@@ -1,0 +1,7 @@
+.next/
+fixtures/
+public/fixtures/
+
+# Playwright artifacts
+test-results/
+playwright-report/

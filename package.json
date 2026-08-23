@@ -1,0 +1,20 @@
+{
+  "name": "hwp-editor",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Embeddable GUI editor for Korean HWP/HWPX documents, delegating all document work to the hwp-cli binary.",
+  "type": "module",
+  "engines": {
+    "node": ">=22",
+    "pnpm": ">=10"
+  },
+  "packageManager": "pnpm@10.0.0",
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.2"
+  }
+}
