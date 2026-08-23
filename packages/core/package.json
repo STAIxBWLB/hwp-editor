@@ -1,0 +1,31 @@
+{
+  "name": "@hwp-editor/core",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Framework-free core for hwp-editor: engine interface, typed hwp edit ops, segments, spec types, editor state.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": ["dist", "schemas"],
+  "scripts": {
+    "build": "pnpm gen:types && tsup",
+    "gen:types": "node scripts/gen-spec-types.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "json-schema-to-typescript": "^15.0.4",
+    "tsup": "^8.5.0",
+    "typescript": "~5.9.2",
+    "vitest": "^3.2.4"
+  }
+}
