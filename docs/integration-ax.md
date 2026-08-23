@@ -18,18 +18,20 @@ browser                          ax (Next.js)
 
 ## 1. Vendoring the packages
 
-The packages are `private: true` workspace packages — they are not published
-to a registry, so ax takes them as tarballs or a git dependency:
+The packages are `private: true` workspace packages, not published to a
+registry, so ax takes them as tarballs:
 
-- **Tarball (recommended for deploys).** `pnpm pack` each package in this
-  repo (`packages/core`, `packages/react`, `packages/server`), commit or
-  artifact-store the `.tgz` files, and depend on them with
-  `"@hwp-editor/core": "file:./vendor/hwp-editor-core-0.0.0.tgz"` (and
-  `link:` for local dev if both repos are checked out side by side).
-  Tarballs make the deploy hermetic and reviewable; bump by re-packing.
-- **Git dependency.** `"@hwp-editor/core": "github:STAIxBWLB/hwp-editor#<sha>"`
-  pins a commit but rebuilds on install — slower CI, no checked-in artifact
-  to review. Acceptable for spikes.
+`pnpm pack` each package in this repo (`packages/core`, `packages/react`,
+`packages/server`), commit or artifact-store the `.tgz` files, and depend on
+them with `"@hwp-editor/core": "file:./vendor/hwp-editor-core-0.0.0.tgz"` (and
+`link:` for local dev if both repos are checked out side by side). Tarballs
+make the deploy hermetic and reviewable; bump by re-packing.
+
+A git dependency is not an option. `github:STAIxBWLB/hwp-editor#<sha>` installs
+the repository root, which is named `hwp-editor` and declares no `main` or
+`exports`, and even a subdirectory selector pointing at `packages/core` would
+resolve entry points under `dist/`, which is gitignored and has no `prepare`
+script to build it on install.
 
 Keep the pin in one place (a `.hwp-editor-version` file or the lockfile) and
 bump deliberately, the same discipline as the binary pin below.
