@@ -4,6 +4,14 @@
   "private": true,
   "description": "Embeddable React UI for hwp-editor: page canvas, segment inspector, table grid, fields panel, compose panel. Scoped CSS, themeable via CSS variables only.",
   "type": "module",
+  "author": "Young Joon Lee <yj.lee@chu.ac.kr>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/STAIxBWLB/hwp-editor.git",
+    "directory": "packages/react"
+  },
+  "homepage": "https://github.com/STAIxBWLB/hwp-editor#readme",
+  "bugs": "https://github.com/STAIxBWLB/hwp-editor/issues",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -4,6 +4,14 @@
   "private": true,
   "description": "Framework-free core for hwp-editor: engine interface, typed hwp edit ops, segments, spec types, editor state.",
   "type": "module",
+  "author": "Young Joon Lee <yj.lee@chu.ac.kr>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/STAIxBWLB/hwp-editor.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/STAIxBWLB/hwp-editor#readme",
+  "bugs": "https://github.com/STAIxBWLB/hwp-editor/issues",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
