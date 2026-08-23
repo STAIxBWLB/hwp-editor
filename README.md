@@ -2,7 +2,7 @@
 
 Embeddable GUI editor for Korean HWP/HWPX documents. All document
 functionality (reading, rendering, editing, composing, validating) is
-delegated to the external [`hwp`](https://github.com/entelecheia/hwp-cli)
+delegated to the external [`hwp`](https://github.com/STAIxBWLB/hwp-cli)
 binary (hwp-cli **>= 0.8.7**); this repo contains UI and thin engine
 adapters only.
 

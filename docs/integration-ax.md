@@ -27,7 +27,7 @@ to a registry, so ax takes them as tarballs or a git dependency:
   `"@hwp-editor/core": "file:./vendor/hwp-editor-core-0.0.0.tgz"` (and
   `link:` for local dev if both repos are checked out side by side).
   Tarballs make the deploy hermetic and reviewable; bump by re-packing.
-- **Git dependency.** `"@hwp-editor/core": "github:entelecheia/hwp-editor#<sha>"`
+- **Git dependency.** `"@hwp-editor/core": "github:STAIxBWLB/hwp-editor#<sha>"`
   pins a commit but rebuilds on install — slower CI, no checked-in artifact
   to review. Acceptable for spikes.
 
@@ -36,12 +36,24 @@ bump deliberately, the same discipline as the binary pin below.
 
 ## 2. Provisioning the binary (fetch-hwp-cli.sh pattern)
 
-Copy the pattern from hwp-gateway's `scripts/fetch-hwp-cli.sh`:
+Provision the binary with a pinned fetch script that follows this shape:
 
 - The release tag lives in `.hwp-cli-version` (must be `>= v0.8.7`).
-- The script downloads `hwp-<tag>-<target>.tar.gz` plus the published
-  `.sha256` from the hwp-cli releases page and compares them locally — it
-  never pipes upstream's installer into a shell (a git tag is mutable).
+- Releases are published on
+  [`STAIxBWLB/hwp-cli`](https://github.com/STAIxBWLB/hwp-cli/releases). Each tag
+  ships one archive per target plus a sibling `.sha256`:
+
+  | Target | Asset |
+  |---|---|
+  | `aarch64-apple-darwin` | `hwp-<tag>-aarch64-apple-darwin.tar.gz` |
+  | `x86_64-apple-darwin` | `hwp-<tag>-x86_64-apple-darwin.tar.gz` |
+  | `x86_64-unknown-linux-gnu` | `hwp-<tag>-x86_64-unknown-linux-gnu.tar.gz` |
+  | `x86_64-pc-windows-msvc` | `hwp-<tag>-x86_64-pc-windows-msvc.zip` |
+
+  Every asset has a `<asset>.sha256` next to it, so the download URL is
+  `https://github.com/STAIxBWLB/hwp-cli/releases/download/<tag>/<asset>`.
+- The script downloads the archive and its `.sha256` and compares them locally;
+  it never pipes upstream's installer into a shell (a git tag is mutable).
 - Install goes to `bin/hwp` via a temp file + atomic `mv`; a stamp file
   (`bin/.hwp-cli-version`) skips repeat downloads.
 - On Linux it additionally asserts the glibc floor (Vercel runs on the

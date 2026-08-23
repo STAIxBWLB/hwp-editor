@@ -10,7 +10,7 @@ browser (maru-web, anchor.halla.ai)
 @hwp-editor/react ──engine──▶ createHttpEngine("https://<host>/api/hwp-editor", { fetch })
                                      │ multipart/JSON over HTTPS, auth headers
                                      ▼
-                       hosted @hwp-editor/server (or hwp-gateway, below)
+                       hosted @hwp-editor/server
 ```
 
 ## Client
@@ -49,20 +49,16 @@ Notes:
   playground app) needs no auth story at all and is the cheapest way to
   pilot the UI.
 
-## Endpoint options
+## Endpoint
 
-1. **Self-hosted `@hwp-editor/server`.** Run `createHwpEditorHandler()`
-  (framework-agnostic `(Request) => Response`) on any Fetch-API runtime, or
-  `createHwpEditorRoutes()` under Next.js — the [ax recipe](./integration-ax.md)
-  covers provisioning and deployment details.
-2. **hwp-gateway (future shared endpoint).**
-   [`hwp-gateway`](https://github.com/entelecheia/hwp-gateway)
-   (`~/workspace/work/sites/hwp-gateway`) already operates hwp-cli as a
-   serverless service (Vercel; Teams/Telegram bots; pinned-binary provisioning
-   via `scripts/fetch-hwp-cli.sh`). Exposing the `protocol.ts` routes there
-   would give every web host one shared, already-hardened endpoint instead of
-   per-app binaries. Tracked as a follow-up; until it lands, hosts deploy
-   their own route per option 1.
+Self-host `@hwp-editor/server`. Run `createHwpEditorHandler()`
+(framework-agnostic `(Request) => Response`) on any Fetch-API runtime, or
+`createHwpEditorRoutes()` under Next.js; the [ax recipe](./integration-ax.md)
+covers provisioning and deployment details.
+
+A shared multi-host endpoint (one hardened deployment instead of a binary per
+app) is a plausible follow-up, but no such endpoint is published today.
+
 ## Theming
 
 Map the host's design tokens onto the `--hwped-*` contract — see
