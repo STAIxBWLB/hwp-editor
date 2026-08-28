@@ -11,12 +11,10 @@ import type {
   CatEnvelope,
   DocumentHandle,
   HwpEngine,
-  HwpErrorCode,
-  PageImage,
   ValidationReport,
 } from "@hwp-editor/core";
 import { createStore, isHwpEngineError, segmentAtRef } from "@hwp-editor/core";
-import type { EditorStore } from "@hwp-editor/core";
+import type { EditorError, EditorStore } from "@hwp-editor/core";
 import { HwpEditorContext } from "./context.js";
 import type { HwpEditorContextValue } from "./context.js";
 import { PageCanvas } from "./PageCanvas.js";
@@ -25,38 +23,17 @@ import { TableGrid } from "./TableGrid.js";
 import { FieldsPanel } from "./FieldsPanel.js";
 import { ComposePanel } from "./ComposePanel.js";
 import { isTableSlice } from "./tables.js";
-import { engineErrorKind, ENGINE_ERROR_LABELS } from "./errors.js";
+import { ErrorLine } from "./ErrorLine.js";
 import { segmentText } from "@hwp-editor/core";
 
-/** Document-load failure: the code when the engine supplied one. */
-interface LoadError {
-  code?: HwpErrorCode;
-  message: string;
-}
-
-/** One alert line with a distinct kind badge for known engine failures. */
-function ErrorLine(props: {
-  prefix: string;
-  /** Stable HwpErrorCode when the failure carried one; drives the badge. */
-  code?: string;
-  message: string;
-}): JSX.Element {
-  const kind = engineErrorKind({
-    // Conditional spread: exactOptionalPropertyTypes rejects an explicit
-    // `code: undefined` against the optional field.
-    ...(props.code !== undefined ? { code: props.code } : {}),
-    message: props.message,
-  });
-  return (
-    <p className="hwped-error" role="alert" data-error-kind={kind}>
-      {kind !== "generic" && (
-        <span className={`hwped-error-kind hwped-error-${kind}`}>
-          {ENGINE_ERROR_LABELS[kind]}
-        </span>
-      )}
-      {props.prefix}: {props.message}
-    </p>
-  );
+/**
+ * Build the store/load carrier from an arbitrary thrown value: the code
+ * only when the thrower actually supplied one.
+ */
+function toEditorError(e: unknown): EditorError {
+  return isHwpEngineError(e)
+    ? { code: e.code, message: e.message }
+    : { message: e instanceof Error ? e.message : String(e) };
 }
 
 export interface HwpEditorProps {
@@ -74,17 +51,15 @@ export interface HwpEditorProps {
 
 type SideTab = "para" | "table" | "fields";
 
-/** Render pages, preferring SVG and falling back to PNG. */
-async function renderPages(
-  engine: HwpEngine,
-  document: DocumentHandle,
-): Promise<PageImage[]> {
-  try {
-    return await engine.render(document, { format: "svg" });
-  } catch {
-    return await engine.render(document, { format: "png" });
-  }
-}
+/**
+ * Every render goes straight to the engine. The former client-side
+ * SVG-to-PNG catch-all turned a timeout, a missing binary, or a network
+ * error into a second full CLI render and masked which one it was
+ * (BUG-01). The one legitimate retry lives in the engine, gated on a real
+ * format failure: CliEngine at cli-engine.ts:445-451 (`reason === "failed"`)
+ * and maru at hwped.rs:485-486 (the `hwp_failed:` prefix).
+ */
+const RENDER_SVG = { format: "svg" } as const;
 
 /**
  * Top-level embeddable editor. Layout: toolbar (apply/revert/validation
@@ -106,7 +81,7 @@ export function HwpEditor(props: HwpEditorProps): JSX.Element {
   // `code` is deliberately optional: a host-supplied engine, a mock, or a
   // React-internal throw legitimately has none, and synthesizing `internal`
   // would be indistinguishable from a real `internal`.
-  const [loadError, setLoadError] = useState<LoadError | null>(null);
+  const [loadError, setLoadError] = useState<EditorError | null>(null);
   const [tab, setTab] = useState<SideTab>("para");
   const [composing, setComposing] = useState(false);
 
@@ -124,7 +99,7 @@ export function HwpEditor(props: HwpEditorProps): JSX.Element {
         const caps = await engine.capabilities();
         const [nextEnvelope, pages, report] = await Promise.all([
           engine.read(file),
-          renderPages(engine, file),
+          engine.render(file, RENDER_SVG),
           engine.validate(file).catch(() => null),
         ]);
         if (cancelled) return;
@@ -134,13 +109,7 @@ export function HwpEditor(props: HwpEditorProps): JSX.Element {
         setLoadError(null);
         store.dispatch({ type: "load", document: file, pages });
       } catch (e) {
-        if (!cancelled) {
-          setLoadError(
-            isHwpEngineError(e)
-              ? { code: e.code, message: e.message }
-              : { message: e instanceof Error ? e.message : String(e) },
-          );
-        }
+        if (!cancelled) setLoadError(toEditorError(e));
       }
     })();
     return () => {
@@ -184,7 +153,7 @@ export function HwpEditor(props: HwpEditorProps): JSX.Element {
         });
         const [nextEnvelope, pages, report] = await Promise.all([
           engine.read(next),
-          renderPages(engine, next),
+          engine.render(next, RENDER_SVG),
           engine.validate(next).catch(() => null),
         ]);
         setEnvelope(nextEnvelope);
@@ -192,10 +161,7 @@ export function HwpEditor(props: HwpEditorProps): JSX.Element {
         store.dispatch({ type: "applySucceeded", document: next, pages });
         onChange?.(next);
       } catch (e) {
-        store.dispatch({
-          type: "applyFailed",
-          error: e instanceof Error ? e.message : String(e),
-        });
+        store.dispatch({ type: "applyFailed", error: toEditorError(e) });
       }
     })();
   }, [editable, engine, onChange, store]);
@@ -206,13 +172,19 @@ export function HwpEditor(props: HwpEditorProps): JSX.Element {
     if (previous === undefined) return;
     store.dispatch({ type: "undo" });
     void (async () => {
-      const [nextEnvelope, pages] = await Promise.all([
-        engine.read(previous),
-        renderPages(engine, previous),
-      ]);
-      setEnvelope(nextEnvelope);
-      store.dispatch({ type: "setPages", pages });
-      onChange?.(previous);
+      try {
+        const [nextEnvelope, pages] = await Promise.all([
+          engine.read(previous),
+          engine.render(previous, RENDER_SVG),
+        ]);
+        setEnvelope(nextEnvelope);
+        store.dispatch({ type: "setPages", pages });
+        onChange?.(previous);
+      } catch (e) {
+        // Without a destination this rejection was unhandled and the user
+        // saw a stale canvas with no explanation.
+        setLoadError(toEditorError(e));
+      }
     })();
   }, [engine, onChange, store]);
 
@@ -221,7 +193,7 @@ export function HwpEditor(props: HwpEditorProps): JSX.Element {
     if (snapshot.document === null) return;
     const [nextEnvelope, pages, report] = await Promise.all([
       engine.read(snapshot.document),
-      renderPages(engine, snapshot.document),
+      engine.render(snapshot.document, RENDER_SVG),
       engine.validate(snapshot.document).catch(() => null),
     ]);
     setEnvelope(nextEnvelope);
@@ -337,7 +309,7 @@ export function HwpEditor(props: HwpEditorProps): JSX.Element {
         </header>
 
         {state.status === "error" && state.error !== null && (
-          <ErrorLine prefix="편집 적용 실패" message={state.error} />
+          <ErrorLine prefix="편집 적용 실패" {...state.error} />
         )}
         {loadError !== null && (
           <ErrorLine prefix="문서 열기 실패" {...loadError} />
@@ -398,12 +370,18 @@ export function HwpEditor(props: HwpEditorProps): JSX.Element {
               // The host passes the composed document back via `file`; load
               // it directly so the flow also works when the host doesn't.
               void (async () => {
-                const [nextEnvelope, pages] = await Promise.all([
-                  engine.read(document),
-                  renderPages(engine, document),
-                ]);
-                setEnvelope(nextEnvelope);
-                store.dispatch({ type: "load", document, pages });
+                try {
+                  const [nextEnvelope, pages] = await Promise.all([
+                    engine.read(document),
+                    engine.render(document, RENDER_SVG),
+                  ]);
+                  setEnvelope(nextEnvelope);
+                  store.dispatch({ type: "load", document, pages });
+                } catch (e) {
+                  // Covers the render AFTER a successful compose; the
+                  // compose call itself fails inside ComposePanel.
+                  setLoadError(toEditorError(e));
+                }
               })();
             }}
           />

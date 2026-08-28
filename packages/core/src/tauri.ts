@@ -38,6 +38,8 @@ import type {
   RenderResponse,
 } from "./protocol.js";
 import { base64 } from "./http-engine.js";
+import { HwpEngineError, toHwpErrorCode } from "./errors.js";
+import type { HwpErrorCode } from "./errors.js";
 
 /** Signature of `@tauri-apps/api/core`'s invoke, declared here so core stays
  *  dependency-free (peer pattern: the host injects the real one). */
@@ -73,6 +75,68 @@ export interface TauriEngineOptions {
   pathOf?: (document: DocumentHandle) => string | undefined;
 }
 
+/**
+ * maru's rejection prefixes, verified against
+ * dev/maru/src-tauri/src/hwped.rs. Kept module-private here rather than in
+ * errors.ts on purpose: these strings are maru's vocabulary, and a shared
+ * home would imply every transport speaks them.
+ *
+ * No entry is a prefix of another, so match order is NOT load-bearing —
+ * do not reorder this into a bug on the assumption that it is.
+ */
+const PREFIX_CODES: readonly (readonly [string, HwpErrorCode])[] = [
+  ["cli_missing:", "unavailable"],
+  ["hwp_spawn_failed:", "unavailable"],
+  ["hwp_timeout:", "timeout"],
+  ["hwp_aborted:", "failed"],
+  ["hwp_failed:", "failed"],
+  ["hwp_version:", "version"],
+  ["hwped_bad_request:", "bad_request"],
+  ["hwp_stage_failed:", "internal"],
+  ["hwp_parse_failed:", "failed"],
+];
+
+function prefixToCode(detail: string): HwpErrorCode {
+  for (const [prefix, code] of PREFIX_CODES) {
+    if (detail.startsWith(prefix)) return code;
+  }
+  // Conservative default: this package does not own maru's vocabulary, so
+  // an unrecognized rejection (including "") is a generic engine failure
+  // rather than a guessed specific one.
+  return "failed";
+}
+
+/**
+ * Read a stable HwpErrorCode out of whatever maru rejected with, so the
+ * Tauri transport feeds the same badge table the HTTP transport does.
+ *
+ * No `status` is set: there is no HTTP status on this bridge, and
+ * synthesizing one would invent information.
+ */
+function toEngineError(cmd: string, error: unknown): HwpEngineError {
+  // Forward compatibility (Phase 7 / EXT-04): every hwped_* command is
+  // `-> Result<T, String>` today, so this branch is dead now and goes live
+  // for free when the Rust side moves to a structured Err.
+  if (typeof error === "object" && error !== null && !(error instanceof Error)) {
+    const rec = error as { code?: unknown; message?: unknown };
+    if (typeof rec.code === "string") {
+      const detail =
+        typeof rec.message === "string" ? rec.message : String(error);
+      return new HwpEngineError(
+        // Narrowed, never cast: a future (or compromised) command handler
+        // cannot inject a value outside the union into a typed field.
+        toHwpErrorCode(rec.code),
+        `${cmd} failed: ${detail}`,
+        { cause: error },
+      );
+    }
+  }
+  const detail = error instanceof Error ? error.message : String(error);
+  return new HwpEngineError(prefixToCode(detail), `${cmd} failed: ${detail}`, {
+    cause: error,
+  });
+}
+
 export function createTauriEngine(
   invoke: TauriInvoke,
   opts: TauriEngineOptions = {},
@@ -93,8 +157,7 @@ export function createTauriEngine(
     try {
       return await invoke<T>(cmd, args);
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new Error(`${cmd} failed: ${detail}`);
+      throw toEngineError(cmd, error);
     }
   }
 
