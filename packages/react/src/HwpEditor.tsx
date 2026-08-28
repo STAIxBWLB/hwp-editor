@@ -11,7 +11,6 @@ import type {
   CatEnvelope,
   DocumentHandle,
   HwpEngine,
-  PageImage,
   ValidationReport,
 } from "@hwp-editor/core";
 import { createStore, isHwpEngineError, segmentAtRef } from "@hwp-editor/core";
@@ -52,17 +51,15 @@ export interface HwpEditorProps {
 
 type SideTab = "para" | "table" | "fields";
 
-/** Render pages, preferring SVG and falling back to PNG. */
-async function renderPages(
-  engine: HwpEngine,
-  document: DocumentHandle,
-): Promise<PageImage[]> {
-  try {
-    return await engine.render(document, { format: "svg" });
-  } catch {
-    return await engine.render(document, { format: "png" });
-  }
-}
+/**
+ * Every render goes straight to the engine. The former client-side
+ * SVG-to-PNG catch-all turned a timeout, a missing binary, or a network
+ * error into a second full CLI render and masked which one it was
+ * (BUG-01). The one legitimate retry lives in the engine, gated on a real
+ * format failure: CliEngine at cli-engine.ts:445-451 (`reason === "failed"`)
+ * and maru at hwped.rs:485-486 (the `hwp_failed:` prefix).
+ */
+const RENDER_SVG = { format: "svg" } as const;
 
 /**
  * Top-level embeddable editor. Layout: toolbar (apply/revert/validation
@@ -102,7 +99,7 @@ export function HwpEditor(props: HwpEditorProps): JSX.Element {
         const caps = await engine.capabilities();
         const [nextEnvelope, pages, report] = await Promise.all([
           engine.read(file),
-          renderPages(engine, file),
+          engine.render(file, RENDER_SVG),
           engine.validate(file).catch(() => null),
         ]);
         if (cancelled) return;
@@ -156,7 +153,7 @@ export function HwpEditor(props: HwpEditorProps): JSX.Element {
         });
         const [nextEnvelope, pages, report] = await Promise.all([
           engine.read(next),
-          renderPages(engine, next),
+          engine.render(next, RENDER_SVG),
           engine.validate(next).catch(() => null),
         ]);
         setEnvelope(nextEnvelope);
@@ -175,13 +172,19 @@ export function HwpEditor(props: HwpEditorProps): JSX.Element {
     if (previous === undefined) return;
     store.dispatch({ type: "undo" });
     void (async () => {
-      const [nextEnvelope, pages] = await Promise.all([
-        engine.read(previous),
-        renderPages(engine, previous),
-      ]);
-      setEnvelope(nextEnvelope);
-      store.dispatch({ type: "setPages", pages });
-      onChange?.(previous);
+      try {
+        const [nextEnvelope, pages] = await Promise.all([
+          engine.read(previous),
+          engine.render(previous, RENDER_SVG),
+        ]);
+        setEnvelope(nextEnvelope);
+        store.dispatch({ type: "setPages", pages });
+        onChange?.(previous);
+      } catch (e) {
+        // Without a destination this rejection was unhandled and the user
+        // saw a stale canvas with no explanation.
+        setLoadError(toEditorError(e));
+      }
     })();
   }, [engine, onChange, store]);
 
@@ -190,7 +193,7 @@ export function HwpEditor(props: HwpEditorProps): JSX.Element {
     if (snapshot.document === null) return;
     const [nextEnvelope, pages, report] = await Promise.all([
       engine.read(snapshot.document),
-      renderPages(engine, snapshot.document),
+      engine.render(snapshot.document, RENDER_SVG),
       engine.validate(snapshot.document).catch(() => null),
     ]);
     setEnvelope(nextEnvelope);
@@ -367,12 +370,18 @@ export function HwpEditor(props: HwpEditorProps): JSX.Element {
               // The host passes the composed document back via `file`; load
               // it directly so the flow also works when the host doesn't.
               void (async () => {
-                const [nextEnvelope, pages] = await Promise.all([
-                  engine.read(document),
-                  renderPages(engine, document),
-                ]);
-                setEnvelope(nextEnvelope);
-                store.dispatch({ type: "load", document, pages });
+                try {
+                  const [nextEnvelope, pages] = await Promise.all([
+                    engine.read(document),
+                    engine.render(document, RENDER_SVG),
+                  ]);
+                  setEnvelope(nextEnvelope);
+                  store.dispatch({ type: "load", document, pages });
+                } catch (e) {
+                  // Covers the render AFTER a successful compose; the
+                  // compose call itself fails inside ComposePanel.
+                  setLoadError(toEditorError(e));
+                }
               })();
             }}
           />
