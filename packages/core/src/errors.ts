@@ -72,8 +72,13 @@ export interface HwpEngineErrorOptions {
 
 /** Engine failure carrying a stable `code` alongside its human message. */
 export class HwpEngineError extends Error {
-  /** Present only when the failure crossed an HTTP boundary. */
-  readonly status?: number;
+  /**
+   * Present only when the failure crossed an HTTP boundary. `declare` is
+   * load-bearing: with useDefineForClassFields (implied by target ESNext) a
+   * plain declaration would emit `status = undefined`, so an error built
+   * without a status would still answer true to `"status" in err`.
+   */
+  declare readonly status?: number;
 
   constructor(
     public readonly code: HwpErrorCode,

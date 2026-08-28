@@ -59,3 +59,51 @@ describe("parseError JSON branch", () => {
     expect(err.code).toBe("internal");
   });
 });
+
+describe("parseError non-JSON branch", () => {
+  async function codeForNonJson(
+    status: number,
+    statusText: string,
+  ): Promise<unknown> {
+    const engine = createHttpEngine("/api", {
+      // A reverse proxy / gateway error page: never reaches the JSON handler.
+      fetch: stubFetch("<html>Gateway Timeout</html>", {
+        status,
+        statusText,
+        headers: { "content-type": "text/html" },
+      }),
+    });
+    return engine.capabilities().then(
+      () => null,
+      (e: unknown) => e,
+    );
+  }
+
+  it("derives the code from the HTTP status", async () => {
+    const cases: [number, string, string][] = [
+      [504, "Gateway Timeout", "timeout"],
+      [503, "Service Unavailable", "unavailable"],
+      [400, "Bad Request", "bad_request"],
+      [404, "Not Found", "not_found"],
+      [405, "Method Not Allowed", "method_not_allowed"],
+      [422, "Unprocessable Entity", "failed"],
+      // 403 is reserved for a later authorization phase; it must NOT claim
+      // a code of its own here.
+      [403, "Forbidden", "internal"],
+      [500, "Internal Server Error", "internal"],
+    ];
+    for (const [status, statusText, code] of cases) {
+      const err = await codeForNonJson(status, statusText);
+      expect(isHwpEngineError(err)).toBe(true);
+      if (!isHwpEngineError(err)) return;
+      expect(err.code).toBe(code);
+      expect(err.status).toBe(status);
+    }
+  });
+
+  it("keeps the statusText message format", async () => {
+    const err = await codeForNonJson(504, "Gateway Timeout");
+    if (!isHwpEngineError(err)) throw new Error("expected HwpEngineError");
+    expect(err.message).toBe("hwp-engine HTTP 504: Gateway Timeout");
+  });
+});
