@@ -5,10 +5,24 @@
  */
 
 import type { DocumentHandle, PageImage } from "./engine.js";
+import type { HwpErrorCode } from "./errors.js";
 import type { EditOp } from "./ops.js";
 import type { SegmentRef } from "./segments.js";
 
 export type EditorStatus = "clean" | "dirty" | "applying" | "error";
+
+/**
+ * A failure held by the store. `code` is optional on purpose: a
+ * host-supplied engine, a mock, or a React-internal throw legitimately
+ * carries none, and synthesizing `internal` would be indistinguishable
+ * from a real `internal` emitted by the route layer. Build it with a
+ * conditional spread rather than `{ code: undefined }`.
+ */
+export interface EditorError {
+  /** Stable engine code, when the thrown value supplied one. */
+  code?: HwpErrorCode;
+  message: string;
+}
 
 export interface EditorState {
   /** Current document bytes; null before load. */
@@ -25,8 +39,11 @@ export interface EditorState {
    */
   snapshots: DocumentHandle[];
   status: EditorStatus;
-  /** Error message when status is "error". */
-  error: string | null;
+  /**
+   * Failure when status is "error"; `code` is present when the engine
+   * supplied one, so a non-React host reads it without parsing prose.
+   */
+  error: EditorError | null;
 }
 
 export const initialState: EditorState = {
@@ -48,7 +65,7 @@ export type EditorAction =
   | { type: "clearOps" }
   | { type: "applyStarted" }
   | { type: "applySucceeded"; document: DocumentHandle; pages?: PageImage[] }
-  | { type: "applyFailed"; error: string }
+  | { type: "applyFailed"; error: EditorError }
   | { type: "undo" };
 
 export function reducer(state: EditorState, action: EditorAction): EditorState {

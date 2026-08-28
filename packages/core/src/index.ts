@@ -49,6 +49,7 @@ export {
 } from "./state.js";
 export type {
   EditorAction,
+  EditorError,
   EditorState,
   EditorStatus,
   EditorStore,

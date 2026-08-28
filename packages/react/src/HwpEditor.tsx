@@ -11,12 +11,11 @@ import type {
   CatEnvelope,
   DocumentHandle,
   HwpEngine,
-  HwpErrorCode,
   PageImage,
   ValidationReport,
 } from "@hwp-editor/core";
 import { createStore, isHwpEngineError, segmentAtRef } from "@hwp-editor/core";
-import type { EditorStore } from "@hwp-editor/core";
+import type { EditorError, EditorStore } from "@hwp-editor/core";
 import { HwpEditorContext } from "./context.js";
 import type { HwpEditorContextValue } from "./context.js";
 import { PageCanvas } from "./PageCanvas.js";
@@ -25,38 +24,17 @@ import { TableGrid } from "./TableGrid.js";
 import { FieldsPanel } from "./FieldsPanel.js";
 import { ComposePanel } from "./ComposePanel.js";
 import { isTableSlice } from "./tables.js";
-import { engineErrorKind, ENGINE_ERROR_LABELS } from "./errors.js";
+import { ErrorLine } from "./ErrorLine.js";
 import { segmentText } from "@hwp-editor/core";
 
-/** Document-load failure: the code when the engine supplied one. */
-interface LoadError {
-  code?: HwpErrorCode;
-  message: string;
-}
-
-/** One alert line with a distinct kind badge for known engine failures. */
-function ErrorLine(props: {
-  prefix: string;
-  /** Stable HwpErrorCode when the failure carried one; drives the badge. */
-  code?: string;
-  message: string;
-}): JSX.Element {
-  const kind = engineErrorKind({
-    // Conditional spread: exactOptionalPropertyTypes rejects an explicit
-    // `code: undefined` against the optional field.
-    ...(props.code !== undefined ? { code: props.code } : {}),
-    message: props.message,
-  });
-  return (
-    <p className="hwped-error" role="alert" data-error-kind={kind}>
-      {kind !== "generic" && (
-        <span className={`hwped-error-kind hwped-error-${kind}`}>
-          {ENGINE_ERROR_LABELS[kind]}
-        </span>
-      )}
-      {props.prefix}: {props.message}
-    </p>
-  );
+/**
+ * Build the store/load carrier from an arbitrary thrown value: the code
+ * only when the thrower actually supplied one.
+ */
+function toEditorError(e: unknown): EditorError {
+  return isHwpEngineError(e)
+    ? { code: e.code, message: e.message }
+    : { message: e instanceof Error ? e.message : String(e) };
 }
 
 export interface HwpEditorProps {
@@ -106,7 +84,7 @@ export function HwpEditor(props: HwpEditorProps): JSX.Element {
   // `code` is deliberately optional: a host-supplied engine, a mock, or a
   // React-internal throw legitimately has none, and synthesizing `internal`
   // would be indistinguishable from a real `internal`.
-  const [loadError, setLoadError] = useState<LoadError | null>(null);
+  const [loadError, setLoadError] = useState<EditorError | null>(null);
   const [tab, setTab] = useState<SideTab>("para");
   const [composing, setComposing] = useState(false);
 
@@ -134,13 +112,7 @@ export function HwpEditor(props: HwpEditorProps): JSX.Element {
         setLoadError(null);
         store.dispatch({ type: "load", document: file, pages });
       } catch (e) {
-        if (!cancelled) {
-          setLoadError(
-            isHwpEngineError(e)
-              ? { code: e.code, message: e.message }
-              : { message: e instanceof Error ? e.message : String(e) },
-          );
-        }
+        if (!cancelled) setLoadError(toEditorError(e));
       }
     })();
     return () => {
@@ -192,10 +164,7 @@ export function HwpEditor(props: HwpEditorProps): JSX.Element {
         store.dispatch({ type: "applySucceeded", document: next, pages });
         onChange?.(next);
       } catch (e) {
-        store.dispatch({
-          type: "applyFailed",
-          error: e instanceof Error ? e.message : String(e),
-        });
+        store.dispatch({ type: "applyFailed", error: toEditorError(e) });
       }
     })();
   }, [editable, engine, onChange, store]);
@@ -337,7 +306,7 @@ export function HwpEditor(props: HwpEditorProps): JSX.Element {
         </header>
 
         {state.status === "error" && state.error !== null && (
-          <ErrorLine prefix="편집 적용 실패" message={state.error} />
+          <ErrorLine prefix="편집 적용 실패" {...state.error} />
         )}
         {loadError !== null && (
           <ErrorLine prefix="문서 열기 실패" {...loadError} />

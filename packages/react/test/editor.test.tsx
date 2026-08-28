@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import type { DocumentHandle } from "@hwp-editor/core";
 import { HwpEngineError } from "@hwp-editor/core";
 import { HwpEditor } from "../src/HwpEditor.js";
@@ -199,6 +199,29 @@ describe("HwpEditor engine error states", () => {
     expect(alert.querySelector(".hwped-error-kind")).toBeNull();
   });
 
+  it("selects the edit badge from the code when the prose has no marker", async () => {
+    // Contains none of distribution / encrypted / protected / 배포용, so a
+    // "protected" badge here can only have come from the code.
+    const engine = createMockEngine();
+    engine.edit = async () => {
+      throw new HwpEngineError("protected", "이 문서는 편집할 수 없습니다");
+    };
+    render(<HwpEditor engine={engine} file={file} />);
+
+    const page = await screen.findByRole("button", { name: "페이지 1" });
+    fireEvent.click(page, { clientY: clientYForPara(makeEnvelope(), 0) });
+    await screen.findByText("1. 회의록");
+    fireEvent.change(screen.getByLabelText("텍스트 교체"), {
+      target: { value: "수정됨" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "교체" }));
+    fireEvent.click(screen.getByRole("button", { name: "적용 (1)" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("편집 적용 실패");
+    expect(alert.getAttribute("data-error-kind")).toBe("protected");
+  });
+
   it("selects the badge from the error code, not from the message prose", async () => {
     // The message deliberately contains none of the classifyEngineError
     // substring markers: a "timeout" badge here can only come from the code.
@@ -282,6 +305,49 @@ describe("HwpEditor compose flow", () => {
       expect(dialog.isConnected).toBe(false);
     });
     await screen.findByText("테스트 보고서.hwpx");
+    cleanup();
+  });
+
+  /** Drive the dialog to a compose() call on `engine`; returns the dialog. */
+  async function driveCompose(
+    engine: ReturnType<typeof createMockEngine>,
+  ): Promise<HTMLElement> {
+    render(<HwpEditor engine={engine} file={null} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "새 문서 만들기" }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "새 문서 만들기" });
+    fireEvent.change(screen.getByLabelText("제목"), {
+      target: { value: "테스트" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "문서 생성" }));
+    return dialog;
+  }
+
+  it("badges a protected compose refusal from its code", async () => {
+    const engine = createMockEngine();
+    engine.compose = async () => {
+      throw new HwpEngineError("protected", "이 문서는 생성할 수 없습니다");
+    };
+    const dialog = await driveCompose(engine);
+
+    const alert = await within(dialog).findByRole("alert");
+    expect(alert.textContent).toContain("문서 생성 실패");
+    expect(alert.getAttribute("data-error-kind")).toBe("protected");
+    cleanup();
+  });
+
+  it("degrades a codeless compose failure to the generic kind", async () => {
+    const engine = createMockEngine();
+    engine.compose = async () => {
+      throw new Error("boom");
+    };
+    const dialog = await driveCompose(engine);
+
+    const alert = await within(dialog).findByRole("alert");
+    expect(alert.textContent).toContain("문서 생성 실패: boom");
+    expect(alert.getAttribute("data-error-kind")).toBe("generic");
+    expect(alert.querySelector(".hwped-error-kind")).toBeNull();
     cleanup();
   });
 });

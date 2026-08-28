@@ -1,6 +1,10 @@
 import { useState } from "react";
 import type { JSX } from "react";
-import type { DocumentHandle } from "@hwp-editor/core";
+import type { DocumentHandle, EditorError } from "@hwp-editor/core";
+// Separate value import: verbatimModuleSyntax will not let a value ride
+// along in a type-only import.
+import { isHwpEngineError } from "@hwp-editor/core";
+import { ErrorLine } from "./ErrorLine.js";
 import {
   COMPOSE_PRESETS,
   COMPOSE_PRESET_LABELS,
@@ -27,7 +31,7 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
   const [author, setAuthor] = useState("");
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<EditorError | null>(null);
 
   const compose = async (): Promise<void> => {
     setBusy(true);
@@ -38,7 +42,13 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
       const result = await engine.compose(spec, `${stem}.hwpx`);
       props.onComposed(result.document);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      // Compose is one of the two operations that can refuse with
+      // `protected`, so this surface needs the code as much as the editor's.
+      setError(
+        isHwpEngineError(e)
+          ? { code: e.code, message: e.message }
+          : { message: e instanceof Error ? e.message : String(e) },
+      );
     } finally {
       setBusy(false);
     }
@@ -121,9 +131,7 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
         </div>
 
         {error !== null && (
-          <p className="hwped-error" role="alert">
-            문서 생성 실패: {error}
-          </p>
+          <ErrorLine prefix="문서 생성 실패" {...error} />
         )}
 
         <div className="hwped-row hwped-dialog-actions">
