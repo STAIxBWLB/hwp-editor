@@ -16,5 +16,10 @@
   },
   "devDependencies": {
     "typescript": "~5.9.2"
+  },
+  "pnpm": {
+    "overrides": {
+      "esbuild": "^0.28.2"
+    }
   }
 }
