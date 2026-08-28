@@ -15,6 +15,7 @@ import type {
   EditOp,
   EditOptions,
   HwpEngine,
+  HwpErrorCode,
   PageImageFormat,
   RenderOptions,
 } from "@hwp-editor/core";
@@ -56,7 +57,7 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-function error(status: number, code: string, message: string): Response {
+function error(status: number, code: HwpErrorCode, message: string): Response {
   const body: ErrorResponse = { error: { code, message } };
   return json(body, status);
 }
@@ -73,6 +74,10 @@ function statusFor(err: HwpCliError): number {
     case "version":
       return 500;
     case "failed":
+    // 403 is deliberately left unclaimed for Phase 4's `authorize`
+    // rejections, so a host can tell an auth refusal from a document
+    // refusal by status alone.
+    case "protected":
       return 422;
   }
 }

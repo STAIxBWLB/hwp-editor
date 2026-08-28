@@ -28,6 +28,7 @@ import {
   type EditOp,
   type EditOptions,
   type HwpEngine,
+  type HwpErrorCode,
   type PageImage,
   type PageImageFormat,
   type RenderOptions,
@@ -42,13 +43,24 @@ const MIN_VERSION: readonly [number, number, number] = [0, 8, 7];
 /** Hancom binary .hwp is a CFBF (OLE2) container; .hwpx is a zip. */
 const CFBF_SIGNATURE = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
 
-export type HwpCliErrorReason =
+/**
+ * The engine half of the published `HwpErrorCode` vocabulary. Derived with
+ * `Extract<>` rather than aliased to the full union on purpose: an alias
+ * would make `statusFor`'s switch (routes.ts) non-exhaustive by five at
+ * once, and the natural fix for that is a `default:` clause, which
+ * permanently destroys the exhaustiveness check that must catch the next
+ * code addition.
+ */
+export type HwpCliErrorReason = Extract<
+  HwpErrorCode,
   | "unavailable"
   | "version"
   | "timeout"
   | "failed"
   | "bad_request"
-  | "unsupported_format";
+  | "unsupported_format"
+  | "protected"
+>;
 
 export class HwpCliError extends Error {
   constructor(
