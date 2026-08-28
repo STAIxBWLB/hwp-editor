@@ -422,9 +422,14 @@ const SVG_UNITS = "pt|px|mm|in|cm|em|%";
 export function svgSize(source: string): { width: number; height: number } | null {
   const tag = source.match(/<svg\b[^>]*>/i);
   if (tag === null) return null;
-  const width = tag[0].match(new RegExp(`\\bwidth="([\\d.]+)(?:${SVG_UNITS})?"`, "i"));
-  const height = tag[0].match(new RegExp(`\\bheight="([\\d.]+)(?:${SVG_UNITS})?"`, "i"));
+  const width = tag[0].match(new RegExp(`\\bwidth="([\\d.]+)(${SVG_UNITS})?"`, "i"));
+  const height = tag[0].match(new RegExp(`\\bheight="([\\d.]+)(${SVG_UNITS})?"`, "i"));
   if (width !== null && height !== null) {
+    // The numbers feed PageCanvas's aspectRatio, meaningful only when both
+    // dimensions share a unit. A mixed-unit tag (210mm x 841.86pt) must
+    // fail loudly here rather than silently render a wrong ratio; no unit
+    // conversion — hwp-cli emits pt only.
+    if ((width[2] ?? "") !== (height[2] ?? "")) return null;
     return positiveSize(Number(width[1]), Number(height[1]));
   }
   // An attribute that is present but unparseable (`NaN`, `inf`, `-5.00`) is a
