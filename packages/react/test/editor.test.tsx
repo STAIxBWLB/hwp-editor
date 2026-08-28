@@ -278,6 +278,38 @@ describe("HwpEditor revert", () => {
       expect(onChange).toHaveBeenLastCalledWith(file);
     });
   });
+
+  it("leaves the store untouched when the undo read/render fails", async () => {
+    const engine = createMockEngine();
+    render(<HwpEditor engine={engine} file={file} />);
+
+    const page = await screen.findByRole("button", { name: "페이지 1" });
+    fireEvent.click(page, { clientY: clientYForPara(makeEnvelope(), 0) });
+    await screen.findByText("1. 회의록");
+    fireEvent.change(screen.getByLabelText("텍스트 교체"), {
+      target: { value: "수정됨" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "교체" }));
+    fireEvent.click(screen.getByRole("button", { name: "적용 (1)" }));
+    await screen.findByText("edited-1.hwpx");
+
+    // A mid-undo engine failure must not half-apply the undo: the store
+    // keeps the applied document AND its snapshot (the button stays
+    // enabled), and the failure surfaces as an alert.
+    engine.read = async () => {
+      throw new HwpEngineError("timeout", "hwp read timed out after 60000ms");
+    };
+    fireEvent.click(screen.getByRole("button", { name: "되돌리기" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("문서 열기 실패");
+    expect(alert.getAttribute("data-error-kind")).toBe("timeout");
+    expect(screen.getByText("edited-1.hwpx")).toBeDefined();
+    expect(screen.getByRole("button", { name: "되돌리기" })).toHaveProperty(
+      "disabled",
+      false,
+    );
+  });
 });
 
 describe("HwpEditor compose flow", () => {

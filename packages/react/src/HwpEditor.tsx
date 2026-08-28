@@ -161,19 +161,26 @@ export function HwpEditor(props: HwpEditorProps): JSX.Element {
     const snapshot = store.getState();
     const previous = snapshot.snapshots[snapshot.snapshots.length - 1];
     if (previous === undefined) return;
-    store.dispatch({ type: "undo" });
     void (async () => {
       try {
         const [nextEnvelope, pages] = await Promise.all([
           engine.read(previous),
           engine.render(previous, RENDER_SVG),
         ]);
+        // Dispatch only after the engine succeeds: popping the snapshot
+        // first and failing mid-undo left the canvas showing the pre-undo
+        // envelope while the store claimed the previous document. A second
+        // revert may have consumed this snapshot while we awaited; if so,
+        // leave the newer transition alone.
+        const now = store.getState();
+        if (now.snapshots[now.snapshots.length - 1] !== previous) return;
+        store.dispatch({ type: "undo" });
         setEnvelope(nextEnvelope);
         store.dispatch({ type: "setPages", pages });
         onChange?.(previous);
       } catch (e) {
-        // Without a destination this rejection was unhandled and the user
-        // saw a stale canvas with no explanation.
+        // The store was never touched, so store and canvas stay consistent;
+        // without this destination the rejection was unhandled.
         setLoadError(toEditorError(e));
       }
     })();
