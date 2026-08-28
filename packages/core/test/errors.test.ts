@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   HwpEngineError,
   isHwpEngineError,
+  isHwpErrorCode,
   toHwpErrorCode,
   type HwpErrorCode,
 } from "../src/errors.js";
@@ -50,6 +51,21 @@ describe("toHwpErrorCode", () => {
     expect(toHwpErrorCode("TIMEOUT")).toBe("internal");
     expect(toHwpErrorCode(" timeout")).toBe("internal");
     expect(toHwpErrorCode("timeout ")).toBe("internal");
+  });
+});
+
+describe("isHwpErrorCode", () => {
+  it("accepts each of the twelve literals", () => {
+    for (const code of ALL_CODES) expect(isHwpErrorCode(code)).toBe(true);
+  });
+
+  it("rejects anything unrecognized instead of remapping it", () => {
+    expect(isHwpErrorCode("ENOENT")).toBe(false);
+    expect(isHwpErrorCode("Timeout")).toBe(false);
+    expect(isHwpErrorCode("")).toBe(false);
+    expect(isHwpErrorCode(undefined)).toBe(false);
+    expect(isHwpErrorCode(null)).toBe(false);
+    expect(isHwpErrorCode(42)).toBe(false);
   });
 });
 

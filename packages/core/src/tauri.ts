@@ -92,6 +92,7 @@ const PREFIX_CODES: readonly (readonly [string, HwpErrorCode])[] = [
   ["hwp_failed:", "failed"],
   ["hwp_version:", "version"],
   ["hwped_bad_request:", "bad_request"],
+  ["hwped_task_failed:", "failed"],
   ["hwp_stage_failed:", "internal"],
   ["hwp_parse_failed:", "failed"],
 ];

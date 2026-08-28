@@ -11,9 +11,24 @@
  * those engines; `classifyEngineError` stays exported for that path.
  */
 
-import type { HwpErrorCode } from "@hwp-editor/core";
+import type { EditorError, HwpErrorCode } from "@hwp-editor/core";
+import { isHwpEngineError, isHwpErrorCode } from "@hwp-editor/core";
 
 export type EngineErrorKind = "timeout" | "unavailable" | "protected" | "generic";
+
+/**
+ * Build the store/load carrier from an arbitrary thrown value: the code
+ * only when the thrower supplied one AND it is a known HwpErrorCode. A
+ * duck-typed foreign error (e.g. a Node ErrnoException with code "ENOENT")
+ * must not leak a non-union string into a field typed as the union; its
+ * code is dropped, not remapped — synthesizing `internal` here would be
+ * indistinguishable from a real `internal` (see state.ts in core).
+ */
+export function toEditorError(e: unknown): EditorError {
+  return isHwpEngineError(e) && isHwpErrorCode(e.code)
+    ? { code: e.code, message: e.message }
+    : { message: e instanceof Error ? e.message : String(e) };
+}
 
 /**
  * Badge per code. A total Record on purpose, not a switch with a default:
@@ -46,7 +61,7 @@ export function engineErrorKind(error: {
   code?: string;
   message: string;
 }): EngineErrorKind {
-  if (error.code !== undefined && error.code in KIND_BY_CODE) {
+  if (error.code !== undefined && Object.hasOwn(KIND_BY_CODE, error.code)) {
     return KIND_BY_CODE[error.code as HwpErrorCode];
   }
   return classifyEngineError(error.message);

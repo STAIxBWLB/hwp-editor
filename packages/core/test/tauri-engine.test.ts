@@ -173,6 +173,7 @@ describe("createTauriEngine errors", () => {
     ["hwp_failed: hwp exited with status 1", "failed"],
     ["hwp_version: 0.8.6 is older than 0.8.8", "version"],
     ["hwped_bad_request: document is missing", "bad_request"],
+    ["hwped_task_failed: task join error", "failed"],
     ["hwp_stage_failed: could not create temp dir", "internal"],
     ["hwp_parse_failed: not a valid hwpx container", "failed"],
     ["something else", "failed"],

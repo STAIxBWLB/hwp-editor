@@ -77,6 +77,14 @@ describe("svgSize", () => {
     }
   });
 
+  it("returns null when width and height carry different units", () => {
+    // Same-unit pairs are comparable; mixed units would silently corrupt
+    // the aspect ratio, so they fail loudly like any unreadable dimension.
+    expect(svgSize('<svg width="210mm" height="841.86pt">')).toBeNull();
+    expect(svgSize('<svg width="595.28pt" height="842">')).toBeNull();
+    expect(svgSize('<svg width="210" height="297mm">')).toBeNull();
+  });
+
   it("returns null for degenerate dimension values", () => {
     expect(svgSize('<svg width="NaN" height="841.86">')).toBeNull();
     expect(svgSize('<svg width="inf" height="841.86">')).toBeNull();

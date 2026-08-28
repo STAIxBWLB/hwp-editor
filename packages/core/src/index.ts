@@ -13,6 +13,7 @@ export type {
 export {
   HwpEngineError,
   isHwpEngineError,
+  isHwpErrorCode,
   toHwpErrorCode,
 } from "./errors.js";
 export type { HwpErrorCode, HwpEngineErrorOptions } from "./errors.js";
