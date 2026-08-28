@@ -1,13 +1,56 @@
 /**
- * Engine error classification for distinct UI states. Engines surface
- * failures as plain message strings (HTTP: "hwp-engine HTTP 504: ...",
- * Tauri: "hwped_read failed: cli_missing: ...", CLI: "hwp binary not
- * found: ..."); this maps them onto the four states the editor renders
- * distinctly. Substring matching is deliberate — the wire contract carries
- * no error-kind field, and the markers below are pinned by the engines.
+ * Engine error classification for distinct UI states, mapping a failure
+ * onto the four states the editor renders distinctly.
+ *
+ * The stable `HwpErrorCode` carried by `HwpEngineError` (@hwp-editor/core)
+ * is the preferred input: `engineErrorKind` consults it first and never
+ * reads the prose when it is present. Substring matching over the message
+ * is the documented FALLBACK for failures that carry no code — a pre-1.0
+ * server, or a maru/Tauri rejection that surfaces only a prefixed string
+ * ("hwped_read failed: cli_missing: ..."). The markers below are pinned by
+ * those engines; `classifyEngineError` stays exported for that path.
  */
 
+import type { HwpErrorCode } from "@hwp-editor/core";
+
 export type EngineErrorKind = "timeout" | "unavailable" | "protected" | "generic";
+
+/**
+ * Badge per code. A total Record on purpose, not a switch with a default:
+ * adding a thirteenth HwpErrorCode must fail `tsc --noEmit` here and force
+ * an explicit badge decision rather than silently rendering "generic".
+ *
+ * `version` maps to `unavailable`: a binary too old and a binary missing
+ * are the same problem with the same remedy from the user's seat.
+ */
+const KIND_BY_CODE: Record<HwpErrorCode, EngineErrorKind> = {
+  timeout: "timeout",
+  unavailable: "unavailable",
+  version: "unavailable",
+  protected: "protected",
+  failed: "generic",
+  bad_request: "generic",
+  unsupported_format: "generic",
+  method_not_allowed: "generic",
+  not_found: "generic",
+  session_not_found: "generic",
+  path_traversal: "generic",
+  internal: "generic",
+};
+
+/**
+ * Single entry point: the code wins whenever it is present and known;
+ * otherwise fall back to reading the message.
+ */
+export function engineErrorKind(error: {
+  code?: string;
+  message: string;
+}): EngineErrorKind {
+  if (error.code !== undefined && error.code in KIND_BY_CODE) {
+    return KIND_BY_CODE[error.code as HwpErrorCode];
+  }
+  return classifyEngineError(error.message);
+}
 
 export function classifyEngineError(message: string): EngineErrorKind {
   const m = message.toLowerCase();
