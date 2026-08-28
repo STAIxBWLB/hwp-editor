@@ -38,7 +38,7 @@ import {
 
 export const HWP_TIMEOUT_MS = 60_000;
 const HWP_MAX_BUFFER = 32 * 1024 * 1024;
-const MIN_VERSION: readonly [number, number, number] = [0, 8, 7];
+const MIN_VERSION: readonly [number, number, number] = [0, 8, 8];
 
 /** Hancom binary .hwp is a CFBF (OLE2) container; .hwpx is a zip. */
 const CFBF_SIGNATURE = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
@@ -194,7 +194,7 @@ function runCli(
         if ((error as { code?: unknown }).code === "ENOENT") {
           reject(new HwpCliError(
             "unavailable",
-            `hwp binary not found: ${bin} (install hwp-cli >= 0.8.7, or set HWP_EDITOR_BIN / the bin option)`,
+            `hwp binary not found: ${bin} (install hwp-cli >= 0.8.8, or set HWP_EDITOR_BIN / the bin option)`,
           ));
           return;
         }
@@ -282,7 +282,7 @@ async function tryJson(
  * `check_body_readable()` refuses five conditions (Encrypted, CertEncrypted,
  * CertDrm, Drm, Signed) but `info --json` exposes only two of them as
  * booleans, so without this table four protection kinds pass the pre-flight
- * silently. Best-effort only: hwp-cli's 0.8.7 changelog states the
+ * silently. Best-effort only: hwp-cli's 0.8.8 changelog states the
  * certificate/DRM/signature branches are unverified against a genuine
  * protected file, so PROTECTED_MARKERS (the stderr backstop) is what
  * actually carries the requirement.
@@ -294,7 +294,7 @@ const PROTECTED_ATTRIBUTES: Readonly<Record<string, string>> = {
   "전자 서명 정보": "signed document (전자 서명 정보)",
 };
 
-/** Distribution/encrypted documents: 0.8.7 can read them but refuses edit/fill. */
+/** Distribution/encrypted documents: 0.8.8 can read them but refuses edit/fill. */
 export function documentEditability(info: unknown): { editable: boolean; reason?: string } {
   if (typeof info !== "object" || info === null) return { editable: true };
   const record = info as Record<string, unknown>;
@@ -304,7 +304,7 @@ export function documentEditability(info: unknown): { editable: boolean; reason?
   if (record["distribution"] === true) {
     return {
       editable: false,
-      reason: "distribution (배포용) document; hwp-cli 0.8.7 refuses edit/fill",
+      reason: "distribution (배포용) document; hwp-cli 0.8.8 refuses edit/fill",
     };
   }
   const attributes = record["attributes"];

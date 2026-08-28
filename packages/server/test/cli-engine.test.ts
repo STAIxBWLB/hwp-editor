@@ -1,5 +1,5 @@
 /**
- * Integration tests against a real hwp-cli binary at or above the 0.8.7
+ * Integration tests against a real hwp-cli binary at or above the 0.8.8
  * floor. Skipped with a clear message when the binary is absent (see
  * helpers.ts). Version assertions check the floor, not an exact release:
  * the dev binary moves ahead of the floor as hwp-cli ships.
@@ -15,24 +15,24 @@ import { BIN, describeBin, multipartRequest, sampleSpec } from "./helpers.js";
 
 const engine = () => createCliEngine({ bin: BIN });
 
-// Mirrors the engine's MIN_VERSION floor ([0, 8, 7] in cli-engine.ts).
-function expectVersionAtLeast087(version: string) {
+// Mirrors the engine's MIN_VERSION floor ([0, 8, 8] in cli-engine.ts).
+function expectVersionAtLeast088(version: string) {
   const [major = 0, minor = 0, patch = 0] = version.split(".").map(Number);
-  const ok = major > 0 || minor > 8 || (minor === 8 && patch >= 7);
-  expect(ok, `expected hwp-cli >= 0.8.7, got ${version}`).toBe(true);
+  const ok = major > 0 || minor > 8 || (minor === 8 && patch >= 8);
+  expect(ok, `expected hwp-cli >= 0.8.8, got ${version}`).toBe(true);
 }
 
 describeBin("cli-engine (real hwp-cli binary)", () => {
-  it("reports a verified >= 0.8.7 version", async () => {
+  it("reports a verified >= 0.8.8 version", async () => {
     const info = await engine().binaryInfo();
     expect(info.bin).toBe(BIN);
-    expectVersionAtLeast087(info.version);
+    expectVersionAtLeast088(info.version);
     const caps = await engine().capabilities();
-    expectVersionAtLeast087(caps.version);
+    expectVersionAtLeast088(caps.version);
     expect(caps).toMatchObject({ editable: true, formats: ["hwp", "hwpx"] });
   });
 
-  it("rejects binaries older than 0.8.7", async () => {
+  it("rejects binaries older than 0.8.8", async () => {
     // /bin/echo prints no semver — stands in for an unusable binary.
     const bad = createCliEngine({ bin: "/bin/echo" });
     await expect(bad.capabilities()).rejects.toThrow(HwpCliError);
@@ -155,7 +155,7 @@ describeBin("cli-engine (real hwp-cli binary)", () => {
     await expect(
       cli.edit(composed.document, [{ kind: "replace", find: "없는문자열", replace: "x" }]),
     ).rejects.toThrow(HwpCliError);
-    // 0.8.7 still refuses when *no* op matches, even with allowPartial.
+    // 0.8.8 still refuses when *no* op matches, even with allowPartial.
     await expect(
       cli.edit(composed.document, [{ kind: "replace", find: "없는문자열", replace: "x" }], {
         allowPartial: true,
@@ -223,6 +223,6 @@ describeBin("routes (real hwp-cli binary)", () => {
     const handler = createHwpEditorHandler({ engine: engine() });
     const res = await handler(new Request("http://localhost/api/hwp-editor/capabilities"));
     expect(res.status).toBe(200);
-    expectVersionAtLeast087((await res.json()).version);
+    expectVersionAtLeast088((await res.json()).version);
   });
 });

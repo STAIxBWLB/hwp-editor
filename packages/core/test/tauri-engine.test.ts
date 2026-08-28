@@ -132,7 +132,7 @@ describe("createTauriEngine commands", () => {
   });
 
   it("capabilities hits hwped_capabilities with no payload", async () => {
-    const caps = { version: "0.8.7", editable: true, formats: ["hwp", "hwpx"] };
+    const caps = { version: "0.8.8", editable: true, formats: ["hwp", "hwpx"] };
     const { invoke, calls } = mockInvoke({ hwped_capabilities: caps });
     const engine = createTauriEngine(invoke);
     await expect(engine.capabilities()).resolves.toEqual(caps);
@@ -171,7 +171,7 @@ describe("createTauriEngine errors", () => {
     ["hwp_timeout: hwp render timed out after 60000ms", "timeout"],
     ["hwp_aborted: cancelled by the host", "failed"],
     ["hwp_failed: hwp exited with status 1", "failed"],
-    ["hwp_version: 0.8.6 is older than 0.8.7", "version"],
+    ["hwp_version: 0.8.6 is older than 0.8.8", "version"],
     ["hwped_bad_request: document is missing", "bad_request"],
     ["hwp_stage_failed: could not create temp dir", "internal"],
     ["hwp_parse_failed: not a valid hwpx container", "failed"],

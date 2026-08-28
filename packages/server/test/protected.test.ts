@@ -52,7 +52,7 @@ function fakeBin(opts: { info: string; editStderr?: string }): { bin: string; lo
       "#!/bin/sh",
       `echo "$@" >> ${JSON.stringify(logPath)}`,
       'case "$1" in',
-      "  --version) echo 'hwp 0.8.7' ;;",
+      "  --version) echo 'hwp 0.8.8' ;;",
       `  info) printf '%s' ${JSON.stringify(opts.info)} ;;`,
       `  edit) printf '%s' ${JSON.stringify(opts.editStderr ?? "boom")} >&2; exit 1 ;;`,
       "  *) echo 'unexpected' >&2; exit 1 ;;",

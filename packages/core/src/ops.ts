@@ -1,7 +1,7 @@
 /**
  * Typed edit operations mirroring every repeatable flag of `hwp edit`.
  *
- * Flag spellings and value formats are pinned to hwp-cli v0.8.7,
+ * Flag spellings and value formats are pinned to hwp-cli v0.8.8,
  * crates/hwp-cli/src/cli.rs `EditArgs` (lines ~414-511). Each op serializes
  * to exactly one `--flag value` argv pair; repeatability is expressed by
  * emitting the flag once per op of that kind.
