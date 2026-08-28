@@ -1,6 +1,6 @@
 /**
  * opsToArgv/argvToOps tests. Expected flag spellings and value formats are
- * pinned to hwp-cli v0.8.7, crates/hwp-cli/src/cli.rs `EditArgs`
+ * pinned to hwp-cli v0.8.8, crates/hwp-cli/src/cli.rs `EditArgs`
  * (lines ~414-511) — each test cites the clap long name from that struct.
  */
 import { describe, expect, it } from "vitest";

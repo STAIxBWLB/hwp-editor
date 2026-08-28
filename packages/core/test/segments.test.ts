@@ -1,7 +1,7 @@
 /**
  * Segments envelope tests. Fixtures are REAL captures produced with the
- * hwp-cli v0.8.7 debug build
- * (hwp-cli/target/debug/hwp, `hwp 0.8.7`):
+ * hwp-cli v0.8.8 debug build
+ * (hwp-cli/target/debug/hwp, `hwp 0.8.8`):
  *   cat-segments-basic.json — `hwp compose examples/document-spec-v2/basic.json
  *     -o basic.hwpx && hwp cat basic.hwpx --format markdown --with-segments`
  *   cat-segments-table.json — `hwp new -o table.hwpx --from table.md &&

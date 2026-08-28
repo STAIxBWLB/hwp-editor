@@ -128,7 +128,7 @@ describe("HwpEditor engine error states", () => {
   function failingEngine(message: string): ReturnType<typeof createMockEngine> {
     const engine = createMockEngine();
     engine.capabilities = async () => ({
-      version: "0.8.7-test",
+      version: "0.8.8-test",
       editable: true,
       formats: ["hwp", "hwpx"],
     });

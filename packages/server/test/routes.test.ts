@@ -39,7 +39,7 @@ function stubEngine(overrides: Partial<HwpEngine> = {}): HwpEngine {
       return { valid: true, errors: [] };
     },
     async capabilities() {
-      return { version: "0.8.7", editable: true, formats: ["hwp", "hwpx"] };
+      return { version: "0.8.8", editable: true, formats: ["hwp", "hwpx"] };
     },
     ...overrides,
   };
@@ -53,7 +53,7 @@ describe("routes (stub engine)", () => {
     const res = await handler(new Request(`${BASE}/capabilities`));
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.version).toBe("0.8.7");
+    expect(body.version).toBe("0.8.8");
     expect(body.editable).toBe(true);
   });
 
@@ -202,7 +202,7 @@ describe("routes (stub engine)", () => {
     const unavailable = async (): Promise<never> => {
       throw new HwpCliError(
         "unavailable",
-        "hwp binary not found: /missing/hwp (install hwp-cli >= 0.8.7, or set HWP_EDITOR_BIN / the bin option)",
+        "hwp binary not found: /missing/hwp (install hwp-cli >= 0.8.8, or set HWP_EDITOR_BIN / the bin option)",
       );
     };
     const engine = stubEngine({

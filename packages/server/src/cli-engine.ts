@@ -38,10 +38,13 @@ import {
 
 export const HWP_TIMEOUT_MS = 60_000;
 const HWP_MAX_BUFFER = 32 * 1024 * 1024;
-const MIN_VERSION: readonly [number, number, number] = [0, 8, 7];
+const MIN_VERSION: readonly [number, number, number] = [0, 8, 8];
 
 /** Hancom binary .hwp is a CFBF (OLE2) container; .hwpx is a zip. */
 const CFBF_SIGNATURE = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
+
+/** The eight-byte PNG file signature (PNG spec 5.2). */
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
 /**
  * The engine half of the published `HwpErrorCode` vocabulary. Derived with
@@ -191,7 +194,7 @@ function runCli(
         if ((error as { code?: unknown }).code === "ENOENT") {
           reject(new HwpCliError(
             "unavailable",
-            `hwp binary not found: ${bin} (install hwp-cli >= 0.8.7, or set HWP_EDITOR_BIN / the bin option)`,
+            `hwp binary not found: ${bin} (install hwp-cli >= 0.8.8, or set HWP_EDITOR_BIN / the bin option)`,
           ));
           return;
         }
@@ -279,7 +282,7 @@ async function tryJson(
  * `check_body_readable()` refuses five conditions (Encrypted, CertEncrypted,
  * CertDrm, Drm, Signed) but `info --json` exposes only two of them as
  * booleans, so without this table four protection kinds pass the pre-flight
- * silently. Best-effort only: hwp-cli's 0.8.7 changelog states the
+ * silently. Best-effort only: hwp-cli's 0.8.8 changelog states the
  * certificate/DRM/signature branches are unverified against a genuine
  * protected file, so PROTECTED_MARKERS (the stderr backstop) is what
  * actually carries the requirement.
@@ -291,7 +294,7 @@ const PROTECTED_ATTRIBUTES: Readonly<Record<string, string>> = {
   "전자 서명 정보": "signed document (전자 서명 정보)",
 };
 
-/** Distribution/encrypted documents: 0.8.7 can read them but refuses edit/fill. */
+/** Distribution/encrypted documents: 0.8.8 can read them but refuses edit/fill. */
 export function documentEditability(info: unknown): { editable: boolean; reason?: string } {
   if (typeof info !== "object" || info === null) return { editable: true };
   const record = info as Record<string, unknown>;
@@ -301,7 +304,7 @@ export function documentEditability(info: unknown): { editable: boolean; reason?
   if (record["distribution"] === true) {
     return {
       editable: false,
-      reason: "distribution (배포용) document; hwp-cli 0.8.7 refuses edit/fill",
+      reason: "distribution (배포용) document; hwp-cli 0.8.8 refuses edit/fill",
     };
   }
   const attributes = record["attributes"];
@@ -377,19 +380,63 @@ function rethrowProtected(error: unknown): never {
   throw error;
 }
 
-function pngSize(data: Uint8Array): { width: number; height: number } | null {
-  if (data.length < 24) return null;
-  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-  return { width: view.getUint32(16), height: view.getUint32(20) };
+/**
+ * A page dimension is only trustworthy when it is finite and strictly
+ * positive. `PageCanvas`'s `aspectRatio` collapses on a zero, and
+ * `page.width_pt` upstream is an `f32`, so a degenerate value means the
+ * producer emitted corruption rather than that this parser mis-read it.
+ */
+function positiveSize(width: number, height: number): { width: number; height: number } | null {
+  if (!Number.isFinite(width) || !Number.isFinite(height)) return null;
+  if (width <= 0 || height <= 0) return null;
+  return { width, height };
 }
 
-function svgSize(source: string): { width: number; height: number } | null {
+/**
+ * Dimensions from a PNG IHDR. Exported for `render-size.test.ts`; deliberately
+ * NOT re-exported from `src/index.ts` — this is engine-internal parsing.
+ *
+ * The signature AND the `IHDR` chunk type are both validated before any
+ * integer is read: a length check alone lets any payload of 24 bytes or more
+ * yield two arbitrary uint32s presented to the client as real dimensions,
+ * which fails invisibly and so is worse than the 0x0 BUG-04 names.
+ */
+export function pngSize(data: Uint8Array): { width: number; height: number } | null {
+  if (data.length < 24) return null;
+  if (PNG_SIGNATURE.some((byte, i) => data[i] !== byte)) return null;
+  // ASCII "IHDR" must be the first chunk type, at offsets 12-15.
+  if (data[12] !== 0x49 || data[13] !== 0x48 || data[14] !== 0x44 || data[15] !== 0x52) return null;
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  return positiveSize(view.getUint32(16), view.getUint32(20));
+}
+
+const SVG_UNITS = "pt|px|mm|in|cm|em|%";
+
+/**
+ * Dimensions from an SVG root tag. Exported for `render-size.test.ts` only.
+ *
+ * The numeric pattern stays `[\d.]+` on purpose: `NaN`, `inf` and a leading
+ * minus are exactly the degenerate `f32` spellings this must reject, not
+ * gaps to widen away.
+ */
+export function svgSize(source: string): { width: number; height: number } | null {
   const tag = source.match(/<svg\b[^>]*>/i);
   if (tag === null) return null;
-  const width = tag[0].match(/\bwidth="([\d.]+)(?:pt|px)?"/i);
-  const height = tag[0].match(/\bheight="([\d.]+)(?:pt|px)?"/i);
-  if (width === null || height === null) return null;
-  return { width: Number(width[1]), height: Number(height[1]) };
+  const width = tag[0].match(new RegExp(`\\bwidth="([\\d.]+)(?:${SVG_UNITS})?"`, "i"));
+  const height = tag[0].match(new RegExp(`\\bheight="([\\d.]+)(?:${SVG_UNITS})?"`, "i"));
+  if (width !== null && height !== null) {
+    return positiveSize(Number(width[1]), Number(height[1]));
+  }
+  // An attribute that is present but unparseable (`NaN`, `inf`, `-5.00`) is a
+  // degenerate producer value, not an absent attribute: reject rather than
+  // silently substituting the viewBox, which would resurrect the guess D-16
+  // exists to remove.
+  if (/\b(?:width|height)="/i.test(tag[0])) return null;
+  // Defensive padding against a future upstream change: hwp-cli's only SVG
+  // root emission always writes both attributes (hwp-render/src/svg.rs:17-26).
+  const viewBox = tag[0].match(/\bviewBox="[\d.-]+\s+[\d.-]+\s+([\d.]+)\s+([\d.]+)"/i);
+  if (viewBox === null) return null;
+  return positiveSize(Number(viewBox[1]), Number(viewBox[2]));
 }
 
 function parseSinglePage(pages: string | undefined): number | null {
@@ -566,10 +613,25 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
               format === "png"
                 ? pngSize(data)
                 : svgSize(Buffer.from(data).toString("utf8"));
+            // Output whose dimensions cannot be read cannot be trusted, so it
+            // is discarded rather than handed to PageCanvas, whose aspectRatio
+            // collapses on the zero the old fallback substituted (D-16).
+            //
+            // This composes with the SVG->PNG retry immediately below: that
+            // retry fires on `requested === "svg" && reason === "failed"`, so
+            // an SVG dimension failure is retried as PNG before it surfaces
+            // while a PNG one surfaces directly. That is D-16 meeting the
+            // retry D-15 deliberately kept, not a bug to "fix".
+            if (size === null) {
+              throw new HwpCliError(
+                "failed",
+                `unreadable ${format} page dimensions in ${file}`,
+              );
+            }
             images.push({
               page,
-              width: size?.width ?? 0,
-              height: size?.height ?? 0,
+              width: size.width,
+              height: size.height,
               dpi,
               format,
               data,
