@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { HwpEngineError } from "@hwp-editor/core";
 
-import { toEditorError } from "../src/errors.js";
+import { engineErrorKind, toEditorError } from "../src/errors.js";
 
 describe("toEditorError", () => {
   it("keeps the code of a real HwpEngineError", () => {
@@ -39,5 +39,13 @@ describe("toEditorError", () => {
   it("carries only the message for a codeless Error and a non-Error", () => {
     expect(toEditorError(new Error("boom"))).toEqual({ message: "boom" });
     expect(toEditorError("boom")).toEqual({ message: "boom" });
+  });
+});
+
+describe("engineErrorKind", () => {
+  it("falls back to message classification for a prototype-chain key", () => {
+    // `in` would find "constructor" on Object.prototype and return a
+    // function; Object.hasOwn restricts membership to the twelve codes.
+    expect(engineErrorKind({ code: "constructor", message: "boom" })).toBe("generic");
   });
 });

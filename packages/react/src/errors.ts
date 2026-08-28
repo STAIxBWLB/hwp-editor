@@ -61,7 +61,7 @@ export function engineErrorKind(error: {
   code?: string;
   message: string;
 }): EngineErrorKind {
-  if (error.code !== undefined && error.code in KIND_BY_CODE) {
+  if (error.code !== undefined && Object.hasOwn(KIND_BY_CODE, error.code)) {
     return KIND_BY_CODE[error.code as HwpErrorCode];
   }
   return classifyEngineError(error.message);
