@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { describe } from "vitest";
 
 /**
- * The 0.8.7 debug binary (PATH carries 0.8.6, which is too old for
+ * The 0.8.8 debug binary (PATH carries 0.8.6, which is too old for
  * edit/compose --report/render --report). HWP_EDITOR_BIN overrides.
  */
 export const DEBUG_BIN = "/Users/yj.lee/workspace/work/dev/hwp-cli/target/debug/hwp";
@@ -14,7 +14,7 @@ export const HAS_BIN = existsSync(BIN);
 
 if (!HAS_BIN) {
   console.warn(
-    `[hwp-editor/server tests] hwp-cli 0.8.7 binary not found at ${BIN} — ` +
+    `[hwp-editor/server tests] hwp-cli 0.8.8 binary not found at ${BIN} — ` +
       "real-binary integration tests are skipped. Build hwp-cli or set HWP_EDITOR_BIN.",
   );
 }
@@ -23,7 +23,7 @@ if (!HAS_BIN) {
 export const describeBin = HAS_BIN
   ? describe
   : (name: string, fn: () => void) =>
-      describe.skip(`${name} [skipped: no hwp-cli 0.8.7 binary at ${BIN}]`, fn);
+      describe.skip(`${name} [skipped: no hwp-cli 0.8.8 binary at ${BIN}]`, fn);
 
 /** DocumentSpec v2 fixture: one replaceable paragraph + one 2x2 table. */
 export function sampleSpec() {

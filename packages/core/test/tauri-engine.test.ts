@@ -5,7 +5,8 @@
  */
 import { describe, expect, it } from "vitest";
 import { base64 } from "../src/http-engine.js";
-import type { DocumentHandle, EditOp } from "../src/index.js";
+import type { DocumentHandle, EditOp, HwpErrorCode } from "../src/index.js";
+import { HwpEngineError, isHwpEngineError } from "../src/index.js";
 import { createTauriEngine, type TauriInvoke } from "../src/tauri.js";
 
 interface Call {
@@ -131,13 +132,25 @@ describe("createTauriEngine commands", () => {
   });
 
   it("capabilities hits hwped_capabilities with no payload", async () => {
-    const caps = { version: "0.8.7", editable: true, formats: ["hwp", "hwpx"] };
+    const caps = { version: "0.8.8", editable: true, formats: ["hwp", "hwpx"] };
     const { invoke, calls } = mockInvoke({ hwped_capabilities: caps });
     const engine = createTauriEngine(invoke);
     await expect(engine.capabilities()).resolves.toEqual(caps);
     expect(calls[0]).toEqual({ cmd: "hwped_capabilities", args: {} });
   });
 });
+
+/** Reject `hwped_capabilities` with `value` and hand back the thrown error. */
+async function rejectionOf(value: unknown): Promise<unknown> {
+  const invoke: TauriInvoke = () => Promise.reject(value);
+  const engine = createTauriEngine(invoke);
+  return await engine.capabilities().then(
+    () => {
+      throw new Error("expected a rejection");
+    },
+    (e: unknown) => e,
+  );
+}
 
 describe("createTauriEngine errors", () => {
   it("wraps invoke rejections with the command name", async () => {
@@ -147,5 +160,50 @@ describe("createTauriEngine errors", () => {
     await expect(engine.capabilities()).rejects.toThrow(
       "hwped_capabilities failed: cli_missing: hwp is not available",
     );
+  });
+
+  // Every prefix maru can emit (dev/maru/src-tauri/src/hwped.rs), plus the
+  // two shapes with no prefix at all. A maru cli_missing must land on the
+  // same code an HTTP 503 does, or success criterion 1 is false.
+  const PREFIX_CASES: readonly (readonly [string, HwpErrorCode])[] = [
+    ["cli_missing: hwp is not available", "unavailable"],
+    ["hwp_spawn_failed: No such file or directory", "unavailable"],
+    ["hwp_timeout: hwp render timed out after 60000ms", "timeout"],
+    ["hwp_aborted: cancelled by the host", "failed"],
+    ["hwp_failed: hwp exited with status 1", "failed"],
+    ["hwp_version: 0.8.6 is older than 0.8.8", "version"],
+    ["hwped_bad_request: document is missing", "bad_request"],
+    ["hwp_stage_failed: could not create temp dir", "internal"],
+    ["hwp_parse_failed: not a valid hwpx container", "failed"],
+    ["something else", "failed"],
+    ["", "failed"],
+  ];
+
+  it.each(PREFIX_CASES)("maps the rejection %j to %s", async (detail, code) => {
+    const err = await rejectionOf(detail);
+    expect(isHwpEngineError(err)).toBe(true);
+    expect((err as HwpEngineError).code).toBe(code);
+    expect((err as HwpEngineError).message).toBe(
+      `hwped_capabilities failed: ${detail}`,
+    );
+    expect((err as HwpEngineError).cause).toBe(detail);
+  });
+
+  it("prefers a structured { code, message } rejection over prefix parsing", async () => {
+    const raw = { code: "protected", message: "document is protected" };
+    const err = (await rejectionOf(raw)) as HwpEngineError;
+    expect(err.code).toBe("protected");
+    expect(err.message).toBe("hwped_capabilities failed: document is protected");
+    expect(err.cause).toBe(raw);
+  });
+
+  it("narrows an unknown structured code to internal instead of casting it in", async () => {
+    const err = (await rejectionOf({ code: "not-a-real-code" })) as HwpEngineError;
+    expect(err.code).toBe("internal");
+  });
+
+  it("carries no own status: there is no HTTP status on this transport", async () => {
+    const err = (await rejectionOf("hwp_timeout: too slow")) as HwpEngineError;
+    expect("status" in err).toBe(false);
   });
 });

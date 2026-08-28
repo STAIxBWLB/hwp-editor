@@ -13,6 +13,8 @@ import type {
   RenderOptions,
   ValidationReport,
 } from "./engine.js";
+import { HwpEngineError, toHwpErrorCode } from "./errors.js";
+import type { HwpErrorCode } from "./errors.js";
 import type { EditOp } from "./ops.js";
 import type { CatEnvelope } from "./segments.js";
 import type { DocumentSpecV2 } from "./generated/document-spec-v2.js";
@@ -42,12 +44,51 @@ function fromBase64(base64: string): Uint8Array {
   return bytes;
 }
 
-async function parseError(res: Response): Promise<Error> {
+/**
+ * Code for a response whose body is not the JSON contract — a reverse proxy
+ * page, a serverless platform kill. This is the most common real timeout, so
+ * without the mapping the badge would silently regress to "generic".
+ *
+ * 403 is deliberately left in the default: it is reserved for a later
+ * authorization phase and must not claim a code of its own here.
+ */
+function codeForStatus(status: number): HwpErrorCode {
+  switch (status) {
+    case 400:
+      return "bad_request";
+    case 404:
+      return "not_found";
+    case 405:
+      return "method_not_allowed";
+    case 422:
+      return "failed";
+    case 503:
+      return "unavailable";
+    case 504:
+      return "timeout";
+    default:
+      return "internal";
+  }
+}
+
+async function parseError(res: Response): Promise<HwpEngineError> {
   try {
     const body = (await res.json()) as ErrorResponse;
-    return new Error(`hwp-engine HTTP ${res.status}: ${body.error.message}`);
+    // Narrow, never cast: the code comes from a server this client does
+    // not control (a pre-1.0 build, a newer one, a proxy's own body).
+    return new HwpEngineError(
+      toHwpErrorCode(body.error.code),
+      // Pinned format: the "http 504"/"http 503" substrings are the
+      // fallback markers classifyEngineError reads in @hwp-editor/react.
+      `hwp-engine HTTP ${res.status}: ${body.error.message}`,
+      { status: res.status, cause: body },
+    );
   } catch {
-    return new Error(`hwp-engine HTTP ${res.status}: ${res.statusText}`);
+    return new HwpEngineError(
+      codeForStatus(res.status),
+      `hwp-engine HTTP ${res.status}: ${res.statusText}`,
+      { status: res.status },
+    );
   }
 }
 

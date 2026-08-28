@@ -70,12 +70,32 @@ describe("reducer", () => {
       op: { kind: "delete-para", text: "x" },
     });
     s = reducer(s, { type: "applyStarted" });
-    s = reducer(s, { type: "applyFailed", error: "no target matched" });
+    s = reducer(s, {
+      type: "applyFailed",
+      error: { message: "no target matched" },
+    });
     expect(s.status).toBe("error");
-    expect(s.error).toBe("no target matched");
+    expect(s.error?.message).toBe("no target matched");
+    // A carrier that saw no code leaves the field absent rather than
+    // synthesizing `internal`, which would be indistinguishable from a
+    // real one emitted by the route layer.
+    expect(s.error !== null && "code" in s.error).toBe(false);
     expect(s.snapshots).toHaveLength(0);
     // pending ops survive a failed apply so the user can retry
     expect(s.pendingOps).toHaveLength(1);
+  });
+
+  it("applyFailed preserves the engine code on the store", () => {
+    let s = reducer(loaded, {
+      type: "queueOp",
+      op: { kind: "delete-para", text: "x" },
+    });
+    s = reducer(s, { type: "applyStarted" });
+    s = reducer(s, {
+      type: "applyFailed",
+      error: { code: "protected", message: "이 문서는 편집할 수 없습니다" },
+    });
+    expect(s.error?.code).toBe("protected");
   });
 
   it("applyStarted without a document does nothing", () => {
