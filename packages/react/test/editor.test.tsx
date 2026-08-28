@@ -222,6 +222,23 @@ describe("HwpEditor engine error states", () => {
     expect(alert.getAttribute("data-error-kind")).toBe("protected");
   });
 
+  it("issues exactly one render call when the load render rejects", async () => {
+    // The deleted client-side SVG->PNG catch-all turned any render failure
+    // into a second full CLI render and hid which error occurred (BUG-01).
+    const engine = createMockEngine();
+    let renders = 0;
+    engine.render = async () => {
+      renders += 1;
+      throw new HwpEngineError("timeout", "hwp render timed out after 60000ms");
+    };
+    render(<HwpEditor engine={engine} file={file} />);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("문서 열기 실패");
+    expect(alert.getAttribute("data-error-kind")).toBe("timeout");
+    expect(renders).toBe(1);
+  });
+
   it("selects the badge from the error code, not from the message prose", async () => {
     // The message deliberately contains none of the classifyEngineError
     // substring markers: a "timeout" badge here can only come from the code.
