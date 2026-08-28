@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { DocumentHandle } from "@hwp-editor/core";
+import { HwpEngineError } from "@hwp-editor/core";
 import { HwpEditor } from "../src/HwpEditor.js";
 import { clientYForPara, createMockEngine, makeEnvelope } from "./mock-engine.js";
 
@@ -196,6 +197,20 @@ describe("HwpEditor engine error states", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.getAttribute("data-error-kind")).toBe("generic");
     expect(alert.querySelector(".hwped-error-kind")).toBeNull();
+  });
+
+  it("selects the badge from the error code, not from the message prose", async () => {
+    // The message deliberately contains none of the classifyEngineError
+    // substring markers: a "timeout" badge here can only come from the code.
+    const engine = createMockEngine();
+    engine.capabilities = async () => {
+      throw new HwpEngineError("timeout", "무언가 잘못되었습니다");
+    };
+    render(<HwpEditor engine={engine} file={file} />);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.getAttribute("data-error-kind")).toBe("timeout");
+    expect(alert.textContent).toContain("엔진 시간 초과");
   });
 });
 
