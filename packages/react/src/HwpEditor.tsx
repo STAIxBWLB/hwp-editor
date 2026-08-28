@@ -11,10 +11,11 @@ import type {
   CatEnvelope,
   DocumentHandle,
   HwpEngine,
+  HwpErrorCode,
   PageImage,
   ValidationReport,
 } from "@hwp-editor/core";
-import { createStore, segmentAtRef } from "@hwp-editor/core";
+import { createStore, isHwpEngineError, segmentAtRef } from "@hwp-editor/core";
 import type { EditorStore } from "@hwp-editor/core";
 import { HwpEditorContext } from "./context.js";
 import type { HwpEditorContextValue } from "./context.js";
@@ -24,12 +25,28 @@ import { TableGrid } from "./TableGrid.js";
 import { FieldsPanel } from "./FieldsPanel.js";
 import { ComposePanel } from "./ComposePanel.js";
 import { isTableSlice } from "./tables.js";
-import { classifyEngineError, ENGINE_ERROR_LABELS } from "./errors.js";
+import { engineErrorKind, ENGINE_ERROR_LABELS } from "./errors.js";
 import { segmentText } from "@hwp-editor/core";
 
+/** Document-load failure: the code when the engine supplied one. */
+interface LoadError {
+  code?: HwpErrorCode;
+  message: string;
+}
+
 /** One alert line with a distinct kind badge for known engine failures. */
-function ErrorLine(props: { prefix: string; message: string }): JSX.Element {
-  const kind = classifyEngineError(props.message);
+function ErrorLine(props: {
+  prefix: string;
+  /** Stable HwpErrorCode when the failure carried one; drives the badge. */
+  code?: string;
+  message: string;
+}): JSX.Element {
+  const kind = engineErrorKind({
+    // Conditional spread: exactOptionalPropertyTypes rejects an explicit
+    // `code: undefined` against the optional field.
+    ...(props.code !== undefined ? { code: props.code } : {}),
+    message: props.message,
+  });
   return (
     <p className="hwped-error" role="alert" data-error-kind={kind}>
       {kind !== "generic" && (
@@ -86,7 +103,10 @@ export function HwpEditor(props: HwpEditorProps): JSX.Element {
   const [envelope, setEnvelope] = useState<CatEnvelope | null>(null);
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
   const [validation, setValidation] = useState<ValidationReport | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  // `code` is deliberately optional: a host-supplied engine, a mock, or a
+  // React-internal throw legitimately has none, and synthesizing `internal`
+  // would be indistinguishable from a real `internal`.
+  const [loadError, setLoadError] = useState<LoadError | null>(null);
   const [tab, setTab] = useState<SideTab>("para");
   const [composing, setComposing] = useState(false);
 
@@ -115,7 +135,11 @@ export function HwpEditor(props: HwpEditorProps): JSX.Element {
         store.dispatch({ type: "load", document: file, pages });
       } catch (e) {
         if (!cancelled) {
-          setLoadError(e instanceof Error ? e.message : String(e));
+          setLoadError(
+            isHwpEngineError(e)
+              ? { code: e.code, message: e.message }
+              : { message: e instanceof Error ? e.message : String(e) },
+          );
         }
       }
     })();
@@ -316,7 +340,7 @@ export function HwpEditor(props: HwpEditorProps): JSX.Element {
           <ErrorLine prefix="편집 적용 실패" message={state.error} />
         )}
         {loadError !== null && (
-          <ErrorLine prefix="문서 열기 실패" message={loadError} />
+          <ErrorLine prefix="문서 열기 실패" {...loadError} />
         )}
 
         <div className="hwped-main">

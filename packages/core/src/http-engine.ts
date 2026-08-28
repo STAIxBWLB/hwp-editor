@@ -13,6 +13,7 @@ import type {
   RenderOptions,
   ValidationReport,
 } from "./engine.js";
+import { HwpEngineError, toHwpErrorCode } from "./errors.js";
 import type { EditOp } from "./ops.js";
 import type { CatEnvelope } from "./segments.js";
 import type { DocumentSpecV2 } from "./generated/document-spec-v2.js";
@@ -42,12 +43,24 @@ function fromBase64(base64: string): Uint8Array {
   return bytes;
 }
 
-async function parseError(res: Response): Promise<Error> {
+async function parseError(res: Response): Promise<HwpEngineError> {
   try {
     const body = (await res.json()) as ErrorResponse;
-    return new Error(`hwp-engine HTTP ${res.status}: ${body.error.message}`);
+    // Narrow, never cast: the code comes from a server this client does
+    // not control (a pre-1.0 build, a newer one, a proxy's own body).
+    return new HwpEngineError(
+      toHwpErrorCode(body.error.code),
+      // Pinned format: the "http 504"/"http 503" substrings are the
+      // fallback markers classifyEngineError reads in @hwp-editor/react.
+      `hwp-engine HTTP ${res.status}: ${body.error.message}`,
+      { status: res.status, cause: body },
+    );
   } catch {
-    return new Error(`hwp-engine HTTP ${res.status}: ${res.statusText}`);
+    return new HwpEngineError(
+      "internal",
+      `hwp-engine HTTP ${res.status}: ${res.statusText}`,
+      { status: res.status },
+    );
   }
 }
 

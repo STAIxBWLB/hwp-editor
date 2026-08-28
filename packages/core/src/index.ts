@@ -11,6 +11,12 @@ export type {
   ValidationReport,
 } from "./engine.js";
 export {
+  HwpEngineError,
+  isHwpEngineError,
+  toHwpErrorCode,
+} from "./errors.js";
+export type { HwpErrorCode, HwpEngineErrorOptions } from "./errors.js";
+export {
   opsToArgv,
   argvToOps,
 } from "./ops.js";
