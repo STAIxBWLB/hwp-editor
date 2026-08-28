@@ -53,14 +53,22 @@ const CODES: ReadonlySet<string> = new Set<HwpErrorCode>([
 ]);
 
 /**
+ * Membership test for the twelve literals above. Use this at boundaries
+ * where an unrecognized code must be DROPPED (e.g. a duck-typed foreign
+ * error entering `EditorError.code`) rather than remapped — the remapping
+ * variant is `toHwpErrorCode`.
+ */
+export function isHwpErrorCode(value: unknown): value is HwpErrorCode {
+  return typeof value === "string" && CODES.has(value);
+}
+
+/**
  * Narrow an untrusted value (a wire body field, a host-thrown error) to a
  * known code. Anything unrecognized — including `undefined`, `null` and
  * non-strings — becomes `internal` rather than entering the union by cast.
  */
 export function toHwpErrorCode(value: unknown): HwpErrorCode {
-  return typeof value === "string" && CODES.has(value)
-    ? (value as HwpErrorCode)
-    : "internal";
+  return isHwpErrorCode(value) ? value : "internal";
 }
 
 export interface HwpEngineErrorOptions {

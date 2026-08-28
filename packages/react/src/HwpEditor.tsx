@@ -13,7 +13,7 @@ import type {
   HwpEngine,
   ValidationReport,
 } from "@hwp-editor/core";
-import { createStore, isHwpEngineError, segmentAtRef } from "@hwp-editor/core";
+import { createStore, segmentAtRef } from "@hwp-editor/core";
 import type { EditorError, EditorStore } from "@hwp-editor/core";
 import { HwpEditorContext } from "./context.js";
 import type { HwpEditorContextValue } from "./context.js";
@@ -24,17 +24,8 @@ import { FieldsPanel } from "./FieldsPanel.js";
 import { ComposePanel } from "./ComposePanel.js";
 import { isTableSlice } from "./tables.js";
 import { ErrorLine } from "./ErrorLine.js";
+import { toEditorError } from "./errors.js";
 import { segmentText } from "@hwp-editor/core";
-
-/**
- * Build the store/load carrier from an arbitrary thrown value: the code
- * only when the thrower actually supplied one.
- */
-function toEditorError(e: unknown): EditorError {
-  return isHwpEngineError(e)
-    ? { code: e.code, message: e.message }
-    : { message: e instanceof Error ? e.message : String(e) };
-}
 
 export interface HwpEditorProps {
   /** Engine implementation (HTTP client, local adapter, mock in tests). */

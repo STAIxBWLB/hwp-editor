@@ -1,10 +1,8 @@
 import { useState } from "react";
 import type { JSX } from "react";
 import type { DocumentHandle, EditorError } from "@hwp-editor/core";
-// Separate value import: verbatimModuleSyntax will not let a value ride
-// along in a type-only import.
-import { isHwpEngineError } from "@hwp-editor/core";
 import { ErrorLine } from "./ErrorLine.js";
+import { toEditorError } from "./errors.js";
 import {
   COMPOSE_PRESETS,
   COMPOSE_PRESET_LABELS,
@@ -44,11 +42,7 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
     } catch (e) {
       // Compose is one of the two operations that can refuse with
       // `protected`, so this surface needs the code as much as the editor's.
-      setError(
-        isHwpEngineError(e)
-          ? { code: e.code, message: e.message }
-          : { message: e instanceof Error ? e.message : String(e) },
-      );
+      setError(toEditorError(e));
     } finally {
       setBusy(false);
     }
