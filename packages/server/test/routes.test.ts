@@ -182,6 +182,21 @@ describe("routes (stub engine)", () => {
     expect(body.error).toEqual({ code: "failed", message: "boom" });
   });
 
+  it("a protected document is a 422 whose error.code is protected", async () => {
+    const { HwpCliError } = await import("../src/cli-engine.js");
+    const engine = stubEngine({
+      async edit() {
+        throw new HwpCliError("protected", "encrypted document; hwp-cli refuses edit/compose");
+      },
+    });
+    const handler = createHwpEditorHandler({ engine, sessions: false });
+    const res = await handler(multipartRequest(`${BASE}/edit`, { file: DOC, ops: "[]" }));
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body.error.code).toBe("protected");
+    expect(typeof body.error.message).toBe("string");
+  });
+
   it("a missing binary is a clear 503 on every action, including capabilities", async () => {
     const { HwpCliError } = await import("../src/cli-engine.js");
     const unavailable = async (): Promise<never> => {

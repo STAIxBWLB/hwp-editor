@@ -28,6 +28,7 @@ import {
   type EditOp,
   type EditOptions,
   type HwpEngine,
+  type HwpErrorCode,
   type PageImage,
   type PageImageFormat,
   type RenderOptions,
@@ -42,13 +43,24 @@ const MIN_VERSION: readonly [number, number, number] = [0, 8, 7];
 /** Hancom binary .hwp is a CFBF (OLE2) container; .hwpx is a zip. */
 const CFBF_SIGNATURE = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
 
-export type HwpCliErrorReason =
+/**
+ * The engine half of the published `HwpErrorCode` vocabulary. Derived with
+ * `Extract<>` rather than aliased to the full union on purpose: an alias
+ * would make `statusFor`'s switch (routes.ts) non-exhaustive by five at
+ * once, and the natural fix for that is a `default:` clause, which
+ * permanently destroys the exhaustiveness check that must catch the next
+ * code addition.
+ */
+export type HwpCliErrorReason = Extract<
+  HwpErrorCode,
   | "unavailable"
   | "version"
   | "timeout"
   | "failed"
   | "bad_request"
-  | "unsupported_format";
+  | "unsupported_format"
+  | "protected"
+>;
 
 export class HwpCliError extends Error {
   constructor(
@@ -73,6 +85,14 @@ export interface CliEngineOptions {
    * seconds below it so the engine's 504 beats the platform's kill.
    */
   timeoutMs?: number;
+  /**
+   * Language passed to the child as HWP_LANG, default `en`. Accepts
+   * `en`/`eng`/`english`/`c`/`posix` and `ko`/`kor`/`korean`. This sets
+   * HWP_LANG only: LANG, LC_ALL and LC_MESSAGES stay pinned to `C.UTF-8`
+   * regardless, so a host cannot accidentally change the child's encoding
+   * while changing its language.
+   */
+  locale?: string;
 }
 
 /** Everything `read` gathers beyond the pinned CatEnvelope wire shape. */
@@ -105,19 +125,31 @@ export interface CliEngine extends HwpEngine {
   binaryInfo(): Promise<{ bin: string; version: string }>;
 }
 
-function scrubbedEnv(): Record<string, string> {
+export function scrubbedEnv(locale?: string): Record<string, string> {
   // An inherited env is the usual way a subprocess reaches credentials it has
   // no business with. The CLI needs PATH (for helpers) and little else;
   // HWP_* is the CLI's own configuration surface (HWP_LANG, HWP_FONT_DIR...).
   const env: Record<string, string> = {};
-  for (const key of ["PATH", "HOME", "LANG"]) {
+  for (const key of ["PATH", "HOME"]) {
     const value = process.env[key];
     if (value !== undefined) env[key] = value;
   }
-  env.LANG ??= "C.UTF-8";
   for (const [key, value] of Object.entries(process.env)) {
     if (key.startsWith("HWP_") && value !== undefined) env[key] = value;
   }
+  // The four locale variables are pinned AFTER the HWP_* pass-through, which
+  // is what currently copies an inherited HWP_LANG in. hwp-cli's precedence
+  // chain is --lang -> HWP_LANG -> LC_ALL -> LC_MESSAGES -> LANG
+  // (i18n.rs:36-68); LC_MESSAGES is pinned alongside the other two so no link
+  // is left open for whoever widens the allow-list later. C.UTF-8 over
+  // en_US.UTF-8 because it exists in slim container images, where an
+  // ungenerated en_US.UTF-8 silently degrades to C and breaks UTF-8 handling.
+  // hwp-cli's Lang::parse splits on `.`, `_`, `-`, `@` and lowercases the
+  // head, so `c` and `posix` also resolve to English; `en` is just canonical.
+  env.LANG = "C.UTF-8";
+  env.LC_ALL = "C.UTF-8";
+  env.LC_MESSAGES = "C.UTF-8";
+  env.HWP_LANG = locale?.trim() || "en";
   return env;
 }
 
@@ -127,7 +159,14 @@ interface RunResult {
   code: number;
 }
 
-function runCli(bin: string, args: string[], timeoutMs: number = HWP_TIMEOUT_MS): Promise<RunResult> {
+function runCli(
+  bin: string,
+  args: string[],
+  timeoutMs: number = HWP_TIMEOUT_MS,
+  // Required (not optional) on purpose: tsc then enumerates every call site
+  // rather than letting one silently keep the default locale.
+  locale: string | undefined,
+): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     execFile(
       bin,
@@ -135,7 +174,7 @@ function runCli(bin: string, args: string[], timeoutMs: number = HWP_TIMEOUT_MS)
       {
         timeout: timeoutMs,
         maxBuffer: HWP_MAX_BUFFER,
-        env: scrubbedEnv(),
+        env: scrubbedEnv(locale),
         encoding: "utf8",
       },
       (error, stdout, stderr) => {
@@ -168,8 +207,13 @@ function runCli(bin: string, args: string[], timeoutMs: number = HWP_TIMEOUT_MS)
 }
 
 /** Run a command that must succeed; throw a rich error otherwise. */
-async function runCliOk(bin: string, args: string[], timeoutMs?: number): Promise<RunResult> {
-  const result = await runCli(bin, args, timeoutMs);
+async function runCliOk(
+  bin: string,
+  args: string[],
+  timeoutMs: number | undefined,
+  locale: string | undefined,
+): Promise<RunResult> {
+  const result = await runCli(bin, args, timeoutMs, locale);
   if (result.code !== 0) {
     throw new HwpCliError(
       "failed",
@@ -215,17 +259,40 @@ function safeOutputName(name: string, fallbackExt: ".hwp" | ".hwpx"): string {
   return `${base}${fallbackExt}`;
 }
 
-async function tryJson(bin: string, args: string[], timeoutMs?: number): Promise<unknown> {
+async function tryJson(
+  bin: string,
+  args: string[],
+  timeoutMs: number | undefined,
+  locale: string | undefined,
+): Promise<unknown> {
   try {
-    const result = await runCliOk(bin, args, timeoutMs);
+    const result = await runCliOk(bin, args, timeoutMs, locale);
     return JSON.parse(result.stdout) as unknown;
   } catch {
     return null;
   }
 }
 
+/**
+ * hwp5 protection labels exactly as `hwp info --json` emits them in
+ * `attributes[]` (hwp-cli/crates/hwp5/src/file_header.rs:220-236).
+ * `check_body_readable()` refuses five conditions (Encrypted, CertEncrypted,
+ * CertDrm, Drm, Signed) but `info --json` exposes only two of them as
+ * booleans, so without this table four protection kinds pass the pre-flight
+ * silently. Best-effort only: hwp-cli's 0.8.7 changelog states the
+ * certificate/DRM/signature branches are unverified against a genuine
+ * protected file, so PROTECTED_MARKERS (the stderr backstop) is what
+ * actually carries the requirement.
+ */
+const PROTECTED_ATTRIBUTES: Readonly<Record<string, string>> = {
+  "DRM 보안": "DRM-protected document (DRM 보안)",
+  "공인 인증서 암호화": "certificate-encrypted document (공인 인증서 암호화)",
+  "공인 인증서 DRM 보안": "certificate DRM-protected document (공인 인증서 DRM 보안)",
+  "전자 서명 정보": "signed document (전자 서명 정보)",
+};
+
 /** Distribution/encrypted documents: 0.8.7 can read them but refuses edit/fill. */
-function documentEditability(info: unknown): { editable: boolean; reason?: string } {
+export function documentEditability(info: unknown): { editable: boolean; reason?: string } {
   if (typeof info !== "object" || info === null) return { editable: true };
   const record = info as Record<string, unknown>;
   if (record["encrypted"] === true) {
@@ -237,7 +304,77 @@ function documentEditability(info: unknown): { editable: boolean; reason?: strin
       reason: "distribution (배포용) document; hwp-cli 0.8.7 refuses edit/fill",
     };
   }
+  const attributes = record["attributes"];
+  if (Array.isArray(attributes)) {
+    for (const attribute of attributes) {
+      const label = typeof attribute === "string" ? PROTECTED_ATTRIBUTES[attribute] : undefined;
+      if (label !== undefined) {
+        return { editable: false, reason: `${label}; hwp-cli refuses edit/fill` };
+      }
+    }
+  }
   return { editable: true };
+}
+
+/**
+ * Korean markers in hwp-cli's runtime diagnostics, each paired with the
+ * fixed, server-authored message the client sees.
+ *
+ * THESE MARKERS STAY KOREAN PERMANENTLY. Do not delete them after seeing
+ * `scrubbedEnv()` pin HWP_LANG two functions away. HWP_LANG and --lang feed
+ * exactly one consumer, `localize()`
+ * (hwp-cli/crates/hwp-cli/src/i18n.rs:71-77), which rewrites clap
+ * about/help strings; runtime diagnostics are hardcoded Korean thiserror
+ * attributes with no locale branch (crates/hwp5/src/error.rs:1-92), verified
+ * by running the binary under HWP_LANG=en, HWP_LANG=ko, and no locale env at
+ * all and getting byte-identical Korean output all three times. Deleting
+ * these degrades protected detection to the hwp5-booleans-only pre-flight,
+ * which misses every HWPX protection and four of six hwp5 kinds.
+ *
+ * Four entries cover all seven refusal messages: `암호화된 문서` also matches
+ * `공인 인증서로 암호화된 문서는...` and the HWPX Encrypted variant, and `DRM`
+ * matches both Drm and CertDrm. `지원하지 않습니다` is deliberately NOT a
+ * marker — Hwp5Error::UnsupportedVersion ("지원하지 않는 HWP 버전입니다")
+ * shares that phrasing, and a false `protected` on a version problem sends
+ * the user to the wrong remedy.
+ *
+ * Matching is a UTF-16 substring test with the markers written precomposed
+ * (NFC) to mirror the Rust source literals. Decomposed (NFD) stderr would
+ * not match and the failure would stay `failed` — a safe degradation.
+ */
+const PROTECTED_MARKERS: ReadonlyArray<readonly [string, string]> = [
+  ["암호화된 문서", "encrypted document; hwp-cli refuses edit/compose"],
+  ["DRM", "DRM-protected document; hwp-cli refuses edit/compose"],
+  ["서명된 문서", "signed document; hwp-cli refuses edit/compose"],
+  ["배포용 문서", "distribution (배포용) document; hwp-cli refuses edit/compose"],
+];
+
+/**
+ * The stderr backstop. Returns one of the four fixed constants above, or
+ * null. The stderr argument is never interpolated into the result: raw CLI
+ * output stays on the non-serialized `HwpCliError.stderr` field, so this
+ * path adds no new CLI-output-to-client leak (Phase 4 SEC-06 owns the
+ * pre-existing one in `runCliOk`).
+ */
+export function protectedReasonFromStderr(stderr: string): string | null {
+  for (const [marker, message] of PROTECTED_MARKERS) {
+    if (stderr.includes(marker)) return message;
+  }
+  return null;
+}
+
+/**
+ * Rethrow a generic CLI failure as `protected` when its stderr carries a
+ * protection marker. Applied at the `edit` and `compose` call sites only,
+ * never inside `runCliOk`: that is what keeps `read` and `render` succeeding
+ * on protected documents hwp-cli can still read (D-11).
+ */
+function rethrowProtected(error: unknown): never {
+  if (error instanceof HwpCliError && error.reason === "failed") {
+    const message = protectedReasonFromStderr(error.stderr ?? "");
+    if (message !== null) throw new HwpCliError("protected", message, error.stderr);
+  }
+  throw error;
 }
 
 function pngSize(data: Uint8Array): { width: number; height: number } | null {
@@ -280,7 +417,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       const bin = resolveBin();
       let result: RunResult;
       try {
-        result = await runCli(bin, ["--version"], timeoutMs);
+        result = await runCli(bin, ["--version"], timeoutMs, opts.locale);
       } catch (error) {
         if (error instanceof HwpCliError) throw error;
         throw new HwpCliError(
@@ -333,15 +470,15 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
     if (cached !== undefined) return cached;
     const inspection = await withWorkDir(async (dir) => {
       const file = await stage(dir, document);
-      const cat = await runCliOk(bin, ["cat", file, "--format", "markdown", "--with-segments"], timeoutMs);
+      const cat = await runCliOk(bin, ["cat", file, "--format", "markdown", "--with-segments"], timeoutMs, opts.locale);
       const envelope = parseCatEnvelope(cat.stdout);
       // Best-effort extras: a document that cats fine but fails fields should
       // still read; the extras inform editing UI, not the wire contract.
       const [fields, bookmarks, slots, info] = await Promise.all([
-        tryJson(bin, ["fields", file, "--json"], timeoutMs),
-        tryJson(bin, ["bookmarks", file, "--json"], timeoutMs),
-        tryJson(bin, ["slots", file, "--json"], timeoutMs),
-        tryJson(bin, ["info", file, "--json"], timeoutMs),
+        tryJson(bin, ["fields", file, "--json"], timeoutMs, opts.locale),
+        tryJson(bin, ["bookmarks", file, "--json"], timeoutMs, opts.locale),
+        tryJson(bin, ["slots", file, "--json"], timeoutMs, opts.locale),
+        tryJson(bin, ["info", file, "--json"], timeoutMs, opts.locale),
       ]);
       return {
         envelope,
@@ -394,7 +531,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
             "render", input, "-o", outBase,
             "--format", format, "--pages", pages, "--dpi", String(dpi),
             "--report", reportPath,
-          ], timeoutMs);
+          ], timeoutMs, opts.locale);
           // Multi-page renders land as page-<n>.<ext>; a single selected page
           // keeps the exact -o name. The report's selected_pages pins numbers.
           const filePattern = new RegExp(`^page-(\\d+)\\.${format}$`);
@@ -461,11 +598,28 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       const ext = sniffExtension(document);
       const edited = await withWorkDir(async (dir) => {
         const input = await stage(dir, document);
+        // Pre-flight: refuse a protected document before spawning `hwp edit`.
+        // Reuse the cached inspection when the normal read-then-edit path has
+        // already warmed it (routes.ts describes the same pre-edit bytes); on
+        // a miss spawn `info` alone, never describe() — that costs five
+        // parallel spawns and `info` is the only one this check reads.
+        // compose() has no input DocumentHandle to inspect (its signature is
+        // (spec, name)), so the pre-flight has no subject there; the stderr
+        // backstop below covers it.
+        const cached = inspections.get(sha256(document.data))?.capabilities;
+        const capabilities =
+          cached ?? documentEditability(await tryJson(bin, ["info", input, "--json"], timeoutMs, opts.locale));
+        if (!capabilities.editable) {
+          throw new HwpCliError(
+            "protected",
+            capabilities.reason ?? "protected document; hwp-cli refuses edit/compose",
+          );
+        }
         const output = path.join(dir, `out${ext}`);
         const args = ["edit", input, "-o", output, ...opsToArgv(ops)];
         if (options.verify !== false) args.push("--verify");
         if (options.allowPartial === true) args.push("--allow-partial");
-        await runCliOk(bin, args, timeoutMs);
+        await runCliOk(bin, args, timeoutMs, opts.locale).catch(rethrowProtected);
         return new Uint8Array(await readFile(output));
       });
       // Pre-edit snapshot keyed by the edited hash: undo(edited) -> original.
@@ -492,7 +646,12 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         const specPath = path.join(dir, "spec.json");
         await writeFile(specPath, JSON.stringify(spec), { mode: 0o600 });
         const outPath = path.join(dir, outName);
-        const result = await runCliOk(bin, ["compose", specPath, "-o", outPath, "--report"], timeoutMs);
+        const result = await runCliOk(
+          bin,
+          ["compose", specPath, "-o", outPath, "--report"],
+          timeoutMs,
+          opts.locale,
+        ).catch(rethrowProtected);
         let report: unknown;
         try {
           report = JSON.parse(result.stdout) as unknown;
@@ -512,7 +671,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       return withWorkDir(async (dir) => {
         const file = await stage(dir, document);
         // Exit 1 means "invalid" and still prints the JSON report.
-        const result = await runCli(bin, ["validate", file, "--json"], timeoutMs);
+        const result = await runCli(bin, ["validate", file, "--json"], timeoutMs, opts.locale);
         let parsed: { valid?: unknown; errors?: unknown };
         try {
           parsed = JSON.parse(result.stdout) as { valid?: unknown; errors?: unknown };

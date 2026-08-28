@@ -36,6 +36,30 @@ Every host uses the same `HwpEngine` contract; only the transport differs.
 Theming is host-agnostic: map the host's tokens onto the `--hwped-*`
 contract — [docs/theme-contract.md](docs/theme-contract.md).
 
+## Child process environment
+
+`@hwp-editor/server` decides the hwp-cli child's locale instead of
+inheriting it. The child always runs with `LANG`, `LC_ALL` and `LC_MESSAGES`
+set to `C.UTF-8` and `HWP_LANG` set to `en`, whatever the operator's shell
+holds for those four names. This makes the child's language selection
+independent of the shell it was launched from, and keeps its encoding
+deterministic in slim container images where `en_US.UTF-8` may not exist.
+
+A deployment that relied on `HWP_LANG=ko` in its shell must now pass the
+language explicitly:
+
+```ts
+createCliEngine({ locale: "ko" });
+// behind the route factory:
+createHwpEditorRoutes({ engine: createCliEngine({ locale: "ko" }) });
+```
+
+`locale` sets `HWP_LANG` only; `LANG`, `LC_ALL` and `LC_MESSAGES` stay
+pinned to `C.UTF-8` regardless, so changing the language cannot accidentally
+change the encoding. Every other `HWP_*` variable (`HWP_FONT_DIR` and
+friends), plus `PATH` and `HOME`, still passes through from the parent
+environment unchanged; everything else is stripped.
+
 ## Develop
 
 ```sh
