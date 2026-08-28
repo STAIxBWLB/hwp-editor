@@ -85,6 +85,14 @@ export interface CliEngineOptions {
    * seconds below it so the engine's 504 beats the platform's kill.
    */
   timeoutMs?: number;
+  /**
+   * Language passed to the child as HWP_LANG, default `en`. Accepts
+   * `en`/`eng`/`english`/`c`/`posix` and `ko`/`kor`/`korean`. This sets
+   * HWP_LANG only: LANG, LC_ALL and LC_MESSAGES stay pinned to `C.UTF-8`
+   * regardless, so a host cannot accidentally change the child's encoding
+   * while changing its language.
+   */
+  locale?: string;
 }
 
 /** Everything `read` gathers beyond the pinned CatEnvelope wire shape. */
@@ -117,19 +125,31 @@ export interface CliEngine extends HwpEngine {
   binaryInfo(): Promise<{ bin: string; version: string }>;
 }
 
-function scrubbedEnv(): Record<string, string> {
+export function scrubbedEnv(locale?: string): Record<string, string> {
   // An inherited env is the usual way a subprocess reaches credentials it has
   // no business with. The CLI needs PATH (for helpers) and little else;
   // HWP_* is the CLI's own configuration surface (HWP_LANG, HWP_FONT_DIR...).
   const env: Record<string, string> = {};
-  for (const key of ["PATH", "HOME", "LANG"]) {
+  for (const key of ["PATH", "HOME"]) {
     const value = process.env[key];
     if (value !== undefined) env[key] = value;
   }
-  env.LANG ??= "C.UTF-8";
   for (const [key, value] of Object.entries(process.env)) {
     if (key.startsWith("HWP_") && value !== undefined) env[key] = value;
   }
+  // The four locale variables are pinned AFTER the HWP_* pass-through, which
+  // is what currently copies an inherited HWP_LANG in. hwp-cli's precedence
+  // chain is --lang -> HWP_LANG -> LC_ALL -> LC_MESSAGES -> LANG
+  // (i18n.rs:36-68); LC_MESSAGES is pinned alongside the other two so no link
+  // is left open for whoever widens the allow-list later. C.UTF-8 over
+  // en_US.UTF-8 because it exists in slim container images, where an
+  // ungenerated en_US.UTF-8 silently degrades to C and breaks UTF-8 handling.
+  // hwp-cli's Lang::parse splits on `.`, `_`, `-`, `@` and lowercases the
+  // head, so `c` and `posix` also resolve to English; `en` is just canonical.
+  env.LANG = "C.UTF-8";
+  env.LC_ALL = "C.UTF-8";
+  env.LC_MESSAGES = "C.UTF-8";
+  env.HWP_LANG = locale?.trim() || "en";
   return env;
 }
 
@@ -139,7 +159,14 @@ interface RunResult {
   code: number;
 }
 
-function runCli(bin: string, args: string[], timeoutMs: number = HWP_TIMEOUT_MS): Promise<RunResult> {
+function runCli(
+  bin: string,
+  args: string[],
+  timeoutMs: number = HWP_TIMEOUT_MS,
+  // Required (not optional) on purpose: tsc then enumerates every call site
+  // rather than letting one silently keep the default locale.
+  locale: string | undefined,
+): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     execFile(
       bin,
@@ -147,7 +174,7 @@ function runCli(bin: string, args: string[], timeoutMs: number = HWP_TIMEOUT_MS)
       {
         timeout: timeoutMs,
         maxBuffer: HWP_MAX_BUFFER,
-        env: scrubbedEnv(),
+        env: scrubbedEnv(locale),
         encoding: "utf8",
       },
       (error, stdout, stderr) => {
@@ -180,8 +207,13 @@ function runCli(bin: string, args: string[], timeoutMs: number = HWP_TIMEOUT_MS)
 }
 
 /** Run a command that must succeed; throw a rich error otherwise. */
-async function runCliOk(bin: string, args: string[], timeoutMs?: number): Promise<RunResult> {
-  const result = await runCli(bin, args, timeoutMs);
+async function runCliOk(
+  bin: string,
+  args: string[],
+  timeoutMs: number | undefined,
+  locale: string | undefined,
+): Promise<RunResult> {
+  const result = await runCli(bin, args, timeoutMs, locale);
   if (result.code !== 0) {
     throw new HwpCliError(
       "failed",
@@ -227,9 +259,14 @@ function safeOutputName(name: string, fallbackExt: ".hwp" | ".hwpx"): string {
   return `${base}${fallbackExt}`;
 }
 
-async function tryJson(bin: string, args: string[], timeoutMs?: number): Promise<unknown> {
+async function tryJson(
+  bin: string,
+  args: string[],
+  timeoutMs: number | undefined,
+  locale: string | undefined,
+): Promise<unknown> {
   try {
-    const result = await runCliOk(bin, args, timeoutMs);
+    const result = await runCliOk(bin, args, timeoutMs, locale);
     return JSON.parse(result.stdout) as unknown;
   } catch {
     return null;
@@ -380,7 +417,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       const bin = resolveBin();
       let result: RunResult;
       try {
-        result = await runCli(bin, ["--version"], timeoutMs);
+        result = await runCli(bin, ["--version"], timeoutMs, opts.locale);
       } catch (error) {
         if (error instanceof HwpCliError) throw error;
         throw new HwpCliError(
@@ -433,15 +470,15 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
     if (cached !== undefined) return cached;
     const inspection = await withWorkDir(async (dir) => {
       const file = await stage(dir, document);
-      const cat = await runCliOk(bin, ["cat", file, "--format", "markdown", "--with-segments"], timeoutMs);
+      const cat = await runCliOk(bin, ["cat", file, "--format", "markdown", "--with-segments"], timeoutMs, opts.locale);
       const envelope = parseCatEnvelope(cat.stdout);
       // Best-effort extras: a document that cats fine but fails fields should
       // still read; the extras inform editing UI, not the wire contract.
       const [fields, bookmarks, slots, info] = await Promise.all([
-        tryJson(bin, ["fields", file, "--json"], timeoutMs),
-        tryJson(bin, ["bookmarks", file, "--json"], timeoutMs),
-        tryJson(bin, ["slots", file, "--json"], timeoutMs),
-        tryJson(bin, ["info", file, "--json"], timeoutMs),
+        tryJson(bin, ["fields", file, "--json"], timeoutMs, opts.locale),
+        tryJson(bin, ["bookmarks", file, "--json"], timeoutMs, opts.locale),
+        tryJson(bin, ["slots", file, "--json"], timeoutMs, opts.locale),
+        tryJson(bin, ["info", file, "--json"], timeoutMs, opts.locale),
       ]);
       return {
         envelope,
@@ -494,7 +531,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
             "render", input, "-o", outBase,
             "--format", format, "--pages", pages, "--dpi", String(dpi),
             "--report", reportPath,
-          ], timeoutMs);
+          ], timeoutMs, opts.locale);
           // Multi-page renders land as page-<n>.<ext>; a single selected page
           // keeps the exact -o name. The report's selected_pages pins numbers.
           const filePattern = new RegExp(`^page-(\\d+)\\.${format}$`);
@@ -571,7 +608,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         // backstop below covers it.
         const cached = inspections.get(sha256(document.data))?.capabilities;
         const capabilities =
-          cached ?? documentEditability(await tryJson(bin, ["info", input, "--json"], timeoutMs));
+          cached ?? documentEditability(await tryJson(bin, ["info", input, "--json"], timeoutMs, opts.locale));
         if (!capabilities.editable) {
           throw new HwpCliError(
             "protected",
@@ -582,7 +619,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         const args = ["edit", input, "-o", output, ...opsToArgv(ops)];
         if (options.verify !== false) args.push("--verify");
         if (options.allowPartial === true) args.push("--allow-partial");
-        await runCliOk(bin, args, timeoutMs).catch(rethrowProtected);
+        await runCliOk(bin, args, timeoutMs, opts.locale).catch(rethrowProtected);
         return new Uint8Array(await readFile(output));
       });
       // Pre-edit snapshot keyed by the edited hash: undo(edited) -> original.
@@ -613,6 +650,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
           bin,
           ["compose", specPath, "-o", outPath, "--report"],
           timeoutMs,
+          opts.locale,
         ).catch(rethrowProtected);
         let report: unknown;
         try {
@@ -633,7 +671,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       return withWorkDir(async (dir) => {
         const file = await stage(dir, document);
         // Exit 1 means "invalid" and still prints the JSON report.
-        const result = await runCli(bin, ["validate", file, "--json"], timeoutMs);
+        const result = await runCli(bin, ["validate", file, "--json"], timeoutMs, opts.locale);
         let parsed: { valid?: unknown; errors?: unknown };
         try {
           parsed = JSON.parse(result.stdout) as { valid?: unknown; errors?: unknown };
