@@ -15,7 +15,19 @@ import { BIN, describeBin, multipartRequest, sampleSpec } from "./helpers.js";
 
 const engine = () => createCliEngine({ bin: BIN });
 
-// Mirrors the engine's MIN_VERSION floor ([0, 8, 8] in cli-engine.ts).
+/**
+ * Mirrors the engine's MIN_VERSION floor ([0, 8, 8] in cli-engine.ts).
+ *
+ * The accepted range is now bounded at both ends — MAX_VERSION_EXCLUSIVE is
+ * [1, 0, 0] — but this still asserts the floor rather than an exact release,
+ * for the reason in the file header: the dev binary moves ahead of the floor
+ * as hwp-cli ships. Pinning the range here would mean editing this suite on
+ * every upstream patch release, and the ceiling itself is proven against a
+ * fake binary in `lifecycle.test.ts` rather than against whichever real one
+ * happens to be installed. Reaching this assertion at all already proves the
+ * ceiling and the flag handshake passed: `ensureVersion` runs both before it
+ * resolves a version string.
+ */
 function expectVersionAtLeast088(version: string) {
   const [major = 0, minor = 0, patch = 0] = version.split(".").map(Number);
   const ok = major > 0 || minor > 8 || (minor === 8 && patch >= 8);
