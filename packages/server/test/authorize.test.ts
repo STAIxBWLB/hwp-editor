@@ -12,7 +12,7 @@
  * selectors 04-VALIDATION.md runs SEC-01/02/03 with. `vitest -t` matches
  * describe and it titles, so renaming one reports green against zero tests.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type {
   DocumentHandle,
@@ -25,6 +25,23 @@ import type {
 import { createHwpEditorRoutes } from "../src/next.js";
 import { createHwpEditorHandler, type AuthorizeFn, type HwpAction } from "../src/routes.js";
 import { multipartRequest } from "./helpers.js";
+
+/**
+ * Capture the options the handler hands its default engine. Only the locale
+ * case constructs a default engine; every other test passes `engine`, so the
+ * spy is inert for them.
+ */
+const cliEngineCalls: unknown[] = [];
+vi.mock("../src/cli-engine.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/cli-engine.js")>();
+  return {
+    ...actual,
+    createCliEngine: (opts: unknown) => {
+      cliEngineCalls.push(opts);
+      return actual.createCliEngine(opts as Parameters<typeof actual.createCliEngine>[0]);
+    },
+  };
+});
 
 const DOC: DocumentHandle = {
   name: "sample.hwpx",
@@ -222,5 +239,130 @@ describe("next forwards", () => {
     const viaDirect = await direct(new Request(`${BASE}/explode`, { method: "POST" }));
     expect(viaRoutes.status).toBe(404);
     expect(await viaRoutes.json()).toEqual(await viaDirect.json());
+  });
+});
+
+/**
+ * Present `content-length` to the handler exactly as written, bypassing the
+ * trimming a `Headers` object applies on `set`. `" 10"` cannot otherwise be
+ * observed: Headers normalizes it to `"10"` before the handler ever sees it.
+ */
+function withRawContentLength(req: Request, raw: string): Request {
+  const headers = {
+    get: (name: string) =>
+      name.toLowerCase() === "content-length" ? raw : req.headers.get(name),
+  };
+  return new Proxy(req, {
+    get(target, prop) {
+      if (prop === "headers") return headers;
+      const value = Reflect.get(target, prop) as unknown;
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as Request;
+}
+
+describe("size cap", () => {
+  it("admits a request whose Content-Length is exactly the cap", async () => {
+    const { engine, calls } = countingEngine();
+    const req = multipartRequest(`${BASE}/read`, { file: DOC });
+    const declared = Number(req.headers.get("content-length"));
+    expect(Number.isSafeInteger(declared)).toBe(true);
+    const handler = createHwpEditorHandler({ engine, sessions: false, maxRequestBytes: declared });
+    const res = await handler(req);
+    expect(res.status).toBe(200);
+    expect(calls).toEqual(["read"]);
+  });
+
+  it("refuses cap + 1 with 413 before the body is buffered", async () => {
+    const { engine, calls } = countingEngine();
+    const req = multipartRequest(`${BASE}/read`, { file: DOC });
+    const declared = Number(req.headers.get("content-length"));
+    const handler = createHwpEditorHandler({
+      engine,
+      sessions: false,
+      maxRequestBytes: declared - 1,
+    });
+    const res = await handler(req);
+    expect(res.status).toBe(413);
+    const body = await res.json();
+    expect(body.error.code).toBe("bad_request");
+    expect(body.error.message).toContain(String(declared - 1));
+    expect(calls).toEqual([]);
+  });
+
+  it("refuses a chunked body with no Content-Length", async () => {
+    const { engine, calls } = countingEngine();
+    const handler = createHwpEditorHandler({ engine, sessions: false });
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1, 2, 3]));
+        controller.close();
+      },
+    });
+    const req = new Request(`${BASE}/read`, {
+      method: "POST",
+      body,
+      duplex: "half",
+    } as RequestInit & { duplex: "half" });
+    expect(req.headers.get("content-length")).toBeNull();
+    const res = await handler(req);
+    expect(res.status).toBe(400);
+    const parsed = await res.json();
+    expect(parsed.error.code).toBe("bad_request");
+    expect(parsed.error.message).toBe("content-length is required");
+    expect(calls).toEqual([]);
+  });
+
+  it("refuses every Content-Length that is not a safe non-negative integer", async () => {
+    const { engine, calls } = countingEngine();
+    const handler = createHwpEditorHandler({ engine, sessions: false });
+    for (const raw of ["1e9", " 10", "0x10", "-1", "Infinity", ""]) {
+      const req = withRawContentLength(multipartRequest(`${BASE}/read`, { file: DOC }), raw);
+      const res = await handler(req);
+      expect(res.status, `content-length ${JSON.stringify(raw)}`).toBe(400);
+      const body = await res.json();
+      expect(body.error.code).toBe("bad_request");
+      expect(body.error.message).toBe("invalid content-length");
+    }
+    expect(calls).toEqual([]);
+  });
+
+  it("does not apply to GET /capabilities, which carries no Content-Length", async () => {
+    const { engine, calls } = countingEngine();
+    const handler = createHwpEditorHandler({ engine, sessions: false });
+    const req = new Request(`${BASE}/capabilities`);
+    expect(req.headers.get("content-length")).toBeNull();
+    const res = await handler(req);
+    expect(res.status).toBe(200);
+    expect(calls).toEqual(["capabilities"]);
+  });
+
+  it("defaults to 50 MiB and refuses an ordinary upload at maxRequestBytes: 10", async () => {
+    const { engine, calls } = countingEngine();
+    const byDefault = createHwpEditorHandler({ engine, sessions: false });
+    expect((await byDefault(multipartRequest(`${BASE}/read`, { file: DOC }))).status).toBe(200);
+
+    const tiny = createHwpEditorHandler({ engine, sessions: false, maxRequestBytes: 10 });
+    const res = await tiny(multipartRequest(`${BASE}/read`, { file: DOC }));
+    expect(res.status).toBe(413);
+    expect((await res.json()).error.message).toContain("10 byte limit");
+
+    const atDefault = createHwpEditorHandler({
+      engine,
+      sessions: false,
+      maxRequestBytes: 52428800,
+    });
+    expect((await atDefault(multipartRequest(`${BASE}/read`, { file: DOC }))).status).toBe(200);
+    expect(calls).toEqual(["read", "read"]);
+  });
+
+  it("forwards locale to the default engine (ERR-04)", () => {
+    cliEngineCalls.length = 0;
+    createHwpEditorHandler({ locale: "ko", bin: "/nonexistent/hwp", sessions: false });
+    expect(cliEngineCalls).toEqual([{ bin: "/nonexistent/hwp", locale: "ko" }]);
+
+    cliEngineCalls.length = 0;
+    createHwpEditorHandler({ sessions: false });
+    expect(cliEngineCalls).toEqual([{}]);
   });
 });
