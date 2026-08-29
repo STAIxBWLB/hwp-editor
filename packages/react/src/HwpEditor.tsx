@@ -4,6 +4,7 @@ import {
   useEffect,
   useImperativeHandle,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
 } from "react";
@@ -138,6 +139,34 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       style,
     } = props;
 
+    /**
+     * Host callbacks are deliberately NON-REACTIVE. They live in this one
+     * bundle ref and reach the component only through the stable dispatchers
+     * below. Putting any of them back into a dependency array turns an
+     * ordinary host re-render — the inline-arrow idiom every React host
+     * writes — into a full engine round trip (capabilities + read + render +
+     * validate) against the same document, which is worst on exactly the
+     * multi-megabyte documents BUG-06's chunked codec was added to serve.
+     */
+    const cbRef = useRef({ onReady, onError, onChange, onDirtyChange });
+    // No dependency array on purpose: this runs after EVERY render, so a
+    // dispatcher fired later always reaches the host's latest identity rather
+    // than a mount-time closure. Declared above the load effect because React
+    // runs a component's effects in declaration order.
+    useEffect(() => {
+      cbRef.current = { onReady, onError, onChange, onDirtyChange };
+    });
+
+    // Forward-only dispatchers, stable for the component's lifetime. They
+    // pass the argument by reference and return nothing: no wrapping, no
+    // re-throwing, no synthesized code (03-CONTEXT D-09).
+    const emitReady = useCallback((document: DocumentHandle): void => {
+      cbRef.current.onReady?.(document);
+    }, []);
+    const emitError = useCallback((error: unknown): void => {
+      cbRef.current.onError?.(error);
+    }, []);
+
     const t = useMemo(() => createT(locale, messages), [locale, messages]);
 
     const [store] = useState<EditorStore>(() => createStore());
@@ -180,17 +209,17 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           store.dispatch({ type: "load", document: file, pages });
           // Once per completed load, from THIS effect only: a second effect
           // keyed on envelope/pages would re-fire after every apply and undo.
-          onReady?.(file);
+          emitReady(file);
         } catch (e) {
           if (cancelled) return;
           setLoadError(toEditorError(e));
-          onError?.(e);
+          emitError(e);
         }
       })();
       return () => {
         cancelled = true;
       };
-    }, [engine, file, store, onReady, onError]);
+    }, [engine, file, store]);
 
     // Single fan-out point: every panel, both toolbar buttons and the
     // applyPendingOps guard read `editable`, so `readOnly` works everywhere
@@ -240,10 +269,10 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           onChange?.(next);
         } catch (e) {
           store.dispatch({ type: "applyFailed", error: toEditorError(e) });
-          onError?.(e);
+          emitError(e);
         }
       })();
-    }, [editable, engine, onChange, onError, store]);
+    }, [editable, engine, onChange, store]);
 
     const revert = useCallback((): Promise<void> => {
       const snapshot = store.getState();
@@ -275,10 +304,10 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           // The store was never touched, so store and canvas stay consistent;
           // without this destination the rejection was unhandled.
           setLoadError(toEditorError(e));
-          onError?.(e);
+          emitError(e);
         }
       })();
-    }, [engine, onChange, onError, store]);
+    }, [engine, onChange, store]);
 
     const refresh = useCallback(async () => {
       const snapshot = store.getState();
@@ -296,10 +325,10 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         // A no-op resolves quietly (above); a FAILURE must be observable to
         // the awaiting host, so surface it three ways and reject.
         setLoadError(toEditorError(e));
-        onError?.(e);
+        emitError(e);
         throw e;
       }
-    }, [engine, onError, store]);
+    }, [engine, store]);
 
     const openCompose = useCallback(() => setComposing(true), []);
 
@@ -322,7 +351,10 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         refresh,
         openCompose,
         t,
-        onError,
+        // Always defined now, and stable: a widening, since every consumer
+        // already calls it as `onError?.(e)` and it no-ops when the host
+        // supplied no callback. The payload is unchanged.
+        onError: emitError,
       }),
       [
         engine,
@@ -336,7 +368,6 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         refresh,
         openCompose,
         t,
-        onError,
       ],
     );
 
@@ -521,7 +552,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
                     // Covers the render AFTER a successful compose; the
                     // compose call itself fails inside ComposePanel.
                     setLoadError(toEditorError(e));
-                    onError?.(e);
+                    emitError(e);
                   }
                 })();
               }}
