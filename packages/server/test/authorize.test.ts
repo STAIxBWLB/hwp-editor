@@ -24,7 +24,7 @@ import type {
 
 import { createHwpEditorRoutes } from "../src/next.js";
 import { createHwpEditorHandler, type AuthorizeFn, type HwpAction } from "../src/routes.js";
-import { multipartRequest } from "./helpers.js";
+import { hwpBytes, hwpxBytes, jsonRequest, multipartRequest } from "./helpers.js";
 
 /**
  * Capture the options the handler hands its default engine. Only the locale
@@ -43,9 +43,10 @@ vi.mock("../src/cli-engine.js", async (importOriginal) => {
   };
 });
 
+/** Must pass routes.ts's magic-byte sniff, or every POST here is a 400. */
 const DOC: DocumentHandle = {
   name: "sample.hwpx",
-  data: new Uint8Array([80, 75, 3, 4, 1, 2, 3]),
+  data: hwpxBytes(),
 };
 
 const BASE = "http://localhost/api/hwp-editor";
@@ -77,13 +78,27 @@ function stubEngine(overrides: Partial<HwpEngine> = {}): HwpEngine {
   };
 }
 
-/** Stub whose read/capabilities record every entry, so 0 proves non-entry. */
+/** Stub recording every entry, so an empty `calls` proves non-entry. */
 function countingEngine(): { engine: HwpEngine; calls: string[] } {
   const calls: string[] = [];
   const engine = stubEngine({
     async read() {
       calls.push("read");
       return { markdown: "# hi", segments: [] };
+    },
+    async render(): Promise<PageImage[]> {
+      calls.push("render");
+      return [
+        { page: 1, width: 100, height: 200, dpi: 96, format: "svg", data: new Uint8Array([60]) },
+      ];
+    },
+    async edit(document: DocumentHandle) {
+      calls.push("edit");
+      return { name: document.name, data: new Uint8Array([9, 9, 9]) };
+    },
+    async validate() {
+      calls.push("validate");
+      return { valid: true, errors: [] };
     },
     async capabilities() {
       calls.push("capabilities");
@@ -364,5 +379,119 @@ describe("size cap", () => {
     cliEngineCalls.length = 0;
     createHwpEditorHandler({ sessions: false });
     expect(cliEngineCalls).toEqual([{}]);
+  });
+});
+
+/**
+ * SEC-07. The sniff sits at the single buffering site, so a refusal is proven
+ * the same way admission is: the counting engine was never entered.
+ */
+describe("sniff", () => {
+  /** POST `bytes` to `action` and report the status plus the engine calls. */
+  async function post(
+    action: string,
+    bytes: Uint8Array,
+    fields: Record<string, string> = {},
+  ): Promise<{ status: number; body: { error: { code: string; message: string } }; calls: string[] }> {
+    const { engine, calls } = countingEngine();
+    const handler = createHwpEditorHandler({ engine, sessions: false });
+    const res = await handler(
+      multipartRequest(`${BASE}/${action}`, { file: { name: "x.hwpx", data: bytes }, ...fields }),
+    );
+    return { status: res.status, body: await res.json(), calls };
+  }
+
+  it("admits a CFBF buffer as an HWP5 document", async () => {
+    const { status, calls } = await post("read", hwpBytes());
+    expect(status).toBe(200);
+    expect(calls).toEqual(["read"]);
+  });
+
+  it("admits a STORED first `mimetype` entry reading application/hwp+zip", async () => {
+    const { status, calls } = await post("read", hwpxBytes());
+    expect(status).toBe(200);
+    expect(calls).toEqual(["read"]);
+  });
+
+  it("admits the same layout with a non-empty extra field", async () => {
+    const { status, calls } = await post("read", hwpxBytes({ extraLen: 4 }));
+    expect(status).toBe(200);
+    expect(calls).toEqual(["read"]);
+  });
+
+  it("refuses a zip whose first entry is deflated rather than STORED", async () => {
+    const { status, body, calls } = await post("read", hwpxBytes({ method: 8 }));
+    expect(status).toBe(400);
+    expect(body.error.code).toBe("bad_request");
+    expect(body.error.message).toBe("file is not an HWP or HWPX document");
+    expect(calls).toEqual([]);
+  });
+
+  it("refuses a zip whose first entry is not named mimetype", async () => {
+    // Same eight-byte length, different name: the name check, not the length.
+    const wrongName = await post("read", hwpxBytes({ name: "manifest" }));
+    expect(wrongName.status).toBe(400);
+    expect(wrongName.calls).toEqual([]);
+    // A different length trips the nameLen check first.
+    const shortName = await post("read", hwpxBytes({ name: "meta" }));
+    expect(shortName.status).toBe(400);
+    expect(shortName.calls).toEqual([]);
+  });
+
+  it("refuses a zip whose mimetype is not application/hwp+zip", async () => {
+    const { status, body, calls } = await post(
+      "read",
+      hwpxBytes({ mimetype: "application/epub+zip" }),
+    );
+    expect(status).toBe(400);
+    expect(body.error.code).toBe("bad_request");
+    expect(calls).toEqual([]);
+  });
+
+  it("refuses a PNG, a text buffer and a 3-byte buffer", async () => {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
+    const text = new TextEncoder().encode("hello, this is definitely not a document at all");
+    for (const [label, bytes] of [
+      ["png", png],
+      ["text", text],
+      ["tiny", new Uint8Array([80, 75, 3])],
+    ] as const) {
+      const { status, body, calls } = await post("read", bytes);
+      expect(status, label).toBe(400);
+      expect(body.error.code, label).toBe("bad_request");
+      expect(calls, label).toEqual([]);
+    }
+  });
+
+  it("refuses a header truncated before the mimetype content, without reading past it", async () => {
+    const full = hwpxBytes();
+    // 38 is exactly the header + name; anything below the mimetype end is short.
+    for (const end of [38, 45, full.length - 1]) {
+      const { status, calls } = await post("read", full.subarray(0, end));
+      expect(status, `truncated to ${end}`).toBe(400);
+      expect(calls, `truncated to ${end}`).toEqual([]);
+    }
+  });
+
+  it("refuses on read, render, edit and validate alike — one buffering site", async () => {
+    const junk = new Uint8Array([80, 75, 3, 4, 1, 2, 3]);
+    for (const action of ["read", "render", "validate"]) {
+      const { status, calls } = await post(action, junk);
+      expect(status, action).toBe(400);
+      expect(calls, action).toEqual([]);
+    }
+    const edit = await post("edit", junk, { ops: JSON.stringify([{ kind: "replace", find: "a", replace: "b" }]) });
+    expect(edit.status).toBe(400);
+    expect(edit.calls).toEqual([]);
+  });
+
+  it("does not apply to compose, which carries no upload", async () => {
+    const { engine, calls } = countingEngine();
+    const handler = createHwpEditorHandler({ engine, sessions: false });
+    const res = await handler(
+      jsonRequest(`${BASE}/compose`, { spec: { version: "2.0", document: {} }, name: "out.hwpx" }),
+    );
+    expect(res.status).toBe(200);
+    expect(calls).toEqual([]);
   });
 });

@@ -63,6 +63,43 @@ export function sampleSpec() {
   } as const;
 }
 
+/**
+ * Minimal HWP5 document bytes: the eight CFBF signature bytes plus padding.
+ * Enough to pass `sniffFormat` in routes.ts; not a parseable document, which
+ * no stub-engine test needs.
+ */
+export function hwpBytes(): Uint8Array {
+  const out = new Uint8Array(64);
+  out.set([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1], 0);
+  return out;
+}
+
+/**
+ * Minimal HWPX document bytes: a zip local file header whose first entry is a
+ * STORED `mimetype` reading `application/hwp+zip` — the layout hwp-cli's
+ * writer emits and the only one `sniffFormat` in routes.ts admits.
+ *
+ * Every override exists so a test can build exactly one deviation from that
+ * layout (deflated, wrong name, wrong mimetype) and assert the refusal.
+ */
+export function hwpxBytes(
+  opts: { method?: number; name?: string; mimetype?: string; extraLen?: number } = {},
+): Uint8Array {
+  const encoder = new TextEncoder();
+  const nameBytes = encoder.encode(opts.name ?? "mimetype");
+  const mimeBytes = encoder.encode(opts.mimetype ?? "application/hwp+zip");
+  const extraLen = opts.extraLen ?? 0;
+  const out = new Uint8Array(30 + nameBytes.length + extraLen + mimeBytes.length);
+  const view = new DataView(out.buffer);
+  out.set([0x50, 0x4b, 0x03, 0x04], 0);
+  view.setUint16(8, opts.method ?? 0, true);
+  view.setUint16(26, nameBytes.length, true);
+  view.setUint16(28, extraLen, true);
+  out.set(nameBytes, 30);
+  out.set(mimeBytes, 30 + nameBytes.length + extraLen);
+  return out;
+}
+
 let boundarySeq = 0;
 
 /**

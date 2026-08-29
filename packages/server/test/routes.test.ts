@@ -10,11 +10,12 @@ import type {
 
 import { createHwpEditorHandler } from "../src/routes.js";
 import { createSessionStore } from "../src/session.js";
-import { jsonRequest, multipartRequest } from "./helpers.js";
+import { hwpxBytes, jsonRequest, multipartRequest } from "./helpers.js";
 
+/** Must pass routes.ts's magic-byte sniff, or every POST here is a 400. */
 const DOC: DocumentHandle = {
   name: "sample.hwpx",
-  data: new Uint8Array([80, 75, 3, 4, 1, 2, 3]),
+  data: hwpxBytes(),
 };
 
 /** In-memory HwpEngine stub — route shape tests do not need the binary. */
@@ -243,7 +244,7 @@ describe("routes + sessions (stub engine)", () => {
   it("edit snapshots the input; the session can undo back to it", async () => {
     const sessions = createSessionStore();
     try {
-      const original = new Uint8Array([1, 1, 1]);
+      const original = hwpxBytes();
       const handler = createHwpEditorHandler({ engine: stubEngine(), sessions });
       const res = await handler(
         multipartRequest(`${BASE}/edit`, {
@@ -258,7 +259,7 @@ describe("routes + sessions (stub engine)", () => {
       expect([...(await sessions.exportBytes(id)).data]).toEqual([9, 9, 9]);
       const restored = await sessions.undo(id);
       expect(restored).not.toBeNull();
-      expect([...restored!.data]).toEqual([1, 1, 1]);
+      expect([...restored!.data]).toEqual([...original]);
     } finally {
       await sessions.dispose();
     }
