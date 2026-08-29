@@ -211,6 +211,79 @@ describe("onReady", () => {
   });
 });
 
+describe("host callback identity", () => {
+  /**
+   * Let every already-scheduled effect, microtask and load pipeline settle.
+   * A re-render that (wrongly) re-fires the load effect needs a full
+   * capabilities → Promise.all round trip to bump the call counts, so a bare
+   * microtask flush would let the regression through.
+   */
+  const settle = (): Promise<void> =>
+    act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+  it("does not reload the document for a new inline onReady arrow", async () => {
+    const engine = createMockEngine();
+    const ready = vi.fn();
+    const { rerender } = render(
+      <HwpEditor engine={engine} file={file} onReady={(d) => ready(d)} />,
+    );
+    await waitFor(() => expect(ready).toHaveBeenCalledTimes(1));
+
+    // Same engine, same file, brand-new arrow: the ordinary host idiom.
+    rerender(<HwpEditor engine={engine} file={file} onReady={(d) => ready(d)} />);
+    await settle();
+
+    expect(ready).toHaveBeenCalledTimes(1);
+    expect(engine.calls.read).toHaveLength(1);
+  });
+
+  it("does not reload the document for a new inline onError arrow alone", async () => {
+    const engine = createMockEngine();
+    const { rerender } = render(
+      <HwpEditor engine={engine} file={file} onError={() => {}} />,
+    );
+    await screen.findByRole("button", { name: "Page 1" });
+
+    rerender(<HwpEditor engine={engine} file={file} onError={() => {}} />);
+    await settle();
+
+    expect(engine.calls.read).toHaveLength(1);
+    expect(engine.calls.render).toBe(1);
+  });
+
+  it("delivers a mid-load completion to the replacement, not the mount-time identity", async () => {
+    const engine = createMockEngine();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    engine.read = async () => {
+      await gate;
+      return makeEnvelope();
+    };
+    const first = vi.fn();
+    const second = vi.fn();
+    const { rerender } = render(
+      <HwpEditor engine={engine} file={file} onReady={(d) => first(d)} />,
+    );
+    await waitFor(() => expect(engine.calls.render).toBe(1));
+
+    // Swap the handler while the read is still gated, then let it finish.
+    rerender(<HwpEditor engine={engine} file={file} onReady={(d) => second(d)} />);
+    await act(async () => {
+      release();
+      await gate;
+    });
+
+    // Freeze-at-mount would call `first` here and pass every count assertion.
+    expect(first).not.toHaveBeenCalled();
+    await waitFor(() => expect(second).toHaveBeenCalledTimes(1));
+    expect(second).toHaveBeenCalledWith(file);
+  });
+});
+
 describe("onError", () => {
   it("fires with the caught value verbatim when the load fails", async () => {
     const boom = new HwpEngineError("timeout", "hwp render timed out after 60000ms");
