@@ -31,6 +31,35 @@ import type {
 import { createCliEngine, HwpCliError, type CliEngine } from "./cli-engine.js";
 import { createSessionStore, SessionNotFoundError, PathTraversalError, type SessionStore } from "./session.js";
 
+/** The six actions this handler serves; the runtime guard and `HwpAction` share it. */
+const ACTION_LIST = ["read", "render", "edit", "compose", "validate", "capabilities"] as const;
+
+/** One of the six action names the handler dispatches on. */
+export type HwpAction = (typeof ACTION_LIST)[number];
+
+/**
+ * Host-supplied admission hook. Its return value answers two questions at
+ * once, deliberately (D-01): a string ADMITS the request AND is the tenant
+ * scope every server-side cache key is salted with; `null` REFUSES it with
+ * HTTP 403 and code `forbidden`. One call decides both, so admission and
+ * tenancy can never disagree.
+ *
+ * Called once per request, awaited, before any body is buffered — a refusal
+ * therefore costs zero bytes of upload and zero engine calls (D-04).
+ *
+ * The refusal message is a fixed literal: a `{ allow, scope, reason }` shape
+ * was rejected precisely so no host-authored reason string can ride out to
+ * an unauthenticated client.
+ */
+export type AuthorizeFn = (req: Request, action: HwpAction) => Promise<string | null>;
+
+/**
+ * Scope used when no `authorize` is supplied. D-02: no hook means allow, with
+ * one fixed scope — the documented `createHwpEditorRoutes({ bin })` one-liner
+ * keeps working and single-tenant hosts need no configuration.
+ */
+const DEFAULT_SCOPE = "default";
+
 export interface RoutesOptions {
   /** Engine to serve; defaults to a CliEngine resolved from env/PATH. */
   engine?: HwpEngine;
@@ -44,11 +73,17 @@ export interface RoutesOptions {
    * store with a private temp root.
    */
   sessions?: SessionStore | false;
+  /**
+   * Admission hook run before any body is read. Defaults to allow-all with a
+   * fixed scope: this package owns no auth, the host owns the trust boundary
+   * (see the trust-boundary section of packages/server/README.md).
+   */
+  authorize?: AuthorizeFn;
 }
 
 export type HwpEditorHandler = (req: Request) => Promise<Response>;
 
-const ACTIONS = new Set(["read", "render", "edit", "compose", "validate", "capabilities"]);
+const ACTIONS: ReadonlySet<string> = new Set<string>(ACTION_LIST);
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -269,10 +304,19 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
       }
       if (action === "capabilities") {
         if (req.method !== "GET") return error(405, "method_not_allowed", "capabilities requires GET");
-        return await handleCapabilities();
-      }
-      if (req.method !== "POST") {
+      } else if (req.method !== "POST") {
         return error(405, "method_not_allowed", `${action} requires POST`);
+      }
+      // Admission, above every buffering site and above the capabilities
+      // early return — /capabilities discloses the binary version (SEC-12),
+      // so it is gated too. The scope is bound here and nowhere else: later
+      // plans salt cache keys with this local, never re-derive it.
+      const scope =
+        opts.authorize === undefined ? DEFAULT_SCOPE : await opts.authorize(req, action as HwpAction);
+      if (scope === null) return error(403, "forbidden", "forbidden");
+      void scope;
+      if (action === "capabilities") {
+        return await handleCapabilities();
       }
       switch (action) {
         case "read":

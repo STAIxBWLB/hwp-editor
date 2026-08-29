@@ -2,13 +2,15 @@
  * The published error contract: a stable machine-readable code on every
  * engine failure, so hosts branch on `err.code` instead of parsing prose.
  *
- * The twelve `HwpErrorCode` strings ARE the HTTP body contract — they are
+ * The fifteen `HwpErrorCode` strings ARE the HTTP body contract — they are
  * the values `ErrorResponse.error.code` (protocol.ts) carries on the wire.
  * The server emits the first group from `HwpCliError.reason`
  * (packages/server/src/cli-engine.ts) and the second from its route layer
  * (packages/server/src/routes.ts). Renaming any of them, or dropping one,
  * is a breaking change for every host `catch`/`switch` and for any non-JS
- * client reading the JSON.
+ * client reading the JSON. `forbidden`, `output_too_large` and `cancelled`
+ * were added in Phase 4 before the first publish — the only moment an
+ * addition to this union is free, because no host is branching on it yet.
  *
  * Not to be confused with `ValidationError.code` (engine.ts), a
  * document-validation finding inside a 200 response — a different
@@ -25,15 +27,18 @@ export type HwpErrorCode =
   | "bad_request"
   | "unsupported_format"
   | "protected"
+  | "output_too_large"
+  | "cancelled"
   // Route-layer codes — emitted by the HTTP handler itself.
   | "method_not_allowed"
   | "not_found"
   | "session_not_found"
   | "path_traversal"
+  | "forbidden"
   | "internal";
 
 /**
- * Exact membership set for the twelve literals above. Matching is plain
+ * Exact membership set for the fifteen literals above. Matching is plain
  * JavaScript string equality: no case folding, no trimming, no Unicode
  * normalization. "Timeout" and " timeout" are NOT members.
  */
@@ -45,15 +50,18 @@ const CODES: ReadonlySet<string> = new Set<HwpErrorCode>([
   "bad_request",
   "unsupported_format",
   "protected",
+  "output_too_large",
+  "cancelled",
   "method_not_allowed",
   "not_found",
   "session_not_found",
   "path_traversal",
+  "forbidden",
   "internal",
 ]);
 
 /**
- * Membership test for the twelve literals above. Use this at boundaries
+ * Membership test for the fifteen literals above. Use this at boundaries
  * where an unrecognized code must be DROPPED (e.g. a duck-typed foreign
  * error entering `EditorError.code`) rather than remapped — the remapping
  * variant is `toHwpErrorCode`.

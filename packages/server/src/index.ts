@@ -22,4 +22,4 @@ export type {
   SessionStoreOptions,
 } from "./session.js";
 export { createHwpEditorHandler } from "./routes.js";
-export type { HwpEditorHandler, RoutesOptions } from "./routes.js";
+export type { AuthorizeFn, HwpAction, HwpEditorHandler, RoutesOptions } from "./routes.js";
