@@ -241,27 +241,41 @@ describe("routes (stub engine)", () => {
 });
 
 describe("routes + sessions (stub engine)", () => {
-  it("edit snapshots the input; the session can undo back to it", async () => {
+  it("edit creates no session: the server keeps no pre-edit copy (BUG-07)", async () => {
     const sessions = createSessionStore();
-    try {
-      const original = hwpxBytes();
-      const handler = createHwpEditorHandler({ engine: stubEngine(), sessions });
-      const res = await handler(
-        multipartRequest(`${BASE}/edit`, {
-          file: { name: "doc.hwpx", data: original },
-          ops: JSON.stringify([{ kind: "replace", find: "a", replace: "b" }]),
-        }),
-      );
-      expect(res.status).toBe(200);
-      expect(sessions.size()).toBe(1);
-      const id = sessions.ids()[0]!;
-      // Session now holds the edited bytes; history holds the original.
-      expect([...(await sessions.exportBytes(id)).data]).toEqual([9, 9, 9]);
-      const restored = await sessions.undo(id);
-      expect(restored).not.toBeNull();
-      expect([...restored!.data]).toEqual([...original]);
-    } finally {
-      await sessions.dispose();
-    }
+    const handler = createHwpEditorHandler({ engine: stubEngine(), sessions });
+    const res = await handler(
+      multipartRequest(`${BASE}/edit`, {
+        file: { name: "doc.hwpx", data: hwpxBytes() },
+        ops: JSON.stringify([{ kind: "replace", find: "a", replace: "b" }]),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()).dataBase64).toBe(Buffer.from([9, 9, 9]).toString("base64"));
+    expect(sessions.size()).toBe(0);
+  });
+
+  it("read attaches the inspection to a session — the one thing the store still does", async () => {
+    const sessions = createSessionStore();
+    const engine = Object.assign(stubEngine(), {
+      async describe() {
+        return {
+          envelope: { markdown: "# described", segments: [] },
+          fields: null,
+          bookmarks: null,
+          slots: null,
+          info: null,
+          capabilities: { editable: true },
+        };
+      },
+    });
+    const handler = createHwpEditorHandler({ engine, sessions });
+    const res = await handler(
+      multipartRequest(`${BASE}/read`, { file: { name: "doc.hwpx", data: hwpxBytes() } }),
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()).markdown).toBe("# described");
+    expect(sessions.size()).toBe(1);
+    expect(sessions.get(sessions.ids()[0]!).inspection?.envelope.markdown).toBe("# described");
   });
 });
