@@ -54,6 +54,12 @@ const engine = createTauriEngine(invoke, {
 });
 ```
 
+Mount it as `<HwpEditor engine={engine} file={file} locale="ko" />`.
+`locale="ko"` is required: the chrome defaults to English, so a maru build
+without it ships English buttons to Korean users. This prop is the UI
+language only and is unrelated to the server-side `createCliEngine({ locale })`.
+Full prop reference: [packages/react/README.md](../packages/react/README.md).
+
 Until `@hwp-editor/core` is vendored into maru, `maru/src/lib/hwped.ts`
 provides typed invoke wrappers over the same commands with mirrored types.
 

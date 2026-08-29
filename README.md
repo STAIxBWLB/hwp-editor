@@ -54,6 +54,11 @@ createCliEngine({ locale: "ko" });
 createHwpEditorRoutes({ engine: createCliEngine({ locale: "ko" }) });
 ```
 
+This `locale` is the hwp-cli child's language and is unrelated to the
+`HwpEditor` `locale` prop, which selects the UI chrome language and also
+defaults to English; setting one does not set the other. See
+[packages/react/README.md](packages/react/README.md) for the UI prop.
+
 `locale` sets `HWP_LANG` only; `LANG`, `LC_ALL` and `LC_MESSAGES` stay
 pinned to `C.UTF-8` regardless, so changing the language cannot accidentally
 change the encoding. Every other `HWP_*` variable (`HWP_FONT_DIR` and
