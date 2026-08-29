@@ -10,7 +10,7 @@ import "./theme.css";
 import "./editor.css";
 
 export { HwpEditor } from "./HwpEditor.js";
-export type { HwpEditorProps } from "./HwpEditor.js";
+export type { HwpEditorHandle, HwpEditorProps } from "./HwpEditor.js";
 export { PageCanvas } from "./PageCanvas.js";
 export { SegmentInspector } from "./SegmentInspector.js";
 export { TableGrid } from "./TableGrid.js";
