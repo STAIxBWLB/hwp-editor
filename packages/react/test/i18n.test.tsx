@@ -93,6 +93,26 @@ describe("messages override (I18N-03)", () => {
     expect(screen.getByText(ko["toolbar.newDocument"])).toBeTruthy();
   });
 
+  it("renders an empty-string override as empty, not as the default", () => {
+    const { container } = render(
+      <HwpEditor
+        engine={createMockEngine()}
+        file={null}
+        messages={{ "canvas.empty": "" }}
+      />,
+    );
+    const p = container.querySelector(".hwped-empty p");
+    expect(p).not.toBeNull();
+    expect(p?.textContent).toBe("");
+    expect(screen.queryByText(en["canvas.empty"])).toBeNull();
+  });
+
+  // Lookup is exact string equality on keys, so an unknown key is not a
+  // silent no-op — `Partial<MessageTable>`'s excess-property check makes
+  // `messages={{ "toolbar.nope": "x" }}` a tsc error. That is asserted by
+  // the package's typecheck step, not here: committing the broken literal
+  // would break the build it is meant to demonstrate.
+
   it("leaves the locale table untouched for messages={{}}", () => {
     const { container } = render(
       <HwpEditor engine={createMockEngine()} file={null} messages={{}} />,
@@ -105,6 +125,15 @@ describe("messages override (I18N-03)", () => {
 
 describe.each(LOCALES)("HwpEditor chrome under locale=%s", (locale) => {
   const t = tables[locale];
+
+  it("puts the active locale on the root lang attribute", () => {
+    const { container } = render(
+      <HwpEditor locale={locale} engine={createMockEngine()} file={null} />,
+    );
+    expect(root(container).getAttribute("lang")).toBe(locale);
+    // Both supported locales are ltr, so `dir` is deliberately absent.
+    expect(root(container).hasAttribute("dir")).toBe(false);
+  });
 
   it("renders the read-only notice with the protected-document fallback", async () => {
     const engine = createMockEngine({ editable: false });
