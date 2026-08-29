@@ -616,3 +616,132 @@ describe("no leak: the unclassified catch branch answers a fixed message", () =>
     expect(body.error).toEqual({ code: "failed", message: "hwp validate exited 1" });
   });
 });
+
+/**
+ * The route half of SEC-04: the scope the single `authorize` call returns
+ * reaches every spawning handler's per-call options and salts the session
+ * key, so two tenants uploading identical bytes share nothing.
+ *
+ * The engine half — that `inspections` and `snapshots` key off that same
+ * scope — is proven in `cli-engine.test.ts`'s describe of the same name,
+ * because those two Maps live inside `createCliEngine` and a stub engine
+ * has neither.
+ *
+ * Every case below drives ONE handler across both scopes. A second handler
+ * would get its own `hashToSession` map and produce two session ids whether
+ * the key is salted or not, which is a test that cannot fail.
+ */
+describe("scope isolation", () => {
+  /** A CliEngine-shaped stub recording the `call` options each method saw. */
+  function scopeSpy(): { engine: HwpEngine; seen: Array<{ action: string; scope?: string }> } {
+    const seen: Array<{ action: string; scope?: string }> = [];
+    const record = (action: string, call?: { scope?: string }) => {
+      seen.push({ action, ...(call?.scope === undefined ? {} : { scope: call.scope }) });
+    };
+    const engine = {
+      async describe(_doc: DocumentHandle, call?: { scope?: string }) {
+        record("describe", call);
+        return {
+          envelope: { markdown: "# hi", segments: [] },
+          fields: null,
+          bookmarks: null,
+          slots: null,
+          info: null,
+          capabilities: { editable: true },
+        };
+      },
+      async read(_doc: DocumentHandle, call?: { scope?: string }) {
+        record("read", call);
+        return { markdown: "# hi", segments: [] };
+      },
+      async render(_doc: DocumentHandle, _o?: RenderOptions, call?: { scope?: string }) {
+        record("render", call);
+        return [
+          { page: 1, width: 100, height: 200, dpi: 96, format: "svg", data: new Uint8Array([60]) },
+        ] as PageImage[];
+      },
+      async edit(doc: DocumentHandle, _ops: EditOp[], _o?: unknown, call?: { scope?: string }) {
+        record("edit", call);
+        return { name: doc.name, data: new Uint8Array([9, 9, 9]) };
+      },
+      async compose(_spec: unknown, name: string, call?: { scope?: string }) {
+        record("compose", call);
+        return { document: { name, data: new Uint8Array([7, 7]) } };
+      },
+      async validate(_doc: DocumentHandle, call?: { scope?: string }) {
+        record("validate", call);
+        return { valid: true, errors: [] };
+      },
+      async capabilities() {
+        return { version: "0.8.8", editable: true, formats: ["hwp", "hwpx"] };
+      },
+    };
+    return { engine: engine as unknown as HwpEngine, seen };
+  }
+
+  it("passes the authorize scope to all five spawning handlers", async () => {
+    const { engine, seen } = scopeSpy();
+    const handler = createHwpEditorHandler({
+      engine,
+      sessions: false,
+      authorize: async () => "tenant-a",
+    });
+    const ops = JSON.stringify([{ kind: "replace", find: "a", replace: "b" }]);
+    for (const req of [
+      multipartRequest(`${BASE}/read`, { file: DOC }),
+      multipartRequest(`${BASE}/render`, { file: DOC }),
+      multipartRequest(`${BASE}/edit`, { file: DOC, ops }),
+      jsonRequest(`${BASE}/compose`, { spec: { version: "2.0" }, name: "x.hwpx" }),
+      multipartRequest(`${BASE}/validate`, { file: DOC }),
+    ]) {
+      expect((await handler(req)).status).toBe(200);
+    }
+    // `handleEdit` is the one that matters most and the easiest to miss: the
+    // engine's `inspections` pre-flight and its `snapshots` write both key off
+    // this argument, so an unthreaded edit silently falls back to the default.
+    expect(seen).toEqual([
+      { action: "read", scope: "tenant-a" },
+      { action: "render", scope: "tenant-a" },
+      { action: "edit", scope: "tenant-a" },
+      { action: "compose", scope: "tenant-a" },
+      { action: "validate", scope: "tenant-a" },
+    ]);
+  });
+
+  it("uses the fixed default scope when no authorize is supplied", async () => {
+    const { engine, seen } = scopeSpy();
+    const handler = createHwpEditorHandler({ engine, sessions: false });
+    expect((await handler(multipartRequest(`${BASE}/render`, { file: DOC }))).status).toBe(200);
+    expect(seen).toEqual([{ action: "render", scope: "default" }]);
+  });
+
+  it("gives two scopes uploading identical bytes different session ids", async () => {
+    const { createSessionStore } = await import("../src/session.js");
+    const sessions = createSessionStore();
+    const { engine } = scopeSpy();
+    let scope = "tenant-a";
+    const handler = createHwpEditorHandler({ engine, sessions, authorize: async () => scope });
+    expect((await handler(multipartRequest(`${BASE}/read`, { file: DOC }))).status).toBe(200);
+    expect(sessions.size()).toBe(1);
+    // Same handler, same bytes, same hashToSession map — only the scope moved.
+    scope = "tenant-b";
+    expect((await handler(multipartRequest(`${BASE}/read`, { file: DOC }))).status).toBe(200);
+    expect(sessions.size()).toBe(2);
+    const [a, b] = sessions.ids();
+    expect(a).not.toBe(b);
+  });
+
+  it("reuses one session id for identical bytes under the same scope", async () => {
+    const { createSessionStore } = await import("../src/session.js");
+    const sessions = createSessionStore();
+    const { engine } = scopeSpy();
+    const handler = createHwpEditorHandler({
+      engine,
+      sessions,
+      authorize: async () => "tenant-a",
+    });
+    await handler(multipartRequest(`${BASE}/read`, { file: DOC }));
+    await handler(multipartRequest(`${BASE}/read`, { file: DOC }));
+    expect(sessions.size()).toBe(1);
+  });
+});

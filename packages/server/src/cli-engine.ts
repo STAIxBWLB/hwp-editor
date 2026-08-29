@@ -221,6 +221,19 @@ export interface CliCallOptions {
    * `req.signal` so a client that disconnects does not leave an orphan.
    */
   signal?: AbortSignal;
+  /**
+   * Tenant scope from the server's `authorize` hook, salted into every cache
+   * key this engine owns (SEC-04, D-07). One engine instance serves every
+   * request a handler sees, so `inspections` and `snapshots` are otherwise a
+   * cross-tenant channel: two callers uploading identical bytes would share
+   * both entries.
+   *
+   * The engine RECEIVES a scope and never derives one — the single
+   * `authorize` call in routes.ts is the only place it is decided. Omitting
+   * it uses `DEFAULT_CALL_SCOPE`, so a direct `CliEngine` consumer with no
+   * tenancy of its own keeps working unchanged.
+   */
+  scope?: string;
 }
 
 export interface CliEngine extends HwpEngine {
@@ -249,9 +262,12 @@ export interface CliEngine extends HwpEngine {
   validate(document: DocumentHandle, call?: CliCallOptions): Promise<ValidationReport>;
   /**
    * Return the pre-edit snapshot of a document this engine edited, or null.
-   * Keyed by the edited document's content hash; consumed on use.
+   * Keyed by the edited document's content hash SALTED WITH THE CALL SCOPE;
+   * consumed on use. Takes the same trailing options as the spawning methods
+   * (it spawns nothing, but its read must salt exactly as `edit`'s write did,
+   * or a scoped write is findable by nobody).
    */
-  undo(document: DocumentHandle): DocumentHandle | null;
+  undo(document: DocumentHandle, call?: CliCallOptions): DocumentHandle | null;
   /** Resolved binary path and verified version. */
   binaryInfo(): Promise<{ bin: string; version: string }>;
 }
@@ -465,6 +481,25 @@ function versionAtLeast(v: [number, number, number], min: readonly [number, numb
 
 function sha256(data: Uint8Array): string {
   return createHash("sha256").update(data).digest("hex");
+}
+
+/** Scope used when a caller supplies none; see `CliCallOptions.scope`. */
+const DEFAULT_CALL_SCOPE = "default";
+
+/**
+ * The key for every entry in this engine's two caches: the content hash
+ * salted with the tenant scope (SEC-04, D-07).
+ *
+ * Written once so `inspections` and `snapshots` cannot disagree about the
+ * separator, and so `edit`'s snapshot write and `undo`'s read are the same
+ * expression. The `\0` separator is what makes the pair unambiguous: without
+ * it a scope ending in hex digits could produce the key some other scope
+ * produces for different content.
+ */
+function cacheKey(scope: string | undefined, data: Uint8Array): string {
+  return createHash("sha256")
+    .update(`${scope ?? DEFAULT_CALL_SCOPE}\0${sha256(data)}`)
+    .digest("hex");
 }
 
 function sniffExtension(document: DocumentHandle): ".hwp" | ".hwpx" {
@@ -776,8 +811,8 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
   ): Promise<DocumentInspection> {
     await ensureVersion();
     const bin = resolveBin();
-    const hash = sha256(document.data);
-    const cached = inspections.get(hash);
+    const key = cacheKey(call?.scope, document.data);
+    const cached = inspections.get(key);
     if (cached !== undefined) return cached;
     const signal = call?.signal;
     const inspection = await withWorkDir(async (dir) => {
@@ -805,7 +840,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       const oldest = inspections.keys().next().value;
       if (oldest !== undefined) inspections.delete(oldest);
     }
-    inspections.set(hash, inspection);
+    inspections.set(key, inspection);
     return inspection;
   }
 
@@ -937,7 +972,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         // compose() has no input DocumentHandle to inspect (its signature is
         // (spec, name)), so the pre-flight has no subject there; the stderr
         // backstop below covers it.
-        const cached = inspections.get(sha256(document.data))?.capabilities;
+        const cached = inspections.get(cacheKey(call?.scope, document.data))?.capabilities;
         const capabilities =
           cached ?? documentEditability(await tryJson(bin, ["info", input, "--json"], timeoutMs, opts.locale, call?.signal));
         if (!capabilities.editable) {
@@ -953,8 +988,9 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         await runCliOk(bin, args, timeoutMs, opts.locale, call?.signal).catch(rethrowProtected);
         return new Uint8Array(await readFile(output));
       });
-      // Pre-edit snapshot keyed by the edited hash: undo(edited) -> original.
-      snapshots.set(sha256(edited), { name: document.name, data: document.data });
+      // Pre-edit snapshot keyed by the edited hash SALTED WITH THIS CALL'S
+      // SCOPE: undo(edited, same scope) -> original, and no other scope.
+      snapshots.set(cacheKey(call?.scope, edited), { name: document.name, data: document.data });
       if (snapshots.size > 256) {
         const oldest = snapshots.keys().next().value;
         if (oldest !== undefined) snapshots.delete(oldest);
@@ -962,8 +998,10 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       return { name: document.name, data: edited };
     },
 
-    undo(document) {
-      const key = sha256(document.data);
+    undo(document, call) {
+      // Salts identically to the `edit` write above; any divergence here makes
+      // every scoped snapshot unreachable rather than merely mis-scoped.
+      const key = cacheKey(call?.scope, document.data);
       const snapshot = snapshots.get(key) ?? null;
       if (snapshot !== null) snapshots.delete(key);
       return snapshot;

@@ -11,8 +11,6 @@ export type {
 } from "./cli-engine.js";
 export {
   createSessionStore,
-  listSessionFiles,
-  PathTraversalError,
   SessionNotFoundError,
   DEFAULT_TTL_MS,
 } from "./session.js";
