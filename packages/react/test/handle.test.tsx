@@ -9,6 +9,13 @@
  * selector with it. As of 03-04 the panel and canvas selectors are `en` too;
  * the remaining Korean literals here are DOCUMENT content from the fixture
  * envelope ("1. 회의록"), which no locale changes.
+ *
+ * Host callbacks are NON-REACTIVE by contract: `onReady`, `onError`,
+ * `onChange` and `onDirtyChange` never appear in a dependency array inside
+ * HwpEditor.tsx, so a host may pass inline arrows without turning its own
+ * re-renders into engine round trips (API-02). Every other callback test here
+ * passes a `vi.fn()` whose identity never changes and therefore cannot see
+ * that regression; `describe("host callback identity")` is its regression net.
  */
 
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -208,6 +215,132 @@ describe("onReady", () => {
       await gate;
     });
     expect(onReady).not.toHaveBeenCalled();
+  });
+});
+
+describe("host callback identity", () => {
+  /**
+   * Let every already-scheduled effect, microtask and load pipeline settle.
+   * A re-render that (wrongly) re-fires the load effect needs a full
+   * capabilities → Promise.all round trip to bump the call counts, so a bare
+   * microtask flush would let the regression through.
+   */
+  const settle = (): Promise<void> =>
+    act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+  it("does not reload the document for a new inline onReady arrow", async () => {
+    const engine = createMockEngine();
+    const ready = vi.fn();
+    const { rerender } = render(
+      <HwpEditor engine={engine} file={file} onReady={(d) => ready(d)} />,
+    );
+    await waitFor(() => expect(ready).toHaveBeenCalledTimes(1));
+
+    // Same engine, same file, brand-new arrow: the ordinary host idiom.
+    rerender(<HwpEditor engine={engine} file={file} onReady={(d) => ready(d)} />);
+    await settle();
+
+    expect(ready).toHaveBeenCalledTimes(1);
+    expect(engine.calls.read).toHaveLength(1);
+  });
+
+  it("does not reload the document for a new inline onError arrow alone", async () => {
+    const engine = createMockEngine();
+    const { rerender } = render(
+      <HwpEditor engine={engine} file={file} onError={() => {}} />,
+    );
+    await screen.findByRole("button", { name: "Page 1" });
+
+    rerender(<HwpEditor engine={engine} file={file} onError={() => {}} />);
+    await settle();
+
+    expect(engine.calls.read).toHaveLength(1);
+    expect(engine.calls.render).toBe(1);
+  });
+
+  it("delivers a mid-load completion to the replacement, not the mount-time identity", async () => {
+    const engine = createMockEngine();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    engine.read = async () => {
+      await gate;
+      return makeEnvelope();
+    };
+    const first = vi.fn();
+    const second = vi.fn();
+    const { rerender } = render(
+      <HwpEditor engine={engine} file={file} onReady={(d) => first(d)} />,
+    );
+    await waitFor(() => expect(engine.calls.render).toBe(1));
+
+    // Swap the handler while the read is still gated, then let it finish.
+    rerender(<HwpEditor engine={engine} file={file} onReady={(d) => second(d)} />);
+    await act(async () => {
+      release();
+      await gate;
+    });
+
+    // Freeze-at-mount would call `first` here and pass every count assertion.
+    expect(first).not.toHaveBeenCalled();
+    await waitFor(() => expect(second).toHaveBeenCalledTimes(1));
+    expect(second).toHaveBeenCalledWith(file);
+  });
+
+  it("does not re-emit onDirtyChange for a new inline arrow with no dirty change", async () => {
+    const engine = createMockEngine();
+    const dirty = vi.fn();
+    const { rerender } = render(
+      <HwpEditor engine={engine} file={file} onDirtyChange={(d) => dirty(d)} />,
+    );
+    await screen.findByRole("button", { name: "Page 1" });
+    const before = dirty.mock.calls.length;
+
+    rerender(
+      <HwpEditor engine={engine} file={file} onDirtyChange={(d) => dirty(d)} />,
+    );
+    await settle();
+
+    expect(dirty).toHaveBeenCalledTimes(before);
+  });
+
+  it("keeps the imperative handle identity across new inline host callbacks", async () => {
+    const engine = createMockEngine();
+    const ref = createRef<HwpEditorHandle>();
+    const { rerender } = render(
+      <HwpEditor
+        ref={ref}
+        engine={engine}
+        file={file}
+        onReady={() => {}}
+        onError={() => {}}
+        onChange={() => {}}
+        onDirtyChange={() => {}}
+      />,
+    );
+    // Capture AFTER the load: `editable` settles once capabilities resolve,
+    // which legitimately re-creates applyPendingOps once.
+    await screen.findByRole("button", { name: "Page 1" });
+    const before = handle(ref);
+
+    rerender(
+      <HwpEditor
+        ref={ref}
+        engine={engine}
+        file={file}
+        onReady={() => {}}
+        onError={() => {}}
+        onChange={() => {}}
+        onDirtyChange={() => {}}
+      />,
+    );
+
+    // The single assertion proving no host callback reaches ANY dependency
+    // array in HwpEditor.tsx.
+    expect(handle(ref)).toBe(before);
   });
 });
 
