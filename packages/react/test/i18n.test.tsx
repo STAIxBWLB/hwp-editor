@@ -58,7 +58,9 @@ describe("messages override (I18N-03)", () => {
     expect(screen.queryByText(en["toolbar.revert"])).toBeNull();
     // Adjacent keys are untouched.
     expect(screen.getByText(en["toolbar.newDocument"])).toBeTruthy();
-    expect(screen.getByText(en["canvas.empty"])).toBeTruthy();
+    expect(
+      screen.getByText(en["toolbar.applyWithCount"]({ count: 0 })),
+    ).toBeTruthy();
   });
 
   it("overrides on top of the ko table, not on top of en", () => {

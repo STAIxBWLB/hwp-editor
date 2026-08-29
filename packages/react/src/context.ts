@@ -11,6 +11,7 @@ import type {
   HwpEngine,
   ValidationReport,
 } from "@hwp-editor/core";
+import type { TFunction } from "./messages.js";
 
 export interface HwpEditorContextValue {
   engine: HwpEngine;
@@ -29,6 +30,12 @@ export interface HwpEditorContextValue {
   refresh: () => Promise<void>;
   /** Open the compose panel (new-document flow). */
   openCompose: () => void;
+  /**
+   * Message lookup bound to the active locale and host overrides. Every
+   * panel localizes through this one channel; a panel that cannot reach `t`
+   * cannot be localized at all.
+   */
+  t: TFunction;
 }
 
 export const HwpEditorContext = createContext<HwpEditorContextValue | null>(
