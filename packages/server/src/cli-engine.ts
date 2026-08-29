@@ -185,6 +185,24 @@ export interface CliEngine extends HwpEngine {
   binaryInfo(): Promise<{ bin: string; version: string }>;
 }
 
+/**
+ * The only `HWP_*` variables copied from the operator's environment.
+ *
+ * An explicit list of one rather than the `HWP_` prefix it replaces: hwp-cli
+ * 0.14.0 reads roughly two dozen `HWP_*` variables, the prefix is upstream's
+ * namespace, and upstream adds to it freely — so a prefix match silently
+ * admits whatever the next release invents. `HWP_CERTIFY_ORACLE_RUNTIME` is
+ * the illustration: hwp-cli reads it as a path to an executable
+ * (crates/hwp-cli/src/certification.rs), reachable only through `hwp
+ * certify`, which this engine never invokes.
+ *
+ * Of the whole set exactly two matter here, and one of them (`HWP_LANG`) is
+ * pinned unconditionally below, so the pass-through gave it nothing. A host
+ * that needs another variable should get a new option for it rather than a
+ * wider window onto the ambient environment.
+ */
+const HWP_ENV_ALLOWLIST = ["HWP_FONT_DIR"] as const;
+
 export function scrubbedEnv(locale?: string): Record<string, string> {
   // An inherited env is the usual way a subprocess reaches credentials it has
   // no business with. The CLI needs PATH (for helpers) and little else;
@@ -194,14 +212,15 @@ export function scrubbedEnv(locale?: string): Record<string, string> {
     const value = process.env[key];
     if (value !== undefined) env[key] = value;
   }
-  for (const [key, value] of Object.entries(process.env)) {
-    if (key.startsWith("HWP_") && value !== undefined) env[key] = value;
+  for (const key of HWP_ENV_ALLOWLIST) {
+    const value = process.env[key];
+    if (value !== undefined) env[key] = value;
   }
-  // The four locale variables are pinned AFTER the HWP_* pass-through, which
-  // is what currently copies an inherited HWP_LANG in. hwp-cli's precedence
+  // The four locale variables are pinned AFTER the allow-list, which is the
+  // only thing that could copy an inherited HWP_LANG in. hwp-cli's precedence
   // chain is --lang -> HWP_LANG -> LC_ALL -> LC_MESSAGES -> LANG
   // (i18n.rs:36-68); LC_MESSAGES is pinned alongside the other two so no link
-  // is left open for whoever widens the allow-list later. C.UTF-8 over
+  // is left open for whoever adds an entry to HWP_ENV_ALLOWLIST later. C.UTF-8 over
   // en_US.UTF-8 because it exists in slim container images, where an
   // ungenerated en_US.UTF-8 silently degrades to C and breaks UTF-8 handling.
   // hwp-cli's Lang::parse splits on `.`, `_`, `-`, `@` and lowercases the
