@@ -58,10 +58,10 @@ async function queueReplace(envelope: CatEnvelope = makeEnvelope()): Promise<voi
   const page = await screen.findByRole("button", { name: "페이지 1" });
   fireEvent.click(page, { clientY: clientYForPara(envelope, 0) });
   await screen.findByText("1. 회의록");
-  fireEvent.change(screen.getByLabelText("텍스트 교체"), {
+  fireEvent.change(screen.getByLabelText("Replace text"), {
     target: { value: "2. 회의록" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "교체" }));
+  fireEvent.click(screen.getByRole("button", { name: "Replace" }));
   await screen.findByText(pending(1));
 }
 
@@ -236,7 +236,7 @@ describe("onError", () => {
     render(<HwpEditor engine={engine} file={file} onError={onError} />);
     await queueReplace();
 
-    fireEvent.click(screen.getByRole("button", { name: /^Apply/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Apply \(/ }));
     await screen.findByRole("alert");
     expect(onError.mock.calls[0]?.[0]).toBe(boom);
   });
@@ -319,8 +319,8 @@ describe("readOnly", () => {
     const page = await screen.findByRole("button", { name: "페이지 1" });
     fireEvent.click(page, { clientY: clientYForPara(makeEnvelope(), 0) });
     await screen.findByText("1. 회의록");
-    expect(screen.getByLabelText("텍스트 교체")).toHaveProperty("disabled", true);
-    expect(screen.getByRole("button", { name: /^Apply/ })).toHaveProperty(
+    expect(screen.getByLabelText("Replace text")).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: /^Apply \(/ })).toHaveProperty(
       "disabled",
       true,
     );
