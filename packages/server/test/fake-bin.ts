@@ -45,6 +45,8 @@ export interface FakeBinOptions {
   info?: string;
   /** stderr written by `mode: "fail"`; default `boom`. */
   editStderr?: string;
+  /** stdout written by `ok`/`fail` before exiting, e.g. a validate report. */
+  stdout?: string;
   /** Alternative `edit --help` output, for flag-surface cases. */
   helpFixture?: string;
 }
@@ -52,11 +54,13 @@ export interface FakeBinOptions {
 const dirs: string[] = [];
 
 function modeScript(opts: FakeBinOptions): string[] {
+  const stdout =
+    opts.stdout === undefined ? [] : [`printf '%s' ${JSON.stringify(opts.stdout)}`];
   switch (opts.mode ?? "ok") {
     case "ok":
-      return ["exit 0"];
+      return [...stdout, "exit 0"];
     case "fail":
-      return [`printf '%s' ${JSON.stringify(opts.editStderr ?? "boom")} >&2`, "exit 3"];
+      return [...stdout, `printf '%s' ${JSON.stringify(opts.editStderr ?? "boom")} >&2`, "exit 3"];
     case "overflow":
       // `yes` is a C program; a shell `while echo` loop takes seconds to
       // reach 32 MiB. `exec` so no shell is left waiting on the pipe.
