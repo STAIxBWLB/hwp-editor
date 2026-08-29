@@ -4,6 +4,7 @@ import { plainSegmentText } from "../src/text.js";
 import { parseMarkdownTable, findTables, tableAtRef } from "../src/tables.js";
 import { extractFieldSlots } from "../src/fields.js";
 import { buildDocumentSpec, bodyToBlocks } from "../src/presets.js";
+import { createT } from "../src/messages.js";
 import { nearestSegment, segmentBand } from "../src/geometry.js";
 import { makeEnvelope } from "./mock-engine.js";
 
@@ -100,6 +101,43 @@ describe("presets", () => {
 
   it("parses markdown-ish body into blocks", () => {
     expect(bodyToBlocks("# 제목\n\n본문\n\n# 둘째")).toHaveLength(3);
+  });
+
+  // I18N-05: preset PROFILES are document data, not chrome. `buildDocumentSpec`
+  // takes no locale at all — that is the structural guarantee, and these
+  // assertions pin it. Composing the way ComposePanel does under each intended
+  // UI locale must yield byte-identical font fields.
+  it("composes locale-invariant font data under either UI locale", () => {
+    for (const locale of ["en", "ko"] as const) {
+      const t = createT(locale);
+      // The only locale-dependent input ComposePanel feeds the builder.
+      const title = t("compose.defaultFileStem");
+      expect(title).toBe(locale === "ko" ? "새 문서" : "New document");
+
+      const malgun = buildDocumentSpec("official", { title, author: "", body: "x" });
+      const batang = buildDocumentSpec("report", { title, author: "", body: "x" });
+      expect(malgun.document.styles?.["body"]?.font_family).toBe("맑은 고딕");
+      expect(malgun.document.styles?.["heading"]?.font_family).toBe("맑은 고딕");
+      expect(malgun.document.styles?.["title"]?.font_family).toBe("맑은 고딕");
+      expect(batang.document.styles?.["body"]?.font_family).toBe("함초롬바탕");
+      expect(batang.document.styles?.["heading"]?.font_family).toBe("함초롬바탕");
+      expect(batang.document.styles?.["title"]?.font_family).toBe("함초롬바탕");
+    }
+  });
+
+  // I18N-05 empty edge: an empty form still composes, with the table-supplied
+  // default stem as the title and one placeholder paragraph.
+  it("composes an empty form with the default stem and no sections lost", () => {
+    for (const locale of ["en", "ko"] as const) {
+      const spec = buildDocumentSpec("official", {
+        title: createT(locale)("compose.defaultFileStem"),
+        author: "",
+        body: "",
+      });
+      expect(spec.document.sections).toHaveLength(1);
+      expect(spec.document.sections[0]?.blocks).toHaveLength(1);
+      expect(spec.document.styles?.["body"]?.font_family).toBe("맑은 고딕");
+    }
   });
 });
 

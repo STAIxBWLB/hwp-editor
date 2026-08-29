@@ -116,3 +116,57 @@ export function isHwpEngineError(value: unknown): value is HwpEngineError {
     typeof (value as { code?: unknown }).code === "string"
   );
 }
+
+/**
+ * Korean markers in hwp-cli's runtime diagnostics, each paired with the
+ * fixed, transport-authored message the client sees.
+ *
+ * Lives in core, not in one transport, because it is hwp-cli's vocabulary
+ * rather than any single transport's: the CLI server reads it out of
+ * `HwpCliError.stderr` and the Tauri bridge reads it out of maru's rejection
+ * string. A second copy would drift the moment hwp-cli rewords a message.
+ *
+ * THESE MARKERS STAY KOREAN PERMANENTLY. Do not delete them after seeing
+ * `scrubbedEnv()` pin HWP_LANG in packages/server. HWP_LANG and --lang feed
+ * exactly one consumer, `localize()`
+ * (hwp-cli/crates/hwp-cli/src/i18n.rs:71-77), which rewrites clap
+ * about/help strings; runtime diagnostics are hardcoded Korean thiserror
+ * attributes with no locale branch (crates/hwp5/src/error.rs:1-92), verified
+ * by running the binary under HWP_LANG=en, HWP_LANG=ko, and no locale env at
+ * all and getting byte-identical Korean output all three times. Deleting
+ * these degrades protected detection to the hwp5-booleans-only pre-flight,
+ * which misses every HWPX protection and four of six hwp5 kinds.
+ *
+ * Four entries cover all seven refusal messages: `암호화된 문서` also matches
+ * `공인 인증서로 암호화된 문서는...` and the HWPX Encrypted variant, and `DRM`
+ * matches both Drm and CertDrm. `지원하지 않습니다` is deliberately NOT a
+ * marker: Hwp5Error::UnsupportedVersion ("지원하지 않는 HWP 버전입니다")
+ * shares that phrasing, and a false `protected` on a version problem sends
+ * the user to the wrong remedy.
+ *
+ * Matching is a UTF-16 substring test with the markers written precomposed
+ * (NFC) to mirror the Rust source literals. Decomposed (NFD) input would not
+ * match and the failure would stay `failed`, a safe degradation.
+ */
+const PROTECTED_MARKERS: ReadonlyArray<readonly [string, string]> = [
+  ["암호화된 문서", "encrypted document; hwp-cli refuses edit/compose"],
+  ["DRM", "DRM-protected document; hwp-cli refuses edit/compose"],
+  ["서명된 문서", "signed document; hwp-cli refuses edit/compose"],
+  ["배포용 문서", "distribution (배포용) document; hwp-cli refuses edit/compose"],
+];
+
+/**
+ * The protection backstop, shared by every transport that sees raw hwp-cli
+ * diagnostics. Returns one of the four fixed constants above, or null.
+ *
+ * The argument is never interpolated into the result: raw CLI output stays
+ * on whatever non-serialized field its transport keeps it on, so this path
+ * adds no new CLI-output-to-client leak (Phase 4 SEC-06 owns the
+ * pre-existing one in the server's `runCliOk`).
+ */
+export function protectedReasonFromDiagnostics(text: string): string | null {
+  for (const [marker, message] of PROTECTED_MARKERS) {
+    if (text.includes(marker)) return message;
+  }
+  return null;
+}

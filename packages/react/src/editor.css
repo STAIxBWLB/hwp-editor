@@ -51,12 +51,22 @@
   flex: 1 1 auto;
 }
 
+/* The title and this notice are the only toolbar items that may shrink: a
+   long engine reason truncates here (the full text stays reachable via the
+   element's title attribute) instead of being distributed across the badge,
+   count and buttons, which would collapse them to min-content and stack the
+   row. That is why every sibling below carries `flex: 0 0 auto` (G-03-1). */
 .hwped-notice {
   color: var(--hwped-muted);
   border: 1px solid var(--hwped-border);
   border-radius: var(--hwped-radius);
   padding: 1px 8px;
   font-size: 12px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 0 1 auto;
 }
 
 .hwped-badge {
@@ -64,21 +74,23 @@
   padding: 1px 8px;
   font-size: 12px;
   border: 1px solid var(--hwped-border);
+  flex: 0 0 auto;
 }
 
 .hwped-badge-ok {
-  color: #15803d;
-  border-color: #15803d;
+  color: var(--hwped-success);
+  border-color: var(--hwped-success);
 }
 
 .hwped-badge-err {
-  color: #b91c1c;
-  border-color: #b91c1c;
+  color: var(--hwped-error);
+  border-color: var(--hwped-error);
 }
 
 .hwped-count {
   color: var(--hwped-muted);
   font-size: 12px;
+  flex: 0 0 auto;
 }
 
 /* ---- buttons / inputs ---- */
@@ -110,8 +122,8 @@
 }
 
 .hwped-btn-danger:hover:not(:disabled) {
-  border-color: #b91c1c;
-  color: #b91c1c;
+  border-color: var(--hwped-error);
+  color: var(--hwped-error);
 }
 
 .hwped-btn-link {
@@ -119,6 +131,14 @@
   padding: 0;
   color: var(--hwped-accent);
   text-decoration: underline;
+}
+
+/* Scoped to direct toolbar children on purpose: `.hwped-btn` is reused by
+   SegmentInspector, TableGrid, FieldsPanel, the compose dialog actions and
+   the empty-state button, where non-shrinkable buttons would trade this bug
+   for horizontal overflow in those narrow rows. */
+.hwped-toolbar > .hwped-btn {
+  flex: 0 0 auto;
 }
 
 .hwped-input,
@@ -246,7 +266,7 @@
 }
 
 .hwped-error {
-  color: #b91c1c;
+  color: var(--hwped-error);
   margin: 0;
   padding: 6px 10px;
   border-bottom: 1px solid var(--hwped-border);
@@ -263,7 +283,7 @@
 
 /* timeout is transient (retry may succeed); unavailable/protected are not. */
 .hwped-error-timeout {
-  color: #a16207;
+  color: var(--hwped-warning);
 }
 
 /* ---- page canvas ---- */

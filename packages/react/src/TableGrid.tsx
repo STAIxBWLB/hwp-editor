@@ -15,7 +15,7 @@ interface CellCoord {
  * 0-based "table:row:col" grammar (row 0 = header row).
  */
 export function TableGrid(): JSX.Element {
-  const { state, store, envelope, editable } = useHwpEditorContext();
+  const { state, store, envelope, editable, t } = useHwpEditorContext();
   const { selection } = state;
 
   const table =
@@ -35,11 +35,12 @@ export function TableGrid(): JSX.Element {
 
   if (table === undefined) {
     return (
-      <div className="hwped-panel" role="region" aria-label="표 편집">
-        <p className="hwped-hint">
-          표가 포함된 영역을 페이지에서 선택하세요. 표가 아닌 문단이 선택되어
-          있습니다.
-        </p>
+      <div
+        className="hwped-panel"
+        role="region"
+        aria-label={t("table.panelAria")}
+      >
+        <p className="hwped-hint">{t("table.hint")}</p>
       </div>
     );
   }
@@ -49,9 +50,11 @@ export function TableGrid(): JSX.Element {
   const queue = store.dispatch.bind(store);
 
   return (
-    <div className="hwped-panel" role="region" aria-label="표 편집">
+    <div className="hwped-panel" role="region" aria-label={t("table.panelAria")}>
       <div className="hwped-field">
-        <span className="hwped-label">표 #{tableIndex}</span>
+        <span className="hwped-label">
+          {t("table.tableLabel", { index: tableIndex })}
+        </span>
         <table className="hwped-grid">
           <tbody>
             {table.rows.map((row, rowIndex) => (
@@ -93,7 +96,7 @@ export function TableGrid(): JSX.Element {
       {cell !== null && (
         <div className="hwped-field">
           <label className="hwped-label" htmlFor="hwped-cell">
-            셀 ({cell.row}, {cell.col})
+            {t("table.cellLabel", { row: cell.row, col: cell.col })}
           </label>
           <div className="hwped-row">
             <input
@@ -121,7 +124,7 @@ export function TableGrid(): JSX.Element {
                 })
               }
             >
-              셀 설정
+              {t("table.setCell")}
             </button>
           </div>
           <div className="hwped-row">
@@ -131,7 +134,7 @@ export function TableGrid(): JSX.Element {
               disabled={disabled}
               onClick={() => setMergeAnchor({ ...cell })}
             >
-              병합 기준 지정
+              {t("table.mergeAnchor")}
             </button>
             <button
               type="button"
@@ -157,7 +160,7 @@ export function TableGrid(): JSX.Element {
                 setMergeAnchor(null);
               }}
             >
-              기준 셀과 병합
+              {t("table.mergeWithAnchor")}
             </button>
             <button
               type="button"
@@ -175,14 +178,14 @@ export function TableGrid(): JSX.Element {
                 })
               }
             >
-              셀 분할
+              {t("table.splitCell")}
             </button>
           </div>
         </div>
       )}
 
       <div className="hwped-field">
-        <span className="hwped-label">행/열</span>
+        <span className="hwped-label">{t("table.rowsCols")}</span>
         <div className="hwped-row">
           <button
             type="button"
@@ -198,7 +201,7 @@ export function TableGrid(): JSX.Element {
               })
             }
           >
-            행 추가
+            {t("table.addRow")}
           </button>
           <button
             type="button"
@@ -214,7 +217,7 @@ export function TableGrid(): JSX.Element {
               })
             }
           >
-            열 추가
+            {t("table.addCol")}
           </button>
           <button
             type="button"
@@ -228,7 +231,7 @@ export function TableGrid(): JSX.Element {
               });
             }}
           >
-            행 삭제
+            {t("table.deleteRow")}
           </button>
           <button
             type="button"
@@ -242,7 +245,7 @@ export function TableGrid(): JSX.Element {
               });
             }}
           >
-            열 삭제
+            {t("table.deleteCol")}
           </button>
         </div>
       </div>
@@ -259,7 +262,7 @@ export function TableGrid(): JSX.Element {
             })
           }
         >
-          표 삭제
+          {t("table.deleteTable")}
         </button>
       </div>
     </div>

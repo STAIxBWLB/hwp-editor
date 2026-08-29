@@ -9,7 +9,22 @@
  */
 
 import type { JSX } from "react";
-import { engineErrorKind, ENGINE_ERROR_LABELS } from "./errors.js";
+import { engineErrorKind } from "./errors.js";
+import type { EngineErrorKind } from "./errors.js";
+import { useHwpEditorContext } from "./context.js";
+import type { MessageKey } from "./messages.js";
+
+/**
+ * Badge label key per kind. A total Record on purpose: a fifth kind must
+ * fail `tsc --noEmit` here rather than render an undefined label. The label
+ * TEXT lives in the string table; only this kind→key mapping is code.
+ */
+const LABEL_KEY_BY_KIND: Record<EngineErrorKind, MessageKey> = {
+  timeout: "error.kind.timeout",
+  unavailable: "error.kind.unavailable",
+  protected: "error.kind.protected",
+  generic: "error.kind.generic",
+};
 
 /** One alert line with a distinct kind badge for known engine failures. */
 export function ErrorLine(props: {
@@ -18,6 +33,9 @@ export function ErrorLine(props: {
   code?: string;
   message: string;
 }): JSX.Element {
+  // ErrorLine is always rendered inside <HwpEditor>, so it reaches `t`
+  // through the context instead of taking a label prop at both call sites.
+  const { t } = useHwpEditorContext();
   const kind = engineErrorKind({
     // Conditional spread: exactOptionalPropertyTypes rejects an explicit
     // `code: undefined` against the optional field.
@@ -28,7 +46,7 @@ export function ErrorLine(props: {
     <p className="hwped-error" role="alert" data-error-kind={kind}>
       {kind !== "generic" && (
         <span className={`hwped-error-kind hwped-error-${kind}`}>
-          {ENGINE_ERROR_LABELS[kind]}
+          {t(LABEL_KEY_BY_KIND[kind])}
         </span>
       )}
       {props.prefix}: {props.message}

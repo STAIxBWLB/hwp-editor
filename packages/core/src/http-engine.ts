@@ -31,13 +31,50 @@ export interface HttpEngineOptions {
   fetch?: typeof fetch;
 }
 
+/**
+ * Native TC39 base64 (proposal-arraybuffer-base64), captured once. Baseline
+ * 2025-09: Node >= 25, Chrome/Edge >= 140, Safari >= 26, Firefox >= 133.
+ * ABSENT on the declared Node >= 22 floor and in older Tauri webviews, so
+ * this is a fast path only, never an assumption — the access is defensive so
+ * an environment without it cannot throw at import time. TS 5.9's
+ * ESNext/DOM lib does not declare these methods yet; the local structural
+ * types below are deliberate and cheaper than bumping `lib`.
+ */
+const nativeEncode = (
+  Uint8Array.prototype as { toBase64?: (this: Uint8Array) => string }
+).toBase64;
+const nativeDecode = (
+  Uint8Array as unknown as { fromBase64?: (s: string) => Uint8Array }
+).fromBase64;
+
+/**
+ * 32768 bytes — the largest subarray that can be spread into
+ * `String.fromCharCode` before engines reject the argument count
+ * (RangeError: Maximum call stack size exceeded).
+ */
+const CHUNK = 0x8000;
+
+/**
+ * Encode bytes to base64. Synchronous by contract: this is published API
+ * (`base64`, re-exported from the barrel) consumed synchronously by
+ * `PageCanvas`'s useMemo and `tauri.ts`'s `ref()`.
+ *
+ * The fallback builds one 32KB binary-string piece per chunk instead of
+ * concatenating per byte, which is what stalled the UI on multi-megabyte
+ * documents (BUG-06).
+ */
 function toBase64(data: Uint8Array): string {
+  if (nativeEncode !== undefined) return nativeEncode.call(data);
   let binary = "";
-  for (const byte of data) binary += String.fromCharCode(byte);
+  for (let i = 0; i < data.length; i += CHUNK) {
+    binary += String.fromCharCode(...data.subarray(i, i + CHUNK));
+  }
   return btoa(binary);
 }
 
+/** Decode base64 to bytes. The fallback is already linear: `atob` is native. */
 function fromBase64(base64: string): Uint8Array {
+  if (nativeDecode !== undefined) return nativeDecode(base64);
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);

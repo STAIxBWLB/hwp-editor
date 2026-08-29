@@ -27,17 +27,6 @@ export const COMPOSE_PRESETS: ComposePreset[] = [
   "press",
 ];
 
-/** Korean UI labels for the preset picker. */
-export const COMPOSE_PRESET_LABELS: Record<ComposePreset, string> = {
-  official: "공문",
-  report: "보고서",
-  plan: "계획서",
-  notice: "안내문",
-  minutes: "회의록",
-  gaejosik: "개조식 문서",
-  press: "보도자료",
-};
-
 interface PresetProfile {
   fontFamily: string;
   bodySizePt: number;
@@ -45,6 +34,13 @@ interface PresetProfile {
   pageNumber: boolean;
 }
 
+/**
+ * Document data, NOT chrome (I18N-05). These font names travel into the
+ * composed DocumentSpec and are consumed by hwp-cli; translating them would
+ * change what the engine receives, so they stay here and are structurally
+ * unreachable from the string table. The picker's human-readable LABELS
+ * live in messages.ts under `presets.*`.
+ */
 const MALGUN = "맑은 고딕";
 const HCR_BATANG = "함초롬바탕";
 

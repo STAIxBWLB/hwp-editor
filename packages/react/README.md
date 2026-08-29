@@ -21,12 +21,53 @@ import "@hwp-editor/react/style.css"; // required: styles are not auto-injected
 
 Editing model: segment-based structured editing. Rendered pages are the
 visual canvas; clicking selects a segment; the side panel builds typed
-`EditOp`s; **Apply** commits all queued ops in one `engine.edit()` call and
-re-renders; **되돌리기 (Revert)** restores the snapshot taken before the last
-applied edit. Protected/distribution documents open read-only with a notice
+`EditOp`s; the apply button commits all queued ops in one `engine.edit()`
+call and re-renders; the undo button restores the snapshot taken before the
+last applied edit. Both buttons are labelled from the active locale table,
+so referring to them by a fixed label goes stale the moment the copy or the
+locale changes. Protected/distribution documents open read-only with a notice
 (engine `capabilities().editable === false`).
 
 Keyboard: `Escape` clears the selection; `Cmd/Ctrl+Enter` applies pending ops.
+
+## Props
+
+| Prop | Type | Notes |
+| ---- | ---- | ----- |
+| `engine` | `HwpEngine` | Required. Every read/render/edit/compose/validate call goes through it. |
+| `file` | `DocumentHandle \| null` | Required. `null` shows the empty state with the new-document entry point. |
+| `locale` | `"en" \| "ko"` | UI chrome language. Defaults to `"en"`. Read at mount and on change, and also drives the editor root's `lang` attribute. Document content and engine-authored error prose are never translated. |
+| `messages` | `Partial<MessageTable>` | Per-key overrides applied on top of the locale table. Merge order is `en` -> locale table -> `messages`, so a key you do not list keeps its locale default. An unknown key is a compile error. Import `en` / `ko` from this package to discover the keys. |
+| `readOnly` | `boolean` | Forces the editor read-only regardless of what the engine reports, and never re-enables a document the engine reports as protected. **A UI affordance, not an authorization boundary** - it hides and disables controls in one browser, and a host that must actually prevent writes enforces that server-side, in front of the route handler. `@hwp-editor/server` gains an `authorize` hook in Phase 4 (SEC-01); today `routes.ts` only reserves HTTP 403 for it, so there is no server-side hook to call yet. |
+| `onReady` | `(document: DocumentHandle) => void` | Fires once per completed document load, after both the read and the render resolve, with the document that was loaded. Fires again on every `file` change. Never fires for `file={null}` or for a load cancelled by unmount. |
+| `onError` | `(error: unknown) => void` | Fires for every engine failure (load, apply, undo, refresh, compose) carrying the caught value **verbatim**, so a host can branch on the stable `code` of a `HwpEngineError`. The inline alert renders either way; this is an addition to it, not a replacement. |
+| `onChange` | `(document: DocumentHandle) => void` | Fires whenever the document bytes change: an applied edit, an undo, or a compose. |
+| `onDirtyChange` | `(dirty: boolean) => void` | Fires when the dirty flag (pending ops queued) transitions. |
+| `className` | `string` | Applied to the editor root. |
+| `style` | `CSSProperties` | Applied to the editor root; the usual place to set `--hwped-*` variables. |
+
+`locale` is a name collision worth stating plainly: this prop is the UI
+chrome language and has nothing to do with `createCliEngine({ locale })` in
+`@hwp-editor/server`, which sets the hwp-cli child process's `HWP_LANG`.
+Setting one does not set the other.
+
+## Imperative handle
+
+`ref` exposes exactly four methods and no state getters, because hosts
+observe state through the callbacks above, which stay in sync with React
+rendering in a way a getter read from outside the render cycle cannot.
+
+| Method | Returns | No-op when |
+| ------ | ------- | ---------- |
+| `apply()` | `Promise<void>` | The queue is empty, no document is loaded, an apply is already in flight, or the editor is read-only. Resolves without touching the engine. |
+| `revert()` | `Promise<void>` | The snapshot stack is empty. Resolves without touching the engine. |
+| `refresh()` | `Promise<void>` | Never a no-op: it re-reads and re-renders the current document after an external change. **Rejects** if the engine fails, after firing `onError` and showing the alert. |
+| `openCompose()` | `void` | Never; it opens the new-document compose dialog. |
+
+Host callbacks are non-reactive: passing a fresh inline arrow on every
+render is fine and does not re-trigger a document load. The component holds
+the latest identity behind a ref, so you do not need `useCallback` and you
+never receive a stale closure.
 
 ## Styling contract
 

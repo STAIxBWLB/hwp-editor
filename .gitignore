@@ -5,3 +5,8 @@ dist/
 .planning/
 .claude/
 .gsd/
+
+# Written by `next dev` (next/dist/server/lib/generate-agent-files.js).
+# This repo keeps agent instruction files untracked (see .claude/ above).
+apps/playground/AGENTS.md
+apps/playground/CLAUDE.md

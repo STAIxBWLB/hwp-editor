@@ -49,10 +49,17 @@ export interface MockCalls {
   compose: { spec: DocumentSpecV2; name: string }[];
   render: number;
   validate: number;
+  /** Documents passed to validate(), in call order. */
+  validated: DocumentHandle[];
 }
 
 export interface MockEngine extends HwpEngine {
   calls: MockCalls;
+  /**
+   * Report `validate()` answers with. Mutable so a test can flip the badge
+   * mid-flow (e.g. assert that undo re-validates the restored document).
+   */
+  report: ValidationReport;
 }
 
 export function createMockEngine(opts?: {
@@ -61,7 +68,14 @@ export function createMockEngine(opts?: {
   envelope?: CatEnvelope;
 }): MockEngine {
   const envelope = opts?.envelope ?? makeEnvelope();
-  const calls: MockCalls = { read: [], edit: [], compose: [], render: 0, validate: 0 };
+  const calls: MockCalls = {
+    read: [],
+    edit: [],
+    compose: [],
+    render: 0,
+    validate: 0,
+    validated: [],
+  };
   let editCount = 0;
   const doc = (name: string): DocumentHandle => ({
     name,
@@ -73,10 +87,9 @@ export function createMockEngine(opts?: {
     ...(opts?.reason !== undefined ? { reason: opts.reason } : {}),
     formats: ["hwp", "hwpx"],
   };
-  const report: ValidationReport = { valid: true, errors: [] };
-
-  return {
+  const engine: MockEngine = {
     calls,
+    report: { valid: true, errors: [] },
     read: async (document) => {
       calls.read.push(document);
       return envelope;
@@ -94,12 +107,14 @@ export function createMockEngine(opts?: {
       calls.compose.push({ spec, name });
       return { document: doc(name) };
     },
-    validate: async () => {
+    validate: async (document) => {
       calls.validate += 1;
-      return report;
+      calls.validated.push(document);
+      return engine.report;
     },
     capabilities: async () => capabilities,
   };
+  return engine;
 }
 
 /**

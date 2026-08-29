@@ -14,6 +14,7 @@ export {
   HwpEngineError,
   isHwpEngineError,
   isHwpErrorCode,
+  protectedReasonFromDiagnostics,
   toHwpErrorCode,
 } from "./errors.js";
 export type { HwpErrorCode, HwpEngineErrorOptions } from "./errors.js";

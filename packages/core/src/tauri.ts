@@ -38,7 +38,11 @@ import type {
   RenderResponse,
 } from "./protocol.js";
 import { base64 } from "./http-engine.js";
-import { HwpEngineError, toHwpErrorCode } from "./errors.js";
+import {
+  HwpEngineError,
+  protectedReasonFromDiagnostics,
+  toHwpErrorCode,
+} from "./errors.js";
 import type { HwpErrorCode } from "./errors.js";
 
 /** Signature of `@tauri-apps/api/core`'s invoke, declared here so core stays
@@ -133,9 +137,54 @@ function toEngineError(cmd: string, error: unknown): HwpEngineError {
     }
   }
   const detail = error instanceof Error ? error.message : String(error);
-  return new HwpEngineError(prefixToCode(detail), `${cmd} failed: ${detail}`, {
+  const code = prefixToCode(detail);
+  const protectedReason = protectedReasonFor(cmd, code, detail);
+  if (protectedReason !== null) {
+    return new HwpEngineError("protected", `${cmd} failed: ${protectedReason}`, {
+      cause: error,
+    });
+  }
+  return new HwpEngineError(code, `${cmd} failed: ${detail}`, {
     cause: error,
   });
+}
+
+/**
+ * Commands whose refusal may mean "this document is protected". Mirrors the
+ * server's D-11 rule: `read` and `render` keep succeeding on protected
+ * documents hwp-cli can still open, so a failure there is a real failure and
+ * relabelling it would send the user to the wrong remedy.
+ */
+const PROTECTABLE_COMMANDS: ReadonlySet<string> = new Set([
+  "hwped_edit",
+  "hwped_compose",
+]);
+
+/**
+ * The protection backstop for this transport.
+ *
+ * maru rejects with `Result<T, String>`, and its vocabulary
+ * (dev/maru/src-tauri/src/hwped.rs) has no protected-specific prefix: a
+ * refusal on a 배포용 document arrives under `hwp_failed:` carrying hwp-cli's
+ * own Korean diagnostics, which `prefixToCode` can only read as `failed`.
+ *
+ * That has to be repaired HERE and not downstream. `engineErrorKind`
+ * (packages/react/src/errors.ts) returns as soon as it recognises a code and
+ * never reads the prose, which is the whole point of the Phase 2 contract:
+ * the transport that owns the hwp-cli coupling is the one that must resolve
+ * it, exactly as ERR-03 has the CLI server do in `rethrowProtected`. The
+ * Tauri bridge is that boundary on this transport.
+ *
+ * Only `failed` is upgraded. A `timeout` or `unavailable` that happens to
+ * mention a marker is not a protection refusal.
+ */
+function protectedReasonFor(
+  cmd: string,
+  code: HwpErrorCode,
+  detail: string,
+): string | null {
+  if (code !== "failed" || !PROTECTABLE_COMMANDS.has(cmd)) return null;
+  return protectedReasonFromDiagnostics(detail);
 }
 
 export function createTauriEngine(

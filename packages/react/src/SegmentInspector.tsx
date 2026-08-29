@@ -4,12 +4,18 @@ import type { ParagraphAlignment } from "@hwp-editor/core";
 import { segmentAtRef, segmentText } from "@hwp-editor/core";
 import { plainSegmentText } from "./text.js";
 import { useHwpEditorContext } from "./context.js";
+import type { MessageKey } from "./messages.js";
 
-const ALIGNMENTS: { value: ParagraphAlignment; label: string }[] = [
-  { value: "left", label: "왼쪽" },
-  { value: "center", label: "가운데" },
-  { value: "right", label: "오른쪽" },
-  { value: "justify", label: "양쪽" },
+/**
+ * Alignment buttons. The array stays at module scope but now carries message
+ * KEYS instead of label literals, so the labels resolve through `t()` at
+ * render time without reallocating the array on every render.
+ */
+const ALIGNMENTS: { value: ParagraphAlignment; key: MessageKey }[] = [
+  { value: "left", key: "segment.alignLeft" },
+  { value: "center", key: "segment.alignCenter" },
+  { value: "right", key: "segment.alignRight" },
+  { value: "justify", key: "segment.alignJustify" },
 ];
 
 /**
@@ -18,7 +24,7 @@ const ALIGNMENTS: { value: ParagraphAlignment; label: string }[] = [
  * All controls queue EditOps; nothing touches the engine until Apply.
  */
 export function SegmentInspector(): JSX.Element {
-  const { state, store, envelope, editable } = useHwpEditorContext();
+  const { state, store, envelope, editable, t } = useHwpEditorContext();
   const { selection } = state;
 
   const segment =
@@ -47,10 +53,12 @@ export function SegmentInspector(): JSX.Element {
 
   if (segment === undefined || selection === null) {
     return (
-      <div className="hwped-panel" role="region" aria-label="문단 편집">
-        <p className="hwped-hint">
-          페이지를 클릭해 편집할 문단을 선택하세요.
-        </p>
+      <div
+        className="hwped-panel"
+        role="region"
+        aria-label={t("segment.panelAria")}
+      >
+        <p className="hwped-hint">{t("segment.hint")}</p>
       </div>
     );
   }
@@ -59,17 +67,26 @@ export function SegmentInspector(): JSX.Element {
   const disabled = !editable;
 
   return (
-    <div className="hwped-panel" role="region" aria-label="문단 편집">
+    <div
+      className="hwped-panel"
+      role="region"
+      aria-label={t("segment.panelAria")}
+    >
       <div className="hwped-field">
         <span className="hwped-label">
-          선택 문단 (구역 {selection.section}, 문단 {selection.para})
+          {t("segment.selectedPara", {
+            section: selection.section,
+            para: selection.para,
+          })}
         </span>
-        <div className="hwped-quote">{currentText || "(빈 문단)"}</div>
+        <div className="hwped-quote">
+          {currentText || t("segment.emptyPara")}
+        </div>
       </div>
 
       <div className="hwped-field">
         <label className="hwped-label" htmlFor="hwped-replace">
-          텍스트 교체
+          {t("segment.replaceLabel")}
         </label>
         <div className="hwped-row">
           <input
@@ -79,7 +96,7 @@ export function SegmentInspector(): JSX.Element {
             value={replaceWith}
             disabled={disabled}
             onChange={(e) => setReplaceWith(e.target.value)}
-            placeholder="새 텍스트"
+            placeholder={t("segment.replacePlaceholder")}
           />
           <button
             type="button"
@@ -92,14 +109,14 @@ export function SegmentInspector(): JSX.Element {
               })
             }
           >
-            교체
+            {t("segment.replaceSubmit")}
           </button>
         </div>
       </div>
 
       <div className="hwped-field">
         <label className="hwped-label" htmlFor="hwped-insert">
-          문단 삽입
+          {t("segment.insertLabel")}
         </label>
         <textarea
           id="hwped-insert"
@@ -107,7 +124,7 @@ export function SegmentInspector(): JSX.Element {
           value={insertText}
           disabled={disabled}
           onChange={(e) => setInsertText(e.target.value)}
-          placeholder="삽입할 문단 텍스트"
+          placeholder={t("segment.insertPlaceholder")}
           rows={2}
         />
         <div className="hwped-row">
@@ -122,7 +139,7 @@ export function SegmentInspector(): JSX.Element {
               })
             }
           >
-            앞에 삽입
+            {t("segment.insertBefore")}
           </button>
           <button
             type="button"
@@ -135,7 +152,7 @@ export function SegmentInspector(): JSX.Element {
               })
             }
           >
-            뒤에 삽입
+            {t("segment.insertAfter")}
           </button>
           <button
             type="button"
@@ -148,14 +165,18 @@ export function SegmentInspector(): JSX.Element {
               })
             }
           >
-            문단 삭제
+            {t("segment.deletePara")}
           </button>
         </div>
       </div>
 
       <div className="hwped-field">
-        <span className="hwped-label">정렬</span>
-        <div className="hwped-row" role="group" aria-label="문단 정렬">
+        <span className="hwped-label">{t("segment.alignLabel")}</span>
+        <div
+          className="hwped-row"
+          role="group"
+          aria-label={t("segment.alignGroupAria")}
+        >
           {ALIGNMENTS.map((align) => (
             <button
               key={align.value}
@@ -169,14 +190,14 @@ export function SegmentInspector(): JSX.Element {
                 })
               }
             >
-              {align.label}
+              {t(align.key)}
             </button>
           ))}
         </div>
       </div>
 
       <div className="hwped-field">
-        <span className="hwped-label">글자 서식</span>
+        <span className="hwped-label">{t("segment.formatLabel")}</span>
         <div className="hwped-row">
           <label className="hwped-check">
             <input
@@ -185,7 +206,7 @@ export function SegmentInspector(): JSX.Element {
               disabled={disabled}
               onChange={(e) => setBold(e.target.checked)}
             />
-            굵게
+            {t("segment.bold")}
           </label>
           <input
             className="hwped-input hwped-input-narrow"
@@ -194,8 +215,8 @@ export function SegmentInspector(): JSX.Element {
             value={fontSize}
             disabled={disabled}
             onChange={(e) => setFontSize(e.target.value)}
-            placeholder="크기(pt)"
-            aria-label="글자 크기(pt)"
+            placeholder={t("segment.sizePlaceholder")}
+            aria-label={t("segment.sizeAria")}
           />
           <input
             className="hwped-input hwped-input-narrow"
@@ -203,8 +224,9 @@ export function SegmentInspector(): JSX.Element {
             value={color}
             disabled={disabled}
             onChange={(e) => setColor(e.target.value)}
+            // A sample hex value, not chrome: never a message key (I18N-05).
             placeholder="#FF0000"
-            aria-label="글자 색상"
+            aria-label={t("segment.colorAria")}
           />
           <button
             type="button"
@@ -225,7 +247,7 @@ export function SegmentInspector(): JSX.Element {
               });
             }}
           >
-            서식 적용
+            {t("segment.formatSubmit")}
           </button>
         </div>
       </div>
