@@ -6,8 +6,9 @@
  * These tests run at the DEFAULT locale (`en`) — unlike editor.test.tsx,
  * which pins `locale="ko"` for its pre-i18n selectors. Chrome strings are
  * read from the `en` table rather than hardcoded so a copy change moves the
- * selector with it. The panel/canvas selectors below are still Korean
- * literals: SegmentInspector and PageCanvas are not localized until 03-04.
+ * selector with it. As of 03-04 the panel and canvas selectors are `en` too;
+ * the remaining Korean literals here are DOCUMENT content from the fixture
+ * envelope ("1. 회의록"), which no locale changes.
  */
 
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -55,13 +56,13 @@ const pending = (count: number): string =>
 
 /** Click the heading, type a replacement, queue the op. */
 async function queueReplace(envelope: CatEnvelope = makeEnvelope()): Promise<void> {
-  const page = await screen.findByRole("button", { name: "페이지 1" });
+  const page = await screen.findByRole("button", { name: "Page 1" });
   fireEvent.click(page, { clientY: clientYForPara(envelope, 0) });
   await screen.findByText("1. 회의록");
-  fireEvent.change(screen.getByLabelText("텍스트 교체"), {
+  fireEvent.change(screen.getByLabelText("Replace text"), {
     target: { value: "2. 회의록" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "교체" }));
+  fireEvent.click(screen.getByRole("button", { name: "Replace" }));
   await screen.findByText(pending(1));
 }
 
@@ -75,7 +76,7 @@ describe("HwpEditorHandle", () => {
   it("exposes exactly apply, revert, refresh and openCompose", async () => {
     const ref = createRef<HwpEditorHandle>();
     render(<HwpEditor ref={ref} engine={createMockEngine()} file={file} />);
-    await screen.findByRole("button", { name: "페이지 1" });
+    await screen.findByRole("button", { name: "Page 1" });
 
     expect(Object.keys(handle(ref)).sort()).toEqual([
       "apply",
@@ -89,7 +90,7 @@ describe("HwpEditorHandle", () => {
     const engine = createMockEngine();
     const ref = createRef<HwpEditorHandle>();
     render(<HwpEditor ref={ref} engine={engine} file={file} />);
-    await screen.findByRole("button", { name: "페이지 1" });
+    await screen.findByRole("button", { name: "Page 1" });
 
     await act(async () => {
       await handle(ref).apply();
@@ -101,7 +102,7 @@ describe("HwpEditorHandle", () => {
     const engine = createMockEngine();
     const ref = createRef<HwpEditorHandle>();
     render(<HwpEditor ref={ref} engine={engine} file={file} />);
-    await screen.findByRole("button", { name: "페이지 1" });
+    await screen.findByRole("button", { name: "Page 1" });
     const readsBefore = engine.calls.read.length;
 
     await act(async () => {
@@ -113,7 +114,7 @@ describe("HwpEditorHandle", () => {
   it("opens the compose dialog from openCompose() and returns undefined", async () => {
     const ref = createRef<HwpEditorHandle>();
     render(<HwpEditor ref={ref} engine={createMockEngine()} file={file} />);
-    await screen.findByRole("button", { name: "페이지 1" });
+    await screen.findByRole("button", { name: "Page 1" });
 
     let result: void | undefined;
     act(() => {
@@ -158,7 +159,7 @@ describe("onReady", () => {
   it("fires once with the loaded document after read and render resolve", async () => {
     const onReady = vi.fn();
     render(<HwpEditor engine={createMockEngine()} file={file} onReady={onReady} />);
-    await screen.findByRole("button", { name: "페이지 1" });
+    await screen.findByRole("button", { name: "Page 1" });
 
     expect(onReady).toHaveBeenCalledTimes(1);
     expect(onReady).toHaveBeenCalledWith(file);
@@ -236,7 +237,7 @@ describe("onError", () => {
     render(<HwpEditor engine={engine} file={file} onError={onError} />);
     await queueReplace();
 
-    fireEvent.click(screen.getByRole("button", { name: /^Apply/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Apply \(/ }));
     await screen.findByRole("alert");
     expect(onError.mock.calls[0]?.[0]).toBe(boom);
   });
@@ -270,7 +271,7 @@ describe("onError", () => {
     const onError = vi.fn();
     const ref = createRef<HwpEditorHandle>();
     render(<HwpEditor ref={ref} engine={engine} file={file} onError={onError} />);
-    await screen.findByRole("button", { name: "페이지 1" });
+    await screen.findByRole("button", { name: "Page 1" });
 
     engine.read = async () => {
       throw boom;
@@ -316,11 +317,11 @@ describe("readOnly", () => {
     expect(notice.textContent).toBe(en["toolbar.readOnly"]);
     expect(notice.getAttribute("title")).toBeNull();
 
-    const page = await screen.findByRole("button", { name: "페이지 1" });
+    const page = await screen.findByRole("button", { name: "Page 1" });
     fireEvent.click(page, { clientY: clientYForPara(makeEnvelope(), 0) });
     await screen.findByText("1. 회의록");
-    expect(screen.getByLabelText("텍스트 교체")).toHaveProperty("disabled", true);
-    expect(screen.getByRole("button", { name: /^Apply/ })).toHaveProperty(
+    expect(screen.getByLabelText("Replace text")).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: /^Apply \(/ })).toHaveProperty(
       "disabled",
       true,
     );

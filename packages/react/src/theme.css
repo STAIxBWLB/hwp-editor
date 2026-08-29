@@ -7,6 +7,9 @@
  *   --hwped-muted    secondary text / disabled
  *   --hwped-accent   primary actions, selection
  *   --hwped-border   hairline borders
+ *   --hwped-error    destructive / error text and badges
+ *   --hwped-warning  transient warning (timeout badge only)
+ *   --hwped-success  success badge
  *   --hwped-radius   corner radius
  *   --hwped-font     font stack (default: Pretendard -> system)
  *
@@ -19,6 +22,9 @@
   --hwped-muted: #6b7280;
   --hwped-accent: #1f5fbf;
   --hwped-border: #d7dbe0;
+  --hwped-error: #b91c1c;
+  --hwped-warning: #a16207;
+  --hwped-success: #15803d;
   --hwped-radius: 6px;
   --hwped-font:
     "Pretendard", "Pretendard Variable", "Malgun Gothic", "맑은 고딕",
@@ -32,5 +38,9 @@
     --hwped-muted: #9ca3af;
     --hwped-accent: #5b8def;
     --hwped-border: #33373f;
+    /* Lifted for >= 4.5:1 against --hwped-bg at 11-13px. */
+    --hwped-error: #f87171;
+    --hwped-warning: #fbbf24;
+    --hwped-success: #4ade80;
   }
 }

@@ -10,7 +10,7 @@ import { useHwpEditorContext } from "./context.js";
  * no native field/bookmark listing; see fields.ts.)
  */
 export function FieldsPanel(): JSX.Element {
-  const { store, envelope, editable } = useHwpEditorContext();
+  const { store, envelope, editable, t } = useHwpEditorContext();
   const [drafts, setDrafts] = useState<Record<string, string>>({});
 
   const slots = useMemo(
@@ -20,16 +20,24 @@ export function FieldsPanel(): JSX.Element {
 
   if (envelope === null || slots.length === 0) {
     return (
-      <div className="hwped-panel" role="region" aria-label="필드">
-        <p className="hwped-hint">
-          문서에서 {"{{이름}}"} 형태의 필드 자리표시자를 찾지 못했습니다.
-        </p>
+      <div
+        className="hwped-panel"
+        role="region"
+        aria-label={t("fields.panelAria")}
+      >
+        {/* The `{{name}}` / `{{이름}}` template marker lives inside the
+            message value: it is per-locale copy, not a runtime param. */}
+        <p className="hwped-hint">{t("fields.hint")}</p>
       </div>
     );
   }
 
   return (
-    <div className="hwped-panel" role="region" aria-label="필드">
+    <div
+      className="hwped-panel"
+      role="region"
+      aria-label={t("fields.panelAria")}
+    >
       <ul className="hwped-fields">
         {slots.map((slot) => {
           const segment = segmentAtRef(envelope, slot.segment);
@@ -58,8 +66,8 @@ export function FieldsPanel(): JSX.Element {
                   type="text"
                   value={draft}
                   disabled={!editable}
-                  placeholder="새 값"
-                  aria-label={`필드 ${slot.name} 값`}
+                  placeholder={t("fields.valuePlaceholder")}
+                  aria-label={t("fields.fieldValueAria", { name: slot.name })}
                   onChange={(e) =>
                     setDrafts((prev) => ({ ...prev, [slot.name]: e.target.value }))
                   }
@@ -75,7 +83,7 @@ export function FieldsPanel(): JSX.Element {
                     })
                   }
                 >
-                  설정
+                  {t("fields.setValue")}
                 </button>
               </div>
             </li>

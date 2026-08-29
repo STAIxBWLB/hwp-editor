@@ -51,12 +51,20 @@
   flex: 1 1 auto;
 }
 
+/* A long engine reason must truncate here, not push the spacer, badge,
+   count and buttons out of the toolbar row (the full text stays reachable
+   via the element's title attribute). */
 .hwped-notice {
   color: var(--hwped-muted);
   border: 1px solid var(--hwped-border);
   border-radius: var(--hwped-radius);
   padding: 1px 8px;
   font-size: 12px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 0 1 auto;
 }
 
 .hwped-badge {
@@ -67,13 +75,13 @@
 }
 
 .hwped-badge-ok {
-  color: #15803d;
-  border-color: #15803d;
+  color: var(--hwped-success);
+  border-color: var(--hwped-success);
 }
 
 .hwped-badge-err {
-  color: #b91c1c;
-  border-color: #b91c1c;
+  color: var(--hwped-error);
+  border-color: var(--hwped-error);
 }
 
 .hwped-count {
@@ -110,8 +118,8 @@
 }
 
 .hwped-btn-danger:hover:not(:disabled) {
-  border-color: #b91c1c;
-  color: #b91c1c;
+  border-color: var(--hwped-error);
+  color: var(--hwped-error);
 }
 
 .hwped-btn-link {
@@ -246,7 +254,7 @@
 }
 
 .hwped-error {
-  color: #b91c1c;
+  color: var(--hwped-error);
   margin: 0;
   padding: 6px 10px;
   border-bottom: 1px solid var(--hwped-border);
@@ -263,7 +271,7 @@
 
 /* timeout is transient (retry may succeed); unavailable/protected are not. */
 .hwped-error-timeout {
-  color: #a16207;
+  color: var(--hwped-warning);
 }
 
 /* ---- page canvas ---- */
