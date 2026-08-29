@@ -37,3 +37,13 @@ export { useHwpEditorContext } from "./context.js";
 export type { HwpEditorContextValue } from "./context.js";
 export { classifyEngineError, ENGINE_ERROR_LABELS } from "./errors.js";
 export type { EngineErrorKind } from "./errors.js";
+// The locale tables are public: a host writing `messages` overrides needs
+// them to discover which keys exist and what the defaults say.
+export { en, ko, createT } from "./messages.js";
+export type {
+  MessageTable,
+  MessageKey,
+  HwpEditorMessages,
+  Locale,
+  TFunction,
+} from "./messages.js";

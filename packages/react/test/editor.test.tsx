@@ -1,3 +1,13 @@
+/**
+ * Editor flow tests, predating the string table.
+ *
+ * Every render here pins `locale="ko"` on purpose: the selectors below query
+ * by the Korean literals that shipped before localization, so the pin keeps
+ * them meaningful while the default locale flips to English. It is migration
+ * sequencing, not the end state — 03-05 makes this file table-driven and
+ * drops the pin. Do not copy the pattern into new tests; see i18n.test.tsx.
+ */
+
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import type { DocumentHandle } from "@hwp-editor/core";
@@ -41,7 +51,7 @@ describe("HwpEditor edit flow", () => {
     const onChange = vi.fn();
     const onDirtyChange = vi.fn();
     render(
-      <HwpEditor
+      <HwpEditor locale="ko"
         engine={engine}
         file={file}
         onChange={onChange}
@@ -79,7 +89,7 @@ describe("HwpEditor edit flow", () => {
 
   it("applies queued ops on Cmd/Ctrl+Enter and clears selection on Escape", async () => {
     const engine = createMockEngine();
-    const { container } = render(<HwpEditor engine={engine} file={file} />);
+    const { container } = render(<HwpEditor locale="ko" engine={engine} file={file} />);
 
     const page = await screen.findByRole("button", { name: "페이지 1" });
     fireEvent.click(page, { clientY: clientYForPara(makeEnvelope(), 1) });
@@ -111,7 +121,7 @@ describe("HwpEditor protected documents", () => {
       editable: false,
       reason: "배포용 문서",
     });
-    render(<HwpEditor engine={engine} file={file} />);
+    render(<HwpEditor locale="ko" engine={engine} file={file} />);
 
     await screen.findByText("읽기 전용: 배포용 문서");
     const page = await screen.findByRole("button", { name: "페이지 1" });
@@ -143,7 +153,7 @@ describe("HwpEditor engine error states", () => {
 
   it("renders a timeout badge distinctly from other load failures", async () => {
     render(
-      <HwpEditor
+      <HwpEditor locale="ko"
         engine={failingEngine("hwp-engine HTTP 504: hwp render timed out after 60000ms")}
         file={file}
       />,
@@ -156,7 +166,7 @@ describe("HwpEditor engine error states", () => {
 
   it("renders a binary-missing badge distinctly", async () => {
     render(
-      <HwpEditor
+      <HwpEditor locale="ko"
         engine={failingEngine("hwp-engine HTTP 503: hwp binary not found: hwp")}
         file={file}
       />,
@@ -173,7 +183,7 @@ describe("HwpEditor engine error states", () => {
         "hwp-engine HTTP 422: hwp edit failed: distribution (배포용) document",
       );
     };
-    render(<HwpEditor engine={engine} file={file} />);
+    render(<HwpEditor locale="ko" engine={engine} file={file} />);
 
     const page = await screen.findByRole("button", { name: "페이지 1" });
     fireEvent.click(page, { clientY: clientYForPara(makeEnvelope(), 0) });
@@ -192,7 +202,7 @@ describe("HwpEditor engine error states", () => {
 
   it("renders unknown failures without a kind badge", async () => {
     render(
-      <HwpEditor engine={failingEngine("hwp-engine HTTP 500: boom")} file={file} />,
+      <HwpEditor locale="ko" engine={failingEngine("hwp-engine HTTP 500: boom")} file={file} />,
     );
     const alert = await screen.findByRole("alert");
     expect(alert.getAttribute("data-error-kind")).toBe("generic");
@@ -206,7 +216,7 @@ describe("HwpEditor engine error states", () => {
     engine.edit = async () => {
       throw new HwpEngineError("protected", "이 문서는 편집할 수 없습니다");
     };
-    render(<HwpEditor engine={engine} file={file} />);
+    render(<HwpEditor locale="ko" engine={engine} file={file} />);
 
     const page = await screen.findByRole("button", { name: "페이지 1" });
     fireEvent.click(page, { clientY: clientYForPara(makeEnvelope(), 0) });
@@ -231,7 +241,7 @@ describe("HwpEditor engine error states", () => {
       renders += 1;
       throw new HwpEngineError("timeout", "hwp render timed out after 60000ms");
     };
-    render(<HwpEditor engine={engine} file={file} />);
+    render(<HwpEditor locale="ko" engine={engine} file={file} />);
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("문서 열기 실패");
@@ -246,7 +256,7 @@ describe("HwpEditor engine error states", () => {
     engine.capabilities = async () => {
       throw new HwpEngineError("timeout", "무언가 잘못되었습니다");
     };
-    render(<HwpEditor engine={engine} file={file} />);
+    render(<HwpEditor locale="ko" engine={engine} file={file} />);
 
     const alert = await screen.findByRole("alert");
     expect(alert.getAttribute("data-error-kind")).toBe("timeout");
@@ -258,7 +268,7 @@ describe("HwpEditor revert", () => {
   it("restores the snapshot taken before the applied edit", async () => {
     const engine = createMockEngine();
     const onChange = vi.fn();
-    render(<HwpEditor engine={engine} file={file} onChange={onChange} />);
+    render(<HwpEditor locale="ko" engine={engine} file={file} onChange={onChange} />);
 
     const page = await screen.findByRole("button", { name: "페이지 1" });
     fireEvent.click(page, { clientY: clientYForPara(makeEnvelope(), 0) });
@@ -281,7 +291,7 @@ describe("HwpEditor revert", () => {
 
   it("leaves the store untouched when the undo read/render fails", async () => {
     const engine = createMockEngine();
-    render(<HwpEditor engine={engine} file={file} />);
+    render(<HwpEditor locale="ko" engine={engine} file={file} />);
 
     const page = await screen.findByRole("button", { name: "페이지 1" });
     fireEvent.click(page, { clientY: clientYForPara(makeEnvelope(), 0) });
@@ -316,7 +326,7 @@ describe("HwpEditor compose flow", () => {
   it("preset picker + guided form builds DocumentSpec v2 and opens the result", async () => {
     const engine = createMockEngine();
     const onChange = vi.fn();
-    render(<HwpEditor engine={engine} file={null} onChange={onChange} />);
+    render(<HwpEditor locale="ko" engine={engine} file={null} onChange={onChange} />);
 
     fireEvent.click(
       await screen.findByRole("button", { name: "새 문서 만들기" }),
@@ -361,7 +371,7 @@ describe("HwpEditor compose flow", () => {
   async function driveCompose(
     engine: ReturnType<typeof createMockEngine>,
   ): Promise<HTMLElement> {
-    render(<HwpEditor engine={engine} file={null} />);
+    render(<HwpEditor locale="ko" engine={engine} file={null} />);
     fireEvent.click(
       await screen.findByRole("button", { name: "새 문서 만들기" }),
     );
@@ -404,7 +414,7 @@ describe("HwpEditor compose flow", () => {
 describe("HwpEditor table flow", () => {
   it("selecting a table segment opens the grid; set-cell queues the CLI coords", async () => {
     const engine = createMockEngine();
-    render(<HwpEditor engine={engine} file={file} />);
+    render(<HwpEditor locale="ko" engine={engine} file={file} />);
 
     const page = await screen.findByRole("button", { name: "페이지 1" });
     fireEvent.click(page, { clientY: clientYForPara(makeEnvelope(), 2) });
@@ -430,7 +440,7 @@ describe("HwpEditor table flow", () => {
 describe("HwpEditor fields flow", () => {
   it("lists {{field}} slots, jumps to the segment, and queues set-field", async () => {
     const engine = createMockEngine();
-    render(<HwpEditor engine={engine} file={file} />);
+    render(<HwpEditor locale="ko" engine={engine} file={file} />);
 
     await screen.findByRole("button", { name: "페이지 1" });
     fireEvent.click(screen.getByRole("tab", { name: "필드" }));

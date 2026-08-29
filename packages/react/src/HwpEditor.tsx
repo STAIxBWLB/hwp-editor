@@ -25,6 +25,8 @@ import { ComposePanel } from "./ComposePanel.js";
 import { isTableSlice } from "./tables.js";
 import { ErrorLine } from "./ErrorLine.js";
 import { toEditorError } from "./errors.js";
+import { createT } from "./messages.js";
+import type { HwpEditorMessages, Locale } from "./messages.js";
 import { segmentText } from "@hwp-editor/core";
 
 export interface HwpEditorProps {
@@ -32,6 +34,17 @@ export interface HwpEditorProps {
   engine: HwpEngine;
   /** Document to open; null shows the empty state with the new-doc entry. */
   file: DocumentHandle | null;
+  /**
+   * UI language for the editor chrome. Defaults to `"en"`. Read at mount and
+   * on change; also drives the root `lang` attribute. Document content and
+   * engine-authored error prose are never translated.
+   */
+  locale?: Locale;
+  /**
+   * Per-key overrides applied on top of the locale table. A key not listed
+   * keeps its locale default; unknown keys are a compile error.
+   */
+  messages?: HwpEditorMessages;
   /** Called whenever the document bytes change (applied edit, undo, compose). */
   onChange?: (document: DocumentHandle) => void;
   /** Called when the dirty flag (pending ops queued) changes. */
@@ -59,7 +72,18 @@ const RENDER_SVG = { format: "svg" } as const;
  * point opens ComposePanel.
  */
 export function HwpEditor(props: HwpEditorProps): JSX.Element {
-  const { engine, file, onChange, onDirtyChange, className, style } = props;
+  const {
+    engine,
+    file,
+    locale = "en",
+    messages,
+    onChange,
+    onDirtyChange,
+    className,
+    style,
+  } = props;
+
+  const t = useMemo(() => createT(locale, messages), [locale, messages]);
 
   const [store] = useState<EditorStore>(() => createStore());
   // getServerSnapshot is required for SSR hosts (Next.js); a fresh store's
@@ -213,6 +237,7 @@ export function HwpEditor(props: HwpEditorProps): JSX.Element {
       applyPendingOps,
       refresh,
       openCompose,
+      t,
     }),
     [
       engine,
@@ -225,6 +250,7 @@ export function HwpEditor(props: HwpEditorProps): JSX.Element {
       applyPendingOps,
       refresh,
       openCompose,
+      t,
     ],
   );
 
@@ -247,17 +273,25 @@ export function HwpEditor(props: HwpEditorProps): JSX.Element {
         style={style}
         onKeyDown={onKeyDown}
         data-status={state.status}
+        // No `dir`: both supported locales are ltr.
+        lang={locale}
       >
-        <header className="hwped-toolbar" role="toolbar" aria-label="편집 도구">
+        <header
+          className="hwped-toolbar"
+          role="toolbar"
+          aria-label={t("toolbar.toolsAria")}
+        >
           <span className="hwped-title">
             {state.document?.name ?? "hwp-editor"}
           </span>
           {!editable && (
             <span className="hwped-notice" role="note">
-              읽기 전용
+              {t("toolbar.readOnly")}
+              {/* The engine's reason is its own prose and is shown verbatim
+                  under either locale; only the fallback label is localized. */}
               {capabilities?.reason !== undefined
                 ? `: ${capabilities.reason}`
-                : " (보호/배포 문서)"}
+                : ` (${t("error.kind.protected")})`}
             </span>
           )}
           <span className="hwped-spacer" />
@@ -269,15 +303,20 @@ export function HwpEditor(props: HwpEditorProps): JSX.Element {
                   : "hwped-badge hwped-badge-err"
               }
               role="status"
-              aria-label="검증 결과"
+              aria-label={t("validation.aria")}
             >
               {validation.valid
-                ? "유효"
-                : `오류 ${validation.errors.length}건`}
+                ? t("validation.valid")
+                : t("validation.errors", { count: validation.errors.length })}
             </span>
           )}
-          <span className="hwped-count" aria-label="대기 중인 편집 수">
-            대기 편집 {state.pendingOps.length}
+          <span
+            className="hwped-count"
+            aria-label={t("toolbar.pendingEdits", {
+              count: state.pendingOps.length,
+            })}
+          >
+            {t("toolbar.pendingEdits", { count: state.pendingOps.length })}
           </span>
           <button
             type="button"
@@ -285,7 +324,7 @@ export function HwpEditor(props: HwpEditorProps): JSX.Element {
             onClick={revert}
             disabled={state.snapshots.length === 0 || state.status === "applying"}
           >
-            되돌리기
+            {t("toolbar.revert")}
           </button>
           <button
             type="button"
@@ -294,49 +333,55 @@ export function HwpEditor(props: HwpEditorProps): JSX.Element {
             disabled={!dirty || !editable || state.status === "applying"}
           >
             {state.status === "applying"
-              ? "적용 중..."
-              : `적용 (${state.pendingOps.length})`}
+              ? t("toolbar.applying")
+              : t("toolbar.applyWithCount", {
+                  count: state.pendingOps.length,
+                })}
           </button>
           <button
             type="button"
             className="hwped-btn"
             onClick={() => setComposing(true)}
           >
-            새 문서
+            {t("toolbar.newDocument")}
           </button>
         </header>
 
         {state.status === "error" && state.error !== null && (
-          <ErrorLine prefix="편집 적용 실패" {...state.error} />
+          <ErrorLine prefix={t("error.prefix.apply")} {...state.error} />
         )}
         {loadError !== null && (
-          <ErrorLine prefix="문서 열기 실패" {...loadError} />
+          <ErrorLine prefix={t("error.prefix.load")} {...loadError} />
         )}
 
         <div className="hwped-main">
           {state.document === null ? (
-            <div className="hwped-canvas" role="main" aria-label="문서 페이지">
+            <div
+              className="hwped-canvas"
+              role="main"
+              aria-label={t("canvas.aria")}
+            >
               <div className="hwped-empty">
-                <p>열린 문서가 없습니다.</p>
+                <p>{t("canvas.empty")}</p>
                 <button
                   type="button"
                   className="hwped-btn hwped-btn-primary"
                   onClick={() => setComposing(true)}
                 >
-                  새 문서 만들기
+                  {t("canvas.createCta")}
                 </button>
               </div>
             </div>
           ) : (
             <PageCanvas />
           )}
-          <aside className="hwped-side" aria-label="편집 패널">
+          <aside className="hwped-side" aria-label={t("side.panelAria")}>
             <div className="hwped-tabs" role="tablist">
               {(
                 [
-                  ["para", "문단"],
-                  ["table", "표"],
-                  ["fields", "필드"],
+                  ["para", t("tabs.para")],
+                  ["table", t("tabs.table")],
+                  ["fields", t("tabs.fields")],
                 ] as [SideTab, string][]
               ).map(([value, label]) => (
                 <button
