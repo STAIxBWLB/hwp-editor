@@ -208,3 +208,90 @@ describe("createTauriEngine errors", () => {
     expect("status" in err).toBe(false);
   });
 });
+
+/**
+ * Regression: the Tauri transport used to lose `protected` entirely.
+ *
+ * maru's vocabulary (dev/maru/src-tauri/src/hwped.rs) has no
+ * protected-specific prefix, so a refusal on a 배포용 document arrives under
+ * `hwp_failed:` and `prefixToCode` can only read it as `failed`. Downstream,
+ * `engineErrorKind` (packages/react/src/errors.ts) returns as soon as it
+ * recognises a code and never reads the prose, so the Korean markers in
+ * `classifyEngineError` were never consulted and the badge disappeared. The
+ * pre-existing structured-`{ code: "protected" }` test could not catch this:
+ * that branch is dead until maru moves off `Result<T, String>`.
+ */
+describe("createTauriEngine protection backstop", () => {
+  const rejectWith = (detail: string): TauriInvoke => () =>
+    Promise.reject(detail);
+
+  const MARKER_CASES: readonly (readonly [string, string])[] = [
+    ["암호화된 문서", "encrypted document; hwp-cli refuses edit/compose"],
+    ["DRM", "DRM-protected document; hwp-cli refuses edit/compose"],
+    ["서명된 문서", "signed document; hwp-cli refuses edit/compose"],
+    [
+      "배포용 문서",
+      "distribution (배포용) document; hwp-cli refuses edit/compose",
+    ],
+  ];
+
+  it.each(MARKER_CASES)(
+    "upgrades an edit refusal carrying %j to protected",
+    async (marker, message) => {
+      const engine = createTauriEngine(
+        rejectWith(`hwp_failed: hwp exited with status 1: ${marker}는 편집할 수 없습니다`),
+      );
+      const err = (await engine
+        .edit(doc, [{ kind: "replace", find: "가", replace: "나" }])
+        .then(() => null, (e: unknown) => e)) as HwpEngineError;
+      expect(err.code).toBe("protected");
+      expect(err.message).toBe(`hwped_edit failed: ${message}`);
+    },
+  );
+
+  it("upgrades a compose refusal the same way", async () => {
+    const engine = createTauriEngine(
+      rejectWith("hwp_failed: 배포용 문서에는 쓸 수 없습니다"),
+    );
+    const err = (await engine
+      .compose({ version: "2.0", document: { sections: [] } } as never, "out.hwpx")
+      .then(() => null, (e: unknown) => e)) as HwpEngineError;
+    expect(err.code).toBe("protected");
+    expect(err.message).toBe(
+      "hwped_compose failed: distribution (배포용) document; hwp-cli refuses edit/compose",
+    );
+  });
+
+  // D-11, mirrored from the CLI server: hwp-cli can still READ documents it
+  // refuses to edit, so a read/render failure is a real failure. Relabelling
+  // it protected would send the user to the wrong remedy.
+  it("leaves a read refusal alone even when it carries a marker", async () => {
+    const engine = createTauriEngine(
+      rejectWith("hwp_failed: 배포용 문서 처리 중 오류"),
+    );
+    const err = (await engine.read(doc).then(() => null, (e: unknown) => e)) as HwpEngineError;
+    expect(err.code).toBe("failed");
+  });
+
+  // Only `failed` is upgraded: a timeout that happens to name a marker is a
+  // timeout, not a protection refusal.
+  it("does not upgrade a non-failed code that mentions a marker", async () => {
+    const engine = createTauriEngine(
+      rejectWith("hwp_timeout: 배포용 문서 편집이 60000ms 후 시간 초과"),
+    );
+    const err = (await engine
+      .edit(doc, [{ kind: "replace", find: "가", replace: "나" }])
+      .then(() => null, (e: unknown) => e)) as HwpEngineError;
+    expect(err.code).toBe("timeout");
+  });
+
+  it("leaves an unmarked edit failure as failed, with its detail intact", async () => {
+    const detail = "hwp_failed: hwp exited with status 1: 지원하지 않는 HWP 버전입니다";
+    const engine = createTauriEngine(rejectWith(detail));
+    const err = (await engine
+      .edit(doc, [{ kind: "replace", find: "가", replace: "나" }])
+      .then(() => null, (e: unknown) => e)) as HwpEngineError;
+    expect(err.code).toBe("failed");
+    expect(err.message).toBe(`hwped_edit failed: ${detail}`);
+  });
+});

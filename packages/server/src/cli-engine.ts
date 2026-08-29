@@ -20,6 +20,7 @@ import path from "node:path";
 import {
   opsToArgv,
   parseCatEnvelope,
+  protectedReasonFromDiagnostics,
   type Capabilities,
   type CatEnvelope,
   type ComposeResult,
@@ -284,8 +285,9 @@ async function tryJson(
  * booleans, so without this table four protection kinds pass the pre-flight
  * silently. Best-effort only: hwp-cli's 0.8.8 changelog states the
  * certificate/DRM/signature branches are unverified against a genuine
- * protected file, so PROTECTED_MARKERS (the stderr backstop) is what
- * actually carries the requirement.
+ * protected file, so the marker table behind `protectedReasonFromStderr`
+ * (the stderr backstop, shared from core) is what actually carries the
+ * requirement.
  */
 const PROTECTED_ATTRIBUTES: Readonly<Record<string, string>> = {
   "DRM 보안": "DRM-protected document (DRM 보안)",
@@ -320,50 +322,20 @@ export function documentEditability(info: unknown): { editable: boolean; reason?
 }
 
 /**
- * Korean markers in hwp-cli's runtime diagnostics, each paired with the
- * fixed, server-authored message the client sees.
+ * The stderr backstop for this transport, kept under its stderr-specific
+ * name because that is what this transport actually reads. The marker table
+ * itself lives in `@hwp-editor/core`: hwp-cli's Korean diagnostics are its
+ * vocabulary, not the CLI server's, and the Tauri bridge needs the same
+ * table for the same reason (a second copy would drift the moment hwp-cli
+ * rewords a message).
  *
- * THESE MARKERS STAY KOREAN PERMANENTLY. Do not delete them after seeing
- * `scrubbedEnv()` pin HWP_LANG two functions away. HWP_LANG and --lang feed
- * exactly one consumer, `localize()`
- * (hwp-cli/crates/hwp-cli/src/i18n.rs:71-77), which rewrites clap
- * about/help strings; runtime diagnostics are hardcoded Korean thiserror
- * attributes with no locale branch (crates/hwp5/src/error.rs:1-92), verified
- * by running the binary under HWP_LANG=en, HWP_LANG=ko, and no locale env at
- * all and getting byte-identical Korean output all three times. Deleting
- * these degrades protected detection to the hwp5-booleans-only pre-flight,
- * which misses every HWPX protection and four of six hwp5 kinds.
- *
- * Four entries cover all seven refusal messages: `암호화된 문서` also matches
- * `공인 인증서로 암호화된 문서는...` and the HWPX Encrypted variant, and `DRM`
- * matches both Drm and CertDrm. `지원하지 않습니다` is deliberately NOT a
- * marker — Hwp5Error::UnsupportedVersion ("지원하지 않는 HWP 버전입니다")
- * shares that phrasing, and a false `protected` on a version problem sends
- * the user to the wrong remedy.
- *
- * Matching is a UTF-16 substring test with the markers written precomposed
- * (NFC) to mirror the Rust source literals. Decomposed (NFD) stderr would
- * not match and the failure would stay `failed` — a safe degradation.
- */
-const PROTECTED_MARKERS: ReadonlyArray<readonly [string, string]> = [
-  ["암호화된 문서", "encrypted document; hwp-cli refuses edit/compose"],
-  ["DRM", "DRM-protected document; hwp-cli refuses edit/compose"],
-  ["서명된 문서", "signed document; hwp-cli refuses edit/compose"],
-  ["배포용 문서", "distribution (배포용) document; hwp-cli refuses edit/compose"],
-];
-
-/**
- * The stderr backstop. Returns one of the four fixed constants above, or
- * null. The stderr argument is never interpolated into the result: raw CLI
- * output stays on the non-serialized `HwpCliError.stderr` field, so this
- * path adds no new CLI-output-to-client leak (Phase 4 SEC-06 owns the
- * pre-existing one in `runCliOk`).
+ * The stderr argument is never interpolated into the result: raw CLI output
+ * stays on the non-serialized `HwpCliError.stderr` field, so this path adds
+ * no new CLI-output-to-client leak (Phase 4 SEC-06 owns the pre-existing one
+ * in `runCliOk`).
  */
 export function protectedReasonFromStderr(stderr: string): string | null {
-  for (const [marker, message] of PROTECTED_MARKERS) {
-    if (stderr.includes(marker)) return message;
-  }
-  return null;
+  return protectedReasonFromDiagnostics(stderr);
 }
 
 /**
