@@ -286,10 +286,12 @@ export function HwpEditor(props: HwpEditorProps): JSX.Element {
           </span>
           {!editable && (
             <span className="hwped-notice" role="note">
-              읽기 전용
+              {t("toolbar.readOnly")}
+              {/* The engine's reason is its own prose and is shown verbatim
+                  under either locale; only the fallback label is localized. */}
               {capabilities?.reason !== undefined
                 ? `: ${capabilities.reason}`
-                : " (보호/배포 문서)"}
+                : ` (${t("error.kind.protected")})`}
             </span>
           )}
           <span className="hwped-spacer" />
@@ -301,11 +303,11 @@ export function HwpEditor(props: HwpEditorProps): JSX.Element {
                   : "hwped-badge hwped-badge-err"
               }
               role="status"
-              aria-label="검증 결과"
+              aria-label={t("validation.aria")}
             >
               {validation.valid
-                ? "유효"
-                : `오류 ${validation.errors.length}건`}
+                ? t("validation.valid")
+                : t("validation.errors", { count: validation.errors.length })}
             </span>
           )}
           <span
@@ -346,36 +348,40 @@ export function HwpEditor(props: HwpEditorProps): JSX.Element {
         </header>
 
         {state.status === "error" && state.error !== null && (
-          <ErrorLine prefix="편집 적용 실패" {...state.error} />
+          <ErrorLine prefix={t("error.prefix.apply")} {...state.error} />
         )}
         {loadError !== null && (
-          <ErrorLine prefix="문서 열기 실패" {...loadError} />
+          <ErrorLine prefix={t("error.prefix.load")} {...loadError} />
         )}
 
         <div className="hwped-main">
           {state.document === null ? (
-            <div className="hwped-canvas" role="main" aria-label="문서 페이지">
+            <div
+              className="hwped-canvas"
+              role="main"
+              aria-label={t("canvas.aria")}
+            >
               <div className="hwped-empty">
-                <p>열린 문서가 없습니다.</p>
+                <p>{t("canvas.empty")}</p>
                 <button
                   type="button"
                   className="hwped-btn hwped-btn-primary"
                   onClick={() => setComposing(true)}
                 >
-                  새 문서 만들기
+                  {t("canvas.createCta")}
                 </button>
               </div>
             </div>
           ) : (
             <PageCanvas />
           )}
-          <aside className="hwped-side" aria-label="편집 패널">
+          <aside className="hwped-side" aria-label={t("side.panelAria")}>
             <div className="hwped-tabs" role="tablist">
               {(
                 [
-                  ["para", "문단"],
-                  ["table", "표"],
-                  ["fields", "필드"],
+                  ["para", t("tabs.para")],
+                  ["table", t("tabs.table")],
+                  ["fields", t("tabs.fields")],
                 ] as [SideTab, string][]
               ).map(([value, label]) => (
                 <button
