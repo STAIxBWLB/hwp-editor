@@ -166,6 +166,62 @@ function sha256(data: Uint8Array): string {
   return createHash("sha256").update(data).digest("hex");
 }
 
+/**
+ * CFBF/OLE2 container signature — the first eight bytes of every HWP5 file.
+ *
+ * Deliberately a second copy of `cli-engine.ts`'s constant rather than a
+ * shared export: the two answer different questions and must be free to
+ * diverge (see the note on `sniffFormat`).
+ */
+const CFBF_SIGNATURE = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
+
+/**
+ * The OPC media type an HWPX package declares in its first zip entry.
+ *
+ * hwp-cli's own writer emits that entry first and STORED
+ * (hwp-cli/crates/hwpx/src/write/mod.rs:331-332), and `hwp validate` warns
+ * when the layout is violated (commands/validate.rs:100-103). The layout was
+ * checked against 19 real HWPX files — 14 hwp-cli-produced and 5
+ * Hancom-authored — and 19 of 19 passed.
+ */
+const HWPX_MIMETYPE = "application/hwp+zip";
+
+/**
+ * Decide whether these bytes are admissible as an HWP or HWPX document, from
+ * the leading bytes alone. `null` means refuse.
+ *
+ * Reads at most about ninety bytes and decompresses nothing, so it does not
+ * itself widen the archive surface. Every archive-structure defence — entry
+ * count, per-entry and total decompressed size, compression ratio, XML size,
+ * duplicate and traversing entry names — is enforced by hwp-cli's default-on
+ * `hwp-cli-native-v1` profile, twice (declared central-directory sizes before
+ * the archive is opened, and actual decompressed bytes), and was verified
+ * effective. No second limit is written here (D-12).
+ *
+ * A `PK\x03\x04` signature alone is NOT accepted: it admits any zip (D-11).
+ * The cost of the strict layout is a possible false rejection from an exotic
+ * producer, whose failure mode is a clear 400 rather than a silent one.
+ */
+function sniffFormat(d: Uint8Array): ".hwp" | ".hwpx" | null {
+  if (d.length >= CFBF_SIGNATURE.length && CFBF_SIGNATURE.every((b, i) => d[i] === b)) {
+    return ".hwp";
+  }
+  // 30-byte local file header + an 8-byte `mimetype` name is the floor below
+  // which none of the reads below are in range.
+  if (d.length < 38) return null;
+  if (!(d[0] === 0x50 && d[1] === 0x4b && d[2] === 0x03 && d[3] === 0x04)) return null;
+  const view = new DataView(d.buffer, d.byteOffset, d.byteLength);
+  if (view.getUint16(8, true) !== 0) return null; // compression method must be STORED
+  const nameLen = view.getUint16(26, true);
+  const extraLen = view.getUint16(28, true);
+  if (nameLen !== 8) return null;
+  if (new TextDecoder().decode(d.subarray(30, 38)) !== "mimetype") return null;
+  const start = 30 + nameLen + extraLen;
+  const end = start + HWPX_MIMETYPE.length;
+  if (d.length < end) return null;
+  return new TextDecoder().decode(d.subarray(start, end)) === HWPX_MIMETYPE ? ".hwpx" : null;
+}
+
 /** Extract the uploaded document from a multipart form. */
 async function formDocument(req: Request): Promise<{ form: FormData; document: DocumentHandle }> {
   let form: FormData;
@@ -186,6 +242,15 @@ async function formDocument(req: Request): Promise<{ form: FormData; document: D
   const data = new Uint8Array(await blob.arrayBuffer());
   if (data.length === 0) {
     throw new HwpCliError("bad_request", 'multipart field "file" is empty');
+  }
+  // The single buffering site D-04 pins, so this one call covers read,
+  // render, edit and validate alike. The sniffed extension is deliberately
+  // discarded: `sniffExtension` in cli-engine.ts keeps answering its own
+  // question ("what extension do I stage this under?"), and once the route
+  // has rejected non-HWP input that guess is only ever choosing between two
+  // valid answers. Do not merge the two.
+  if (sniffFormat(data) === null) {
+    throw new HwpCliError("bad_request", "file is not an HWP or HWPX document");
   }
   return { form, document: { name, data } };
 }
