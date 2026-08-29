@@ -327,3 +327,82 @@ describe("capabilities", () => {
     });
   }, 30_000);
 });
+
+/** The tmpdir roots a staged path or a resolved binary path would sit under. */
+const ABSOLUTE_PATH = /\/(tmp|var|Users|home|opt)\//;
+
+async function thrown(promise: Promise<unknown>): Promise<HwpCliError> {
+  const error = await promise.then(
+    () => null,
+    (e: unknown) => e,
+  );
+  expect(error).toBeInstanceOf(HwpCliError);
+  return error as HwpCliError;
+}
+
+describe("no leak: engine messages carry no path and no CLI output", () => {
+  it("names the subcommand and exit code, keeping CLI output on stderr and detail", async () => {
+    const { bin } = createFakeBin({
+      mode: "fail",
+      info: "{}",
+      editStderr: "boom on stderr",
+      stdout: "chatter on stdout",
+    });
+    const error = await thrown(createCliEngine({ bin }).edit(DOC, []));
+    expect(error.reason).toBe("failed");
+    expect(error.message).toContain("edit");
+    expect(error.message).toContain("exit 3");
+    expect(error.message).not.toContain("boom on stderr");
+    expect(error.message).not.toContain("chatter on stdout");
+    // stderr is what protectedReasonFromStderr reads; it must survive verbatim.
+    expect(error.stderr).toContain("boom on stderr");
+    expect(error.detail).toContain("boom on stderr");
+    expect(error.detail).toContain(bin);
+  }, 30_000);
+
+  it("reports a missing binary without naming the path it tried", async () => {
+    const error = await thrown(createCliEngine({ bin: "/nonexistent/hwp" }).capabilities());
+    expect(error.reason).toBe("unavailable");
+    // Pinned by packages/react/src/errors.ts's fallback classifier.
+    expect(error.message).toContain("binary not found");
+    expect(error.message).not.toContain("/nonexistent/hwp");
+    expect(error.detail).toContain("/nonexistent/hwp");
+  }, 30_000);
+
+  it("reports an unparseable version without quoting the output", async () => {
+    const { bin } = createFakeBin({ version: "no semver here" });
+    const error = await thrown(createCliEngine({ bin }).capabilities());
+    expect(error.reason).toBe("version");
+    expect(error.message).toMatch(/parse/i);
+    expect(error.message).not.toContain("no semver here");
+    expect(error.detail).toContain("no semver here");
+  }, 30_000);
+
+  it("produces no message matching an absolute filesystem path", async () => {
+    const messages: string[] = [];
+    const collect = async (promise: Promise<unknown>): Promise<void> => {
+      const error = await promise.then(
+        () => null,
+        (e: unknown) => e,
+      );
+      if (error instanceof Error) messages.push(error.message);
+    };
+    // The fakes themselves live under the tmpdir, so a leaked `bin` trips the
+    // pattern as surely as a leaked staged input path does.
+    const failing = createFakeBin({
+      mode: "fail",
+      info: "{}",
+      editStderr: "cannot open /var/folders/xx/in.hwpx",
+    });
+    await collect(createCliEngine({ bin: failing.bin }).edit(DOC, []));
+    await collect(createCliEngine({ bin: failing.bin }).validate(DOC));
+    await collect(createCliEngine({ bin: createFakeBin({ version: "none" }).bin }).capabilities());
+    await collect(createCliEngine({ bin: createFakeBin({ version: "0.7.0" }).bin }).capabilities());
+    await collect(
+      createCliEngine({ bin: createFakeBin({ helpFixture: helpWithoutSetCell() }).bin }).capabilities(),
+    );
+    await collect(createCliEngine({ bin: "/nonexistent/hwp" }).capabilities());
+    expect(messages.length).toBeGreaterThanOrEqual(4);
+    for (const message of messages) expect(message).not.toMatch(ABSOLUTE_PATH);
+  }, 60_000);
+});
