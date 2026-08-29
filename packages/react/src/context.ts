@@ -36,6 +36,14 @@ export interface HwpEditorContextValue {
    * cannot be localized at all.
    */
   t: TFunction;
+  /**
+   * Host error callback, passed straight through from `HwpEditorProps`. A
+   * panel that owns its own error state (ComposePanel) has no other way to
+   * reach the host; the caught value travels verbatim.
+   */
+  // `| undefined` is load-bearing under exactOptionalPropertyTypes: the
+  // provider spreads the prop through whether or not the host passed one.
+  onError?: ((error: unknown) => void) | undefined;
 }
 
 export const HwpEditorContext = createContext<HwpEditorContextValue | null>(

@@ -47,6 +47,28 @@ export interface HwpEditorProps {
    * keeps its locale default; unknown keys are a compile error.
    */
   messages?: HwpEditorMessages;
+  /**
+   * Force the editor read-only regardless of what the engine reports. A UI
+   * affordance, NOT an authorization boundary: a host that must actually
+   * prevent writes enforces that server-side (see the server package's
+   * `authorize` hook). Wins over an editable engine; never re-enables a
+   * document the engine reports as protected.
+   */
+  readOnly?: boolean;
+  /**
+   * Called once per completed document load, after both the read and the
+   * render resolve, with the document that was loaded. Fires again on every
+   * `file` change; never fires for `file={null}` or a load cancelled by
+   * unmount.
+   */
+  onReady?: (document: DocumentHandle) => void;
+  /**
+   * Called for every engine failure — load, apply, undo, refresh, and
+   * compose — with the caught value verbatim, so a host can branch on the
+   * stable `code` of a `HwpEngineError`. The inline alert renders either
+   * way; this is an addition to it, not a replacement.
+   */
+  onError?: (error: unknown) => void;
   /** Called whenever the document bytes change (applied edit, undo, compose). */
   onChange?: (document: DocumentHandle) => void;
   /** Called when the dirty flag (pending ops queued) changes. */
@@ -107,6 +129,9 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       file,
       locale = "en",
       messages,
+      readOnly = false,
+      onReady,
+      onError,
       onChange,
       onDirtyChange,
       className,
@@ -153,16 +178,24 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           setValidation(report);
           setLoadError(null);
           store.dispatch({ type: "load", document: file, pages });
+          // Once per completed load, from THIS effect only: a second effect
+          // keyed on envelope/pages would re-fire after every apply and undo.
+          onReady?.(file);
         } catch (e) {
-          if (!cancelled) setLoadError(toEditorError(e));
+          if (cancelled) return;
+          setLoadError(toEditorError(e));
+          onError?.(e);
         }
       })();
       return () => {
         cancelled = true;
       };
-    }, [engine, file, store]);
+    }, [engine, file, store, onReady, onError]);
 
-    const editable = capabilities?.editable ?? true;
+    // Single fan-out point: every panel, both toolbar buttons and the
+    // applyPendingOps guard read `editable`, so `readOnly` works everywhere
+    // because it is applied here and nowhere else.
+    const editable = !readOnly && (capabilities?.editable ?? true);
 
     // Follow selection to the relevant tab.
     useEffect(() => {
@@ -207,9 +240,10 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           onChange?.(next);
         } catch (e) {
           store.dispatch({ type: "applyFailed", error: toEditorError(e) });
+          onError?.(e);
         }
       })();
-    }, [editable, engine, onChange, store]);
+    }, [editable, engine, onChange, onError, store]);
 
     const revert = useCallback((): Promise<void> => {
       const snapshot = store.getState();
@@ -217,9 +251,13 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       if (previous === undefined) return Promise.resolve();
       return (async () => {
         try {
-          const [nextEnvelope, pages] = await Promise.all([
+          // BUG-02: the badge described the document being undone away, so
+          // re-validate the restored one. Same shape as applyPendingOps; a
+          // validate failure leaves the previous badge rather than clearing it.
+          const [nextEnvelope, pages, report] = await Promise.all([
             engine.read(previous),
             engine.render(previous, RENDER_SVG),
+            engine.validate(previous).catch(() => null),
           ]);
           // Dispatch only after the engine succeeds: popping the snapshot
           // first and failing mid-undo left the canvas showing the pre-undo
@@ -230,28 +268,38 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           if (now.snapshots[now.snapshots.length - 1] !== previous) return;
           store.dispatch({ type: "undo" });
           setEnvelope(nextEnvelope);
+          if (report !== null) setValidation(report);
           store.dispatch({ type: "setPages", pages });
           onChange?.(previous);
         } catch (e) {
           // The store was never touched, so store and canvas stay consistent;
           // without this destination the rejection was unhandled.
           setLoadError(toEditorError(e));
+          onError?.(e);
         }
       })();
-    }, [engine, onChange, store]);
+    }, [engine, onChange, onError, store]);
 
     const refresh = useCallback(async () => {
       const snapshot = store.getState();
       if (snapshot.document === null) return;
-      const [nextEnvelope, pages, report] = await Promise.all([
-        engine.read(snapshot.document),
-        engine.render(snapshot.document, RENDER_SVG),
-        engine.validate(snapshot.document).catch(() => null),
-      ]);
-      setEnvelope(nextEnvelope);
-      setValidation(report);
-      store.dispatch({ type: "setPages", pages });
-    }, [engine, store]);
+      try {
+        const [nextEnvelope, pages, report] = await Promise.all([
+          engine.read(snapshot.document),
+          engine.render(snapshot.document, RENDER_SVG),
+          engine.validate(snapshot.document).catch(() => null),
+        ]);
+        setEnvelope(nextEnvelope);
+        setValidation(report);
+        store.dispatch({ type: "setPages", pages });
+      } catch (e) {
+        // A no-op resolves quietly (above); a FAILURE must be observable to
+        // the awaiting host, so surface it three ways and reject.
+        setLoadError(toEditorError(e));
+        onError?.(e);
+        throw e;
+      }
+    }, [engine, onError, store]);
 
     const openCompose = useCallback(() => setComposing(true), []);
 
@@ -274,6 +322,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         refresh,
         openCompose,
         t,
+        onError,
       }),
       [
         engine,
@@ -287,6 +336,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         refresh,
         openCompose,
         t,
+        onError,
       ],
     );
 
@@ -321,13 +371,24 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
               {state.document?.name ?? "hwp-editor"}
             </span>
             {!editable && (
-              <span className="hwped-notice" role="note">
+              <span
+                className="hwped-notice"
+                role="note"
+                // The full engine prose stays reachable on hover once the
+                // toolbar clamp truncates a long reason (UI-DEBT-01).
+                {...(capabilities?.reason !== undefined
+                  ? { title: capabilities.reason }
+                  : {})}
+              >
                 {t("toolbar.readOnly")}
-                {/* The engine's reason is its own prose and is shown verbatim
-                    under either locale; only the fallback label is localized. */}
-                {capabilities?.reason !== undefined
-                  ? `: ${capabilities.reason}`
-                  : ` (${t("error.kind.protected")})`}
+                {/* Suffix only when the ENGINE refused: a host-forced
+                    read-only has no reason, and inventing one would claim the
+                    document is protected when it isn't. The engine's reason is
+                    its own prose, shown verbatim under either locale. */}
+                {capabilities?.editable === false &&
+                  (capabilities.reason !== undefined
+                    ? `: ${capabilities.reason}`
+                    : ` (${t("error.kind.protected")})`)}
               </span>
             )}
             <span className="hwped-spacer" />
@@ -460,6 +521,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
                     // Covers the render AFTER a successful compose; the
                     // compose call itself fails inside ComposePanel.
                     setLoadError(toEditorError(e));
+                    onError?.(e);
                   }
                 })();
               }}
