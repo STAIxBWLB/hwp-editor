@@ -237,4 +237,39 @@ describeBin("routes (real hwp-cli binary)", () => {
     expect(res.status).toBe(200);
     expectVersionAtLeast088((await res.json()).version);
   });
+
+  /**
+   * The engine half of SEC-04. `inspections` and `snapshots` live inside
+   * `createCliEngine` and are not reachable from outside it, so a cache hit is
+   * asserted by OBJECT IDENTITY on the returned inspection: a miss re-runs the
+   * five-spawn pipeline and cannot return the same object. The route half —
+   * that the scope reaches these calls at all — is `authorize.test.ts`'s
+   * describe of the same name.
+   */
+  describe("scope isolation", () => {
+    it("does not serve one scope's inspection to another", async () => {
+      const cli = engine();
+      const doc = (await cli.compose(sampleSpec() as unknown as DocumentSpecV2, "scope.hwpx"))
+        .document;
+      const a1 = await cli.describe(doc, { scope: "tenant-a" });
+      const a2 = await cli.describe(doc, { scope: "tenant-a" });
+      expect(a2).toBe(a1); // same scope, same bytes: cache hit
+      const b1 = await cli.describe(doc, { scope: "tenant-b" });
+      expect(b1).not.toBe(a1); // different scope, same bytes: real call
+      expect(b1.envelope.markdown).toBe(a1.envelope.markdown);
+    });
+
+    it("does not let one scope undo another's edit", async () => {
+      const cli = engine();
+      const original = (await cli.compose(sampleSpec() as unknown as DocumentSpecV2, "undo.hwpx"))
+        .document;
+      const ops: EditOp[] = [{ kind: "replace", find: "안녕하세요", replace: "반갑습니다" }];
+      const edited = await cli.edit(original, ops, {}, { scope: "tenant-a" });
+      // Wrong scope first: a hit here would consume the entry and mask the next.
+      expect(cli.undo(edited, { scope: "tenant-b" })).toBeNull();
+      const undone = cli.undo(edited, { scope: "tenant-a" });
+      expect(undone).not.toBeNull();
+      expect([...undone!.data]).toEqual([...original.data]);
+    });
+  });
 });
