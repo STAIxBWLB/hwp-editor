@@ -495,3 +495,124 @@ describe("sniff", () => {
     expect(calls).toEqual([]);
   });
 });
+
+/**
+ * SEC-05. `opValue` in packages/core/src/ops.ts reaches `op.path` in exactly
+ * two cases, and both are refused on the HTTP surface (D-10). The Tauri
+ * transport is a local application and keeps them, which is why the guard
+ * lives here and not in ops.ts.
+ */
+describe("op path", () => {
+  async function edit(ops: unknown): Promise<{
+    status: number;
+    body: { error: { code: string; message: string } };
+    calls: string[];
+  }> {
+    const { engine, calls } = countingEngine();
+    const handler = createHwpEditorHandler({ engine, sessions: false });
+    const res = await handler(
+      multipartRequest(`${BASE}/edit`, { file: DOC, ops: JSON.stringify(ops) }),
+    );
+    return { status: res.status, body: await res.json(), calls };
+  }
+
+  const INSERT_IMAGE = { kind: "insert-image", anchor: "here", path: "/etc/passwd" };
+  const SEAL = { kind: "seal", anchor: "here", path: "/root/.ssh/id_rsa" };
+
+  it("refuses insert-image with 400 path_traversal before the engine is called", async () => {
+    const { status, body, calls } = await edit([INSERT_IMAGE]);
+    expect(status).toBe(400);
+    expect(body.error.code).toBe("path_traversal");
+    expect(calls).toEqual([]);
+  });
+
+  it("refuses seal the same way", async () => {
+    const { status, body, calls } = await edit([SEAL]);
+    expect(status).toBe(400);
+    expect(body.error.code).toBe("path_traversal");
+    expect(calls).toEqual([]);
+  });
+
+  it("refuses an array mixing one of them with several harmless ops", async () => {
+    const { status, body, calls } = await edit([
+      { kind: "replace", find: "a", replace: "b" },
+      { kind: "set-field", name: "n", value: "v" },
+      SEAL,
+      { kind: "add-row", table: 0 },
+    ]);
+    expect(status).toBe(400);
+    expect(body.error.code).toBe("path_traversal");
+    expect(calls).toEqual([]);
+  });
+
+  it("admits an array of only other kinds, which reach the engine as today", async () => {
+    const { status, calls } = await edit([
+      { kind: "replace", find: "a", replace: "b" },
+      { kind: "set-cell", table: 0, row: 1, col: 1, value: "x" },
+      { kind: "set-field", name: "n", value: "v" },
+      { kind: "add-row", table: 0 },
+    ]);
+    expect(status).toBe(200);
+    expect(calls).toEqual(["edit"]);
+  });
+
+  it("leaves the empty-ops case to the existing required-field check", async () => {
+    const { status, body, calls } = await edit([]);
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ name: "sample.hwpx" });
+    expect(calls).toEqual(["edit"]);
+  });
+});
+
+/**
+ * SEC-06, route half. 04-03 scrubbed the engine's own messages; this is the
+ * serialization boundary, where an UNclassified throw must not become a
+ * client-visible string at all.
+ */
+describe("no leak: the unclassified catch branch answers a fixed message", () => {
+  const LEAKY_PATH = "/tmp/hwp-editor-abc/in.hwpx";
+
+  async function failingValidate(thrown: unknown): Promise<{
+    status: number;
+    body: { error: { code: string; message: string } };
+  }> {
+    const handler = createHwpEditorHandler({
+      engine: stubEngine({
+        async validate(): Promise<never> {
+          throw thrown;
+        },
+      }),
+      sessions: false,
+    });
+    const res = await handler(multipartRequest(`${BASE}/validate`, { file: DOC }));
+    return { status: res.status, body: await res.json() };
+  }
+
+  it("answers a 500 whose message carries no path from the thrown Error", async () => {
+    const { status, body } = await failingValidate(
+      new Error(`hwp cat failed reading ${LEAKY_PATH}`),
+    );
+    expect(status).toBe(500);
+    expect(body.error.code).toBe("internal");
+    expect(body.error.message).not.toContain(LEAKY_PATH);
+    expect(body.error.message).not.toMatch(/(^|\s|")\/[\w.-]+\//);
+  });
+
+  it("answers identically for a thrown string, null and a plain object", async () => {
+    const baseline = await failingValidate(new Error(LEAKY_PATH));
+    for (const thrown of ["boom", null, { message: "/tmp/x" }, undefined, 42]) {
+      const { status, body } = await failingValidate(thrown);
+      expect(status, JSON.stringify(thrown)).toBe(500);
+      expect(body, JSON.stringify(thrown)).toEqual(baseline.body);
+    }
+  });
+
+  it("still round-trips an HwpCliError's own status, code and message", async () => {
+    const { HwpCliError } = await import("../src/cli-engine.js");
+    const { status, body } = await failingValidate(
+      new HwpCliError("failed", "hwp validate exited 1"),
+    );
+    expect(status).toBe(422);
+    expect(body.error).toEqual({ code: "failed", message: "hwp validate exited 1" });
+  });
+});
