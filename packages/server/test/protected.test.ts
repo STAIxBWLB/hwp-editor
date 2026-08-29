@@ -6,10 +6,6 @@
  * fixture (no such fixture exists in this repo or in hwp-cli's).
  */
 
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
-
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -18,6 +14,7 @@ import {
   HwpCliError,
   protectedReasonFromStderr,
 } from "../src/cli-engine.js";
+import { createFakeBin, disposeFakeBins } from "./fake-bin.js";
 
 const DOC = { name: "sample.hwpx", data: new Uint8Array([80, 75, 3, 4, 1, 2, 3]) };
 
@@ -28,40 +25,11 @@ const FIXED_MESSAGES = [
   "distribution (배포용) document; hwp-cli refuses edit/compose",
 ];
 
-const dirs: string[] = [];
+afterEach(disposeFakeBins);
 
-afterEach(() => {
-  while (dirs.length > 0) rmSync(dirs.pop()!, { recursive: true, force: true });
-});
-
-/**
- * A stand-in `hwp` that logs every argv it receives, answers `--version`
- * with a version the engine accepts, prints `info` as the given JSON, and
- * fails `edit` with the given stderr. The log path is baked into the script
- * because `scrubbedEnv` strips everything but PATH/HOME/HWP_*.
- */
+/** The shared fake in `fail` mode: `info` answers, everything else exits 3. */
 function fakeBin(opts: { info: string; editStderr?: string }): { bin: string; log: () => string } {
-  const dir = mkdtempSync(path.join(tmpdir(), "hwp-editor-fake-"));
-  dirs.push(dir);
-  const logPath = path.join(dir, "argv.log");
-  writeFileSync(logPath, "");
-  const bin = path.join(dir, "hwp");
-  writeFileSync(
-    bin,
-    [
-      "#!/bin/sh",
-      `echo "$@" >> ${JSON.stringify(logPath)}`,
-      'case "$1" in',
-      "  --version) echo 'hwp 0.8.8' ;;",
-      `  info) printf '%s' ${JSON.stringify(opts.info)} ;;`,
-      `  edit) printf '%s' ${JSON.stringify(opts.editStderr ?? "boom")} >&2; exit 1 ;;`,
-      "  *) echo 'unexpected' >&2; exit 1 ;;",
-      "esac",
-      "",
-    ].join("\n"),
-  );
-  chmodSync(bin, 0o700);
-  return { bin, log: () => readFileSync(logPath, "utf8") };
+  return createFakeBin({ mode: "fail", ...opts });
 }
 
 describe("documentEditability", () => {
