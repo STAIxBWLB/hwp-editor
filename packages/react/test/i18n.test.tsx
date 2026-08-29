@@ -198,6 +198,48 @@ describe.each(LOCALES)("HwpEditor chrome under locale=%s", (locale) => {
     }
   });
 
+  it("renders the whole chrome from the active table in one mounted pass", () => {
+    // One mount, one locale: toolbar, tabs and every empty state must agree
+    // with the SAME table — a partially-translated render is the failure
+    // this catches that the per-area tests above cannot (I18N-08).
+    render(<HwpEditor locale={locale} engine={createMockEngine()} file={null} />);
+
+    // Toolbar
+    expect(screen.getByLabelText(t["toolbar.toolsAria"])).toBeTruthy();
+    expect(screen.getByRole("button", { name: t["toolbar.revert"] })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: t["toolbar.newDocument"] }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", {
+        name: t["toolbar.applyWithCount"]({ count: 0 }),
+      }),
+    ).toBeTruthy();
+    expect(
+      screen.getByLabelText(t["toolbar.pendingEdits"]({ count: 0 })),
+    ).toBeTruthy();
+
+    // Side panel and its three tabs
+    expect(screen.getByLabelText(t["side.panelAria"])).toBeTruthy();
+    for (const key of ["tabs.para", "tabs.table", "tabs.fields"] as const) {
+      expect(screen.getByRole("tab", { name: t[key] })).toBeTruthy();
+    }
+
+    // Empty states: the canvas and the default paragraph panel
+    expect(screen.getByLabelText(t["canvas.aria"])).toBeTruthy();
+    expect(screen.getByText(t["canvas.empty"])).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: t["canvas.createCta"] }),
+    ).toBeTruthy();
+    expect(screen.getByText(t["segment.hint"])).toBeTruthy();
+
+    // Nothing from the other table leaked into this render.
+    const other = locale === "en" ? ko : en;
+    expect(screen.queryByText(other["canvas.empty"])).toBeNull();
+    expect(screen.queryByText(other["segment.hint"])).toBeNull();
+    expect(screen.queryByText(other["toolbar.revert"])).toBeNull();
+  });
+
   it("prefixes a load failure with error.prefix.load", async () => {
     const engine = createMockEngine();
     engine.read = async () => {
