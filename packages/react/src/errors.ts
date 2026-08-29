@@ -9,6 +9,10 @@
  * server, or a maru/Tauri rejection that surfaces only a prefixed string
  * ("hwped_read failed: cli_missing: ..."). The markers below are pinned by
  * those engines; `classifyEngineError` stays exported for that path.
+ *
+ * This module classifies only. The human-readable badge LABELS live in the
+ * string table (`error.kind.*` in messages.ts) and are resolved by
+ * ErrorLine; nothing here renders text.
  */
 
 import type { EditorError, HwpErrorCode } from "@hwp-editor/core";
@@ -94,11 +98,3 @@ export function classifyEngineError(message: string): EngineErrorKind {
   }
   return "generic";
 }
-
-/** Korean badge label per kind; "generic" renders no badge. */
-export const ENGINE_ERROR_LABELS: Record<EngineErrorKind, string> = {
-  timeout: "엔진 시간 초과",
-  unavailable: "hwp 실행 파일 없음",
-  protected: "보호/배포 문서",
-  generic: "",
-};

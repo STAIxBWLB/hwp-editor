@@ -14,7 +14,7 @@ import { useHwpEditorContext } from "./context.js";
  * segments are highlighted with overlay bands.
  */
 export function PageCanvas(): JSX.Element {
-  const { state, store, envelope } = useHwpEditorContext();
+  const { state, store, envelope, t } = useHwpEditorContext();
   const { pages, selection, pendingOps } = state;
 
   // Segments covered by queued text-targeting ops, highlighted as pending.
@@ -41,8 +41,8 @@ export function PageCanvas(): JSX.Element {
 
   if (pages.length === 0) {
     return (
-      <div className="hwped-canvas" role="main" aria-label="문서 페이지">
-        <div className="hwped-empty">렌더링된 페이지가 없습니다.</div>
+      <div className="hwped-canvas" role="main" aria-label={t("canvas.aria")}>
+        <div className="hwped-empty">{t("canvas.emptyPages")}</div>
       </div>
     );
   }
@@ -56,7 +56,7 @@ export function PageCanvas(): JSX.Element {
   };
 
   return (
-    <div className="hwped-canvas" role="main" aria-label="문서 페이지">
+    <div className="hwped-canvas" role="main" aria-label={t("canvas.aria")}>
       {pages.map((page, pageIndex) => (
         <PageView
           key={page.page}
@@ -124,6 +124,10 @@ function PageView(props: {
   bands: Band[];
 }): JSX.Element {
   const { page, onClick, onActivate, bands } = props;
+  // PageView is only ever rendered inside <HwpEditor>, so it reaches `t`
+  // through the context rather than threading a label prop down.
+  const { t } = useHwpEditorContext();
+  const label = t("page.label", { page: page.page });
   const svgHtml = useMemo(
     () =>
       page.format === "svg"
@@ -142,7 +146,7 @@ function PageView(props: {
       className="hwped-page"
       role="button"
       tabIndex={0}
-      aria-label={`페이지 ${page.page}`}
+      aria-label={label}
       style={{ aspectRatio: `${page.width} / ${page.height}` }}
       onClick={onClick}
       onKeyDown={(e) => {
@@ -162,7 +166,7 @@ function PageView(props: {
         <img
           className="hwped-page-img"
           src={imgSrc ?? ""}
-          alt={`페이지 ${page.page}`}
+          alt={label}
           width={page.width}
           height={page.height}
         />
