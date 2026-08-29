@@ -166,6 +166,12 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     const emitError = useCallback((error: unknown): void => {
       cbRef.current.onError?.(error);
     }, []);
+    const emitChange = useCallback((document: DocumentHandle): void => {
+      cbRef.current.onChange?.(document);
+    }, []);
+    const emitDirty = useCallback((dirty: boolean): void => {
+      cbRef.current.onDirtyChange?.(dirty);
+    }, []);
 
     const t = useMemo(() => createT(locale, messages), [locale, messages]);
 
@@ -239,8 +245,8 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     // Dirty-change callback.
     const dirty = state.pendingOps.length > 0;
     useEffect(() => {
-      onDirtyChange?.(dirty);
-    }, [dirty, onDirtyChange]);
+      emitDirty(dirty);
+    }, [dirty]);
 
     const applyPendingOps = useCallback((): Promise<void> => {
       const snapshot = store.getState();
@@ -266,13 +272,13 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           setEnvelope(nextEnvelope);
           setValidation(report);
           store.dispatch({ type: "applySucceeded", document: next, pages });
-          onChange?.(next);
+          emitChange(next);
         } catch (e) {
           store.dispatch({ type: "applyFailed", error: toEditorError(e) });
           emitError(e);
         }
       })();
-    }, [editable, engine, onChange, store]);
+    }, [editable, engine, store]);
 
     const revert = useCallback((): Promise<void> => {
       const snapshot = store.getState();
@@ -299,7 +305,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           setEnvelope(nextEnvelope);
           if (report !== null) setValidation(report);
           store.dispatch({ type: "setPages", pages });
-          onChange?.(previous);
+          emitChange(previous);
         } catch (e) {
           // The store was never touched, so store and canvas stay consistent;
           // without this destination the rejection was unhandled.
@@ -307,7 +313,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           emitError(e);
         }
       })();
-    }, [engine, onChange, store]);
+    }, [engine, store]);
 
     const refresh = useCallback(async () => {
       const snapshot = store.getState();
@@ -537,7 +543,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
               onClose={() => setComposing(false)}
               onComposed={(document) => {
                 setComposing(false);
-                onChange?.(document);
+                emitChange(document);
                 // The host passes the composed document back via `file`; load
                 // it directly so the flow also works when the host doesn't.
                 void (async () => {
