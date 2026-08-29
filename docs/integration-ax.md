@@ -112,9 +112,22 @@ import "@hwp-editor/react/style.css";
 const engine = createHttpEngine("/api/hwp-editor");
 
 export function EditorPane({ file }: { file: DocumentHandle | null }) {
-  return <HwpEditor engine={engine} file={file} onChange={saveSomewhere} />;
+  return (
+    <HwpEditor
+      engine={engine}
+      file={file}
+      locale="ko"
+      onChange={saveSomewhere}
+    />
+  );
 }
 ```
+
+Locale: the editor chrome defaults to English. `locale="ko"` selects Korean,
+which is what ax wants; drop it and Korean users get English buttons. This
+prop is unrelated to the server-side `createCliEngine({ locale })`, which
+only sets the hwp-cli child's `HWP_LANG` and never touches the UI. Full prop
+reference: [packages/react/README.md](../packages/react/README.md).
 
 Theming: map ax's tokens onto the `--hwped-*` contract — see
 [theme-contract.md](./theme-contract.md).
