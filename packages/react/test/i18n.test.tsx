@@ -7,8 +7,9 @@
  * The merge order under test is `en` -> locale table -> `messages`.
  */
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
+import type { DocumentHandle } from "@hwp-editor/core";
 import { HwpEditor } from "../src/HwpEditor.js";
 import { en, ko } from "../src/messages.js";
 import type { Locale, MessageTable } from "../src/messages.js";
@@ -17,6 +18,22 @@ import { createMockEngine } from "./mock-engine.js";
 afterEach(cleanup);
 
 const tables: Record<Locale, MessageTable> = { en, ko };
+const LOCALES: Locale[] = ["en", "ko"];
+
+const file: DocumentHandle = {
+  name: "minutes.hwpx",
+  data: new TextEncoder().encode("original"),
+};
+
+beforeAll(() => {
+  // jsdom reports zero-size boxes; give pages the render's 595x842 rect.
+  Element.prototype.getBoundingClientRect = function (this: Element) {
+    return {
+      top: 0, left: 0, right: 595, bottom: 842, width: 595, height: 842,
+      x: 0, y: 0, toJSON: () => ({}),
+    } as DOMRect;
+  };
+});
 
 /** The editor root — the element carrying `lang` and `data-status`. */
 function root(container: HTMLElement): HTMLElement {
@@ -83,6 +100,83 @@ describe("messages override (I18N-03)", () => {
     expect(root(container).getAttribute("lang")).toBe("en");
     expect(screen.getByText(en["toolbar.revert"])).toBeTruthy();
     expect(screen.getByText(en["toolbar.newDocument"])).toBeTruthy();
+  });
+});
+
+describe.each(LOCALES)("HwpEditor chrome under locale=%s", (locale) => {
+  const t = tables[locale];
+
+  it("renders the read-only notice with the protected-document fallback", async () => {
+    const engine = createMockEngine({ editable: false });
+    render(<HwpEditor locale={locale} engine={engine} file={file} />);
+    const notice = await screen.findByRole("note");
+    // No engine reason: the parenthesized protected label is the fallback.
+    expect(notice.textContent).toBe(
+      `${t["toolbar.readOnly"]} (${t["error.kind.protected"]})`,
+    );
+  });
+
+  it("renders an engine-supplied reason verbatim, never translated", async () => {
+    // Deliberately Korean prose under BOTH locales: the engine authored it.
+    const engine = createMockEngine({ editable: false, reason: "배포용 문서" });
+    render(<HwpEditor locale={locale} engine={engine} file={file} />);
+    const notice = await screen.findByRole("note");
+    expect(notice.textContent).toBe(`${t["toolbar.readOnly"]}: 배포용 문서`);
+  });
+
+  it("renders the validation badge as valid", async () => {
+    render(<HwpEditor locale={locale} engine={createMockEngine()} file={file} />);
+    const badge = await screen.findByLabelText(t["validation.aria"]);
+    expect(badge.textContent).toBe(t["validation.valid"]);
+  });
+
+  it.each([0, 1, 2])(
+    "renders the validation badge for %i errors with no count special-casing",
+    async (count) => {
+      const engine = createMockEngine();
+      engine.validate = async () => ({
+        valid: false,
+        errors: Array.from({ length: count }, (_, i) => ({
+          message: `e${i}`,
+        })) as never,
+      });
+      render(<HwpEditor locale={locale} engine={engine} file={file} />);
+      const badge = await screen.findByLabelText(t["validation.aria"]);
+      expect(badge.textContent).toBe(t["validation.errors"]({ count }));
+    },
+  );
+
+  it("renders the pending-edit count at zero through the same function value", () => {
+    render(<HwpEditor locale={locale} engine={createMockEngine()} file={null} />);
+    const label = t["toolbar.pendingEdits"]({ count: 0 });
+    expect(screen.getByLabelText(label).textContent).toBe(label);
+  });
+
+  it("renders the empty canvas with its create CTA", () => {
+    render(<HwpEditor locale={locale} engine={createMockEngine()} file={null} />);
+    expect(screen.getByLabelText(t["canvas.aria"])).toBeTruthy();
+    expect(screen.getByText(t["canvas.empty"])).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: t["canvas.createCta"] }),
+    ).toBeTruthy();
+  });
+
+  it("labels the side panel and the three tabs", () => {
+    render(<HwpEditor locale={locale} engine={createMockEngine()} file={null} />);
+    expect(screen.getByLabelText(t["side.panelAria"])).toBeTruthy();
+    for (const key of ["tabs.para", "tabs.table", "tabs.fields"] as const) {
+      expect(screen.getByRole("tab", { name: t[key] })).toBeTruthy();
+    }
+  });
+
+  it("prefixes a load failure with error.prefix.load", async () => {
+    const engine = createMockEngine();
+    engine.read = async () => {
+      throw new Error("hwp-engine HTTP 500: boom");
+    };
+    render(<HwpEditor locale={locale} engine={engine} file={file} />);
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain(`${t["error.prefix.load"]}: `);
   });
 });
 
