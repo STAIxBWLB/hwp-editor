@@ -51,9 +51,11 @@
   flex: 1 1 auto;
 }
 
-/* A long engine reason must truncate here, not push the spacer, badge,
-   count and buttons out of the toolbar row (the full text stays reachable
-   via the element's title attribute). */
+/* The title and this notice are the only toolbar items that may shrink: a
+   long engine reason truncates here (the full text stays reachable via the
+   element's title attribute) instead of being distributed across the badge,
+   count and buttons, which would collapse them to min-content and stack the
+   row. That is why every sibling below carries `flex: 0 0 auto` (G-03-1). */
 .hwped-notice {
   color: var(--hwped-muted);
   border: 1px solid var(--hwped-border);
@@ -72,6 +74,7 @@
   padding: 1px 8px;
   font-size: 12px;
   border: 1px solid var(--hwped-border);
+  flex: 0 0 auto;
 }
 
 .hwped-badge-ok {
@@ -87,6 +90,7 @@
 .hwped-count {
   color: var(--hwped-muted);
   font-size: 12px;
+  flex: 0 0 auto;
 }
 
 /* ---- buttons / inputs ---- */
@@ -127,6 +131,14 @@
   padding: 0;
   color: var(--hwped-accent);
   text-decoration: underline;
+}
+
+/* Scoped to direct toolbar children on purpose: `.hwped-btn` is reused by
+   SegmentInspector, TableGrid, FieldsPanel, the compose dialog actions and
+   the empty-state button, where non-shrinkable buttons would trade this bug
+   for horizontal overflow in those narrow rows. */
+.hwped-toolbar > .hwped-btn {
+  flex: 0 0 auto;
 }
 
 .hwped-input,
