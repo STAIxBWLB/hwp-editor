@@ -9,6 +9,13 @@
  * selector with it. As of 03-04 the panel and canvas selectors are `en` too;
  * the remaining Korean literals here are DOCUMENT content from the fixture
  * envelope ("1. 회의록"), which no locale changes.
+ *
+ * Host callbacks are NON-REACTIVE by contract: `onReady`, `onError`,
+ * `onChange` and `onDirtyChange` never appear in a dependency array inside
+ * HwpEditor.tsx, so a host may pass inline arrows without turning its own
+ * re-renders into engine round trips (API-02). Every other callback test here
+ * passes a `vi.fn()` whose identity never changes and therefore cannot see
+ * that regression; `describe("host callback identity")` is its regression net.
  */
 
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -281,6 +288,59 @@ describe("host callback identity", () => {
     expect(first).not.toHaveBeenCalled();
     await waitFor(() => expect(second).toHaveBeenCalledTimes(1));
     expect(second).toHaveBeenCalledWith(file);
+  });
+
+  it("does not re-emit onDirtyChange for a new inline arrow with no dirty change", async () => {
+    const engine = createMockEngine();
+    const dirty = vi.fn();
+    const { rerender } = render(
+      <HwpEditor engine={engine} file={file} onDirtyChange={(d) => dirty(d)} />,
+    );
+    await screen.findByRole("button", { name: "Page 1" });
+    const before = dirty.mock.calls.length;
+
+    rerender(
+      <HwpEditor engine={engine} file={file} onDirtyChange={(d) => dirty(d)} />,
+    );
+    await settle();
+
+    expect(dirty).toHaveBeenCalledTimes(before);
+  });
+
+  it("keeps the imperative handle identity across new inline host callbacks", async () => {
+    const engine = createMockEngine();
+    const ref = createRef<HwpEditorHandle>();
+    const { rerender } = render(
+      <HwpEditor
+        ref={ref}
+        engine={engine}
+        file={file}
+        onReady={() => {}}
+        onError={() => {}}
+        onChange={() => {}}
+        onDirtyChange={() => {}}
+      />,
+    );
+    // Capture AFTER the load: `editable` settles once capabilities resolve,
+    // which legitimately re-creates applyPendingOps once.
+    await screen.findByRole("button", { name: "Page 1" });
+    const before = handle(ref);
+
+    rerender(
+      <HwpEditor
+        ref={ref}
+        engine={engine}
+        file={file}
+        onReady={() => {}}
+        onError={() => {}}
+        onChange={() => {}}
+        onDirtyChange={() => {}}
+      />,
+    );
+
+    // The single assertion proving no host callback reaches ANY dependency
+    // array in HwpEditor.tsx.
+    expect(handle(ref)).toBe(before);
   });
 });
 
