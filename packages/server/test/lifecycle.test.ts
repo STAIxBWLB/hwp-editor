@@ -19,11 +19,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createCliEngine, HwpCliError } from "../src/cli-engine.js";
 import { createHwpEditorHandler } from "../src/routes.js";
 import { createFakeBin, disposeFakeBins } from "./fake-bin.js";
-import { multipartRequest } from "./helpers.js";
+import { hwpxBytes, multipartRequest } from "./helpers.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
-const DOC = { name: "sample.hwpx", data: new Uint8Array([80, 75, 3, 4, 1, 2, 3]) };
+/** Must pass routes.ts's magic-byte sniff to reach the fake binary at all. */
+const DOC = { name: "sample.hwpx", data: hwpxBytes() };
 
 /** The 32 MiB stdout ceiling `runCli` hands to execFile as `maxBuffer`. */
 const MAX_BUFFER = 32 * 1024 * 1024;
