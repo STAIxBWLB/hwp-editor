@@ -45,7 +45,7 @@ import type {
 } from "@hwp-editor/core";
 
 import { createCliEngine, HwpCliError, type CliEngine } from "./cli-engine.js";
-import { createSessionStore, SessionNotFoundError, PathTraversalError, type SessionStore } from "./session.js";
+import { createSessionStore, SessionNotFoundError, type SessionStore } from "./session.js";
 
 /** The six actions this handler serves; the runtime guard and `HwpAction` share it. */
 const ACTION_LIST = ["read", "render", "edit", "compose", "validate", "capabilities"] as const;
@@ -109,9 +109,10 @@ export interface RoutesOptions {
    */
   maxRequestBytes?: number;
   /**
-   * Session store used to keep edit history (pre-edit snapshots) and cached
-   * inspections server-side. Pass false to disable; defaults to an in-memory
-   * store with a private temp root.
+   * Cache of read-pipeline inspections, keyed by an opaque session id. Pass
+   * false to disable; defaults to a per-handler in-memory store. It retains no
+   * document bytes and touches no filesystem — the wire is stateless and undo
+   * lives in the client store (D-05/D-06).
    */
   sessions?: SessionStore | false;
   /**
@@ -289,22 +290,16 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
     opts.sessions === false ? null : (opts.sessions ?? createSessionStore());
 
   /** Get-or-create the session tracking this exact document content. */
-  async function sessionFor(document: DocumentHandle): Promise<DocumentSessionHandle | null> {
+  function sessionFor(document: DocumentHandle): string | null {
     if (sessions === null) return null;
     const hash = sha256(document.data);
     const existing = hashToSession.get(hash);
-    if (existing !== undefined && sessions.has(existing)) {
-      return { id: existing, fresh: false };
-    }
-    const session = await sessions.create(document.name, document.data);
+    if (existing !== undefined && sessions.has(existing)) return existing;
+    const session = sessions.create(document.name);
     hashToSession.set(hash, session.id);
-    return { id: session.id, fresh: true };
+    return session.id;
   }
 
-  interface DocumentSessionHandle {
-    id: string;
-    fresh: boolean;
-  }
   const hashToSession = new Map<string, string>();
 
   async function handleRead(req: Request): Promise<Response> {
@@ -313,8 +308,8 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
     // cached on the session because the wire shape is pinned to CatEnvelope.
     if (sessions !== null && cli !== null) {
       const inspection = await cli.describe(document, { signal: req.signal });
-      const session = await sessionFor(document);
-      if (session !== null) sessions.attachInspection(session.id, inspection);
+      const id = sessionFor(document);
+      if (id !== null) sessions.attachInspection(id, inspection);
       return json(inspection.envelope);
     }
     return json(
@@ -391,19 +386,13 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
     const allowPartial = formFlag(form, "allowPartial");
     if (allowPartial !== undefined) options.allowPartial = allowPartial;
 
-    // Snapshot the pre-edit bytes so the edit can be undone server-side.
-    const session = await sessionFor(document);
-    if (sessions !== null && session !== null) {
-      await sessions.snapshot(session.id);
-    }
+    // No session is created or written here. The pre-edit copy this path used
+    // to snapshot was unreadable by anything in the repository (BUG-07, D-05);
+    // undo is the client store's job (packages/core/src/state.ts).
     const edited =
       cli !== null
         ? await cli.edit(document, ops, options, { signal: req.signal })
         : await engine.edit(document, ops, options);
-    if (sessions !== null && session !== null) {
-      const stored = await sessions.put(session.id, edited.name, edited.data);
-      hashToSession.set(sha256(edited.data), stored.id);
-    }
     const body: EditResponse = { name: edited.name, dataBase64: toBase64(edited.data) };
     return json(body);
   }
@@ -510,9 +499,6 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
       }
       if (err instanceof SessionNotFoundError) {
         return error(404, "session_not_found", err.message);
-      }
-      if (err instanceof PathTraversalError) {
-        return error(400, "path_traversal", err.message);
       }
       // Unclassified: this is the single serialization boundary where an
       // internal value could become a client-visible string, and an
