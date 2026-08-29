@@ -9,8 +9,10 @@
  * The `edit --help` fixture these fakes serve was captured from hwp 0.15.0.
  */
 
-import { readdirSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -18,6 +20,8 @@ import { createCliEngine, HwpCliError } from "../src/cli-engine.js";
 import { createHwpEditorHandler } from "../src/routes.js";
 import { createFakeBin, disposeFakeBins } from "./fake-bin.js";
 import { multipartRequest } from "./helpers.js";
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 const DOC = { name: "sample.hwpx", data: new Uint8Array([80, 75, 3, 4, 1, 2, 3]) };
 
@@ -82,7 +86,29 @@ async function waitForSpawn(log: () => string, subcommand: string): Promise<void
   throw new Error(`fake hwp never ran ${subcommand}; log: ${log()}`);
 }
 
-afterEach(disposeFakeBins);
+const helpDirs: string[] = [];
+
+/**
+ * The captured `edit --help` with the bare `--set-cell` flag dropped while
+ * both `--set-cell-by-label` occurrences remain. This is the prefix collision
+ * the handshake's word-boundary match exists for: a naive
+ * `help.includes("--set-cell")` passes against this fixture.
+ *
+ * The dir is named `hwp-editor-fake-*` so `workDirs()` keeps ignoring it.
+ */
+function helpWithoutSetCell(): string {
+  const dir = mkdtempSync(path.join(tmpdir(), "hwp-editor-fake-help-"));
+  helpDirs.push(dir);
+  const source = readFileSync(path.join(HERE, "fixtures", "edit-help.txt"), "utf8");
+  const file = path.join(dir, "edit-help.txt");
+  writeFileSync(file, source.replace("--set-cell <SET_CELL>", "--dropped-flag <SET_CELL>"));
+  return file;
+}
+
+afterEach(() => {
+  disposeFakeBins();
+  while (helpDirs.length > 0) rmSync(helpDirs.pop()!, { recursive: true, force: true });
+});
 
 describe("runCli terminal causes", () => {
   it("reports a stdout overflow as output_too_large, naming the ceiling", async () => {
@@ -224,5 +250,80 @@ describe("request cancellation reaches every spawning action", () => {
     expect(response.status).toBe(499);
     expect(await response.json()).toMatchObject({ error: { code: "cancelled" } });
     expect(newWorkDirs(before)).toEqual([]);
+  }, 30_000);
+});
+
+describe("handshake", () => {
+  it("refuses a binary below the version floor", async () => {
+    const { bin } = createFakeBin({ version: "0.7.0" });
+    const engine = createCliEngine({ bin });
+    const error = await engine.capabilities().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(HwpCliError);
+    expect((error as HwpCliError).reason).toBe("version");
+  }, 30_000);
+
+  it("refuses a binary at the major-version ceiling, not just above it", async () => {
+    const { bin } = createFakeBin({ version: "1.0.0" });
+    const engine = createCliEngine({ bin });
+    const error = await engine.capabilities().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(HwpCliError);
+    expect((error as HwpCliError).reason).toBe("version");
+  }, 30_000);
+
+  it("refuses a binary missing a flag the op grammar emits, naming it", async () => {
+    const { bin } = createFakeBin({ helpFixture: helpWithoutSetCell() });
+    const engine = createCliEngine({ bin });
+    const error = await engine.capabilities().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(HwpCliError);
+    expect((error as HwpCliError).reason).toBe("version");
+    // Named, and named alone: both `--set-cell-by-label` occurrences survive
+    // in the fixture, so a substring match would have found `--set-cell`
+    // inside one of them and let the binary through.
+    expect((error as HwpCliError).message).toContain("--set-cell");
+    expect((error as HwpCliError).message).not.toContain("--replace");
+  }, 30_000);
+
+  it("refuses a binary whose edit --help exits non-zero", async () => {
+    const { bin } = createFakeBin({ helpFixture: "/nonexistent/edit-help.txt" });
+    const engine = createCliEngine({ bin });
+    const error = await engine.capabilities().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(HwpCliError);
+    expect((error as HwpCliError).reason).toBe("version");
+  }, 30_000);
+
+  it("runs once per engine instance", async () => {
+    const { bin, log } = createFakeBin();
+    const engine = createCliEngine({ bin });
+    await engine.capabilities();
+    await engine.capabilities();
+    await engine.capabilities();
+    const helpLines = log()
+      .split("\n")
+      .filter((line) => /^edit --help\b/.test(line));
+    expect(helpLines).toHaveLength(1);
+  }, 30_000);
+});
+
+describe("capabilities", () => {
+  it("reports the resolved binary version with no hwp-cli installed", async () => {
+    const { bin } = createFakeBin({ version: "0.14.0" });
+    const engine = createCliEngine({ bin });
+    await expect(engine.capabilities()).resolves.toEqual({
+      version: "0.14.0",
+      editable: true,
+      formats: ["hwp", "hwpx"],
+    });
   }, 30_000);
 });
