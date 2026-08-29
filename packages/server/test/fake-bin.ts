@@ -53,6 +53,17 @@ export interface FakeBinOptions {
 
 const dirs: string[] = [];
 
+/**
+ * Sleep in 0.1s slices rather than one long `sleep`. A shell waiting on a
+ * foreground command defers signal handling until that command returns, so a
+ * single `sleep 5` would swallow a SIGTERM for up to five seconds; slices
+ * bound that to 0.1s. It also bounds how long the grandchild `sleep` — which
+ * a SIGKILL aimed at the shell's pid does not reach — can outlive the test.
+ */
+function sleepSlices(ms: number): string[] {
+  return ["i=0", `while [ $i -lt ${Math.ceil(ms / 100)} ]; do sleep 0.1; i=$((i+1)); done`];
+}
+
 function modeScript(opts: FakeBinOptions): string[] {
   const stdout =
     opts.stdout === undefined ? [] : [`printf '%s' ${JSON.stringify(opts.stdout)}`];
@@ -66,13 +77,10 @@ function modeScript(opts: FakeBinOptions): string[] {
       // reach 32 MiB. `exec` so no shell is left waiting on the pipe.
       return [`exec yes ${JSON.stringify(OVERFLOW_LINE)}`];
     case "hang":
-      // Ignores SIGTERM, which is what forces the SIGKILL escalation. The
-      // sleep is chopped into 0.1s slices so the grandchild the SIGKILL does
-      // NOT reach (kill targets the pid, not the group) cannot outlive the
-      // test by more than that.
-      return ['trap "" TERM', "i=0", "while [ $i -lt 600 ]; do sleep 0.1; i=$((i+1)); done", "exit 0"];
+      // Ignores SIGTERM, which is what forces the SIGKILL escalation.
+      return ['trap "" TERM', ...sleepSlices(60_000), "exit 0"];
     case "slow":
-      return [`sleep ${(opts.delayMs ?? 5000) / 1000}`, "exit 0"];
+      return sleepSlices(opts.delayMs ?? 5_000).concat("exit 0");
   }
 }
 

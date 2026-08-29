@@ -143,6 +143,12 @@ function statusFor(err: HwpCliError): number {
       return 504;
     case "version":
       return 500;
+    // The client went away; nothing was produced and nobody is listening.
+    case "cancelled":
+      return 499;
+    // The document's CLI output exceeded the 32 MiB stdout ceiling.
+    case "output_too_large":
+      return 413;
     case "failed":
     // 403 is deliberately left unclaimed for Phase 4's `authorize`
     // rejections, so a host can tell an auth refusal from a document
@@ -201,6 +207,12 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
     ...(opts.timeoutMs === undefined ? {} : { timeoutMs: opts.timeoutMs }),
     ...(opts.locale === undefined ? {} : { locale: opts.locale }),
   });
+  // Resolved once, here, and nowhere else: every handler that spawns needs
+  // the same narrowing to pass per-call options, and a second `"describe" in
+  // engine` check inside one handler is how the other four end up without
+  // one. A host-supplied plain HwpEngine keeps working; it simply receives no
+  // per-call options, so its children are not cancellable from here.
+  const cli: CliEngine | null = "describe" in engine ? (engine as CliEngine) : null;
   const maxRequestBytes = opts.maxRequestBytes ?? DEFAULT_MAX_REQUEST_BYTES;
   const sessions: SessionStore | null =
     opts.sessions === false ? null : (opts.sessions ?? createSessionStore());
@@ -228,13 +240,15 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
     const { document } = await formDocument(req);
     // describe() runs cat + fields + bookmarks + slots + info; the extras are
     // cached on the session because the wire shape is pinned to CatEnvelope.
-    if (sessions !== null && "describe" in engine) {
-      const inspection = await (engine as CliEngine).describe(document);
+    if (sessions !== null && cli !== null) {
+      const inspection = await cli.describe(document, { signal: req.signal });
       const session = await sessionFor(document);
       if (session !== null) sessions.attachInspection(session.id, inspection);
       return json(inspection.envelope);
     }
-    return json(await engine.read(document));
+    return json(
+      cli !== null ? await cli.read(document, { signal: req.signal }) : await engine.read(document),
+    );
   }
 
   async function handleRender(req: Request): Promise<Response> {
@@ -250,7 +264,10 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
     if (pagesField !== undefined) options.pages = pagesField;
     if (dpi !== undefined) options.dpi = dpi;
     if (format !== undefined) options.format = format;
-    const pages = await engine.render(document, options);
+    const pages =
+      cli !== null
+        ? await cli.render(document, options, { signal: req.signal })
+        : await engine.render(document, options);
     const body: RenderResponse = {
       pages: pages.map(
         (p): RenderPageWire => ({
@@ -291,7 +308,10 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
     if (sessions !== null && session !== null) {
       await sessions.snapshot(session.id);
     }
-    const edited = await engine.edit(document, ops, options);
+    const edited =
+      cli !== null
+        ? await cli.edit(document, ops, options, { signal: req.signal })
+        : await engine.edit(document, ops, options);
     if (sessions !== null && session !== null) {
       const stored = await sessions.put(session.id, edited.name, edited.data);
       hashToSession.set(sha256(edited.data), stored.id);
@@ -313,7 +333,10 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
     if (typeof body.name !== "string" || body.name === "") {
       throw new HwpCliError("bad_request", 'ComposeRequest requires a non-empty "name"');
     }
-    const result = await engine.compose(body.spec, body.name);
+    const result =
+      cli !== null
+        ? await cli.compose(body.spec, body.name, { signal: req.signal })
+        : await engine.compose(body.spec, body.name);
     const responseBody: ComposeResponse = {
       name: result.document.name,
       dataBase64: toBase64(result.document.data),
@@ -324,7 +347,11 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
 
   async function handleValidate(req: Request): Promise<Response> {
     const { document } = await formDocument(req);
-    return json(await engine.validate(document));
+    return json(
+      cli !== null
+        ? await cli.validate(document, { signal: req.signal })
+        : await engine.validate(document),
+    );
   }
 
   async function handleCapabilities(): Promise<Response> {
