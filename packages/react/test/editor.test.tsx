@@ -1,11 +1,16 @@
 /**
- * Editor flow tests, predating the string table.
+ * Editor flow tests, parameterized over both locales.
  *
- * Every render here pins `locale="ko"` on purpose: the selectors below query
- * by the Korean literals that shipped before localization, so the pin keeps
- * them meaningful while the default locale flips to English. It is migration
- * sequencing, not the end state — 03-05 makes this file table-driven and
- * drops the pin. Do not copy the pattern into new tests; see i18n.test.tsx.
+ * Every string-dependent suite runs under `describe.each(LOCALES)` and
+ * derives its selectors from `tables[locale]`, so the same body proves the
+ * flow works in English and in Korean and a copy change can never silently
+ * break a selector. Suites whose subject is an op payload or an engine call
+ * count are locale-independent by nature: they stay single-locale and take
+ * their incidental selectors from `en`.
+ *
+ * The remaining Korean literals below are document CONTENT (fixture
+ * paragraph text, typed input values) or engine-authored prose, which no UI
+ * locale translates.
  */
 
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -13,9 +18,14 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import type { DocumentHandle } from "@hwp-editor/core";
 import { HwpEngineError } from "@hwp-editor/core";
 import { HwpEditor } from "../src/HwpEditor.js";
+import { en, ko } from "../src/messages.js";
+import type { Locale, MessageTable } from "../src/messages.js";
 import { clientYForPara, createMockEngine, makeEnvelope } from "./mock-engine.js";
 
 afterEach(cleanup);
+
+const tables: Record<Locale, MessageTable> = { en, ko };
+const LOCALES = ["en", "ko"] as const;
 
 const file: DocumentHandle = {
   name: "minutes.hwpx",
@@ -45,13 +55,43 @@ beforeAll(() => {
   };
 });
 
+/** Click the page so the paragraph at `para` becomes the selection. */
+async function selectPara(t: MessageTable, para: number): Promise<void> {
+  const page = await screen.findByRole("button", {
+    name: t["page.label"]({ page: 1 }),
+  });
+  fireEvent.click(page, { clientY: clientYForPara(makeEnvelope(), para) });
+}
+
+/** Select the heading paragraph and queue one replace op against it. */
+async function selectAndQueueReplace(t: MessageTable): Promise<void> {
+  await selectPara(t, 0);
+  await screen.findByText("1. 회의록");
+  fireEvent.change(screen.getByLabelText(t["segment.replaceLabel"]), {
+    target: { value: "수정됨" },
+  });
+  fireEvent.click(
+    screen.getByRole("button", { name: t["segment.replaceSubmit"] }),
+  );
+}
+
+/** Click the toolbar Apply while exactly one op is queued. */
+async function applyOne(t: MessageTable): Promise<void> {
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: t["toolbar.applyWithCount"]({ count: 1 }),
+    }),
+  );
+}
+
 describe("HwpEditor edit flow", () => {
+  // Locale-independent: the subject is the op payload and the callbacks.
   it("render → click → select → queue op → Apply calls engine.edit", async () => {
     const engine = createMockEngine();
     const onChange = vi.fn();
     const onDirtyChange = vi.fn();
     render(
-      <HwpEditor locale="ko"
+      <HwpEditor
         engine={engine}
         file={file}
         onChange={onChange}
@@ -59,24 +99,32 @@ describe("HwpEditor edit flow", () => {
       />,
     );
 
-    const page = await screen.findByRole("button", { name: "페이지 1" });
+    const page = await screen.findByRole("button", {
+      name: en["page.label"]({ page: 1 }),
+    });
     // Click near the top of the page selects the heading segment (para 0).
     fireEvent.click(page, { clientY: clientYForPara(makeEnvelope(), 0) });
 
     // The inspector shows the segment's plain text.
     await screen.findByText("1. 회의록");
 
-    const input = screen.getByLabelText("텍스트 교체");
+    const input = screen.getByLabelText(en["segment.replaceLabel"]);
     fireEvent.change(input, { target: { value: "2. 회의록" } });
-    fireEvent.click(screen.getByRole("button", { name: "교체" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: en["segment.replaceSubmit"] }),
+    );
 
     // Pending count appears; dirty callback fires.
-    await screen.findByText("대기 편집 1");
+    await screen.findByText(en["toolbar.pendingEdits"]({ count: 1 }));
     expect(onDirtyChange).toHaveBeenLastCalledWith(true);
 
-    fireEvent.click(screen.getByRole("button", { name: "적용 (1)" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: en["toolbar.applyWithCount"]({ count: 1 }),
+      }),
+    );
 
-    await screen.findByText("대기 편집 0");
+    await screen.findByText(en["toolbar.pendingEdits"]({ count: 0 }));
     expect(engine.calls.edit).toHaveLength(1);
     expect(engine.calls.edit[0]?.ops).toEqual([
       { kind: "replace", find: "1. 회의록", replace: "2. 회의록" },
@@ -86,55 +134,78 @@ describe("HwpEditor edit flow", () => {
     );
     expect(onDirtyChange).toHaveBeenLastCalledWith(false);
   });
+});
+
+describe.each(LOCALES)("HwpEditor keyboard shortcuts — locale=%s", (locale) => {
+  const t = tables[locale];
 
   it("applies queued ops on Cmd/Ctrl+Enter and clears selection on Escape", async () => {
     const engine = createMockEngine();
-    const { container } = render(<HwpEditor locale="ko" engine={engine} file={file} />);
+    const { container } = render(
+      <HwpEditor locale={locale} engine={engine} file={file} />,
+    );
 
-    const page = await screen.findByRole("button", { name: "페이지 1" });
+    const page = await screen.findByRole("button", {
+      name: t["page.label"]({ page: 1 }),
+    });
     fireEvent.click(page, { clientY: clientYForPara(makeEnvelope(), 1) });
     await screen.findByText("2026년 8월 정기 회의");
 
-    fireEvent.change(screen.getByLabelText("텍스트 교체"), {
+    fireEvent.change(screen.getByLabelText(t["segment.replaceLabel"]), {
       target: { value: "2026년 9월 정기 회의" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "교체" }));
-    await screen.findByText("대기 편집 1");
+    fireEvent.click(
+      screen.getByRole("button", { name: t["segment.replaceSubmit"] }),
+    );
+    await screen.findByText(t["toolbar.pendingEdits"]({ count: 1 }));
 
     const root = container.firstElementChild;
     if (root === null) throw new Error("no root");
     fireEvent.keyDown(root, { key: "Enter", ctrlKey: true });
-    await screen.findByText("대기 편집 0");
+    await screen.findByText(t["toolbar.pendingEdits"]({ count: 0 }));
     expect(engine.calls.edit).toHaveLength(1);
 
     // Select again, then Escape clears the inspector back to the hint.
     fireEvent.click(page, { clientY: clientYForPara(makeEnvelope(), 1) });
     await screen.findByText("2026년 8월 정기 회의");
     fireEvent.keyDown(root, { key: "Escape" });
-    await screen.findByText("페이지를 클릭해 편집할 문단을 선택하세요.");
+    await screen.findByText(t["segment.hint"]);
   });
 });
 
-describe("HwpEditor protected documents", () => {
+describe.each(LOCALES)("HwpEditor protected documents — locale=%s", (locale) => {
+  const t = tables[locale];
+
   it("shows a read-only notice and disables editing", async () => {
     const engine = createMockEngine({
       editable: false,
+      // Engine-authored prose: shown verbatim under either locale.
       reason: "배포용 문서",
     });
-    render(<HwpEditor locale="ko" engine={engine} file={file} />);
+    render(<HwpEditor locale={locale} engine={engine} file={file} />);
 
-    await screen.findByText("읽기 전용: 배포용 문서");
-    const page = await screen.findByRole("button", { name: "페이지 1" });
-    fireEvent.click(page, { clientY: clientYForPara(makeEnvelope(), 0) });
+    await screen.findByText(`${t["toolbar.readOnly"]}: 배포용 문서`);
+    await selectPara(t, 0);
     await screen.findByText("1. 회의록");
 
-    expect(screen.getByLabelText("텍스트 교체")).toHaveProperty("disabled", true);
-    expect(screen.getByRole("button", { name: "교체" })).toHaveProperty("disabled", true);
-    expect(screen.getByRole("button", { name: /^적용/ })).toHaveProperty("disabled", true);
+    expect(
+      screen.getByLabelText(t["segment.replaceLabel"]),
+    ).toHaveProperty("disabled", true);
+    expect(
+      screen.getByRole("button", { name: t["segment.replaceSubmit"] }),
+    ).toHaveProperty("disabled", true);
+    // The counted toolbar CTA, not the inspector's "apply format" button.
+    expect(
+      screen.getByRole("button", {
+        name: t["toolbar.applyWithCount"]({ count: 0 }),
+      }),
+    ).toHaveProperty("disabled", true);
   });
 });
 
-describe("HwpEditor engine error states", () => {
+describe.each(LOCALES)("HwpEditor engine error states — locale=%s", (locale) => {
+  const t = tables[locale];
+
   function failingEngine(message: string): ReturnType<typeof createMockEngine> {
     const engine = createMockEngine();
     engine.capabilities = async () => ({
@@ -153,27 +224,29 @@ describe("HwpEditor engine error states", () => {
 
   it("renders a timeout badge distinctly from other load failures", async () => {
     render(
-      <HwpEditor locale="ko"
+      <HwpEditor
+        locale={locale}
         engine={failingEngine("hwp-engine HTTP 504: hwp render timed out after 60000ms")}
         file={file}
       />,
     );
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain("문서 열기 실패");
+    expect(alert.textContent).toContain(t["error.prefix.load"]);
     expect(alert.getAttribute("data-error-kind")).toBe("timeout");
-    expect(alert.textContent).toContain("엔진 시간 초과");
+    expect(alert.textContent).toContain(t["error.kind.timeout"]);
   });
 
   it("renders a binary-missing badge distinctly", async () => {
     render(
-      <HwpEditor locale="ko"
+      <HwpEditor
+        locale={locale}
         engine={failingEngine("hwp-engine HTTP 503: hwp binary not found: hwp")}
         file={file}
       />,
     );
     const alert = await screen.findByRole("alert");
     expect(alert.getAttribute("data-error-kind")).toBe("unavailable");
-    expect(alert.textContent).toContain("hwp 실행 파일 없음");
+    expect(alert.textContent).toContain(t["error.kind.unavailable"]);
   });
 
   it("renders an edit-time protected refusal distinctly", async () => {
@@ -183,26 +256,24 @@ describe("HwpEditor engine error states", () => {
         "hwp-engine HTTP 422: hwp edit failed: distribution (배포용) document",
       );
     };
-    render(<HwpEditor locale="ko" engine={engine} file={file} />);
+    render(<HwpEditor locale={locale} engine={engine} file={file} />);
 
-    const page = await screen.findByRole("button", { name: "페이지 1" });
-    fireEvent.click(page, { clientY: clientYForPara(makeEnvelope(), 0) });
-    await screen.findByText("1. 회의록");
-    fireEvent.change(screen.getByLabelText("텍스트 교체"), {
-      target: { value: "수정됨" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "교체" }));
-    fireEvent.click(screen.getByRole("button", { name: "적용 (1)" }));
+    await selectAndQueueReplace(t);
+    await applyOne(t);
 
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain("편집 적용 실패");
+    expect(alert.textContent).toContain(t["error.prefix.apply"]);
     expect(alert.getAttribute("data-error-kind")).toBe("protected");
-    expect(alert.textContent).toContain("보호/배포 문서");
+    expect(alert.textContent).toContain(t["error.kind.protected"]);
   });
 
   it("renders unknown failures without a kind badge", async () => {
     render(
-      <HwpEditor locale="ko" engine={failingEngine("hwp-engine HTTP 500: boom")} file={file} />,
+      <HwpEditor
+        locale={locale}
+        engine={failingEngine("hwp-engine HTTP 500: boom")}
+        file={file}
+      />,
     );
     const alert = await screen.findByRole("alert");
     expect(alert.getAttribute("data-error-kind")).toBe("generic");
@@ -216,19 +287,13 @@ describe("HwpEditor engine error states", () => {
     engine.edit = async () => {
       throw new HwpEngineError("protected", "이 문서는 편집할 수 없습니다");
     };
-    render(<HwpEditor locale="ko" engine={engine} file={file} />);
+    render(<HwpEditor locale={locale} engine={engine} file={file} />);
 
-    const page = await screen.findByRole("button", { name: "페이지 1" });
-    fireEvent.click(page, { clientY: clientYForPara(makeEnvelope(), 0) });
-    await screen.findByText("1. 회의록");
-    fireEvent.change(screen.getByLabelText("텍스트 교체"), {
-      target: { value: "수정됨" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "교체" }));
-    fireEvent.click(screen.getByRole("button", { name: "적용 (1)" }));
+    await selectAndQueueReplace(t);
+    await applyOne(t);
 
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain("편집 적용 실패");
+    expect(alert.textContent).toContain(t["error.prefix.apply"]);
     expect(alert.getAttribute("data-error-kind")).toBe("protected");
   });
 
@@ -241,10 +306,10 @@ describe("HwpEditor engine error states", () => {
       renders += 1;
       throw new HwpEngineError("timeout", "hwp render timed out after 60000ms");
     };
-    render(<HwpEditor locale="ko" engine={engine} file={file} />);
+    render(<HwpEditor locale={locale} engine={engine} file={file} />);
 
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain("문서 열기 실패");
+    expect(alert.textContent).toContain(t["error.prefix.load"]);
     expect(alert.getAttribute("data-error-kind")).toBe("timeout");
     expect(renders).toBe(1);
   });
@@ -256,34 +321,32 @@ describe("HwpEditor engine error states", () => {
     engine.capabilities = async () => {
       throw new HwpEngineError("timeout", "무언가 잘못되었습니다");
     };
-    render(<HwpEditor locale="ko" engine={engine} file={file} />);
+    render(<HwpEditor locale={locale} engine={engine} file={file} />);
 
     const alert = await screen.findByRole("alert");
     expect(alert.getAttribute("data-error-kind")).toBe("timeout");
-    expect(alert.textContent).toContain("엔진 시간 초과");
+    expect(alert.textContent).toContain(t["error.kind.timeout"]);
   });
 });
 
-describe("HwpEditor revert", () => {
+describe.each(LOCALES)("HwpEditor revert — locale=%s", (locale) => {
+  const t = tables[locale];
+
   it("restores the snapshot taken before the applied edit", async () => {
     const engine = createMockEngine();
     const onChange = vi.fn();
-    render(<HwpEditor locale="ko" engine={engine} file={file} onChange={onChange} />);
+    render(
+      <HwpEditor locale={locale} engine={engine} file={file} onChange={onChange} />,
+    );
 
-    const page = await screen.findByRole("button", { name: "페이지 1" });
-    fireEvent.click(page, { clientY: clientYForPara(makeEnvelope(), 0) });
-    await screen.findByText("1. 회의록");
-    fireEvent.change(screen.getByLabelText("텍스트 교체"), {
-      target: { value: "수정됨" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "교체" }));
-    fireEvent.click(await screen.findByRole("button", { name: "적용 (1)" }));
-    await screen.findByText("대기 편집 0");
+    await selectAndQueueReplace(t);
+    await applyOne(t);
+    await screen.findByText(t["toolbar.pendingEdits"]({ count: 0 }));
     expect(onChange).toHaveBeenLastCalledWith(
       expect.objectContaining({ name: "edited-1.hwpx" }),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "되돌리기" }));
+    fireEvent.click(screen.getByRole("button", { name: t["toolbar.revert"] }));
     await vi.waitFor(() => {
       expect(onChange).toHaveBeenLastCalledWith(file);
     });
@@ -291,16 +354,10 @@ describe("HwpEditor revert", () => {
 
   it("leaves the store untouched when the undo read/render fails", async () => {
     const engine = createMockEngine();
-    render(<HwpEditor locale="ko" engine={engine} file={file} />);
+    render(<HwpEditor locale={locale} engine={engine} file={file} />);
 
-    const page = await screen.findByRole("button", { name: "페이지 1" });
-    fireEvent.click(page, { clientY: clientYForPara(makeEnvelope(), 0) });
-    await screen.findByText("1. 회의록");
-    fireEvent.change(screen.getByLabelText("텍스트 교체"), {
-      target: { value: "수정됨" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "교체" }));
-    fireEvent.click(screen.getByRole("button", { name: "적용 (1)" }));
+    await selectAndQueueReplace(t);
+    await applyOne(t);
     await screen.findByText("edited-1.hwpx");
 
     // A mid-undo engine failure must not half-apply the undo: the store
@@ -309,43 +366,46 @@ describe("HwpEditor revert", () => {
     engine.read = async () => {
       throw new HwpEngineError("timeout", "hwp read timed out after 60000ms");
     };
-    fireEvent.click(screen.getByRole("button", { name: "되돌리기" }));
+    fireEvent.click(screen.getByRole("button", { name: t["toolbar.revert"] }));
 
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain("문서 열기 실패");
+    expect(alert.textContent).toContain(t["error.prefix.load"]);
     expect(alert.getAttribute("data-error-kind")).toBe("timeout");
     expect(screen.getByText("edited-1.hwpx")).toBeDefined();
-    expect(screen.getByRole("button", { name: "되돌리기" })).toHaveProperty(
-      "disabled",
-      false,
-    );
+    expect(
+      screen.getByRole("button", { name: t["toolbar.revert"] }),
+    ).toHaveProperty("disabled", false);
   });
 });
 
-describe("HwpEditor compose flow", () => {
+describe.each(LOCALES)("HwpEditor compose flow — locale=%s", (locale) => {
+  const t = tables[locale];
+
   it("preset picker + guided form builds DocumentSpec v2 and opens the result", async () => {
     const engine = createMockEngine();
     const onChange = vi.fn();
-    render(<HwpEditor locale="ko" engine={engine} file={null} onChange={onChange} />);
+    render(
+      <HwpEditor locale={locale} engine={engine} file={null} onChange={onChange} />,
+    );
 
     fireEvent.click(
-      await screen.findByRole("button", { name: "새 문서 만들기" }),
+      await screen.findByRole("button", { name: t["canvas.createCta"] }),
     );
-    const dialog = await screen.findByRole("dialog", { name: "새 문서 만들기" });
+    const dialog = await screen.findByRole("dialog", { name: t["compose.title"] });
 
     fireEvent.click(
-      await screen.findByRole("radio", { name: "보고서" }),
+      await screen.findByRole("radio", { name: t["presets.report"] }),
     );
-    fireEvent.change(screen.getByLabelText("제목"), {
+    fireEvent.change(screen.getByLabelText(t["compose.titleLabel"]), {
       target: { value: "테스트 보고서" },
     });
-    fireEvent.change(screen.getByLabelText("작성자"), {
+    fireEvent.change(screen.getByLabelText(t["compose.authorLabel"]), {
       target: { value: "이영준" },
     });
-    fireEvent.change(screen.getByLabelText("본문"), {
+    fireEvent.change(screen.getByLabelText(t["compose.bodyLabel"]), {
       target: { value: "# 1. 개요\n\n본문 내용입니다." },
     });
-    fireEvent.click(screen.getByRole("button", { name: "문서 생성" }));
+    fireEvent.click(screen.getByRole("button", { name: t["compose.submit"] }));
 
     await vi.waitFor(() => {
       expect(engine.calls.compose).toHaveLength(1);
@@ -371,15 +431,15 @@ describe("HwpEditor compose flow", () => {
   async function driveCompose(
     engine: ReturnType<typeof createMockEngine>,
   ): Promise<HTMLElement> {
-    render(<HwpEditor locale="ko" engine={engine} file={null} />);
+    render(<HwpEditor locale={locale} engine={engine} file={null} />);
     fireEvent.click(
-      await screen.findByRole("button", { name: "새 문서 만들기" }),
+      await screen.findByRole("button", { name: t["canvas.createCta"] }),
     );
-    const dialog = await screen.findByRole("dialog", { name: "새 문서 만들기" });
-    fireEvent.change(screen.getByLabelText("제목"), {
+    const dialog = await screen.findByRole("dialog", { name: t["compose.title"] });
+    fireEvent.change(screen.getByLabelText(t["compose.titleLabel"]), {
       target: { value: "테스트" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "문서 생성" }));
+    fireEvent.click(screen.getByRole("button", { name: t["compose.submit"] }));
     return dialog;
   }
 
@@ -391,7 +451,7 @@ describe("HwpEditor compose flow", () => {
     const dialog = await driveCompose(engine);
 
     const alert = await within(dialog).findByRole("alert");
-    expect(alert.textContent).toContain("문서 생성 실패");
+    expect(alert.textContent).toContain(t["error.prefix.compose"]);
     expect(alert.getAttribute("data-error-kind")).toBe("protected");
     cleanup();
   });
@@ -404,7 +464,7 @@ describe("HwpEditor compose flow", () => {
     const dialog = await driveCompose(engine);
 
     const alert = await within(dialog).findByRole("alert");
-    expect(alert.textContent).toContain("문서 생성 실패: boom");
+    expect(alert.textContent).toContain(`${t["error.prefix.compose"]}: boom`);
     expect(alert.getAttribute("data-error-kind")).toBe("generic");
     expect(alert.querySelector(".hwped-error-kind")).toBeNull();
     cleanup();
@@ -412,25 +472,33 @@ describe("HwpEditor compose flow", () => {
 });
 
 describe("HwpEditor table flow", () => {
+  // Locale-independent: the subject is the set-cell op's CLI coordinates.
   it("selecting a table segment opens the grid; set-cell queues the CLI coords", async () => {
     const engine = createMockEngine();
-    render(<HwpEditor locale="ko" engine={engine} file={file} />);
+    render(<HwpEditor engine={engine} file={file} />);
 
-    const page = await screen.findByRole("button", { name: "페이지 1" });
+    const page = await screen.findByRole("button", {
+      name: en["page.label"]({ page: 1 }),
+    });
     fireEvent.click(page, { clientY: clientYForPara(makeEnvelope(), 2) });
 
     // Auto-switched to the table tab with the parsed grid.
     const cell = await screen.findByRole("button", { name: "예산" });
     fireEvent.click(cell);
 
-    fireEvent.change(screen.getByLabelText(/셀 \(1, 0\)/), {
-      target: { value: "예산안" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "셀 설정" }));
+    fireEvent.change(
+      screen.getByLabelText(en["table.cellLabel"]({ row: 1, col: 0 })),
+      { target: { value: "예산안" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: en["table.setCell"] }));
 
-    await screen.findByText("대기 편집 1");
-    fireEvent.click(screen.getByRole("button", { name: "적용 (1)" }));
-    await screen.findByText("대기 편집 0");
+    await screen.findByText(en["toolbar.pendingEdits"]({ count: 1 }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: en["toolbar.applyWithCount"]({ count: 1 }),
+      }),
+    );
+    await screen.findByText(en["toolbar.pendingEdits"]({ count: 0 }));
     expect(engine.calls.edit[0]?.ops).toEqual([
       { kind: "set-cell", table: 0, row: 1, col: 0, value: "예산안" },
     ]);
@@ -438,26 +506,32 @@ describe("HwpEditor table flow", () => {
 });
 
 describe("HwpEditor fields flow", () => {
+  // Locale-independent: the subject is the set-field op payload.
   it("lists {{field}} slots, jumps to the segment, and queues set-field", async () => {
     const engine = createMockEngine();
-    render(<HwpEditor locale="ko" engine={engine} file={file} />);
+    render(<HwpEditor engine={engine} file={file} />);
 
-    await screen.findByRole("button", { name: "페이지 1" });
-    fireEvent.click(screen.getByRole("tab", { name: "필드" }));
+    await screen.findByRole("button", { name: en["page.label"]({ page: 1 }) });
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.fields"] }));
 
     // Jump-to selects the containing segment.
     fireEvent.click(await screen.findByRole("button", { name: "date" }));
     await screen.findByText(/다음 회의는/);
 
-    fireEvent.click(screen.getByRole("tab", { name: "필드" }));
-    fireEvent.change(screen.getByLabelText("필드 date 값"), {
-      target: { value: "9월 1일" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "설정" }));
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.fields"] }));
+    fireEvent.change(
+      screen.getByLabelText(en["fields.fieldValueAria"]({ name: "date" })),
+      { target: { value: "9월 1일" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: en["fields.setValue"] }));
 
-    await screen.findByText("대기 편집 1");
-    fireEvent.click(screen.getByRole("button", { name: "적용 (1)" }));
-    await screen.findByText("대기 편집 0");
+    await screen.findByText(en["toolbar.pendingEdits"]({ count: 1 }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: en["toolbar.applyWithCount"]({ count: 1 }),
+      }),
+    );
+    await screen.findByText(en["toolbar.pendingEdits"]({ count: 0 }));
     expect(engine.calls.edit[0]?.ops).toEqual([
       { kind: "set-field", name: "date", value: "9월 1일" },
     ]);
