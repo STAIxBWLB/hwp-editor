@@ -18,7 +18,8 @@ import type { CatEnvelope, DocumentHandle } from "@hwp-editor/core";
 import { HwpEngineError } from "@hwp-editor/core";
 import { HwpEditor } from "../src/HwpEditor.js";
 import type { HwpEditorHandle } from "../src/HwpEditor.js";
-import { en } from "../src/messages.js";
+import { en, ko } from "../src/messages.js";
+import { COMPOSE_PRESETS } from "../src/presets.js";
 import { clientYForPara, createMockEngine, makeEnvelope } from "./mock-engine.js";
 
 afterEach(cleanup);
@@ -378,5 +379,80 @@ describe("undo re-validates the restored document (BUG-02)", () => {
     });
 
     expect(screen.getByText(en["validation.valid"])).toBeDefined();
+  });
+});
+
+describe("ComposePanel localization", () => {
+  /** Open the dialog from the empty state and submit it. */
+  async function composeUntitled(locale: "en" | "ko"): Promise<void> {
+    const cta = locale === "en" ? en["canvas.createCta"] : ko["canvas.createCta"];
+    fireEvent.click(screen.getByRole("button", { name: cta }));
+    await screen.findByRole("dialog");
+    const submit = locale === "en" ? en["compose.submit"] : ko["compose.submit"];
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: submit }));
+    });
+  }
+
+  it("renders the dialog and preset labels from the en table", async () => {
+    render(<HwpEditor engine={createMockEngine()} file={null} />);
+    fireEvent.click(screen.getByRole("button", { name: en["canvas.createCta"] }));
+
+    const dialog = await screen.findByRole("dialog", { name: en["compose.title"] });
+    expect(dialog.textContent).toContain(en["compose.docType"]);
+    for (const key of COMPOSE_PRESETS) {
+      expect(
+        screen.getByRole("radio", { name: en[`presets.${key}`] }),
+      ).toBeDefined();
+    }
+    expect(screen.getByPlaceholderText(en["compose.titlePlaceholder"])).toBeDefined();
+  });
+
+  it("names an untitled document with the en default stem", async () => {
+    const engine = createMockEngine();
+    render(<HwpEditor engine={engine} file={null} />);
+    await composeUntitled("en");
+
+    expect(engine.calls.compose[0]?.name).toBe(`${en["compose.defaultFileStem"]}.hwpx`);
+    expect(engine.calls.compose[0]?.name).toBe("New document.hwpx");
+  });
+
+  it("names an untitled document with the ko default stem", async () => {
+    const engine = createMockEngine();
+    render(<HwpEditor locale="ko" engine={engine} file={null} />);
+    await composeUntitled("ko");
+
+    expect(engine.calls.compose[0]?.name).toBe("새 문서.hwpx");
+  });
+
+  it("still prefers a typed title over the default stem", async () => {
+    const engine = createMockEngine();
+    render(<HwpEditor engine={engine} file={null} />);
+    fireEvent.click(screen.getByRole("button", { name: en["canvas.createCta"] }));
+    await screen.findByRole("dialog");
+    fireEvent.change(screen.getByPlaceholderText(en["compose.titlePlaceholder"]), {
+      target: { value: "Q3 plan" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: en["compose.submit"] }));
+    });
+
+    expect(engine.calls.compose[0]?.name).toBe("Q3 plan.hwpx");
+  });
+
+  it("passes a compose failure to onError verbatim and keeps its own alert", async () => {
+    const boom = new HwpEngineError("protected", "template is a distribution copy");
+    const engine = createMockEngine();
+    engine.compose = async () => {
+      throw boom;
+    };
+    const onError = vi.fn();
+    render(<HwpEditor engine={engine} file={null} onError={onError} />);
+    await composeUntitled("en");
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.getAttribute("data-error-kind")).toBe("protected");
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0]?.[0]).toBe(boom);
   });
 });
