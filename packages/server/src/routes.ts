@@ -12,6 +12,12 @@
  * after all four does a handler touch `req.formData()` or `req.json()`, so a
  * refusal costs zero uploaded bytes and zero engine calls (D-04).
  *
+ * Two further checks run after the bytes are in hand, in this order: the
+ * magic-byte sniff at the single buffering site (`sniffFormat`, refusing
+ * anything that is not an HWP or HWPX document, SEC-07), and the op-path
+ * filter in the edit path (refusing `insert-image` and `seal`, which name a
+ * file on the server's own disk, SEC-05). Both still precede the engine call.
+ *
  * Archive limits — declared entry sizes, decompressed byte ceilings and
  * compression-ratio caps — are NOT reimplemented here. They are hwp-cli's
  * default-on `hwp-cli-native-v1` profile (D-12); this handler relies on it,
@@ -362,6 +368,23 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
     } catch {
       throw new HwpCliError("bad_request", 'multipart field "ops" is not a JSON array');
     }
+    // `opValue` in packages/core/src/ops.ts hands `op.path` straight to argv
+    // for exactly these two kinds and no others. `execFile` runs without a
+    // shell, which stops command injection but NOT path resolution, so over
+    // HTTP a client could otherwise name any file the server process can read
+    // and have it embedded in the output — which is why refusing, rather than
+    // sanitizing, is the scope-correct fix. Both ops keep working on the
+    // Tauri transport, because that is a local application (D-10). Phase 7
+    // EXT-01 owns the staged-asset upload flow that makes them usable here.
+    // `path_traversal` rather than `bad_request`: D-08 keeps that code in the
+    // union specifically as this reuse site, and both answer 400.
+    if (ops.some((op) => op?.kind === "insert-image" || op?.kind === "seal")) {
+      return error(
+        400,
+        "path_traversal",
+        'ops "insert-image" and "seal" name a server-local path and are not accepted over HTTP; upload the asset with the request instead',
+      );
+    }
     const options: EditOptions = {};
     const verify = formFlag(form, "verify");
     if (verify !== undefined) options.verify = verify;
@@ -491,8 +514,16 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
       if (err instanceof PathTraversalError) {
         return error(400, "path_traversal", err.message);
       }
-      const message = err instanceof Error ? err.message : String(err);
-      return error(500, "internal", message);
+      // Unclassified: this is the single serialization boundary where an
+      // internal value could become a client-visible string, and an
+      // unclassified throw can carry a temp path, the binary path or CLI
+      // stderr. The message is therefore a fixed literal BY CONSTRUCTION —
+      // nothing derived from `err` is interpolated, so there is no filter to
+      // get wrong and no encoding question. The branches above keep their own
+      // messages, which 04-03 already scrubbed at the engine. A host that
+      // needs the detail catches the error itself; this package has no logger
+      // and adds none (SEC-06, route half).
+      return error(500, "internal", "internal error");
     }
   };
 }
