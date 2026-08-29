@@ -119,8 +119,18 @@ export type EditOp =
   /** `--delete-bookmark "name"`. */
   | { kind: "delete-bookmark"; name: string };
 
-/** `--flag` spelling for each op kind (cli.rs EditArgs long names). */
-const OP_FLAGS: Record<EditOp["kind"], string> = {
+/**
+ * `--flag` spelling for each op kind (cli.rs EditArgs long names).
+ *
+ * Published data, not an internal detail: `@hwp-editor/server`'s startup
+ * handshake reads this table to check that the resolved binary actually
+ * accepts every flag the grammar emits. Reading it here rather than copying
+ * it there is the point — a hand-maintained second list would drift from the
+ * grammar it is supposed to protect, and the drift would surface as a runtime
+ * CLI failure instead of a refused binary. Adding an op kind therefore widens
+ * the handshake automatically.
+ */
+export const OP_FLAGS: Record<EditOp["kind"], string> = {
   "replace": "--replace",
   "set-cell": "--set-cell",
   "set-field": "--set-field",

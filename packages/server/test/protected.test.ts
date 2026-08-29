@@ -99,7 +99,10 @@ describe("edit pre-flight and stderr backstop", () => {
     const { bin, log } = fakeBin({ info: '{"encrypted":true}' });
     const engine = createCliEngine({ bin });
     await expect(engine.edit(DOC, [])).rejects.toMatchObject({ reason: "protected" });
-    expect(log()).not.toMatch(/^edit /m);
+    // `edit --help` is excluded: that is the startup flag handshake, which
+    // every engine method awaits before doing anything. What must not appear
+    // is an `edit` invocation against the document.
+    expect(log()).not.toMatch(/^edit (?!--help\b)/m);
   });
 
   it("upgrades a failed edit to protected when stderr carries a Korean marker", async () => {

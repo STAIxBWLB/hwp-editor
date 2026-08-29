@@ -19,6 +19,7 @@ export {
 } from "./errors.js";
 export type { HwpErrorCode, HwpEngineErrorOptions } from "./errors.js";
 export {
+  OP_FLAGS,
   opsToArgv,
   argvToOps,
 } from "./ops.js";

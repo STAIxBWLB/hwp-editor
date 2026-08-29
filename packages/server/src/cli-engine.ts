@@ -24,6 +24,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import {
+  OP_FLAGS,
   opsToArgv,
   parseCatEnvelope,
   protectedReasonFromDiagnostics,
@@ -52,6 +53,49 @@ const HWP_MAX_BUFFER = 32 * 1024 * 1024;
  */
 const KILL_GRACE_MS = 3_000;
 const MIN_VERSION: readonly [number, number, number] = [0, 8, 8];
+
+/**
+ * Upper bound on the accepted binary, EXCLUSIVE.
+ *
+ * The floor is hard because a binary below it lacks flags this engine emits.
+ * The ceiling is deliberately only a major-version gate: the code pins 0.8.8
+ * throughout while the binary shipping today is 0.15.0, so a tight numeric
+ * range would refuse the current development environment on a version string
+ * alone. A major bump is the one signal upstream gives that the contract may
+ * have broken; everything below it is carried by the flag handshake, which
+ * checks what the binary actually accepts rather than what it calls itself.
+ */
+const MAX_VERSION_EXCLUSIVE: readonly [number, number, number] = [1, 0, 0];
+
+/**
+ * A long flag as `--help` prints it, matched on both boundaries.
+ *
+ * The trailing lookahead is the whole point: a naive `help.includes(flag)`
+ * passes for any flag that is a prefix of another, and the real `hwp edit
+ * --help` contains both `--set-cell` and `--set-cell-by-label`. A binary that
+ * dropped the first while keeping the second would sail through a substring
+ * test and then fail at edit time.
+ */
+const FLAG_TOKEN = /(?:^|\s)(--[a-z][a-z0-9-]*)(?=[\s,=<]|$)/gm;
+
+/**
+ * The flag surface the resolved binary must accept before this engine will
+ * use it. Derived from the grammar's own table, so adding an op kind widens
+ * the check automatically and no second list can drift.
+ *
+ * Scope is `edit` only. `--verify` and `--allow-partial` are the two other
+ * flags this engine puts on an `edit` argv and come out of the same 5.5 KB
+ * help output for free. The flags hardcoded on the other eight subcommands
+ * (cat, render, compose, validate, info, fields, bookmarks, slots) are a
+ * known, accepted gap: `edit` is the whole 28-op surface and the highest-risk
+ * one, and covering the rest would cost four or five more `--help` spawns on
+ * every cold serverless start.
+ */
+const HANDSHAKE_FLAGS: readonly string[] = [
+  ...Object.values(OP_FLAGS),
+  "--verify",
+  "--allow-partial",
+];
 
 /** Hancom binary .hwp is a CFBF (OLE2) container; .hwpx is a zip. */
 const CFBF_SIGNATURE = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
@@ -87,15 +131,42 @@ export type HwpCliErrorReason = Extract<
   | "output_too_large"
 >;
 
+/**
+ * Two channels, and which one you use decides who sees it.
+ *
+ * `message` is serialized into the `ErrorResponse` body and crosses the wire
+ * to an untrusted client, so it carries the operation and the outcome and
+ * nothing else — never the resolved binary path, never a staged temp path,
+ * never raw CLI stdout or stderr. `stderr` and `detail` are NOT serialized by
+ * `routes.ts`; they are where that context is retained.
+ *
+ * The scrub is a property of construction rather than a filter applied on the
+ * way out: a filter has to be remembered at every new throw site, and the one
+ * that is forgotten is the one that leaks.
+ *
+ * There is no logger in this package, per the no-`console` convention that
+ * holds across every package source tree. The host catches the error and
+ * decides what to do with `stderr` and `detail` — log them, surface them to
+ * an operator, discard them. This module does not make that choice for it.
+ */
 export class HwpCliError extends Error {
   constructor(
     public readonly reason: HwpCliErrorReason,
     message: string,
+    /** Raw child stderr, verbatim. Read by `protectedReasonFromStderr`. */
     public readonly stderr?: string,
+    /** Operator-facing context: the resolved binary path, CLI output. */
+    public readonly detail?: string,
   ) {
     super(message);
     this.name = "HwpCliError";
   }
+}
+
+/** `bin` alone, or `bin: output` — the standard shape of a `detail`. */
+function detailFor(bin: string, output?: string): string {
+  const trimmed = output?.trim() ?? "";
+  return trimmed === "" ? bin : `${bin}: ${trimmed}`;
 }
 
 export interface CliEngineOptions {
@@ -336,9 +407,14 @@ function runCli(
           return;
         }
         if (raw === "ENOENT") {
+          // `binary not found` is pinned: packages/react/src/errors.ts
+          // substring-matches it for the pre-1.0 fallback classifier. The
+          // scrub moves the path off the message, it does not reword this.
           reject(new HwpCliError(
             "unavailable",
-            `hwp binary not found: ${bin} (install hwp-cli >= 0.8.8, or set HWP_EDITOR_BIN / the bin option)`,
+            "hwp binary not found (install hwp-cli >= 0.8.8, or set HWP_EDITOR_BIN / the bin option)",
+            undefined,
+            detailFor(bin),
           ));
           return;
         }
@@ -360,10 +436,14 @@ async function runCliOk(
 ): Promise<RunResult> {
   const result = await runCli(bin, args, timeoutMs, locale, requestSignal);
   if (result.code !== 0) {
+    // The subcommand and the exit code, and nothing else: the CLI's own text
+    // routinely names the staged input file, so interpolating it here would
+    // hand a temp path to whoever made the request.
     throw new HwpCliError(
       "failed",
-      `hwp ${args[0] ?? ""} failed (exit ${result.code}): ${result.stderr.trim() || result.stdout.trim()}`,
+      `hwp ${args[0] ?? ""} failed (exit ${result.code})`,
       result.stderr,
+      detailFor(bin, result.stderr.trim() || result.stdout.trim()),
     );
   }
   return result;
@@ -589,22 +669,74 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         result = await runCli(bin, ["--version"], timeoutMs, opts.locale, undefined);
       } catch (error) {
         if (error instanceof HwpCliError) throw error;
+        // `not executable` is pinned: packages/react/src/errors.ts
+        // substring-matches it for the pre-1.0 fallback classifier. The path
+        // and the underlying error text move to `detail`; the phrase stays.
         throw new HwpCliError(
           "unavailable",
-          `hwp binary is not executable: ${bin} (${error instanceof Error ? error.message : String(error)})`,
+          "hwp binary is not executable (set HWP_EDITOR_BIN or the bin option)",
+          undefined,
+          detailFor(bin, error instanceof Error ? error.message : String(error)),
         );
       }
       if (result.code !== 0) {
-        throw new HwpCliError("unavailable", `hwp --version failed for ${bin}: ${result.stderr.trim()}`);
+        throw new HwpCliError(
+          "unavailable",
+          `hwp --version failed (exit ${result.code})`,
+          result.stderr,
+          detailFor(bin, result.stderr),
+        );
       }
       const version = parseVersion(result.stdout);
       if (version === null) {
-        throw new HwpCliError("version", `cannot parse hwp --version output: ${result.stdout.trim()}`);
+        throw new HwpCliError(
+          "version",
+          "cannot parse a semver from the hwp --version output",
+          undefined,
+          detailFor(bin, result.stdout),
+        );
       }
+      // The parsed numbers are this engine's own reading, not CLI output, so
+      // stating them is what makes a version message actionable.
       if (!versionAtLeast(version, MIN_VERSION)) {
         throw new HwpCliError(
           "version",
-          `hwp ${version.join(".")} is too old; >= ${MIN_VERSION.join(".")} required (${bin})`,
+          `hwp ${version.join(".")} is too old; >= ${MIN_VERSION.join(".")} required`,
+          undefined,
+          detailFor(bin),
+        );
+      }
+      if (versionAtLeast(version, MAX_VERSION_EXCLUSIVE)) {
+        throw new HwpCliError(
+          "version",
+          `hwp ${version.join(".")} is newer than this engine supports; ` +
+            `< ${MAX_VERSION_EXCLUSIVE.join(".")} required`,
+          undefined,
+          detailFor(bin),
+        );
+      }
+      // Flag handshake, inside this same memo rather than a second one: it
+      // runs once per process for the same reason the version check does, and
+      // with the same explicitly `undefined` request signal, so one cancelled
+      // request can never poison binary verification for every later one.
+      const help = await runCli(bin, ["edit", "--help"], timeoutMs, opts.locale, undefined);
+      if (help.code !== 0) {
+        throw new HwpCliError(
+          "version",
+          `hwp edit --help failed (exit ${help.code}); the edit flag surface cannot be verified`,
+          help.stderr,
+          detailFor(bin, help.stderr),
+        );
+      }
+      const present = new Set([...help.stdout.matchAll(FLAG_TOKEN)].map((match) => match[1]!));
+      const missing = HANDSHAKE_FLAGS.filter((flag) => !present.has(flag));
+      if (missing.length > 0) {
+        throw new HwpCliError(
+          "version",
+          `hwp ${version.join(".")} does not accept ${missing.join(", ")} on edit; ` +
+            "the binary does not match this engine's edit grammar",
+          undefined,
+          detailFor(bin),
         );
       }
       return version.join(".");
@@ -756,9 +888,13 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
             // while a PNG one surfaces directly. That is D-16 meeting the
             // retry D-15 deliberately kept, not a bug to "fix".
             if (size === null) {
+              // The page number identifies it for the client; the staged file
+              // name would only tell them where this server keeps its temps.
               throw new HwpCliError(
                 "failed",
-                `unreadable ${format} page dimensions in ${file}`,
+                `unreadable ${format} page dimensions on page ${page}`,
+                undefined,
+                detailFor(bin, file),
               );
             }
             images.push({
@@ -872,10 +1008,13 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         try {
           parsed = JSON.parse(result.stdout) as { valid?: unknown; errors?: unknown };
         } catch {
+          // "no JSON report" is what distinguishes this from a plain non-zero
+          // validate exit, which is a legitimate "invalid document" result.
           throw new HwpCliError(
             "failed",
-            `hwp validate failed (exit ${result.code}): ${result.stderr.trim() || "no JSON report"}`,
+            `hwp validate failed (exit ${result.code}): no JSON report`,
             result.stderr,
+            detailFor(bin, result.stderr.trim() || result.stdout.trim()),
           );
         }
         const rawErrors = Array.isArray(parsed.errors) ? parsed.errors : [];

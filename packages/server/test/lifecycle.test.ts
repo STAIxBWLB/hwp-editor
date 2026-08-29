@@ -9,8 +9,10 @@
  * The `edit --help` fixture these fakes serve was captured from hwp 0.15.0.
  */
 
-import { readdirSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -18,6 +20,8 @@ import { createCliEngine, HwpCliError } from "../src/cli-engine.js";
 import { createHwpEditorHandler } from "../src/routes.js";
 import { createFakeBin, disposeFakeBins } from "./fake-bin.js";
 import { multipartRequest } from "./helpers.js";
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 const DOC = { name: "sample.hwpx", data: new Uint8Array([80, 75, 3, 4, 1, 2, 3]) };
 
@@ -82,7 +86,29 @@ async function waitForSpawn(log: () => string, subcommand: string): Promise<void
   throw new Error(`fake hwp never ran ${subcommand}; log: ${log()}`);
 }
 
-afterEach(disposeFakeBins);
+const helpDirs: string[] = [];
+
+/**
+ * The captured `edit --help` with the bare `--set-cell` flag dropped while
+ * both `--set-cell-by-label` occurrences remain. This is the prefix collision
+ * the handshake's word-boundary match exists for: a naive
+ * `help.includes("--set-cell")` passes against this fixture.
+ *
+ * The dir is named `hwp-editor-fake-*` so `workDirs()` keeps ignoring it.
+ */
+function helpWithoutSetCell(): string {
+  const dir = mkdtempSync(path.join(tmpdir(), "hwp-editor-fake-help-"));
+  helpDirs.push(dir);
+  const source = readFileSync(path.join(HERE, "fixtures", "edit-help.txt"), "utf8");
+  const file = path.join(dir, "edit-help.txt");
+  writeFileSync(file, source.replace("--set-cell <SET_CELL>", "--dropped-flag <SET_CELL>"));
+  return file;
+}
+
+afterEach(() => {
+  disposeFakeBins();
+  while (helpDirs.length > 0) rmSync(helpDirs.pop()!, { recursive: true, force: true });
+});
 
 describe("runCli terminal causes", () => {
   it("reports a stdout overflow as output_too_large, naming the ceiling", async () => {
@@ -225,4 +251,158 @@ describe("request cancellation reaches every spawning action", () => {
     expect(await response.json()).toMatchObject({ error: { code: "cancelled" } });
     expect(newWorkDirs(before)).toEqual([]);
   }, 30_000);
+});
+
+describe("handshake", () => {
+  it("refuses a binary below the version floor", async () => {
+    const { bin } = createFakeBin({ version: "0.7.0" });
+    const engine = createCliEngine({ bin });
+    const error = await engine.capabilities().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(HwpCliError);
+    expect((error as HwpCliError).reason).toBe("version");
+  }, 30_000);
+
+  it("refuses a binary at the major-version ceiling, not just above it", async () => {
+    const { bin } = createFakeBin({ version: "1.0.0" });
+    const engine = createCliEngine({ bin });
+    const error = await engine.capabilities().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(HwpCliError);
+    expect((error as HwpCliError).reason).toBe("version");
+  }, 30_000);
+
+  it("refuses a binary missing a flag the op grammar emits, naming it", async () => {
+    const { bin } = createFakeBin({ helpFixture: helpWithoutSetCell() });
+    const engine = createCliEngine({ bin });
+    const error = await engine.capabilities().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(HwpCliError);
+    expect((error as HwpCliError).reason).toBe("version");
+    // Named, and named alone: both `--set-cell-by-label` occurrences survive
+    // in the fixture, so a substring match would have found `--set-cell`
+    // inside one of them and let the binary through.
+    expect((error as HwpCliError).message).toContain("--set-cell");
+    expect((error as HwpCliError).message).not.toContain("--replace");
+  }, 30_000);
+
+  it("refuses a binary whose edit --help exits non-zero", async () => {
+    const { bin } = createFakeBin({ helpFixture: "/nonexistent/edit-help.txt" });
+    const engine = createCliEngine({ bin });
+    const error = await engine.capabilities().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(HwpCliError);
+    expect((error as HwpCliError).reason).toBe("version");
+  }, 30_000);
+
+  it("runs once per engine instance", async () => {
+    const { bin, log } = createFakeBin();
+    const engine = createCliEngine({ bin });
+    await engine.capabilities();
+    await engine.capabilities();
+    await engine.capabilities();
+    const helpLines = log()
+      .split("\n")
+      .filter((line) => /^edit --help\b/.test(line));
+    expect(helpLines).toHaveLength(1);
+  }, 30_000);
+});
+
+describe("capabilities", () => {
+  it("reports the resolved binary version with no hwp-cli installed", async () => {
+    const { bin } = createFakeBin({ version: "0.14.0" });
+    const engine = createCliEngine({ bin });
+    await expect(engine.capabilities()).resolves.toEqual({
+      version: "0.14.0",
+      editable: true,
+      formats: ["hwp", "hwpx"],
+    });
+  }, 30_000);
+});
+
+/** The tmpdir roots a staged path or a resolved binary path would sit under. */
+const ABSOLUTE_PATH = /\/(tmp|var|Users|home|opt)\//;
+
+async function thrown(promise: Promise<unknown>): Promise<HwpCliError> {
+  const error = await promise.then(
+    () => null,
+    (e: unknown) => e,
+  );
+  expect(error).toBeInstanceOf(HwpCliError);
+  return error as HwpCliError;
+}
+
+describe("no leak: engine messages carry no path and no CLI output", () => {
+  it("names the subcommand and exit code, keeping CLI output on stderr and detail", async () => {
+    const { bin } = createFakeBin({
+      mode: "fail",
+      info: "{}",
+      editStderr: "boom on stderr",
+      stdout: "chatter on stdout",
+    });
+    const error = await thrown(createCliEngine({ bin }).edit(DOC, []));
+    expect(error.reason).toBe("failed");
+    expect(error.message).toContain("edit");
+    expect(error.message).toContain("exit 3");
+    expect(error.message).not.toContain("boom on stderr");
+    expect(error.message).not.toContain("chatter on stdout");
+    // stderr is what protectedReasonFromStderr reads; it must survive verbatim.
+    expect(error.stderr).toContain("boom on stderr");
+    expect(error.detail).toContain("boom on stderr");
+    expect(error.detail).toContain(bin);
+  }, 30_000);
+
+  it("reports a missing binary without naming the path it tried", async () => {
+    const error = await thrown(createCliEngine({ bin: "/nonexistent/hwp" }).capabilities());
+    expect(error.reason).toBe("unavailable");
+    // Pinned by packages/react/src/errors.ts's fallback classifier.
+    expect(error.message).toContain("binary not found");
+    expect(error.message).not.toContain("/nonexistent/hwp");
+    expect(error.detail).toContain("/nonexistent/hwp");
+  }, 30_000);
+
+  it("reports an unparseable version without quoting the output", async () => {
+    const { bin } = createFakeBin({ version: "no semver here" });
+    const error = await thrown(createCliEngine({ bin }).capabilities());
+    expect(error.reason).toBe("version");
+    expect(error.message).toMatch(/parse/i);
+    expect(error.message).not.toContain("no semver here");
+    expect(error.detail).toContain("no semver here");
+  }, 30_000);
+
+  it("produces no message matching an absolute filesystem path", async () => {
+    const messages: string[] = [];
+    const collect = async (promise: Promise<unknown>): Promise<void> => {
+      const error = await promise.then(
+        () => null,
+        (e: unknown) => e,
+      );
+      if (error instanceof Error) messages.push(error.message);
+    };
+    // The fakes themselves live under the tmpdir, so a leaked `bin` trips the
+    // pattern as surely as a leaked staged input path does.
+    const failing = createFakeBin({
+      mode: "fail",
+      info: "{}",
+      editStderr: "cannot open /var/folders/xx/in.hwpx",
+    });
+    await collect(createCliEngine({ bin: failing.bin }).edit(DOC, []));
+    await collect(createCliEngine({ bin: failing.bin }).validate(DOC));
+    await collect(createCliEngine({ bin: createFakeBin({ version: "none" }).bin }).capabilities());
+    await collect(createCliEngine({ bin: createFakeBin({ version: "0.7.0" }).bin }).capabilities());
+    await collect(
+      createCliEngine({ bin: createFakeBin({ helpFixture: helpWithoutSetCell() }).bin }).capabilities(),
+    );
+    await collect(createCliEngine({ bin: "/nonexistent/hwp" }).capabilities());
+    expect(messages.length).toBeGreaterThanOrEqual(4);
+    for (const message of messages) expect(message).not.toMatch(ABSOLUTE_PATH);
+  }, 60_000);
 });

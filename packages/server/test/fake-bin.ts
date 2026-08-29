@@ -47,7 +47,11 @@ export interface FakeBinOptions {
   editStderr?: string;
   /** stdout written by `ok`/`fail` before exiting, e.g. a validate report. */
   stdout?: string;
-  /** Alternative `edit --help` output, for flag-surface cases. */
+  /**
+   * Alternative `edit --help` output, for flag-surface cases. Pointing this
+   * at a path that does not exist is how a test drives a handshake whose
+   * `edit --help` exits non-zero.
+   */
   helpFixture?: string;
 }
 
@@ -104,7 +108,9 @@ export function createFakeBin(opts: FakeBinOptions = {}): { bin: string; log: ()
       `echo "$@" >> ${JSON.stringify(logPath)}`,
       'case "$1" in',
       `  --version) echo ${JSON.stringify(`hwp ${opts.version ?? DEFAULT_VERSION}`)}; exit 0 ;;`,
-      `  edit) if [ "$2" = "--help" ]; then cat ${JSON.stringify(help)}; exit 0; fi ;;`,
+      // `|| exit 1` rather than an unconditional `exit 0`: an unreadable
+      // fixture is the only way to give the handshake a failing `edit --help`.
+      `  edit) if [ "$2" = "--help" ]; then cat ${JSON.stringify(help)} || exit 1; exit 0; fi ;;`,
       ...(opts.info === undefined ? [] : [`  info) printf '%s' ${JSON.stringify(opts.info)}; exit 0 ;;`]),
       "esac",
       ...modeScript(opts),
