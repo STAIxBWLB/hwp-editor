@@ -173,6 +173,10 @@ function sha256(data: Uint8Array): string {
   return createHash("sha256").update(data).digest("hex");
 }
 
+function sha256Text(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}
+
 /**
  * CFBF/OLE2 container signature — the first eight bytes of every HWP5 file.
  *
@@ -289,35 +293,45 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
   const sessions: SessionStore | null =
     opts.sessions === false ? null : (opts.sessions ?? createSessionStore());
 
-  /** Get-or-create the session tracking this exact document content. */
-  function sessionFor(document: DocumentHandle): string | null {
+  /**
+   * Get-or-create the session tracking this exact document content, within
+   * this scope. The scope is a PARAMETER, never a closure field: one handler
+   * serves concurrent requests, so a field would be a cross-request channel
+   * of exactly the shape SEC-04 forbids.
+   */
+  function sessionFor(document: DocumentHandle, scope: string): string | null {
     if (sessions === null) return null;
-    const hash = sha256(document.data);
-    const existing = hashToSession.get(hash);
+    // Same salted shape as cli-engine.ts's `cacheKey`, written separately
+    // because the two files share no module; the SHAPE is the contract, not
+    // the function (SEC-04, D-07).
+    const key = sha256Text(`${scope}\0${sha256(document.data)}`);
+    const existing = hashToSession.get(key);
     if (existing !== undefined && sessions.has(existing)) return existing;
     const session = sessions.create(document.name);
-    hashToSession.set(hash, session.id);
+    hashToSession.set(key, session.id);
     return session.id;
   }
 
   const hashToSession = new Map<string, string>();
 
-  async function handleRead(req: Request): Promise<Response> {
+  async function handleRead(req: Request, scope: string): Promise<Response> {
     const { document } = await formDocument(req);
     // describe() runs cat + fields + bookmarks + slots + info; the extras are
     // cached on the session because the wire shape is pinned to CatEnvelope.
     if (sessions !== null && cli !== null) {
-      const inspection = await cli.describe(document, { signal: req.signal });
-      const id = sessionFor(document);
+      const inspection = await cli.describe(document, { signal: req.signal, scope });
+      const id = sessionFor(document, scope);
       if (id !== null) sessions.attachInspection(id, inspection);
       return json(inspection.envelope);
     }
     return json(
-      cli !== null ? await cli.read(document, { signal: req.signal }) : await engine.read(document),
+      cli !== null
+        ? await cli.read(document, { signal: req.signal, scope })
+        : await engine.read(document),
     );
   }
 
-  async function handleRender(req: Request): Promise<Response> {
+  async function handleRender(req: Request, scope: string): Promise<Response> {
     const { form, document } = await formDocument(req);
     const dpiField = formString(form, "dpi");
     const dpi = dpiField === undefined ? undefined : Number(dpiField);
@@ -332,7 +346,7 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
     if (format !== undefined) options.format = format;
     const pages =
       cli !== null
-        ? await cli.render(document, options, { signal: req.signal })
+        ? await cli.render(document, options, { signal: req.signal, scope })
         : await engine.render(document, options);
     const body: RenderResponse = {
       pages: pages.map(
@@ -349,7 +363,7 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
     return json(body);
   }
 
-  async function handleEdit(req: Request): Promise<Response> {
+  async function handleEdit(req: Request, scope: string): Promise<Response> {
     const { form, document } = await formDocument(req);
     const opsField = form.get("ops");
     if (typeof opsField !== "string" || opsField === "") {
@@ -389,15 +403,20 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
     // No session is created or written here. The pre-edit copy this path used
     // to snapshot was unreadable by anything in the repository (BUG-07, D-05);
     // undo is the client store's job (packages/core/src/state.ts).
+    //
+    // The scope matters most on this call and is the easiest to leave off:
+    // the engine's `inspections` protected pre-flight AND its `snapshots`
+    // write both key off this argument, so an unthreaded edit falls back to
+    // the default scope and two tenants editing identical bytes share both.
     const edited =
       cli !== null
-        ? await cli.edit(document, ops, options, { signal: req.signal })
+        ? await cli.edit(document, ops, options, { signal: req.signal, scope })
         : await engine.edit(document, ops, options);
     const body: EditResponse = { name: edited.name, dataBase64: toBase64(edited.data) };
     return json(body);
   }
 
-  async function handleCompose(req: Request): Promise<Response> {
+  async function handleCompose(req: Request, scope: string): Promise<Response> {
     let body: ComposeRequest;
     try {
       body = (await req.json()) as ComposeRequest;
@@ -412,7 +431,7 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
     }
     const result =
       cli !== null
-        ? await cli.compose(body.spec, body.name, { signal: req.signal })
+        ? await cli.compose(body.spec, body.name, { signal: req.signal, scope })
         : await engine.compose(body.spec, body.name);
     const responseBody: ComposeResponse = {
       name: result.document.name,
@@ -422,11 +441,11 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
     return json(responseBody);
   }
 
-  async function handleValidate(req: Request): Promise<Response> {
+  async function handleValidate(req: Request, scope: string): Promise<Response> {
     const { document } = await formDocument(req);
     return json(
       cli !== null
-        ? await cli.validate(document, { signal: req.signal })
+        ? await cli.validate(document, { signal: req.signal, scope })
         : await engine.validate(document),
     );
   }
@@ -455,7 +474,6 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
       const scope =
         opts.authorize === undefined ? DEFAULT_SCOPE : await opts.authorize(req, action as HwpAction);
       if (scope === null) return error(403, "forbidden", "forbidden");
-      void scope;
       if (action === "capabilities") {
         return await handleCapabilities();
       }
@@ -481,15 +499,15 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
       }
       switch (action) {
         case "read":
-          return await handleRead(req);
+          return await handleRead(req, scope);
         case "render":
-          return await handleRender(req);
+          return await handleRender(req, scope);
         case "edit":
-          return await handleEdit(req);
+          return await handleEdit(req, scope);
         case "compose":
-          return await handleCompose(req);
+          return await handleCompose(req, scope);
         case "validate":
-          return await handleValidate(req);
+          return await handleValidate(req, scope);
         default:
           return error(404, "not_found", `unknown action: ${action}`);
       }
