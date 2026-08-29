@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 import { base64, createHttpEngine } from "../src/http-engine.js";
 import { isHwpEngineError } from "../src/errors.js";
 import type { DocumentHandle } from "../src/engine.js";
+import type { EditOp } from "../src/ops.js";
 
 const doc: DocumentHandle = {
   name: "회의록.hwpx",
@@ -230,5 +231,86 @@ describe("base64 codec", () => {
     // Sync, not thenable: PageCanvas useMemo and tauri.ts ref() depend on it.
     expect(base64.encode(bytes(4))).toEqual(expect.any(String));
     expect(base64.decode("YQ==")).toBeInstanceOf(Uint8Array);
+  });
+});
+
+/**
+ * TEST-01 multipart leg. The reference client's request body is wire
+ * contract: the server reads `file`, `ops`, `verify` and `allowPartial` by
+ * those exact names, and a Korean document name has to survive the multipart
+ * encoding intact.
+ */
+describe("FormData construction", () => {
+  /** An engine whose fetch records the body instead of sending it. */
+  function capturingEngine(responseBody: unknown): {
+    engine: ReturnType<typeof createHttpEngine>;
+    body: () => FormData;
+  } {
+    let captured: FormData | null = null;
+    const engine = createHttpEngine("/api", {
+      fetch: ((_url: string, init: RequestInit) => {
+        captured = init.body as FormData;
+        return Promise.resolve(new Response(JSON.stringify(responseBody)));
+      }) as unknown as typeof fetch,
+    });
+    return {
+      engine,
+      body: () => {
+        if (captured === null) throw new Error("fetch was never called");
+        return captured;
+      },
+    };
+  }
+
+  async function fileEntry(form: FormData): Promise<File> {
+    const entry = form.get("file");
+    expect(entry).toBeInstanceOf(File);
+    return entry as File;
+  }
+
+  it("sends the document as a File carrying its non-ASCII name verbatim", async () => {
+    const { engine, body } = capturingEngine({ valid: true, errors: [] });
+    await engine.validate(doc);
+
+    const file = await fileEntry(body());
+    expect(file.name).toBe("회의록.hwpx");
+    expect(new Uint8Array(await file.arrayBuffer())).toEqual(doc.data);
+  });
+
+  it("serializes edit ops as JSON under `ops` with the verify flag", async () => {
+    const { engine, body } = capturingEngine({
+      name: "회의록.hwpx",
+      dataBase64: base64.encode(new TextEncoder().encode("edited")),
+    });
+    const ops: EditOp[] = [
+      { kind: "replace", find: "a", replace: "b" },
+      { kind: "delete-para", text: "x" },
+    ];
+    await engine.edit(doc, ops, { verify: true });
+
+    const form = body();
+    expect(await fileEntry(form)).toBeInstanceOf(File);
+    expect(form.get("ops")).toBe(JSON.stringify(ops));
+    // The flags are string "true", and absent rather than "false" when off.
+    expect(form.get("verify")).toBe("true");
+    expect(form.get("allowPartial")).toBeNull();
+  });
+
+  it("omits both flags when neither option is set, and sends allowPartial when it is", async () => {
+    const response = {
+      name: "회의록.hwpx",
+      dataBase64: base64.encode(new TextEncoder().encode("edited")),
+    };
+
+    const bare = capturingEngine(response);
+    await bare.engine.edit(doc, []);
+    expect(bare.body().get("ops")).toBe("[]");
+    expect(bare.body().get("verify")).toBeNull();
+    expect(bare.body().get("allowPartial")).toBeNull();
+
+    const partial = capturingEngine(response);
+    await partial.engine.edit(doc, [], { allowPartial: true });
+    expect(partial.body().get("allowPartial")).toBe("true");
+    expect(partial.body().get("verify")).toBeNull();
   });
 });
