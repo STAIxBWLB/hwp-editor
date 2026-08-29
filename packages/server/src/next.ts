@@ -9,21 +9,6 @@
  */
 
 import { createHwpEditorHandler, type HwpEditorHandler, type RoutesOptions } from "./routes.js";
-import type { SessionStore } from "./session.js";
-
-export interface HwpEditorRouteOptions {
-  /** Explicit hwp binary path; falls back to HWP_EDITOR_BIN / HWP_CLI / PATH. */
-  bin?: string;
-  /**
-   * Per-invocation CLI timeout in ms (defaults to the engine's 60s). Hosts
-   * with a hard request budget should set this a few seconds below it.
-   */
-  timeoutMs?: number;
-  /** Custom engine (defaults to CliEngine). */
-  engine?: RoutesOptions["engine"];
-  /** Custom session store, or false to disable server-side sessions. */
-  sessions?: SessionStore | false;
-}
 
 export interface HwpEditorRouteHandlers {
   GET: (req: Request) => Promise<Response>;
@@ -32,13 +17,14 @@ export interface HwpEditorRouteHandlers {
   handler: HwpEditorHandler;
 }
 
-export function createHwpEditorRoutes(opts: HwpEditorRouteOptions = {}): HwpEditorRouteHandlers {
-  const handler = createHwpEditorHandler({
-    ...(opts.bin !== undefined ? { bin: opts.bin } : {}),
-    ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
-    ...(opts.engine !== undefined ? { engine: opts.engine } : {}),
-    ...(opts.sessions !== undefined ? { sessions: opts.sessions } : {}),
-  });
+/**
+ * `opts` is forwarded whole (D-03). This module declares no options interface
+ * of its own: a field enumeration here is a place for a `RoutesOptions` field
+ * to be silently dropped, so every option the core handler accepts reaches a
+ * Next.js host by construction rather than by remembering to add a line.
+ */
+export function createHwpEditorRoutes(opts: RoutesOptions = {}): HwpEditorRouteHandlers {
+  const handler = createHwpEditorHandler(opts);
   return {
     GET: (req: Request) => handler(req),
     POST: (req: Request) => handler(req),

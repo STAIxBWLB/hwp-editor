@@ -63,17 +63,59 @@ export function sampleSpec() {
   } as const;
 }
 
+let boundarySeq = 0;
+
+/**
+ * Multipart POST carrying an explicit Content-Length.
+ *
+ * The body is assembled by hand rather than through `FormData` because
+ * `new Request(url, { body: form })` sets no `content-length` — the real
+ * fetch transport adds it at send time, and the routes.ts admission gate
+ * requires it (measured: a live `fetch` of the same FormData sends the
+ * header, an in-process Request does not). A `Blob` exposes `.size`
+ * synchronously, so the declared length is exact.
+ */
 export function multipartRequest(
   url: string,
   fields: { file?: { name: string; data: Uint8Array }; [key: string]: unknown },
 ): Request {
-  const form = new FormData();
+  const boundary = `----hwpEditorTest${(boundarySeq++).toString(16).padStart(8, "0")}`;
+  const encoder = new TextEncoder();
+  const parts: BlobPart[] = [];
+  const text = (s: string) => parts.push(encoder.encode(s));
   for (const [key, value] of Object.entries(fields)) {
-    if (key === "file") continue;
-    if (typeof value === "string") form.append(key, value);
+    if (key === "file" || typeof value !== "string") continue;
+    text(`--${boundary}\r\nContent-Disposition: form-data; name="${key}"\r\n\r\n${value}\r\n`);
   }
   if (fields.file !== undefined) {
-    form.append("file", new Blob([fields.file.data as BlobPart]), fields.file.name);
+    text(
+      `--${boundary}\r\nContent-Disposition: form-data; name="file"; ` +
+        `filename="${fields.file.name}"\r\nContent-Type: application/octet-stream\r\n\r\n`,
+    );
+    parts.push(fields.file.data as BlobPart);
+    text("\r\n");
   }
-  return new Request(url, { method: "POST", body: form });
+  text(`--${boundary}--\r\n`);
+  const body = new Blob(parts);
+  return new Request(url, {
+    method: "POST",
+    body,
+    headers: {
+      "content-type": `multipart/form-data; boundary=${boundary}`,
+      "content-length": String(body.size),
+    },
+  });
+}
+
+/** JSON POST carrying an explicit Content-Length, for the compose route. */
+export function jsonRequest(url: string, payload: unknown): Request {
+  const body = JSON.stringify(payload);
+  return new Request(url, {
+    method: "POST",
+    body,
+    headers: {
+      "content-type": "application/json",
+      "content-length": String(Buffer.byteLength(body)),
+    },
+  });
 }

@@ -6,6 +6,16 @@
  * Binary payloads cross the wire as base64 inside JSON responses; uploads
  * are multipart/form-data parsed with Request.formData(). Every failure is
  * an ErrorResponse with a non-2xx status.
+ *
+ * The admission gate runs in a fixed order before any body is buffered:
+ * action (404) -> method (405) -> authorize (403) -> size (400/413). Only
+ * after all four does a handler touch `req.formData()` or `req.json()`, so a
+ * refusal costs zero uploaded bytes and zero engine calls (D-04).
+ *
+ * Archive limits — declared entry sizes, decompressed byte ceilings and
+ * compression-ratio caps — are NOT reimplemented here. They are hwp-cli's
+ * default-on `hwp-cli-native-v1` profile (D-12); this handler relies on it,
+ * so bumping the binary means re-checking that the profile still applies.
  */
 
 import { createHash } from "node:crypto";
@@ -31,6 +41,44 @@ import type {
 import { createCliEngine, HwpCliError, type CliEngine } from "./cli-engine.js";
 import { createSessionStore, SessionNotFoundError, PathTraversalError, type SessionStore } from "./session.js";
 
+/** The six actions this handler serves; the runtime guard and `HwpAction` share it. */
+const ACTION_LIST = ["read", "render", "edit", "compose", "validate", "capabilities"] as const;
+
+/** One of the six action names the handler dispatches on. */
+export type HwpAction = (typeof ACTION_LIST)[number];
+
+/**
+ * Host-supplied admission hook. Its return value answers two questions at
+ * once, deliberately (D-01): a string ADMITS the request AND is the tenant
+ * scope every server-side cache key is salted with; `null` REFUSES it with
+ * HTTP 403 and code `forbidden`. One call decides both, so admission and
+ * tenancy can never disagree.
+ *
+ * Called once per request, awaited, before any body is buffered — a refusal
+ * therefore costs zero bytes of upload and zero engine calls (D-04).
+ *
+ * The refusal message is a fixed literal: a `{ allow, scope, reason }` shape
+ * was rejected precisely so no host-authored reason string can ride out to
+ * an unauthenticated client.
+ */
+export type AuthorizeFn = (req: Request, action: HwpAction) => Promise<string | null>;
+
+/**
+ * Scope used when no `authorize` is supplied. D-02: no hook means allow, with
+ * one fixed scope — the documented `createHwpEditorRoutes({ bin })` one-liner
+ * keeps working and single-tenant hosts need no configuration.
+ */
+const DEFAULT_SCOPE = "default";
+
+/**
+ * Default combined request cap, 50 MiB. It bounds multipart buffering, the
+ * base64 response it produces and the bytes staged on disk. It is NOT a
+ * memory bound: hwp-cli's own per-package ceiling is 2 GiB, and a measured
+ * 9.0 MB HWPX drove `hwp cat` to 1.70 GB RSS. Size the container off that
+ * amplification, not off this number.
+ */
+const DEFAULT_MAX_REQUEST_BYTES = 50 * 1024 * 1024;
+
 export interface RoutesOptions {
   /** Engine to serve; defaults to a CliEngine resolved from env/PATH. */
   engine?: HwpEngine;
@@ -39,16 +87,38 @@ export interface RoutesOptions {
   /** Convenience for the default engine: per-invocation timeout in ms. */
   timeoutMs?: number;
   /**
+   * Convenience for the default engine: language passed to the child as
+   * HWP_LANG, default `en`. Accepts `en`/`eng`/`english`/`c`/`posix` and
+   * `ko`/`kor`/`korean`. Applies to the default engine only — an explicit
+   * `engine` carries its own locale.
+   */
+  locale?: string;
+  /**
+   * Largest request admitted, in bytes; defaults to 52428800 (50 MiB).
+   * The figure is the WHOLE request envelope — multipart boundaries, field
+   * names and part headers included — not the document alone, because it is
+   * compared against `Content-Length`. Checked before any buffering; a
+   * request over it is refused with 413 and a request with no measurable
+   * `Content-Length` with 400.
+   */
+  maxRequestBytes?: number;
+  /**
    * Session store used to keep edit history (pre-edit snapshots) and cached
    * inspections server-side. Pass false to disable; defaults to an in-memory
    * store with a private temp root.
    */
   sessions?: SessionStore | false;
+  /**
+   * Admission hook run before any body is read. Defaults to allow-all with a
+   * fixed scope: this package owns no auth, the host owns the trust boundary
+   * (see the trust-boundary section of packages/server/README.md).
+   */
+  authorize?: AuthorizeFn;
 }
 
 export type HwpEditorHandler = (req: Request) => Promise<Response>;
 
-const ACTIONS = new Set(["read", "render", "edit", "compose", "validate", "capabilities"]);
+const ACTIONS: ReadonlySet<string> = new Set<string>(ACTION_LIST);
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -129,7 +199,9 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
   const engine: HwpEngine = opts.engine ?? createCliEngine({
     ...(opts.bin === undefined ? {} : { bin: opts.bin }),
     ...(opts.timeoutMs === undefined ? {} : { timeoutMs: opts.timeoutMs }),
+    ...(opts.locale === undefined ? {} : { locale: opts.locale }),
   });
+  const maxRequestBytes = opts.maxRequestBytes ?? DEFAULT_MAX_REQUEST_BYTES;
   const sessions: SessionStore | null =
     opts.sessions === false ? null : (opts.sessions ?? createSessionStore());
 
@@ -269,10 +341,39 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
       }
       if (action === "capabilities") {
         if (req.method !== "GET") return error(405, "method_not_allowed", "capabilities requires GET");
+      } else if (req.method !== "POST") {
+        return error(405, "method_not_allowed", `${action} requires POST`);
+      }
+      // Admission, above every buffering site and above the capabilities
+      // early return — /capabilities discloses the binary version (SEC-12),
+      // so it is gated too. The scope is bound here and nowhere else: later
+      // plans salt cache keys with this local, never re-derive it.
+      const scope =
+        opts.authorize === undefined ? DEFAULT_SCOPE : await opts.authorize(req, action as HwpAction);
+      if (scope === null) return error(403, "forbidden", "forbidden");
+      void scope;
+      if (action === "capabilities") {
         return await handleCapabilities();
       }
-      if (req.method !== "POST") {
-        return error(405, "method_not_allowed", `${action} requires POST`);
+      // Size gate: POST actions only, so /capabilities never needs a body
+      // header. Refusing an absent Content-Length rather than falling through
+      // to a post-buffer check is what keeps D-04's promise provable — a
+      // counting guard over req.body would have to read the body first.
+      // Every request the reference client sends carries the header (measured:
+      // FormData and JSON bodies both), so this costs no legitimate caller;
+      // only a deliberately chunked upload is refused (Pitfall 3).
+      const declared = req.headers.get("content-length");
+      if (declared === null) {
+        return error(400, "bad_request", "content-length is required");
+      }
+      // /^\d+$/ before Number(): `Number(" 10")` is 10 and `Number("")` is 0,
+      // so isSafeInteger alone admits both (Pitfall 4).
+      const bytes = /^\d+$/.test(declared) ? Number(declared) : NaN;
+      if (!Number.isSafeInteger(bytes)) {
+        return error(400, "bad_request", "invalid content-length");
+      }
+      if (bytes > maxRequestBytes) {
+        return error(413, "bad_request", `request exceeds the ${maxRequestBytes} byte limit`);
       }
       switch (action) {
         case "read":

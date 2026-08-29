@@ -10,7 +10,7 @@ import type {
 
 import { createHwpEditorHandler } from "../src/routes.js";
 import { createSessionStore } from "../src/session.js";
-import { multipartRequest } from "./helpers.js";
+import { jsonRequest, multipartRequest } from "./helpers.js";
 
 const DOC: DocumentHandle = {
   name: "sample.hwpx",
@@ -66,9 +66,7 @@ describe("routes (stub engine)", () => {
 
   it("POST /read without a file is a 400 ErrorResponse", async () => {
     const handler = createHwpEditorHandler({ engine: stubEngine(), sessions: false });
-    const form = new FormData();
-    form.append("nope", "x");
-    const res = await handler(new Request(`${BASE}/read`, { method: "POST", body: form }));
+    const res = await handler(multipartRequest(`${BASE}/read`, { nope: "x" }));
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error.code).toBe("bad_request");
@@ -125,11 +123,7 @@ describe("routes (stub engine)", () => {
   it("POST /compose accepts a JSON body and returns document + report", async () => {
     const handler = createHwpEditorHandler({ engine: stubEngine(), sessions: false });
     const res = await handler(
-      new Request(`${BASE}/compose`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ spec: { version: "2.0", document: {} }, name: "out.hwpx" }),
-      }),
+      jsonRequest(`${BASE}/compose`, { spec: { version: "2.0", document: {} }, name: "out.hwpx" }),
     );
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -141,11 +135,7 @@ describe("routes (stub engine)", () => {
   it("POST /compose rejects a body without spec or name", async () => {
     const handler = createHwpEditorHandler({ engine: stubEngine(), sessions: false });
     const res = await handler(
-      new Request(`${BASE}/compose`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: "out.hwpx" }),
-      }),
+      jsonRequest(`${BASE}/compose`, { name: "out.hwpx" }),
     );
     expect(res.status).toBe(400);
   });
