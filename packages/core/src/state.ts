@@ -46,6 +46,15 @@ export interface EditorState {
   error: EditorError | null;
 }
 
+/**
+ * Undo depth bound (BUG-05, D-11/D-12). Each snapshot retains a full copy of
+ * the document bytes, so an unbounded stack grows without limit across a long
+ * editing session. Overflow drops the oldest snapshot silently — there is no
+ * "history truncated" notice. Not barrel-exported: the value is an internal
+ * knob, not published API.
+ */
+export const MAX_SNAPSHOTS = 50;
+
 export const initialState: EditorState = {
   document: null,
   pages: [],
@@ -98,10 +107,12 @@ export function reducer(state: EditorState, action: EditorAction): EditorState {
       return { ...state, pendingOps: [], status: "clean" };
     case "applyStarted": {
       if (state.document === null) return state;
-      // Snapshot the pre-edit bytes so the edit can be undone.
+      // Snapshot the pre-edit bytes so the edit can be undone. Trim only
+      // here: applyFailed and undo both assume the newest snapshot is the
+      // tail, so trimming on any other action would desync them.
       return {
         ...state,
-        snapshots: [...state.snapshots, state.document],
+        snapshots: [...state.snapshots, state.document].slice(-MAX_SNAPSHOTS),
         status: "applying",
         error: null,
       };
