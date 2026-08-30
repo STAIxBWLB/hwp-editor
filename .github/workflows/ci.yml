@@ -48,6 +48,8 @@ jobs:
           pnpm --filter @hwp-editor/react add -D \
             react@^18.3.1 react-dom@^18.3.1 \
             @types/react@^18.3.31 @types/react-dom@^18.3
+          pnpm --filter @hwp-editor/react list --depth 0 \
+            react react-dom @types/react @types/react-dom
 
       # Three separate steps, not one chained command, so a step that runs
       # nothing is visible in the job log instead of absorbed into a green line.
