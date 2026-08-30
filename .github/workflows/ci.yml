@@ -1,0 +1,110 @@
+name: ci
+
+# pull_request only, never the _target variant: a fork's branch must never run
+# with this repository's secrets in scope. Phase 5 needs no credential at all.
+on: [pull_request]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    strategy:
+      # One red cell must not hide the state of the other three.
+      fail-fast: false
+      matrix:
+        # 22 proves the declared engines.node floor runs; 24 proves current LTS
+        # does not break. The react axis exists because packages/react is the
+        # only package that imports React, and its published peer range is
+        # "^18 || ^19" - exactly these two values, neither more nor fewer.
+        node: [22, 24]
+        react: [18, 19]
+    steps:
+      - uses: actions/checkout@v5
+      # setup-node's pnpm cache shells out to `pnpm store path`, so pnpm must
+      # already exist or setup-node fails with "Unable to locate executable
+      # file: pnpm". Order here is load-bearing.
+      - uses: pnpm/action-setup@v6
+      # No version input on purpose: action-setup reads packageManager from the
+      # root package.json, so this workflow cannot drift from the repo's pin.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # After the frozen install (which would reject the lockfile this writes)
+      # and before the build. Scoped to the react filter only, so core and
+      # server are untouched. Deliberately carries no failure tolerance: a
+      # failed swap must fail the cell rather than quietly test React 19 twice.
+      - name: Install React 18 for the React 18 cells
+        if: matrix.react == 18
+        run: |
+          pnpm --filter @hwp-editor/react add -D \
+            react@^18.3.1 react-dom@^18.3.1 \
+            @types/react@^18.3.31 @types/react-dom@^18.3
+
+      # Three separate steps, not one chained command, so a step that runs
+      # nothing is visible in the job log instead of absorbed into a green line.
+      #
+      # D-04: this job deliberately provisions no hwp binary. Phase 4 built
+      # packages/server/test/fake-bin.ts and lifecycle.test.ts to prove every
+      # subprocess failure path with no binary present, and the remaining
+      # real-binary suites skip through describeBin. CI liveness therefore does
+      # not depend on another repository's release schedule. The one job that
+      # does need the binary is the e2e job, in its own workflow file.
+      - run: pnpm -r build
+      - run: pnpm -r typecheck
+      - run: pnpm -r test
+
+  package:
+    runs-on: ubuntu-latest
+    # No needs: edge to build-test. Installability is a function of packaging
+    # metadata, not of the runtime axis, so it need not wait for four cells.
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+
+      # --no-git-checks is required: pnpm publish verifies the branch and a
+      # clean tree by default and aborts on a CI checkout. The dry-run runs
+      # unauthenticated, so no token is referenced anywhere in this workflow.
+      #
+      # The assertion is on the captured OUTPUT, never on the exit code:
+      # `pnpm publish -r --dry-run` omits a package marked private from its
+      # output with no error and an unchanged exit code, so an exit-code check
+      # would report green while PKG-01 was unmet.
+      - name: Publish dry-run names all three packages and not playground
+        run: |
+          if ! out=$(pnpm publish -r --dry-run --no-git-checks 2>&1); then
+            printf '%s\n' "$out"
+            echo "::error::pnpm publish --dry-run exited non-zero"
+            exit 1
+          fi
+          printf '%s\n' "$out"
+          fail=0
+          for pkg in core react server; do
+            if ! printf '%s\n' "$out" | grep -qF "@hwp-editor/$pkg@1.0.0"; then
+              echo "::error::publish dry-run output does not name @hwp-editor/$pkg@1.0.0 - a private package is skipped silently, so this is how a packaging regression surfaces"
+              fail=1
+            fi
+          done
+          if printf '%s\n' "$out" | grep -qF "playground"; then
+            echo "::error::publish dry-run output names playground - apps/playground must stay unpublishable"
+            fail=1
+          fi
+          exit $fail
+
+      # Self-builds and self-packs, so it takes no arguments.
+      - name: Consumer tarball smoke test
+        run: node scripts/smoke-consumer.mjs
