@@ -1,9 +1,9 @@
 {
   "name": "@hwp-editor/core",
-  "version": "0.0.0",
-  "private": true,
+  "version": "1.0.0",
   "description": "Framework-free core for hwp-editor: engine interface, typed hwp edit ops, segments, spec types, editor state.",
   "type": "module",
+  "license": "MIT",
   "author": "Young Joon Lee <yj.lee@chu.ac.kr>",
   "repository": {
     "type": "git",
@@ -17,12 +17,14 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "import": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+      "require": { "types": "./dist/index.d.cts", "default": "./dist/index.cjs" }
     }
   },
   "files": ["dist", "schemas"],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "pnpm gen:types && tsup",
     "gen:types": "node scripts/gen-spec-types.mjs",
