@@ -10,7 +10,7 @@
  * walk. A broken exports map would still resolve there and the test would go
  * green for the wrong reason.
  *
- * Stages run strictly in order: build, pack, install, runtime import, type
+ * Stages run strictly in order: wipe dist, pack, install, runtime import, type
  * check, assert. Any stage that fails stops the script with a non-zero exit.
  *
  * Usage: node scripts/smoke-consumer.mjs
@@ -54,10 +54,31 @@ const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
 const appManifest = (name) => json({ name, private: true, version: "0.0.0" });
 
 // ===========================================================================
-// Stage 1: build
+// Stage 1: wipe dist
 // ===========================================================================
-run("pnpm", ["-r", "build"], repoRoot);
-console.log("[build] built all workspace packages");
+// This stage used to run `pnpm -r build`. It no longer does, and that is the
+// point: a surviving dist/ would let every tarball assertion below pass with
+// the `prepack` hook absent, because pack would simply collect the artifacts
+// this script had just built for it. Wiping dist first is what makes stages 2
+// and 6 a proof of the hook rather than a proof of a build we performed
+// ourselves. Packing is now the only thing in this script that builds.
+//
+// The three packages declare `"prepack": "pnpm run build"` rather than
+// `prepublishOnly` or `prepare`. `prepublishOnly` does not run on `pnpm pack`
+// or `npm pack`, so it would leave the tarball and git-dependency distribution
+// paths this repository actually exercises broken, and no pack-based test
+// could observe it. `prepare` runs after every workspace `pnpm install`, which
+// turns a plain install into a full build of all three packages. `prepack`
+// covers both `pnpm pack` and `pnpm publish` and is the only candidate this
+// script can prove. It cannot recurse: `build` is `gen:types && tsup` for core
+// and `tsup` for react and server, and neither of those packs.
+//
+// A local developer's dist/ is collateral of running this script; `pnpm -r
+// build` restores it.
+for (const pkg of ["core", "react", "server"]) {
+  rmSync(join(repoRoot, "packages", pkg, "dist"), { recursive: true, force: true });
+}
+console.log("[wipe] removed packages/{core,react,server}/dist; only prepack rebuilds them");
 
 // ===========================================================================
 // Stage 2: pack
@@ -67,6 +88,10 @@ const packDir = scratch("hwped-pack-");
 // package is packed from its own directory instead.
 const pack = (pkg) =>
   run("pnpm", ["pack", "--pack-destination", packDir], join(repoRoot, "packages", pkg));
+// Pack order is load-bearing now that stage 1 wipes dist. The react and server
+// tsup dts builds resolve @hwp-editor/core types through the workspace symlink
+// into packages/core/dist/index.d.ts, which exists only once core has been
+// packed. Core first, always.
 pack("core");
 pack("react");
 pack("server");
@@ -82,6 +107,21 @@ for (const pkg of ["core", "react", "server"]) {
   }
   console.log(`[pack] packed @hwp-editor/${pkg} -> ${tarballs[pkg]}`);
 }
+
+// Asserted here rather than left to stage 6, because without it the first
+// symptom of a hook that did not fire is an ERR_MODULE_NOT_FOUND out of
+// probe.mjs three stages later, which reads as an exports-map bug.
+for (const pkg of ["core", "react", "server"]) {
+  const files = capture("tar", ["-tzf", tarballs[pkg]], packDir).split("\n").filter(Boolean);
+  if (!files.some((f) => f.startsWith("package/dist/"))) {
+    throw new Error(
+      `${pkg} tarball carries no package/dist/ entry, so the prepack hook in ` +
+        `packages/${pkg}/package.json did not fire (stage 1 wiped dist, and pack ` +
+        `is the only thing that rebuilds it); listing: ${files.join(", ")}`,
+    );
+  }
+}
+console.log("[pack] every tarball carries package/dist/, so the prepack hook fired");
 
 // ===========================================================================
 // Stage 3: install

@@ -74,37 +74,38 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm -r build
 
-      # --no-git-checks is required: pnpm publish verifies the branch and a
-      # clean tree by default and aborts on a CI checkout. The dry-run runs
-      # unauthenticated, so no token is referenced anywhere in this workflow.
+      # This job deliberately runs no `pnpm -r build` of its own. It now
+      # reproduces the unguarded publish path a maintainer would take from a
+      # clean checkout - clone, install, publish - so every build inside it
+      # comes from the `prepack` hook in the three package manifests. A hook
+      # that stops firing therefore fails this job instead of hiding behind a
+      # build the job performed for it. The playground's `next build` keeps its
+      # coverage in build-test, which still runs `pnpm -r build` in all four
+      # matrix cells.
+
+      # Both assertions below live in scripts/check-publishable.mjs. Three
+      # things about how it is anchored, because each replaces a specific
+      # failure of the shell block it supersedes:
       #
-      # The assertion is on the captured OUTPUT, never on the exit code:
-      # `pnpm publish -r --dry-run` omits a package marked private from its
-      # output with no error and an unchanged exit code, so an exit-code check
-      # would report green while PKG-01 was unmet.
-      - name: Publish dry-run names all three packages and not playground
-        run: |
-          if ! out=$(pnpm publish -r --dry-run --no-git-checks 2>&1); then
-            printf '%s\n' "$out"
-            echo "::error::pnpm publish --dry-run exited non-zero"
-            exit 1
-          fi
-          printf '%s\n' "$out"
-          fail=0
-          for pkg in core react server; do
-            if ! printf '%s\n' "$out" | grep -qF "@hwp-editor/$pkg@1.0.0"; then
-              echo "::error::publish dry-run output does not name @hwp-editor/$pkg@1.0.0 - a private package is skipped silently, so this is how a packaging regression surfaces"
-              fail=1
-            fi
-          done
-          if printf '%s\n' "$out" | grep -qF "playground"; then
-            echo "::error::publish dry-run output names playground - apps/playground must stay unpublishable"
-            fail=1
-          fi
-          exit $fail
+      # 1. It reads captured OUTPUT, never the exit status. A publish dry-run
+      #    that skips a package says so silently and still exits 0, so an
+      #    exit-code check would report green while PKG-01 was unmet.
+      # 2. It is per-package, not recursive. The recursive form consults the
+      #    registry and omits any package whose version is already published;
+      #    the non-recursive form names it regardless.
+      # 3. It is therefore blind to registry state by construction, so
+      #    publishing 1.0.0 in Phase 6 cannot turn this required job red on
+      #    every subsequent pull request. Privateness is asserted from the
+      #    workspace manifests rather than inferred from a dry-run staying
+      #    quiet about playground.
+      #
+      # D-09 is unchanged: the publish dry-run still runs on every pull request.
+      - name: Publish would attempt exactly the three packages
+        run: node scripts/check-publishable.mjs
 
-      # Self-builds and self-packs, so it takes no arguments.
+      # Self-packs, and the prepack hook is what builds, so it takes no
+      # arguments. It wipes packages/*/dist first, which is what makes its
+      # tarball assertions a proof of the hook.
       - name: Consumer tarball smoke test
         run: node scripts/smoke-consumer.mjs
