@@ -1,7 +1,7 @@
 /**
  * opsToArgv/argvToOps tests. Expected flag spellings and value formats are
- * pinned to hwp-cli v0.8.8, crates/hwp-cli/src/cli.rs `EditArgs`
- * (lines ~414-511) — each test cites the clap long name from that struct.
+ * pinned to hwp-cli v0.16.0, crates/hwp-cli/src/cli.rs `EditArgs`
+ * (lines ~569-676) — each test cites the clap long name from that struct.
  */
 import { describe, expect, it } from "vitest";
 import { argvToOps, opsToArgv, type EditOp } from "../src/ops.js";
