@@ -12,7 +12,8 @@ name: release
 # prerelease tag such as v1.0.0-rc.1. That is deliberate: the stop for a
 # mistakenly pushed tag is the environment approval on the publish job, not a
 # narrower pattern. A pattern that quietly ignored some tags would make a
-# mistyped tag look like a release that ran and did nothing.
+# mistyped tag look like a release that ran and did nothing. What a prerelease
+# tag must NOT do is land on `latest`; point 10 is how that is prevented.
 #
 # 2. THE E2E JOB IS UNREACHABLE FROM HERE, and must stay so. It lives alone in
 # e2e.yml, and Actions' `needs:` key resolves only within one workflow file, so
@@ -56,8 +57,10 @@ name: release
 # publish itself fails, so swallowing a 409 leaves conflicting provenance behind
 # on a version number that is permanently spent (npm/cli#7654, via
 # 06-RESEARCH.md Pitfall 4). The check may therefore conclude "not published"
-# only from an explicit registry 404; any other failure is a network fact, not
-# an absence fact, and fails the job rather than licensing a re-publish.
+# only from an explicit registry 404 naming the probed package at the probed
+# version; any other failure is a network fact, not an absence fact, and fails
+# the job rather than licensing a re-publish. Even one such 404 is not enough on
+# its own - see point 7.
 #
 # 7. THE WAIT AFTER CORE IS A REAL INSTALL, not a metadata poll, and each
 # attempt gets a fresh cache directory. Measured against registry.npmjs.org: a
@@ -68,6 +71,12 @@ name: release
 # `npm view` appears nowhere below. The consumer-visible failure this ordering
 # prevents is npm resolving react or server, following the core peer range, and
 # reporting a 404 for @hwp-editor/core (D-10, REL-05).
+#
+# The same five minutes cut the other way for point 6's check, which is why
+# absence is concluded only from two 404s separated by more than the packument
+# max-age. A re-run started inside that window can otherwise read 404 for a
+# version that is permanently spent, re-publish it, and produce exactly the
+# conflicting provenance point 6 exists to prevent.
 #
 # 8. THIS WORKFLOW PROVISIONS NO hwp BINARY, and must never gain one. Nothing on
 # the release path needs it: the real-binary suites in packages/server self-skip
@@ -80,6 +89,22 @@ name: release
 # Release cannot mint a publish token. Those Release notes are this project's
 # changelog by decision - no CHANGELOG.md is maintained - which is why creating
 # the Release is part of the release path rather than a manual afterthought.
+#
+# 10. THE DIST-TAG IS DERIVED FROM THE VERSION AND ALWAYS PASSED EXPLICITLY.
+# `npm publish` writes `latest` when no --tag is given, so an approved
+# prerelease tag would put an RC on `latest` for every consumer - a violation of
+# Phase 1's D-01, and one no automated step can undo, because `npm dist-tag` is
+# not among a trusted publisher's allowed actions (06-RESEARCH.md §4). A version
+# carrying a prerelease identifier therefore publishes under `next`, matching
+# the hand-published RC, and every other version under `latest`; neither case
+# leaves the choice to npm's default. The same derivation drives `--prerelease`
+# on the GitHub Release, so a candidate is never presented as the stable one.
+#
+# 11. THE SHELL THAT DECIDES ALL OF THIS LIVES IN scripts/release-helpers.sh,
+# not in a heredoc here. Every function in it decides something irreversible,
+# and inside a workflow file none of it can be run, linted or tested before the
+# publish it governs. Committed, it is read by shellcheck and driven branch by
+# branch against a stub npm by packages/server/test/release-helpers.test.ts.
 #
 # No repository secret is referenced anywhere below. That absence is the whole
 # content of REL-02: the only credential on this path is an ephemeral OIDC
@@ -147,8 +172,9 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    # Generous enough to contain the ten-minute replication wait plus three
-    # publishes, and still bounded.
+    # Generous enough to contain three five-minute absence confirmations (point
+    # 7) plus the ten-minute replication wait plus three publishes, and still
+    # bounded.
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
@@ -175,135 +201,26 @@ jobs:
           echo "PACKS=$packs" >> "$GITHUB_ENV"
           echo "publishing $version from tag $GITHUB_REF_NAME"
 
-      # ONE probe, used by both the skip check and the replication wait, because
-      # they ask the same question: can a consumer install this exact version
-      # right now. Written to a file and sourced by the steps below, since each
-      # `run:` block is its own shell.
-      - name: Write the shared registry probe
-        run: |
-          cat > "$RUNNER_TEMP/release-helpers.sh" <<'HELPERS'
-          # registry_probe <name> <version>
-          #   0  -> a real install of that exact version succeeded
-          #   44 -> the registry said the version is not there (E404 / ETARGET)
-          #   1  -> anything else: a blip, a 5xx, a timeout. NOT evidence of absence.
-          #
-          # A fresh temp dir AND a fresh cache dir per attempt are both
-          # load-bearing (header point 7): --prefer-online revalidates with the
-          # origin but does not control the CDN edge, and a warm cache can hold
-          # a negative packument for its five-minute max-age - long enough to
-          # outlive the publish that invalidated it.
-          registry_probe() {
-            probe_name="$1"
-            probe_version="$2"
-            probe_dir="$(mktemp -d)"
-            probe_cache="$(mktemp -d)"
-            probe_log="$(mktemp)"
-            if (cd "$probe_dir" && npm install --no-audit --no-fund --no-save \
-                  --cache "$probe_cache" --prefer-online \
-                  "$probe_name@$probe_version") >"$probe_log" 2>&1; then
-              rm -rf "$probe_dir" "$probe_cache" "$probe_log"
-              return 0
-            fi
-            probe_status=1
-            if grep -qE 'npm (error|ERR!) code (E404|ETARGET)' "$probe_log"; then
-              probe_status=44
-            else
-              echo "probe of $probe_name@$probe_version failed for a non-404 reason:" >&2
-              sed -n '1,20p' "$probe_log" >&2
-            fi
-            rm -rf "$probe_dir" "$probe_cache" "$probe_log"
-            return "$probe_status"
-          }
-
-          # already_published <name> <version>
-          #   0 -> already on the registry, skip the publish
-          #   1 -> genuinely absent, publish it
-          # Fails the job on "unknown" (header point 6). A single flaky attempt
-          # read as absence is how a re-run re-publishes a version that already
-          # landed and leaves conflicting provenance on it.
-          already_published() {
-            ap_attempt=1
-            while :; do
-              ap_status=0
-              registry_probe "$1" "$2" || ap_status=$?
-              if [ "$ap_status" -eq 0 ]; then
-                return 0
-              fi
-              if [ "$ap_status" -eq 44 ]; then
-                return 1
-              fi
-              if [ "$ap_attempt" -ge 3 ]; then
-                echo "cannot tell whether $1@$2 is published: $ap_attempt attempts" \
-                  "answered neither installable nor 404, so absence is not established" >&2
-                exit 1
-              fi
-              ap_attempt=$(( ap_attempt + 1 ))
-              sleep 10
-            done
-          }
-
-          # wait_for_install <name> <version>
-          # Retries by construction and only ever concludes success, so it needs
-          # no 404-versus-unknown rule: 5s doubling to a 60s ceiling, ten-minute
-          # deadline, job failed on the deadline.
-          wait_for_install() {
-            wf_deadline=$(( $(date +%s) + 600 ))
-            wf_delay=5
-            while :; do
-              wf_status=0
-              registry_probe "$1" "$2" || wf_status=$?
-              if [ "$wf_status" -eq 0 ]; then
-                echo "installable: $1@$2"
-                return 0
-              fi
-              if [ "$(date +%s)" -ge "$wf_deadline" ]; then
-                echo "timed out waiting for $1@$2 to become installable" >&2
-                exit 1
-              fi
-              echo "$1@$2 not installable yet; retrying in ${wf_delay}s"
-              sleep "$wf_delay"
-              wf_delay=$(( wf_delay * 2 ))
-              if [ "$wf_delay" -gt 60 ]; then
-                wf_delay=60
-              fi
-            done
-          }
-
-          # publish_package <core|react|server>
-          # D-09's split: pnpm packs, because pnpm is what substitutes the
-          # workspace protocol into a real semver range, and the npm CLI uploads
-          # that exact tarball, because npm is what implements the OIDC exchange
-          # and the attestation. No --access flag: publishConfig.access travels
-          # inside the packed manifest.
-          publish_package() {
-            pp_pkg="$1"
-            pp_name="@hwp-editor/$pp_pkg"
-            if already_published "$pp_name" "$VERSION"; then
-              echo "[skip] $pp_name@$VERSION is already on the registry"
-              return 0
-            fi
-            ( cd "packages/$pp_pkg" && pnpm pack --pack-destination "$PACKS" )
-            npm publish "$PACKS/hwp-editor-$pp_pkg-$VERSION.tgz" --provenance
-          }
-          HELPERS
-          echo "wrote $RUNNER_TEMP/release-helpers.sh"
-
       # REL-05's ordering is three separate steps on purpose. A single loop over
       # the three package names with the wait tucked inside a conditional would
       # behave identically at runtime and be unreviewable here.
+      #
+      # Each step sources the helpers because every `run:` block is its own
+      # shell. The file is committed (header point 11), so what runs here is what
+      # shellcheck and the test suite read.
       - name: Publish @hwp-editor/core
         run: |
-          . "$RUNNER_TEMP/release-helpers.sh"
+          . ./scripts/release-helpers.sh
           publish_package core
 
       - name: Wait until core is installable from the registry
         run: |
-          . "$RUNNER_TEMP/release-helpers.sh"
+          . ./scripts/release-helpers.sh
           wait_for_install "@hwp-editor/core" "$VERSION"
 
       - name: Publish @hwp-editor/react and @hwp-editor/server
         run: |
-          . "$RUNNER_TEMP/release-helpers.sh"
+          . ./scripts/release-helpers.sh
           publish_package react
           publish_package server
 
@@ -322,12 +239,24 @@ jobs:
       # release path. --verify-tag refuses to invent a Release for a tag that
       # does not exist; the view-first shape makes a Re-run failed jobs after a
       # partial run a no-op rather than a duplicate-name failure.
+      #
+      # A prerelease tag gets --prerelease --latest=false, from the same
+      # derivation that chooses the npm dist-tag (header point 10). Without it a
+      # candidate is presented as the stable, newest Release while npm correctly
+      # holds it back under `next` - the two halves of one release disagreeing
+      # about what it is.
       - name: Create the GitHub Release for this tag
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          . ./scripts/release-helpers.sh
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             echo "[skip] a Release already exists for $GITHUB_REF_NAME"
             exit 0
           fi
-          gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag
+          if is_prerelease "${GITHUB_REF_NAME#v}"; then
+            gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag \
+              --prerelease --latest=false
+          else
+            gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag
+          fi
