@@ -16,14 +16,19 @@
  * script's stage 5 calls those helpers with the wrong arguments, because the
  * stage bodies sit behind the entry-module guard and never run under vitest.
  * That wiring is first exercised by the first green run of
- * `node scripts/smoke-registry.mjs`, which demands `^1.0.0-rc.0` exactly.
+ * `node scripts/smoke-registry.mjs`, which demands whatever range the three
+ * manifests are at: `^1.0.0` today, and `^1.0.0-rc.0` only while the manifests
+ * carry the candidate version, since the script derives the expectation from
+ * `packages/core/package.json` rather than from a literal.
  */
 
-import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   assertResolvedPeer,
@@ -31,6 +36,9 @@ import {
   expectedPeerRange,
   SCRATCH_PREFIX,
 } from "../../../scripts/smoke-registry.mjs";
+
+const SCRIPT_URL = new URL("../../../scripts/smoke-registry.mjs", import.meta.url).href;
+const SCRIPT_PATH = fileURLToPath(SCRIPT_URL);
 
 /**
  * A scratch tree holding a `package.json` at each given relative path, built
@@ -109,19 +117,52 @@ describe("REL-01: the dedupe count can fail", () => {
   });
 });
 
+/**
+ * Both branches of the entry-module guard, in child processes.
+ *
+ * Not `vi.resetModules()` plus a dynamic import, which is what this used to be:
+ * the static import at the top of this file has already executed the module by
+ * the time any sample is taken, `resetModules` does not re-execute a natively
+ * loaded `.mjs`, and the two samples were therefore equal whether the guard
+ * existed or not. An assertion that cannot fail is not a test.
+ *
+ * The two children differ in exactly the thing the guard reads - whether
+ * `process.argv[1]` is the module's own path - and in nothing else. The child
+ * that DOES take the branch is the negative control: it runs with a PATH holding
+ * no `npm`, so stage 2 dies at once instead of touching a registry, and the
+ * scratch directory stage 1 created is left behind as the evidence that the
+ * stages ran.
+ */
 describe("the entry-module guard", () => {
-  it("runs no stage when the module is imported", async () => {
-    // Without the guard, importing the module would start a registry install:
-    // the run would hang, or fail with a 404 for an unpublished version, and
-    // this file would never finish loading. Surviving scratch directories from
-    // a real run of the script are tolerated by comparing before against after
-    // rather than demanding none exist.
-    const strays = () => readdirSync(tmpdir()).filter((name) => name.startsWith(SCRATCH_PREFIX));
+  const strays = () => readdirSync(tmpdir()).filter((name) => name.startsWith(SCRATCH_PREFIX));
+
+  /** A PATH with nothing on it, so `npm` cannot be spawned by either child. */
+  const noTools = { ...process.env, PATH: join(tmpdir(), "hwped-no-such-bin") };
+
+  it("runs no stage when the module is imported rather than executed", () => {
     const before = strays();
+    const result = spawnSync(
+      process.execPath,
+      ["--input-type=module", "-e", `import * as m from ${JSON.stringify(SCRIPT_URL)}; console.log(typeof m.expectedPeerRange);`],
+      { encoding: "utf8", env: noTools },
+    );
 
-    vi.resetModules();
-    await import("../../../scripts/smoke-registry.mjs");
-
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe("function");
+    // Surviving directories from a real run of the script are tolerated by
+    // comparing before against after rather than demanding none exist.
     expect(strays()).toEqual(before);
+  });
+
+  it("runs the stages when the module IS the entry point", () => {
+    // The negative control. If this passed too, the assertion above would be
+    // measuring nothing about the guard.
+    const before = strays();
+    const result = spawnSync(process.execPath, [SCRIPT_PATH], { encoding: "utf8", env: noTools });
+
+    expect(result.status).not.toBe(0);
+    const created = strays().filter((name) => !before.includes(name));
+    expect(created.length).toBeGreaterThan(0);
+    for (const name of created) rmSync(join(tmpdir(), name), { recursive: true, force: true });
   });
 });
