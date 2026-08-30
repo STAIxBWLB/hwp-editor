@@ -119,9 +119,17 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  # One group for the whole repository, deliberately NOT keyed on the ref. A
+  # per-tag group lets two releases overlap, and the approval gate makes that
+  # ordinary rather than exotic: v1.0.0 can sit waiting for a reviewer while
+  # v1.0.1 is pushed and approved first, so the older run finishes last and its
+  # `npm publish --tag latest` moves `latest` backward. Interleaving also lets
+  # core, react and server point at different versions mid-run. Distinct tags
+  # queue here instead.
+  group: release
   # Never cancel a run that may be mid-publish: the second half of a cancelled
-  # release is not recoverable by pushing the tag again.
+  # release is not recoverable by pushing the tag again. With one group, this
+  # makes a second tag wait rather than displace the first.
   cancel-in-progress: false
 
 jobs:

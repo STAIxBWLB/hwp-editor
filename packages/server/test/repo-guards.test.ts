@@ -51,6 +51,7 @@ const PUBLISH_ENVIRONMENT = "npm-publish";
 
 /** The job id in `.github/workflows/release.yml` that runs D-08's comparison. */
 const VERIFY_JOB_ID = "verify";
+const PUBLISH_JOB_ID = "publish";
 
 /** The script D-08's tag/manifest comparison lives in. */
 const CHECK_PUBLISHABLE = "scripts/check-publishable.mjs";
@@ -454,6 +455,40 @@ function expectedVersionValue(step: string[]): string | undefined {
  * REL-02 check 5: the verify job sets EXPECTED_VERSION on the step that runs
  * `check-publishable.mjs`, to a value that cannot render empty.
  */
+/**
+ * A workflow that can publish must serialize across ALL release tags, not per
+ * ref. A per-tag concurrency group lets two releases overlap, and the approval
+ * gate (D-07) makes that ordinary: v1.0.0 can wait for a reviewer while v1.0.1
+ * is pushed and approved first, so the older run finishes last and its
+ * `npm publish --tag latest` moves `latest` backward. The failure is invisible
+ * until two tags are in flight, which is why it needs a standing assertion.
+ */
+function releaseConcurrencyViolations(dir: string): string[] {
+  const hosts = readWorkflows(dir).filter((workflow) => workflow.jobs.has(PUBLISH_JOB_ID));
+  const violations: string[] = [];
+  for (const host of hosts) {
+    const group = withoutComments(host.lines).find((line) =>
+      /^\s*group:/.test(line),
+    );
+    if (group === undefined) {
+      violations.push(`${host.name}: declares job "${PUBLISH_JOB_ID}" with no concurrency group`);
+      continue;
+    }
+    if (/\$\{\{/.test(group)) {
+      violations.push(
+        `${host.name}: concurrency group is expression-keyed (${group.trim()}), so distinct ` +
+          `tags get distinct groups and two releases can interleave`,
+      );
+    }
+  }
+  if (hosts.length === 0) {
+    throw new Error(
+      `REL-02 guard found no workflow declaring a job id "${PUBLISH_JOB_ID}"; the guard did not run.`,
+    );
+  }
+  return violations;
+}
+
 function expectedVersionViolations(dir: string): string[] {
   const hosts = readWorkflows(dir).filter((workflow) => workflow.jobs.has(VERIFY_JOB_ID));
   const host = hosts.length === 1 ? hosts[0] : undefined;
@@ -654,6 +689,32 @@ describe("PKG-11: no esbuild below the advisory floor is resolved", () => {
  * the publish succeeds or not.
  */
 describe("REL-02: the release path carries no stored credential", () => {
+  it("serializes releases across every tag, not per ref", () => {
+    const violations = releaseConcurrencyViolations(WORKFLOWS_DIR);
+    expect(
+      violations,
+      `two release tags could publish concurrently:\n${violations.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  it("reports a violation for a concurrency group keyed on the ref", () => {
+    const dir = fixtureDir({
+      "release.yml":
+        "concurrency:\n  group: release-${{ github.ref }}\n  cancel-in-progress: false\n" +
+        "jobs:\n  publish:\n    runs-on: ubuntu-latest\n",
+    });
+    expect(releaseConcurrencyViolations(dir).join("\n")).toContain("interleave");
+  });
+
+  it("does not mistake a commented-out expression for the real group", () => {
+    const dir = fixtureDir({
+      "release.yml":
+        "concurrency:\n  # not release-${{ github.ref }}, deliberately\n  group: release\n" +
+        "jobs:\n  publish:\n    runs-on: ubuntu-latest\n",
+    });
+    expect(releaseConcurrencyViolations(dir)).toEqual([]);
+  });
+
   it("passes no registry input to actions/setup-node in any workflow", () => {
     const violations = registryInputViolations(WORKFLOWS_DIR);
     expect(
