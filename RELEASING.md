@@ -76,7 +76,8 @@ fails here, before anything is uploaded.
 ### 4. Approve the deployment
 
 The `publish` job targets the `npm-publish` environment and sits at **Waiting** until one
-required reviewer approves it. GitHub fails a deployment left unapproved for 30 days.
+required reviewer approves it. GitHub documents that a deployment left unapproved for 30 days
+fails on its own.
 
 This approval is the last reversible moment in the release. Everything after it is permanent:
 every version number published is permanently consumed, whether or not the publish that
