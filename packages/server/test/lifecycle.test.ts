@@ -207,6 +207,66 @@ describe("runCli terminal causes", () => {
   }, 30_000);
 });
 
+/** A `cat` envelope the fake can print instantly, so `parseCatEnvelope` passes. */
+const ENVELOPE = '{"markdown":"# hi","segments":[]}';
+
+describe("a recorded cause outranks a zero exit status", () => {
+  /*
+   * Both cases use the `graceful` fake: it writes a complete, parseable
+   * envelope, then traps SIGTERM and exits 0 — what a wrapper script that
+   * cleans up after itself does. `execFile` therefore calls back with
+   * `error === null`, and a callback that reads the exit status before the
+   * cause it already recorded reports a blown deadline, or a request the
+   * caller abandoned, as a normal 200.
+   */
+  it("reports a timeout as timeout when the child traps SIGTERM and exits 0", async () => {
+    const { bin } = createFakeBin({ mode: "graceful", stdout: ENVELOPE });
+    const engine = createCliEngine({ bin, timeoutMs: TIMEOUT_MS });
+    // Warm the version memo: ensureVersion passes no signal and no deadline
+    // of its own, and must not be what this case measures.
+    await engine.capabilities();
+    await expect(engine.read(DOC)).rejects.toMatchObject({ reason: "timeout" });
+  }, 30_000);
+
+  it("reports a cancellation as cancelled when the child traps SIGTERM and exits 0", async () => {
+    const { bin, log } = createFakeBin({ mode: "graceful", stdout: ENVELOPE });
+    const engine = createCliEngine({ bin, timeoutMs: 30_000 });
+    await engine.capabilities();
+    const controller = new AbortController();
+    const pending = settled(engine.read(DOC, { signal: controller.signal }));
+    await waitForSpawn(log, "cat");
+    controller.abort();
+    expect(await pending).toMatchObject({ reason: "cancelled" });
+  }, 30_000);
+});
+
+describe("cancellation survives the optional metadata probes", () => {
+  it("rejects, and caches nothing, when the abort lands after cat", async () => {
+    const { bin, log } = createFakeBin({
+      mode: "slow",
+      delayMs: 3_000,
+      catStdout: ENVELOPE,
+    });
+    const engine = createCliEngine({ bin, timeoutMs: 30_000 });
+    await engine.capabilities();
+    const controller = new AbortController();
+    const pending = settled(engine.describe(DOC, { signal: controller.signal }));
+    // `cat` answered instantly from `catStdout`; what is in flight is the
+    // fields/bookmarks/slots/info group, which is the window the blanket
+    // catch in `tryJson` used to swallow.
+    await waitForSpawn(log, "fields");
+    controller.abort();
+    expect(await pending).toMatchObject({ reason: "cancelled" });
+    // The cancelled call must not leave a partial inspection behind: the
+    // inspection cache is keyed on scope + bytes and never re-probes a hit,
+    // so one abandoned request would otherwise degrade every later request
+    // for the same document under the same scope, permanently.
+    await engine.describe(DOC);
+    const catRuns = log().split("\n").filter((line) => /^cat\b/.test(line));
+    expect(catRuns).toHaveLength(2);
+  }, 30_000);
+});
+
 describe("temp directory outlives the child", () => {
   it("keeps the work directory while the child is alive and removes it after", async () => {
     const { bin, log } = createFakeBin({ mode: "hang" });

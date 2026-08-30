@@ -32,7 +32,7 @@ const DEFAULT_VERSION = "0.14.0";
 /** 39 characters plus the newline `yes` appends: 40 bytes per line. */
 const OVERFLOW_LINE = "012345678901234567890123456789012345678";
 
-export type FakeBinMode = "ok" | "fail" | "overflow" | "hang" | "slow";
+export type FakeBinMode = "ok" | "fail" | "overflow" | "hang" | "slow" | "graceful";
 
 export interface FakeBinOptions {
   /** What `--version` prints; default `0.14.0`. */
@@ -47,6 +47,14 @@ export interface FakeBinOptions {
   editStderr?: string;
   /** stdout written by `ok`/`fail` before exiting, e.g. a validate report. */
   stdout?: string;
+  /**
+   * stdout for `cat` alone, answered before the mode branch is reached. Lets
+   * a fake serve a parseable envelope instantly while `fields`/`bookmarks`/
+   * `slots`/`info` still take the mode's path, which is the only way to drive
+   * a cancellation that lands during the optional probes rather than during
+   * `cat`.
+   */
+  catStdout?: string;
   /**
    * Alternative `edit --help` output, for flag-surface cases. Pointing this
    * at a path that does not exist is how a test drives a handshake whose
@@ -83,6 +91,13 @@ function modeScript(opts: FakeBinOptions): string[] {
     case "hang":
       // Ignores SIGTERM, which is what forces the SIGKILL escalation.
       return ['trap "" TERM', ...sleepSlices(60_000), "exit 0"];
+    case "graceful":
+      // Traps SIGTERM and exits ZERO, the way a wrapper that cleans up after
+      // itself does. This is the case that separates "the child exited 0"
+      // from "the run succeeded": stdout is written up front, so a caller
+      // that reads the exit status alone sees a complete, valid response for
+      // a run that was actually timed out or cancelled.
+      return [...stdout, 'trap "exit 0" TERM', ...sleepSlices(60_000), "exit 0"];
     case "slow":
       return sleepSlices(opts.delayMs ?? 5_000).concat("exit 0");
   }
@@ -111,6 +126,9 @@ export function createFakeBin(opts: FakeBinOptions = {}): { bin: string; log: ()
       // `|| exit 1` rather than an unconditional `exit 0`: an unreadable
       // fixture is the only way to give the handshake a failing `edit --help`.
       `  edit) if [ "$2" = "--help" ]; then cat ${JSON.stringify(help)} || exit 1; exit 0; fi ;;`,
+      ...(opts.catStdout === undefined
+        ? []
+        : [`  cat) printf '%s' ${JSON.stringify(opts.catStdout)}; exit 0 ;;`]),
       ...(opts.info === undefined ? [] : [`  info) printf '%s' ${JSON.stringify(opts.info)}; exit 0 ;;`]),
       "esac",
       ...modeScript(opts),
