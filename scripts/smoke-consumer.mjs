@@ -334,8 +334,8 @@ const EXPECTED_TARBALL_FILES = {
   server: [
     "package/LICENSE",
     "package/README.md",
-    "package/dist/chunk-4I65OVHB.js",
-    "package/dist/chunk-4I65OVHB.js.map",
+    "package/dist/chunk-YJDXTIO7.js",
+    "package/dist/chunk-YJDXTIO7.js.map",
     "package/dist/index.cjs",
     "package/dist/index.cjs.map",
     "package/dist/index.d.cts",
