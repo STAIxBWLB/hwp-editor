@@ -395,6 +395,32 @@ and a deadlocked release with one.
   `gh api .../branches/main/protection` returns 404. An environment protection rule is a
   different mechanism from a required status check and does not touch PKG-10's settings half.
 
+### A4b. What the candidate actually did when mounted
+
+D-02's manual half, performed 2026-08-31 against the published `1.0.0-rc.0` in a scratch app
+outside the workspace. The app installed `@hwp-editor/react` and `@hwp-editor/server` from the
+registry, served the handler against a real `hwp 0.16.0`, imported the stylesheet from
+`@hwp-editor/react/style.css`, and mounted the editor over an HTTP engine.
+
+- The editor rendered **with its own styling**: dark chrome, laid-out toolbar, the three side
+  panels as tabs. This is the criterion the stylesheet subpath fails, and it passed.
+- A real HWPX opened and its page rendered **as an image**, with the Korean table intact.
+- Clicking the page **hit-tested to a paragraph**: the region highlighted and the panel showed
+  `Selected paragraph (section 0, paragraph 1)` with the document's own text.
+- An edit applied and the re-render showed it. The server log carries the whole round trip:
+  `edit` 200 on a 7292-byte body, then `read`, `render` and `validate` all 200 against the
+  edited 6951-byte document.
+
+One defect found, and it is in the integration docs rather than in the packages. The `file`
+prop is a `DocumentHandle` - `{ name, data: Uint8Array }` - not a browser `File`. Passing a
+`File` type-checks nowhere in a plain JS host and fails at runtime in a way that points at the
+wrong thing: `createHttpEngine` builds its multipart part from `document.data`, so an undefined
+`data` produces an EMPTY file part, and the server answers
+`400 file is not an HWP or HWPX document`. The message accuses the document; the fault is the
+prop. Judgement: does NOT block `1.0.0` - the published behavior is correct and the types are
+right - but `docs/integration-web.md` should show the conversion, because the first thing an
+outside developer has in hand is a `File` from an input element.
+
 ### A5. Record the replication delay observed during the candidate publish
 
 - Time from a successful `npm publish` to a successful install of that exact version:
