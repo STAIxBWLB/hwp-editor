@@ -2,8 +2,10 @@ import { defineConfig } from "@playwright/test";
 
 /**
  * Playground e2e — drives the real editor UI against the real hwp binary.
- * HWP_EDITOR_BIN points the API route at the binary (the route also has the
- * hwp-cli debug build as its built-in default).
+ * The API route passes no `bin`, so the binary is whatever the engine's own
+ * chain resolves. No env block is needed here: the `pnpm dev` child inherits
+ * this process's environment, so an HWP_EDITOR_BIN exported by the caller (or
+ * by the CI e2e job) reaches the route unchanged.
  */
 export default defineConfig({
   testDir: "./e2e",
@@ -19,10 +21,5 @@ export default defineConfig({
     url: "http://localhost:3100/editor",
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
-    env: {
-      HWP_EDITOR_BIN:
-        process.env.HWP_EDITOR_BIN ??
-        "/Users/yj.lee/workspace/work/dev/hwp-cli/target/debug/hwp",
-    },
   },
 });
