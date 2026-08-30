@@ -536,7 +536,15 @@ async function tryJson(
   try {
     const result = await runCliOk(bin, args, timeoutMs, locale, requestSignal);
     return JSON.parse(result.stdout) as unknown;
-  } catch {
+  } catch (error) {
+    // Best-effort covers this probe failing, not the whole request ending. A
+    // cancellation belongs to the request: swallowing it let describe()
+    // resolve - and then CACHE - an all-null inspection for a caller that was
+    // already gone, and answer 200 where the contract says 499. The cache
+    // never re-probes a hit, so that entry degraded every later request for
+    // the same document under the same scope. Rethrowing here is what keeps
+    // describe()'s cache write unreachable on a cancelled call.
+    if (error instanceof HwpCliError && error.reason === "cancelled") throw error;
     return null;
   }
 }
