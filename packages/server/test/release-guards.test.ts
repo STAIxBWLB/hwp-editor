@@ -111,6 +111,43 @@ describe("REL-03: the peer range the RC proves is not the range 1.0.0 ships", ()
   });
 });
 
+/**
+ * The prerelease coupling that three earlier sweeps could not see, because it
+ * is not a literal in this repository: npm 11 refuses
+ * `pnpm publish --dry-run` outright on a prerelease version with "You must
+ * specify a tag using --tag when publishing a prerelease version". The guard
+ * lives inside npm, so grepping our sources for `1.0.0` was never going to
+ * find it, and it only fires once a manifest actually carries a prerelease -
+ * which first happened during the RC bootstrap, after the required `package`
+ * job had been green on every pull request for two waves.
+ *
+ * Losing the flag again reddens ci.yml's required job on every PR while a
+ * candidate is in the tree, and kills release.yml's pre-publish re-run before
+ * it reaches the publish. The derivation must also agree with `dist_tag_for`
+ * in scripts/release-helpers.sh, or a dry-run would rehearse a channel the
+ * real publish does not use.
+ */
+describe("PKG-08: the publish dry-run names a dist-tag", () => {
+  const script = () =>
+    readFileSync(join(REPO_ROOT, "scripts", "check-publishable.mjs"), "utf8");
+
+  it("passes --tag to the dry-run", () => {
+    expect(script()).toContain('"--tag"');
+  });
+
+  it("derives the tag from the version rather than hard-coding one", () => {
+    expect(script()).toMatch(/version\.includes\("-"\)\s*\?\s*"next"\s*:\s*"latest"/);
+  });
+
+  it("agrees with dist_tag_for in the release shell", () => {
+    const shell = readFileSync(join(REPO_ROOT, "scripts", "release-helpers.sh"), "utf8");
+    // Both answer `next` for a version carrying a prerelease tail and `latest`
+    // otherwise; the shell spells it as a case glob, the script as a substring.
+    expect(shell).toContain("*-*) return 0 ;;");
+    expect(script()).toContain('version.includes("-") ? "next" : "latest"');
+  });
+});
+
 describe("REL-01: the dedupe count can fail", () => {
   it("counts two nested copies of the core manifest", () => {
     const dir = manifestTree([
