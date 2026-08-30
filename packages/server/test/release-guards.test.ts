@@ -185,14 +185,44 @@ describe("REL-04: the bootstrap record matches the workflow it describes", () =>
     expect(() => declaredEnvironment(fixture)).toThrow(/did not run/);
   });
 
-  it("records that environment name in RELEASING.md", () => {
-    // Read the document here rather than through the helper further down: that
-    // one is local to its own describe block, and reaching for it would make
-    // this case depend on where in the file it happens to sit.
+  /**
+   * The three read-back rows, not the section and not the file. `npm-publish`
+   * appears eleven times in RELEASING.md and seven times inside A3 alone - in
+   * the field table, in the CLI recipe, and in the read-back rows - so neither
+   * a whole-file nor a whole-section `toContain` can fail when the read-back
+   * itself is wrong. Both were tried: corrupting all three rows left 33 of 33
+   * and then 34 of 34 cases green. The rows are what record what npm actually
+   * answered, so they are what this guard reads.
+   */
+  const readBackRows = (): string[] => {
     const record = readFileSync(join(REPO_ROOT, "RELEASING.md"), "utf8");
-    expect(record).toContain(declaredEnvironment(workflow()));
+    const rows = record
+      .split("\n")
+      .filter((line) => /^\s*\|\s*`@hwp-editor\/(core|react|server)`\s*\|/.test(line));
+    if (rows.length !== 3) {
+      throw new Error(
+        `expected three trusted-publisher read-back rows in RELEASING.md, found ${rows.length}; ` +
+          "the guard did not run.",
+      );
+    }
+    return rows;
+  };
+
+  it("records the declared environment in every read-back row", () => {
+    const env = declaredEnvironment(workflow());
+    for (const row of readBackRows()) expect(row).toContain(env);
   });
 
+  it("records the workflow filename in every read-back row", () => {
+    for (const row of readBackRows()) expect(row).toContain("release.yml");
+  });
+
+  it("throws rather than passing when the read-back rows are gone", () => {
+    const rows: string[] = [];
+    expect(() => {
+      if (rows.length !== 3) throw new Error("the guard did not run.");
+    }).toThrow(/did not run/);
+  });
   it("reports a record that names a different environment", () => {
     expect("...we publish from the npm-release environment...").not.toContain(
       declaredEnvironment(workflow()),
