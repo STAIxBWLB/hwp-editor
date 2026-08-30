@@ -34,10 +34,23 @@
  *    asserted from the manifests via `pnpm ls`, which reads them from disk and
  *    needs no registry access.
  *
+ * This script is also D-08's home: the release workflow supplies the tag string
+ * in `EXPECTED_VERSION` and this script compares it against the three manifests,
+ * failing before anything reaches the registry. The manifests remain the source
+ * of truth for the version - the workflow only asserts against them, and nothing
+ * here ever writes a version anywhere. Keeping the comparison in this script
+ * rather than in the workflow is what preserves the registry-blindness insisted
+ * on above: the check reads three files off disk and makes no network call.
+ *
+ * The variable is optional by design. The `package` job in
+ * .github/workflows/ci.yml runs on pull requests, where no tag is in scope, so
+ * making it required would turn that job red on every pull request.
+ *
  * There is no try/catch anywhere in this script: any assertion that fails
  * throws and stops it with a non-zero exit.
  *
  * Usage: node scripts/check-publishable.mjs
+ *        EXPECTED_VERSION="${GITHUB_REF_NAME}" node scripts/check-publishable.mjs
  */
 
 import { execFileSync, spawnSync } from "node:child_process";
@@ -98,6 +111,34 @@ if (new Set(Object.values(versions)).size !== 1) {
 }
 const version = manifests.core.version;
 console.log(`[version] all three manifests agree on ${version}`);
+
+// D-08: the tag must agree with the manifests, and it must do so before Part B
+// pays for three `prepack` builds - and, in the release workflow, before
+// anything reaches the registry at all. An absent or empty value skips the
+// comparison, which is what keeps the pull-request `package` job green.
+const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+const expectedVersion = process.env.EXPECTED_VERSION;
+if (expectedVersion !== undefined && expectedVersion !== "") {
+  // One leading `v` only: `github.ref_name` is `v1.0.0` for a tag push. A full
+  // ref such as `refs/tags/v1.0.0` is rejected rather than quietly compared,
+  // because a malformed value that matches nothing is indistinguishable from a
+  // real mismatch once it reaches the comparison.
+  const stripped = expectedVersion.replace(/^v/, "");
+  if (!SEMVER.test(stripped)) {
+    throw new Error(
+      `EXPECTED_VERSION ${JSON.stringify(expectedVersion)} is not a version; ` +
+        `stripped to ${JSON.stringify(stripped)}, which is not a semver triple with an ` +
+        `optional prerelease tail; manifests: ${JSON.stringify(versions)}`,
+    );
+  }
+  if (stripped !== version) {
+    throw new Error(
+      `EXPECTED_VERSION ${JSON.stringify(expectedVersion)} means ${stripped}, but the ` +
+        `manifests are at ${version}; manifests: ${JSON.stringify(versions)}`,
+    );
+  }
+  console.log(`[tag] ${expectedVersion} agrees with the manifests at ${version}`);
+}
 
 for (const dir of PACKAGE_DIRS) {
   const access = manifests[dir].publishConfig?.access;
