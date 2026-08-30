@@ -29,7 +29,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -110,18 +110,29 @@ interface Run {
  * shell. The workflow calls them from `if` conditions for that reason, and so
  * do the snippets below.
  */
+/**
+ * The stub bin directory, written ONCE for the whole file.
+ *
+ * The stubs are byte-identical across every case - all of the variation travels
+ * in environment variables - so writing them per call bought nothing and cost a
+ * great deal: a freshly created executable pays a first-execution security scan
+ * on macOS, measured at roughly 200 ms per `runHelpers` call, and this file's
+ * spawn load is what pushed `lifecycle.test.ts`'s timing assertions over their
+ * budget when vitest ran the two files concurrently. Hoisting the write took the
+ * file from 4.8 s to 0.6 s with no case removed.
+ */
+const STUB_BIN = mkdtempSync(join(tmpdir(), "hwped-release-stubs-"));
+for (const [name, body] of [
+  ["npm", STUB_NPM],
+  ["pnpm", STUB_PNPM],
+] as const) {
+  const path = join(STUB_BIN, name);
+  writeFileSync(path, body);
+  chmodSync(path, 0o755);
+}
+
 function runHelpers(snippet: string, outcomes: Outcome[] = [], env: Record<string, string> = {}): Run {
   const dir = mkdtempSync(join(tmpdir(), "hwped-release-helpers-"));
-  const bin = join(dir, "bin");
-  mkdirSync(bin);
-  for (const [name, body] of [
-    ["npm", STUB_NPM],
-    ["pnpm", STUB_PNPM],
-  ] as const) {
-    const path = join(bin, name);
-    writeFileSync(path, body);
-    chmodSync(path, 0o755);
-  }
   const outcomesFile = join(dir, "outcomes");
   writeFileSync(outcomesFile, `${outcomes.join("\n")}\n`);
   const callsNpm = join(dir, "calls-npm");
@@ -137,7 +148,7 @@ function runHelpers(snippet: string, outcomes: Outcome[] = [], env: Record<strin
     encoding: "utf8",
     env: {
       ...process.env,
-      PATH: `${bin}:${process.env["PATH"] ?? ""}`,
+      PATH: `${STUB_BIN}:${process.env["PATH"] ?? ""}`,
       ABSENCE_CONFIRM_SECONDS: "0",
       UNKNOWN_RETRY_SECONDS: "0",
       OUTCOMES: outcomesFile,
