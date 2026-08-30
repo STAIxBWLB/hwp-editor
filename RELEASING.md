@@ -218,3 +218,101 @@ authenticated npm session with two-factor authentication, not the release workfl
 credentials, which cannot perform either. Confirm `npm whoami` answers before the session is
 needed, rather than during an incident.
 
+## Appendix A: the one-time bootstrap
+
+Performed once, at the first release, and **not to be repeated** - a second release starts at
+"The recurring release" above. It is kept because it is the record of how trusted publishing
+was established on these three packages, for the day it has to be re-established.
+
+Values that are only knowable from the run itself are marked `TBD` until the bootstrap fills
+them in.
+
+### A1. Publish the release candidate by hand
+
+npm cannot bind a trusted publisher to a package that does not exist, so the first publish of
+every package is manual no matter what. That single hand-run publish is the release candidate.
+
+It went out under `--tag next`, so `latest` stayed empty and no plain `npm install` could
+resolve anything at all until `1.0.0` - not even accidentally onto the prerelease.
+
+- Version published: `TBD`
+- Date: `TBD`
+- Account: `TBD`
+
+### A2. Confirm the dist-tag state immediately afterwards
+
+```sh
+npm dist-tag ls @hwp-editor/core       # expect: next: <rc version>, and nothing else
+```
+
+npm documents that publishing sets `latest` "unless the `--tag` option is used", with no
+carve-out for a package's first version, but that could not be verified without publishing, so
+it is a checked step rather than an assumption. If a `latest` tag appeared anyway, remove it -
+`npm dist-tag rm @hwp-editor/core latest` - and repeat for react and server.
+
+- Observed on core / react / server: `TBD`
+
+### A3. Configure the trusted publisher on each of the three packages
+
+The same five fields on all three:
+
+| Field | Value |
+|---|---|
+| Organization | `STAIxBWLB` |
+| Repository | `hwp-editor` |
+| Workflow filename | `release.yml` (filename only, with the extension, not a path) |
+| Environment name | `npm-publish` |
+| Allowed actions | `npm publish` |
+
+Two routes exist. The CLI one is the reproducible record and is preferred:
+
+```sh
+npm trust github --workflow release.yml --environment npm-publish --allow-publish
+```
+
+It needs npm >= 11.15.0, write access to the package and 2FA on the account, and it still
+requires the package to exist first. The other route is the settings form for each package on
+npmjs.com, which requires the same prior publish.
+
+Every field is case-sensitive and must match exactly. The observable symptom of any mismatch is
+a bare **404 on the publish**, not a clear authorization error: npm rejects the OIDC exchange
+and then attempts an unauthenticated publish of a scoped package.
+
+- Route used: `TBD`
+- Date configured: `TBD`
+
+### A4. Create the deployment environment
+
+Create an environment named `npm-publish` on the repository, with a required reviewer.
+
+The environment name is half of a binding whose other half is the trusted-publisher
+configuration in A3: a job that declares an environment gets an OIDC subject claim of the form
+`repo:<owner>/<repo>:environment:<name>`, and one without gets the ref form instead. The two
+sides must agree exactly or the publish fails with the same bare 404.
+
+Leave **"prevent users from approving workflow runs that they triggered" off** while there is a
+single active maintainer. It is a reasonable setting with two genuinely available reviewers,
+and a deadlocked release with one.
+
+- Required reviewer(s): `TBD`
+- Date created: `TBD`
+
+### A5. Record the replication delay observed during the candidate publish
+
+- Time from a successful `npm publish` to a successful install of that exact version: `TBD`
+
+This is the only empirical datapoint this project has for how long the registry takes. The
+workflow does not depend on it: `wait_for_install` retries against a ten-minute deadline
+regardless of what was measured here. It is recorded so a future timeout has something to be
+compared against.
+
+### A6. The settings-side constraint, carried forward
+
+`main` carries no branch protection and no rulesets, and this phase deliberately added none.
+If one is ever added, **the e2e check name must stay out of it**: a required e2e check would
+put fork-supplied code and a network-downloaded binary on the release path, which is the
+settings half of the guarantee `.github/workflows/e2e.yml`'s header records and
+`packages/server/test/repo-guards.test.ts` asserts in the tree.
+
+The approval gate this release uses is a deployment environment protection rule. That is a
+different mechanism, and it does not touch required status checks.

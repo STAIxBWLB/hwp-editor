@@ -1,7 +1,7 @@
 /**
- * Release-instrument guards for REL-01 and REL-03: the range arithmetic and the
- * dedupe count that `scripts/smoke-registry.mjs` judges a published release
- * with.
+ * Release-instrument guards for REL-01 and REL-03 - the range arithmetic and the
+ * dedupe count that `scripts/smoke-registry.mjs` judges a published release with
+ * - and for REL-04, the load-bearing content of `RELEASING.md`.
  *
  * Placement: these assertions are about the release instruments, not about
  * `@hwp-editor/server`. They live in this package's suite for the same reason
@@ -20,10 +20,24 @@
  * manifests are at: `^1.0.0` today, and `^1.0.0-rc.0` only while the manifests
  * carry the candidate version, since the script derives the expectation from
  * `packages/core/package.json` rather than from a literal.
+ *
+ * What the REL-04 block does and does not prove. It fails if the document loses
+ * a lever, loses the sentence denying unpublish, promotes the obsolete bootstrap
+ * appendix back above the rollback section, or states an engine range the code
+ * does not. It cannot tell whether any sentence in the document is TRUE - prose
+ * correctness is not machine-checkable, which is exactly why the guard is
+ * confined to presence, position and agreement with a constant.
  */
 
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -164,5 +178,165 @@ describe("the entry-module guard", () => {
     const created = strays().filter((name) => !before.includes(name));
     expect(created.length).toBeGreaterThan(0);
     for (const name of created) rmSync(join(tmpdir(), name), { recursive: true, force: true });
+  });
+});
+
+// ===========================================================================
+// REL-04: RELEASING.md's load-bearing content
+// ===========================================================================
+
+const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
+const RELEASING = join(REPO_ROOT, "RELEASING.md");
+const CLI_ENGINE = join(REPO_ROOT, "packages", "server", "src", "cli-engine.ts");
+
+/** D-13's denial, asserted verbatim because the whole point is that it is said. */
+const UNPUBLISH_DENIAL = "Unpublishing is not a rollback lever.";
+
+/**
+ * The three levers that DO exist, as the document has to name them. `npm
+ * dist-tag` covers moving `latest` back; it is also the command step 7 uses, so
+ * this one string cannot distinguish the two sites - deliberately, since losing
+ * either is a defect.
+ */
+const LEVERS = ["npm deprecate", "npm dist-tag", "patch release"] as const;
+
+/** D-15's ordering: the recurring procedure and the rollback section come first. */
+const ROLLBACK_HEADING = "## Rollback";
+const APPENDIX_HEADING = "## Appendix A";
+
+/** Reads the document. A missing file throws, which is the intended failure. */
+function readDocument(path: string): string {
+  return readFileSync(path, "utf8");
+}
+
+function missingStrings(doc: string, required: readonly string[]): string[] {
+  return required.filter((needle) => !doc.includes(needle));
+}
+
+/**
+ * Fails when the once-only bootstrap sits above the section a second releaser
+ * needs. Throws when either heading is absent, because a document missing one of
+ * them would otherwise satisfy an index comparison vacuously.
+ */
+function appendixOrderViolations(doc: string): string[] {
+  const rollback = doc.indexOf(ROLLBACK_HEADING);
+  const appendix = doc.indexOf(APPENDIX_HEADING);
+  if (rollback < 0 || appendix < 0) {
+    throw new Error(
+      `REL-04 guard found no ${rollback < 0 ? ROLLBACK_HEADING : APPENDIX_HEADING} ` +
+        `heading; the ordering check did not run.`,
+    );
+  }
+  if (appendix < rollback) {
+    return [
+      `"${APPENDIX_HEADING}" appears at ${appendix}, before "${ROLLBACK_HEADING}" at ` +
+        `${rollback}; the once-only bootstrap must not precede the recurring procedure`,
+    ];
+  }
+  return [];
+}
+
+/**
+ * One bound out of `packages/server/src/cli-engine.ts`, by parsing the source
+ * text.
+ *
+ * Not an import: both constants are module-private with no `export`, so there is
+ * nothing to import, and exporting them to make a test easier would widen a
+ * package's public surface for a repository guard - the wrong trade in the phase
+ * that freezes that surface. A parse that matched nothing throws, following
+ * `repo-guards.test.ts`'s esbuild guard: "the guard did not run" is a failure,
+ * not a clean tree.
+ */
+function engineBound(source: string, name: string): string {
+  const pattern = new RegExp(
+    `const ${name}: readonly \\[number, number, number\\] = \\[(\\d+), (\\d+), (\\d+)\\]`,
+  );
+  const parts = pattern.exec(source)?.slice(1) ?? [];
+  if (parts.length !== 3) {
+    throw new Error(
+      `REL-04 guard found no ${name} tuple in ${CLI_ENGINE}; the engine-range ` +
+        `check did not run. Either the constant was renamed or its declaration ` +
+        `is no longer the readonly triple this guard reads.`,
+    );
+  }
+  return parts.join(".");
+}
+
+/** FLR-01: the document's stated range must be the code's range. */
+function engineRangeViolations(doc: string, floor: string, ceiling: string): string[] {
+  return missingStrings(doc, [`>= ${floor}`, `< ${ceiling}`]).map(
+    (bound) => `RELEASING.md states no supported-engine bound "${bound}"`,
+  );
+}
+
+describe("REL-04: RELEASING.md keeps the content an operator needs", () => {
+  // Read per case rather than once in the describe body: a missing RELEASING.md
+  // must redden these cases, not stop the whole file from collecting and take
+  // the unrelated REL-01 and REL-03 blocks down with it.
+  const doc = () => readDocument(RELEASING);
+  const engineSource = () => readDocument(CLI_ENGINE);
+
+  it("exists and is readable, and reports a missing document rather than passing", () => {
+    expect(doc().length).toBeGreaterThan(0);
+    expect(() => readDocument(join(REPO_ROOT, "RELEASING-NO-SUCH-FILE.md"))).toThrow();
+  });
+
+  it("denies unpublish as a lever, verbatim", () => {
+    expect(missingStrings(doc(), [UNPUBLISH_DENIAL])).toEqual([]);
+  });
+
+  it("reports a document that dropped the unpublish denial", () => {
+    const fixture = "## Rollback\n\nUnpublish the version if it is recent.\n";
+    expect(missingStrings(fixture, [UNPUBLISH_DENIAL])).toEqual([UNPUBLISH_DENIAL]);
+  });
+
+  it("names all three levers that do exist", () => {
+    expect(missingStrings(doc(), LEVERS)).toEqual([]);
+  });
+
+  it("reports a rollback section that lists levers without naming them", () => {
+    const fixture = "## Rollback\n\nDeprecate it, re-point the tag, or ship a fix.\n";
+    expect(missingStrings(fixture, LEVERS)).toEqual([...LEVERS]);
+  });
+
+  it("keeps the bootstrap appendix after the rollback section", () => {
+    expect(appendixOrderViolations(doc())).toEqual([]);
+  });
+
+  it("reports an appendix promoted above the rollback section", () => {
+    const fixture = `${APPENDIX_HEADING}: the one-time bootstrap\n\n${ROLLBACK_HEADING}\n`;
+    expect(appendixOrderViolations(fixture)).toHaveLength(1);
+  });
+
+  it("throws rather than passing when either heading is absent", () => {
+    expect(() => appendixOrderViolations(`${ROLLBACK_HEADING}\n`)).toThrow(/Appendix A/);
+    expect(() => appendixOrderViolations(`${APPENDIX_HEADING}\n`)).toThrow(/Rollback/);
+  });
+
+  it("states the engine range the code enforces", () => {
+    const floor = engineBound(engineSource(), "MIN_VERSION");
+    const ceiling = engineBound(engineSource(), "MAX_VERSION_EXCLUSIVE");
+    expect(engineRangeViolations(doc(), floor, ceiling)).toEqual([]);
+  });
+
+  it("reports a document whose floor disagrees with cli-engine.ts", () => {
+    const floor = engineBound(engineSource(), "MIN_VERSION");
+    const ceiling = engineBound(engineSource(), "MAX_VERSION_EXCLUSIVE");
+    // The floor this repository carried before FLR-01 raised it.
+    const fixture = `Supports hwp-cli >= 0.8.8 and < ${ceiling}.\n`;
+    expect(engineRangeViolations(fixture, floor, ceiling)).toEqual([
+      `RELEASING.md states no supported-engine bound ">= ${floor}"`,
+    ]);
+  });
+
+  it("reads both bounds out of the source rather than from a literal here", () => {
+    expect(engineBound(engineSource(), "MIN_VERSION")).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(engineBound(engineSource(), "MAX_VERSION_EXCLUSIVE")).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  it("throws when the constant it parses is not there to parse", () => {
+    expect(() => engineBound("const MIN_VERSION = [0, 16, 0];\n", "MIN_VERSION")).toThrow(
+      /did not run/,
+    );
   });
 });
