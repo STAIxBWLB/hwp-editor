@@ -244,12 +244,19 @@ them in.
 npm cannot bind a trusted publisher to a package that does not exist, so the first publish of
 every package is manual no matter what. That single hand-run publish is the release candidate.
 
-It went out under `--tag next`, so `latest` stayed empty and no plain `npm install` could
-resolve anything at all until `1.0.0` - not even accidentally onto the prerelease.
+It went out under `--tag next`. That was supposed to leave `latest` empty so no plain
+`npm install` could resolve anything at all until `1.0.0`. **It did not.** See A2 - npm set
+`latest` anyway on each package's first publish, contradicting its own documentation, and the
+correction is a step rather than an assumption for exactly that reason.
 
-- Version published: `TBD`
-- Date: `TBD`
-- Account: `TBD`
+- Version published: `1.0.0-rc.0`, all three packages
+- Date: 2026-08-31
+- Account: `staix` (2FA `auth-and-writes`, security key)
+- Order: core, then react, then server
+- Published sha1, matching the inspected tarballs byte for byte:
+  core `ddaa21128fdfea73848c7042624e40b9e2eb5b7b`,
+  react `2d943fa238ff4af583003032678d2471be665c32`,
+  server `7bc49c8370495659f2892141255493e8f838247b`
 
 ### A2. Confirm the dist-tag state immediately afterwards
 
@@ -262,7 +269,29 @@ carve-out for a package's first version, but that could not be verified without 
 it is a checked step rather than an assumption. If a `latest` tag appeared anyway, remove it -
 `npm dist-tag rm @hwp-editor/core latest` - and repeat for react and server.
 
-- Observed on core / react / server: `TBD`
+- Observed on core / react / server: **`next` AND `latest`, both at `1.0.0-rc.0`, on all three.**
+
+  This contradicts the documented behavior quoted above. `npm dist-tag` docs state that
+  publishing sets `latest` "unless the `--tag` option is used", and `--tag next` WAS used - the
+  proof is that `next` is set, which a publish without the flag would not have done. npm
+  appears to assign `latest` on a package's first publish regardless, presumably because a
+  package cannot exist without one. There is no carve-out for this in the documentation.
+
+  Consequence while it stands: `npm install @hwp-editor/core` resolves `1.0.0-rc.0`, which is
+  precisely what Phase 1's D-01 exists to prevent. Verified by installing into a scratch app.
+
+  Correction, which needs an authenticated session and is NOT something the release workflow
+  can do:
+
+  ```sh
+  npm dist-tag rm @hwp-editor/core latest
+  npm dist-tag rm @hwp-editor/react latest
+  npm dist-tag rm @hwp-editor/server latest
+  npm dist-tag ls @hwp-editor/core     # expect: next only
+  ```
+
+  Publishing `1.0.0` under `--tag latest` would also overwrite it, so leaving it is survivable
+  but leaves the window open for as long as the candidate is the only version.
 
 ### A3. Configure the trusted publisher on each of the three packages
 
@@ -311,7 +340,19 @@ and a deadlocked release with one.
 
 ### A5. Record the replication delay observed during the candidate publish
 
-- Time from a successful `npm publish` to a successful install of that exact version: `TBD`
+- Time from a successful `npm publish` to a successful install of that exact version:
+  **still 404 roughly four to five minutes after publish; installable 54s and 56s after that.**
+
+  Measured on react and server with a real install into a fresh directory and a fresh npm cache
+  per attempt, `--prefer-online` set. The first probe answered with a 404 naming each package by
+  name, minutes after npmjs.com's own package list already showed all three as published - so a
+  404 from a fresh cache is NOT evidence of absence, exactly as `registry_probe`'s contract
+  says. A second probe found the packument present with `versions: []`, and the versions
+  appeared about a minute later.
+
+  This is the hazard `ABSENCE_CONFIRM_SECONDS` exists for, observed in practice on the very
+  first publish this project ever made. A skip check that concluded absence from that first 404
+  would have re-published an already-spent version.
 
 This is the only empirical datapoint this project has for how long the registry takes. The
 workflow does not depend on it: `wait_for_install` retries against a ten-minute deadline
