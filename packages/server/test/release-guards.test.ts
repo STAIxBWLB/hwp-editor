@@ -193,6 +193,18 @@ const CLI_ENGINE = join(REPO_ROOT, "packages", "server", "src", "cli-engine.ts")
 const UNPUBLISH_DENIAL = "Unpublishing is not a rollback lever.";
 
 /**
+ * The operational half of a trade `release.yml` records in its concurrency
+ * comment. One constant group serializes releases so a slow run cannot move
+ * `latest` backward, and the accepted cost is that an Actions group holds at
+ * most one running and one pending member: a third tag pushed while one release
+ * runs and another waits drops the middle one. That is the better failure only
+ * because a dropped run spent no version and is re-runnable, while a backward
+ * `latest` needs a 2FA-authenticated human. If this sentence leaves the
+ * document, the accepted risk quietly becomes an unmanaged one.
+ */
+const PENDING_TAG_RULE = "Do not push a release tag while another release is pending.";
+
+/**
  * The three levers that DO exist, as the document has to name them. `npm
  * dist-tag` covers moving `latest` back; it is also the command step 7 uses, so
  * this one string cannot distinguish the two sites - deliberately, since losing
@@ -288,6 +300,15 @@ describe("REL-04: RELEASING.md keeps the content an operator needs", () => {
   it("reports a document that dropped the unpublish denial", () => {
     const fixture = "## Rollback\n\nUnpublish the version if it is recent.\n";
     expect(missingStrings(fixture, [UNPUBLISH_DENIAL])).toEqual([UNPUBLISH_DENIAL]);
+  });
+
+  it("carries the pending-tag rule verbatim", () => {
+    expect(missingStrings(doc(), [PENDING_TAG_RULE])).toEqual([]);
+  });
+
+  it("reports a document that softened the pending-tag rule", () => {
+    const fixture = "## The recurring release\n\nAvoid concurrent releases where practical.\n";
+    expect(missingStrings(fixture, [PENDING_TAG_RULE])).toEqual([PENDING_TAG_RULE]);
   });
 
   it("names all three levers that do exist", () => {
