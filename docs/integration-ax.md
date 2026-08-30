@@ -1,7 +1,7 @@
 # Host integration: ax (Next.js 16, Vercel)
 
-The canonical server-side recipe. ax consumes the editor as vendored packages
-plus the HTTP engine against its own API routes; the `hwp` binary is
+The canonical server-side recipe. ax installs the editor from npm and drives it
+with the HTTP engine against its own API routes; the `hwp` binary is
 provisioned at build time by a pinned fetch script.
 
 ```
@@ -24,8 +24,16 @@ peer, so naming it is unnecessary and naming a different version of it is how yo
 end up with two copies:
 
 ```sh
-pnpm add @hwp-editor/react @hwp-editor/server
+pnpm add @hwp-editor/core @hwp-editor/react @hwp-editor/server
 ```
+
+Core is named on that line even though react and server already declare it as a
+peer, because this guide imports `createHttpEngine` from it directly. pnpm's
+strict `node_modules` layout does not expose an automatically installed peer to
+the application: a package resolves only what it declares, so an import of core
+from ax's own source fails unless ax declares core itself. Declaring it does not
+create a second copy - the range is the same `^1.0.0` the peer asks for, and
+`scripts/smoke-registry.mjs` asserts the single-copy property on every release.
 
 ```ts
 import { HwpEditor } from "@hwp-editor/react";
