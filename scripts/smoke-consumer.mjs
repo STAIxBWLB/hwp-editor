@@ -17,13 +17,32 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const TSC = join(repoRoot, "node_modules", ".bin", "tsc");
+
+// The expected version is read from packages/core/package.json rather than
+// written here as a literal, because a literal makes this script
+// version-specific and the D-01 bootstrap needs it to survive a prerelease.
+// With a version spelled out below,
+// bumping the three manifests to `1.0.0-rc.0` turns the `package` job in
+// .github/workflows/ci.yml red on every pull request opened while the bump is in
+// the tree, and also fails D-06's pre-publish re-run of this same script
+// [06-RESEARCH.md §5, "smoke-consumer.mjs blocks the RC bump"].
+//
+// The derivation is more than convenience. A prerelease does not satisfy a caret
+// range over its own release - `1.0.0-rc.0` does NOT satisfy `^1.0.0` - so the RC
+// never exercises the range `1.0.0` ships, and the two runs must assert two
+// different strings from one piece of code. That is what D-03 rests on.
+const EXPECTED_VERSION = JSON.parse(
+  readFileSync(join(repoRoot, "packages", "core", "package.json"), "utf8"),
+).version;
+/** The range pnpm substitutes for `workspace:^` when packing at this version. */
+const EXPECTED_PEER_RANGE = `^${EXPECTED_VERSION}`;
 
 // A CI failure that deletes its own evidence cannot be triaged, so the scratch
 // directories survive a non-zero exit and their absolute paths are printed.
@@ -96,10 +115,15 @@ pack("core");
 pack("react");
 pack("server");
 
+// The optional group after the third component is what makes an RC pack key the
+// same way a release pack does: without it `hwp-editor-core-1.0.0-rc.0.tgz`
+// matches nothing, the key stays as the whole remaining filename, and stage 2
+// throws `core tarball not packed` - a packing error for a versioning cause.
+const VERSIONED_TARBALL = /-\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\.tgz$/;
 const tarballs = Object.fromEntries(
   readdirSync(packDir)
     .filter((f) => f.endsWith(".tgz"))
-    .map((f) => [f.replace(/^hwp-editor-/, "").replace(/-\d+\.\d+\.\d+\.tgz$/, ""), join(packDir, f)]),
+    .map((f) => [f.replace(/^hwp-editor-/, "").replace(VERSIONED_TARBALL, ""), join(packDir, f)]),
 );
 for (const pkg of ["core", "react", "server"]) {
   if (tarballs[pkg] === undefined) {
@@ -361,23 +385,32 @@ for (const pkg of ["react", "server"]) {
   const peer = manifest.peerDependencies?.["@hwp-editor/core"];
   const dev = manifest.devDependencies?.["@hwp-editor/core"];
   const dep = manifest.dependencies?.["@hwp-editor/core"];
-  if (peer !== "^1.0.0") {
-    throw new Error(`packed ${pkg} peerDependencies['@hwp-editor/core'] is ${peer}, want ^1.0.0`);
+  if (peer !== EXPECTED_PEER_RANGE) {
+    throw new Error(
+      `packed ${pkg} peerDependencies['@hwp-editor/core'] is ${peer}, ` +
+        `want ${EXPECTED_PEER_RANGE}`,
+    );
   }
-  if (dev !== "1.0.0") {
-    throw new Error(`packed ${pkg} devDependencies['@hwp-editor/core'] is ${dev}, want 1.0.0`);
+  if (dev !== EXPECTED_VERSION) {
+    throw new Error(
+      `packed ${pkg} devDependencies['@hwp-editor/core'] is ${dev}, want ${EXPECTED_VERSION}`,
+    );
   }
   if (dep !== undefined) {
     throw new Error(`packed ${pkg} still names @hwp-editor/core in dependencies: ${dep}`);
   }
 }
-console.log("[assert] react and server declare core as a ^1.0.0 peer, never a dependency");
+console.log(
+  `[assert] react and server declare core as a ${EXPECTED_PEER_RANGE} peer, never a dependency`,
+);
 
 const versions = {};
 for (const pkg of ["core", "react", "server"]) {
   const manifest = packedManifest(tarballs[pkg]);
-  if (manifest.version !== "1.0.0") {
-    throw new Error(`packed @hwp-editor/${pkg} version is ${manifest.version}, want 1.0.0`);
+  if (manifest.version !== EXPECTED_VERSION) {
+    throw new Error(
+      `packed @hwp-editor/${pkg} version is ${manifest.version}, want ${EXPECTED_VERSION}`,
+    );
   }
   versions[pkg] = manifest.version;
 
@@ -408,7 +441,9 @@ for (const pkg of ["core", "react", "server"]) {
 if (new Set(Object.values(versions)).size !== 1) {
   throw new Error(`packed versions are not in lockstep: ${JSON.stringify(versions)}`);
 }
-console.log("[assert] all three tarballs match the reviewed 1.0.0 file allowlists");
+console.log(
+  `[assert] all three tarballs match the reviewed ${EXPECTED_VERSION} file allowlists`,
+);
 
 // A file count rather than parsed dependency-listing or peer-warning output,
 // whose wording varies by package manager version and would break silently.
