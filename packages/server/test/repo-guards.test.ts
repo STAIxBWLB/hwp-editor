@@ -150,18 +150,41 @@ function e2eGatingViolations(dir: string): string[] {
  * writes them as `esbuild@0.28.2:` and `'@esbuild/linux-x64@0.28.2':`; the range
  * forms (`esbuild: ^0.28.2`) carry no `@` and are deliberately not matched,
  * because a range is a request and this asserts on the resolution.
+ *
+ * The prerelease tail is captured rather than discarded. A pattern ending at
+ * the patch digit reads `esbuild@0.28.1-beta.1` as `0.28.1`, which compares
+ * EQUAL to the floor and lets a prerelease of the fixed release through the
+ * advisory gate - a build that predates the fix passing a check that exists to
+ * demand it.
  */
-const ESBUILD_SPEC = /(?<![\w.-])(?:@esbuild\/[a-z0-9-]+|esbuild)@(\d+\.\d+\.\d+)/g;
+const ESBUILD_SPEC =
+  /(?<![\w.-])(?:@esbuild\/[a-z0-9-]+|esbuild)@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/g;
 
+/**
+ * Semver precedence, narrowed to what this guard needs: the numeric triple,
+ * then the rule that a prerelease sorts BELOW the release it leads to
+ * (semver.org #9). The floor is always a plain release here, so comparing
+ * prerelease identifiers against each other is never required - only
+ * recognising that `0.28.1-beta.1` is not `0.28.1`.
+ */
 function isBelow(version: string, floor: string): boolean {
-  const left = version.split(".").map(Number);
-  const right = floor.split(".").map(Number);
+  const [versionCore = "", versionPre] = splitPrerelease(version);
+  const [floorCore = "", floorPre] = splitPrerelease(floor);
+  const left = versionCore.split(".").map(Number);
+  const right = floorCore.split(".").map(Number);
   for (let i = 0; i < 3; i += 1) {
     const a = left[i] ?? 0;
     const b = right[i] ?? 0;
     if (a !== b) return a < b;
   }
-  return false;
+  return versionPre !== undefined && floorPre === undefined;
+}
+
+/** Split `1.2.3-beta.1` into its core and its prerelease tail. */
+function splitPrerelease(version: string): [string, string | undefined] {
+  const dash = version.indexOf("-");
+  if (dash < 0) return [version, undefined];
+  return [version.slice(0, dash), version.slice(dash + 1)];
 }
 
 function esbuildFloorViolations(lockfilePath: string): string[] {
@@ -278,6 +301,24 @@ describe("PKG-11: no esbuild below the advisory floor is resolved", () => {
     });
     const violations = esbuildFloorViolations(join(dir, "pnpm-lock.yaml"));
     expect(violations.join("\n")).toContain("@esbuild/linux-x64@0.27.7");
+  });
+
+  it("reports a violation for a prerelease of the floor release", () => {
+    // The case a patch-digit-only pattern misses: `0.28.1-beta.1` truncates to
+    // `0.28.1`, compares equal to the floor and passes, so a build predating
+    // the advisory fix clears the gate that exists to demand it.
+    const dir = fixtureDir({
+      "pnpm-lock.yaml": "packages:\n  esbuild@0.28.1-beta.1:\n    resolution: {}\n",
+    });
+    const violations = esbuildFloorViolations(join(dir, "pnpm-lock.yaml"));
+    expect(violations.join("\n")).toContain("esbuild@0.28.1-beta.1");
+  });
+
+  it("accepts the floor release itself, so the prerelease rule is not overbroad", () => {
+    const dir = fixtureDir({
+      "pnpm-lock.yaml": "packages:\n  esbuild@0.28.1:\n    resolution: {}\n",
+    });
+    expect(esbuildFloorViolations(join(dir, "pnpm-lock.yaml"))).toEqual([]);
   });
 
   it("fails rather than passing when the lockfile names no esbuild", () => {
