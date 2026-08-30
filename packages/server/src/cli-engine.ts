@@ -583,9 +583,13 @@ const PROTECTED_ATTRIBUTES: Readonly<Record<string, string>> = {
  * for having described these documents as refused "although they have been
  * read since v0.8.7", which is about the read path, not the edit path.
  *
- * The evidence is the changelog alone. This repository has no
- * distribution-document fixture and hwp-cli cannot synthesize one, so the
- * refusal has not been observed here. The reason strings below name no
+ * The evidence is upstream's, not ours. Besides the changelog, hwp-cli's
+ * own `crates/hwp-cli/src/commands/cat.rs` at tag v0.16.0 records that
+ * "the source-preserving edit path fails closed on a /ViewText-only
+ * document instead of writing anything", attributed to a 2026-08-20
+ * measurement against a genuine distribution document. This repository
+ * has no distribution-document fixture and hwp-cli cannot synthesize one,
+ * so the refusal has not been observed here. The reason strings below name no
  * version on purpose: they reach the host as `capabilities.reason`, where a
  * version number is a maintenance liability with no reader benefit.
  */
