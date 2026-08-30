@@ -446,6 +446,34 @@ the released one: a prerelease does not satisfy a caret range over its own relea
 assertion runs again after `1.0.0` publishes, against `^1.0.0`, which is why that second run is
 not a duplicate of the Phase 5 dedupe check.
 
+### A4d. What the 1.0.0 release actually did
+
+Run: https://github.com/STAIxBWLB/hwp-editor/actions/runs/33333393346, 2026-08-31.
+`verify`, `publish` and `release-notes` all succeeded.
+
+- The `publish` job sat at **Waiting** and required an explicit approval before any step in it
+  ran. D-07's human stop is real, not nominal.
+- **npm 11.19.1.** `actions/setup-node` supplied 10.9.8, below the 11.5.1 trusted-publishing
+  floor, and the explicit `npm install -g "npm@^11.5.1"` step is what cleared it. Without that
+  step the publish fails on a version nobody would think to check.
+- Order held: core, then the installability wait, then react and server.
+- **No token fallback anywhere.** The log carries no ENEEDAUTH, no `NODE_AUTH_TOKEN`, no
+  `_authToken`. The workflow omits `registry-url` on `setup-node` and the OIDC exchange worked,
+  which settles the question that guard was added for: omitting it is safe, and npm's own
+  documentation example includes it.
+- **Provenance attached, and A1 is closed.** Every package logged
+  `Signed provenance statement with source and build information from GitHub Actions` and
+  `Provenance statement published to transparency log: https://search.sigstore.dev`.
+  `npm audit signatures` on a fresh install of all three reports verified attestations. So
+  `npm publish <tarball> --provenance` does generate an attestation for a pre-packed tarball -
+  the thing the research could only measure as flag acceptance, because a dry-run
+  short-circuits before generation.
+- `latest` moved to `1.0.0` on all three, which is what finally makes D-01's intent true after
+  the candidate broke it. `next` was moved onto `1.0.0` by hand afterwards, per step 7.
+- `smoke-registry.mjs` passes against `1.0.0`, asserting the resolved peer as `^1.0.0` and a
+  single core copy. That is the range the candidate could not exercise, since a prerelease does
+  not satisfy a caret over its own release - which is why the same assertion runs twice.
+
 ### A5. Record the replication delay observed during the candidate publish
 
 - Time from a successful `npm publish` to a successful install of that exact version:
