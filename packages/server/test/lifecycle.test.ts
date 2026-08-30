@@ -6,7 +6,9 @@
  * SIGTERM-ignoring child and a cancelled request are all reachable without
  * an hwp-cli install.
  *
- * The `edit --help` fixture these fakes serve was captured from hwp 0.15.0.
+ * The `edit --help` fixture these fakes serve reproduces `hwp 0.16.0` output
+ * byte for byte, verified against the installed binary; the bytes are
+ * unchanged since an earlier capture.
  */
 
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
