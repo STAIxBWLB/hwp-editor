@@ -6,8 +6,21 @@ math, generated spec types, and the editor state store. It has zero runtime
 dependencies and deliberately contains no React, no Node-only APIs, and no HWP
 parsing of its own: platform functions (`fetch`, `invoke`) are injected rather
 than imported, so the same build runs in a browser, in Node, and in a Tauri
-webview. The UI lives in [`@hwp-editor/react`](../react) and the binary-spawning
-adapter in [`@hwp-editor/server`](../server).
+webview. The UI lives in [`@hwp-editor/react`](https://www.npmjs.com/package/@hwp-editor/react) and the binary-spawning
+adapter in [`@hwp-editor/server`](https://www.npmjs.com/package/@hwp-editor/server).
+
+## Install
+
+```sh
+pnpm add @hwp-editor/core
+```
+
+Most hosts do not install this directly: it arrives as a peer of
+`@hwp-editor/react` and `@hwp-editor/server`, deduped to a single copy. Add it
+explicitly only when your own source imports from it — `createHttpEngine` and
+the `DocumentHandle` type being the usual reasons — because a strict
+`node_modules` layout does not expose an automatically installed peer to the
+application.
 
 ## Usage
 
