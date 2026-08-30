@@ -63,17 +63,96 @@ export function sampleSpec() {
   } as const;
 }
 
+/**
+ * Minimal HWP5 document bytes: the eight CFBF signature bytes plus padding.
+ * Enough to pass `sniffFormat` in routes.ts; not a parseable document, which
+ * no stub-engine test needs.
+ */
+export function hwpBytes(): Uint8Array {
+  const out = new Uint8Array(64);
+  out.set([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1], 0);
+  return out;
+}
+
+/**
+ * Minimal HWPX document bytes: a zip local file header whose first entry is a
+ * STORED `mimetype` reading `application/hwp+zip` — the layout hwp-cli's
+ * writer emits and the only one `sniffFormat` in routes.ts admits.
+ *
+ * Every override exists so a test can build exactly one deviation from that
+ * layout (deflated, wrong name, wrong mimetype) and assert the refusal.
+ */
+export function hwpxBytes(
+  opts: { method?: number; name?: string; mimetype?: string; extraLen?: number } = {},
+): Uint8Array {
+  const encoder = new TextEncoder();
+  const nameBytes = encoder.encode(opts.name ?? "mimetype");
+  const mimeBytes = encoder.encode(opts.mimetype ?? "application/hwp+zip");
+  const extraLen = opts.extraLen ?? 0;
+  const out = new Uint8Array(30 + nameBytes.length + extraLen + mimeBytes.length);
+  const view = new DataView(out.buffer);
+  out.set([0x50, 0x4b, 0x03, 0x04], 0);
+  view.setUint16(8, opts.method ?? 0, true);
+  view.setUint16(26, nameBytes.length, true);
+  view.setUint16(28, extraLen, true);
+  out.set(nameBytes, 30);
+  out.set(mimeBytes, 30 + nameBytes.length + extraLen);
+  return out;
+}
+
+let boundarySeq = 0;
+
+/**
+ * Multipart POST carrying an explicit Content-Length.
+ *
+ * The body is assembled by hand rather than through `FormData` because
+ * `new Request(url, { body: form })` sets no `content-length` — the real
+ * fetch transport adds it at send time, and the routes.ts admission gate
+ * requires it (measured: a live `fetch` of the same FormData sends the
+ * header, an in-process Request does not). A `Blob` exposes `.size`
+ * synchronously, so the declared length is exact.
+ */
 export function multipartRequest(
   url: string,
   fields: { file?: { name: string; data: Uint8Array }; [key: string]: unknown },
 ): Request {
-  const form = new FormData();
+  const boundary = `----hwpEditorTest${(boundarySeq++).toString(16).padStart(8, "0")}`;
+  const encoder = new TextEncoder();
+  const parts: BlobPart[] = [];
+  const text = (s: string) => parts.push(encoder.encode(s));
   for (const [key, value] of Object.entries(fields)) {
-    if (key === "file") continue;
-    if (typeof value === "string") form.append(key, value);
+    if (key === "file" || typeof value !== "string") continue;
+    text(`--${boundary}\r\nContent-Disposition: form-data; name="${key}"\r\n\r\n${value}\r\n`);
   }
   if (fields.file !== undefined) {
-    form.append("file", new Blob([fields.file.data as BlobPart]), fields.file.name);
+    text(
+      `--${boundary}\r\nContent-Disposition: form-data; name="file"; ` +
+        `filename="${fields.file.name}"\r\nContent-Type: application/octet-stream\r\n\r\n`,
+    );
+    parts.push(fields.file.data as BlobPart);
+    text("\r\n");
   }
-  return new Request(url, { method: "POST", body: form });
+  text(`--${boundary}--\r\n`);
+  const body = new Blob(parts);
+  return new Request(url, {
+    method: "POST",
+    body,
+    headers: {
+      "content-type": `multipart/form-data; boundary=${boundary}`,
+      "content-length": String(body.size),
+    },
+  });
+}
+
+/** JSON POST carrying an explicit Content-Length, for the compose route. */
+export function jsonRequest(url: string, payload: unknown): Request {
+  const body = JSON.stringify(payload);
+  return new Request(url, {
+    method: "POST",
+    body,
+    headers: {
+      "content-type": "application/json",
+      "content-length": String(Buffer.byteLength(body)),
+    },
+  });
 }

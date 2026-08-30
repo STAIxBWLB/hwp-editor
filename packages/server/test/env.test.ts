@@ -15,6 +15,7 @@ const MUTATED = [
   "LC_ALL",
   "LC_MESSAGES",
   "HWP_FONT_DIR",
+  "HWP_CERTIFY_ORACLE_RUNTIME",
   "PATH",
   "HOME",
 ] as const;
@@ -69,9 +70,18 @@ describe("scrubbedEnv", () => {
     expect(scrubbedEnv(locale).HWP_LANG).toBe("en");
   });
 
-  it("still passes every other HWP_* variable through", () => {
+  it("passes the one allow-listed HWP_ variable through", () => {
     setEnv("HWP_FONT_DIR", "/fonts");
     expect(scrubbedEnv().HWP_FONT_DIR).toBe("/fonts");
+  });
+
+  it("drops an ambient HWP_ variable that is not on the allow-list", () => {
+    // hwp-cli reads this as a path to an executable
+    // (crates/hwp-cli/src/certification.rs). The HWP_ prefix is upstream's
+    // namespace and upstream adds to it freely, so a prefix match is a
+    // standing invitation for the next variable it invents.
+    setEnv("HWP_CERTIFY_ORACLE_RUNTIME", "/tmp/x");
+    expect(scrubbedEnv()).not.toHaveProperty("HWP_CERTIFY_ORACLE_RUNTIME");
   });
 
   it("still forwards PATH and HOME", () => {

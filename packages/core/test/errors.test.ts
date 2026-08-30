@@ -1,5 +1,5 @@
 /**
- * Pins the published narrowing contract: exact membership for the twelve
+ * Pins the published narrowing contract: exact membership for the fifteen
  * codes, the duck-typed guard, and HwpEngineError's field shape. Pure unit
  * tests — no server, no binary.
  */
@@ -20,21 +20,24 @@ const ALL_CODES: HwpErrorCode[] = [
   "bad_request",
   "unsupported_format",
   "protected",
+  "output_too_large",
+  "cancelled",
   "method_not_allowed",
   "not_found",
   "session_not_found",
   "path_traversal",
+  "forbidden",
   "internal",
 ];
 
 describe("toHwpErrorCode", () => {
-  it("round-trips each of the twelve literals", () => {
+  it("round-trips each of the fifteen literals", () => {
     for (const code of ALL_CODES) expect(toHwpErrorCode(code)).toBe(code);
   });
 
-  it("has exactly twelve members", () => {
-    expect(ALL_CODES.length).toBe(12);
-    expect(new Set(ALL_CODES).size).toBe(12);
+  it("has exactly fifteen members", () => {
+    expect(ALL_CODES.length).toBe(15);
+    expect(new Set(ALL_CODES).size).toBe(15);
   });
 
   it("narrows anything unrecognized to internal", () => {
@@ -55,7 +58,7 @@ describe("toHwpErrorCode", () => {
 });
 
 describe("isHwpErrorCode", () => {
-  it("accepts each of the twelve literals", () => {
+  it("accepts each of the fifteen literals", () => {
     for (const code of ALL_CODES) expect(isHwpErrorCode(code)).toBe(true);
   });
 

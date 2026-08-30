@@ -36,7 +36,7 @@ export function toEditorError(e: unknown): EditorError {
 
 /**
  * Badge per code. A total Record on purpose, not a switch with a default:
- * adding a thirteenth HwpErrorCode must fail `tsc --noEmit` here and force
+ * adding a sixteenth HwpErrorCode must fail `tsc --noEmit` here and force
  * an explicit badge decision rather than silently rendering "generic".
  *
  * `version` maps to `unavailable`: a binary too old and a binary missing
@@ -50,10 +50,13 @@ const KIND_BY_CODE: Record<HwpErrorCode, EngineErrorKind> = {
   failed: "generic",
   bad_request: "generic",
   unsupported_format: "generic",
+  output_too_large: "generic",
+  cancelled: "generic",
   method_not_allowed: "generic",
   not_found: "generic",
   session_not_found: "generic",
   path_traversal: "generic",
+  forbidden: "generic",
   internal: "generic",
 };
 

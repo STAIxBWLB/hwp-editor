@@ -2,9 +2,15 @@
  * CliEngine — HwpEngine implementation that shells out to the hwp-cli binary.
  *
  * Hardening ported from the ax deployment wrapper (sites/ax/lib/hwp-cli.ts):
- * execFile only (never a shell), a 60s timeout and 32MB maxBuffer on every
+ * execFile only (never a shell), an owned 60s budget enforced by this
+ * module's own AbortController with SIGTERM-to-SIGKILL escalation (execFile's
+ * built-in `timeout` signals once and never escalates, so a signal-ignoring
+ * child would hang the request past every budget), a 32MB maxBuffer on every
  * invocation, a scrubbed child environment, and per-call temp directories
- * that are removed on every path including failure. Generalizations: the
+ * that are removed on every path including failure. The runCli promise
+ * settles ONLY from the execFile callback, which fires after the child has
+ * exited; that is what keeps `withWorkDir`'s removal ordered strictly after
+ * child exit, so a racing timer must never settle it. Generalizations: the
  * binary is resolved by option/env/PATH instead of a bundled artifact (this
  * package runs on developer machines and servers, not one fixed lambda), and
  * the per-process verification is a minimum-version check instead of a
@@ -18,6 +24,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import {
+  OP_FLAGS,
   opsToArgv,
   parseCatEnvelope,
   protectedReasonFromDiagnostics,
@@ -39,7 +46,56 @@ import {
 
 export const HWP_TIMEOUT_MS = 60_000;
 const HWP_MAX_BUFFER = 32 * 1024 * 1024;
+/**
+ * Grace between SIGTERM and SIGKILL. A convention, not a measurement:
+ * hwp-cli does no cleanup on signal, so any value is safe, and the engine's
+ * 60s budget makes the exact figure uncritical.
+ */
+const KILL_GRACE_MS = 3_000;
 const MIN_VERSION: readonly [number, number, number] = [0, 8, 8];
+
+/**
+ * Upper bound on the accepted binary, EXCLUSIVE.
+ *
+ * The floor is hard because a binary below it lacks flags this engine emits.
+ * The ceiling is deliberately only a major-version gate: the code pins 0.8.8
+ * throughout while the binary shipping today is 0.15.0, so a tight numeric
+ * range would refuse the current development environment on a version string
+ * alone. A major bump is the one signal upstream gives that the contract may
+ * have broken; everything below it is carried by the flag handshake, which
+ * checks what the binary actually accepts rather than what it calls itself.
+ */
+const MAX_VERSION_EXCLUSIVE: readonly [number, number, number] = [1, 0, 0];
+
+/**
+ * A long flag as `--help` prints it, matched on both boundaries.
+ *
+ * The trailing lookahead is the whole point: a naive `help.includes(flag)`
+ * passes for any flag that is a prefix of another, and the real `hwp edit
+ * --help` contains both `--set-cell` and `--set-cell-by-label`. A binary that
+ * dropped the first while keeping the second would sail through a substring
+ * test and then fail at edit time.
+ */
+const FLAG_TOKEN = /(?:^|\s)(--[a-z][a-z0-9-]*)(?=[\s,=<]|$)/gm;
+
+/**
+ * The flag surface the resolved binary must accept before this engine will
+ * use it. Derived from the grammar's own table, so adding an op kind widens
+ * the check automatically and no second list can drift.
+ *
+ * Scope is `edit` only. `--verify` and `--allow-partial` are the two other
+ * flags this engine puts on an `edit` argv and come out of the same 5.5 KB
+ * help output for free. The flags hardcoded on the other eight subcommands
+ * (cat, render, compose, validate, info, fields, bookmarks, slots) are a
+ * known, accepted gap: `edit` is the whole 28-op surface and the highest-risk
+ * one, and covering the rest would cost four or five more `--help` spawns on
+ * every cold serverless start.
+ */
+const HANDSHAKE_FLAGS: readonly string[] = [
+  ...Object.values(OP_FLAGS),
+  "--verify",
+  "--allow-partial",
+];
 
 /** Hancom binary .hwp is a CFBF (OLE2) container; .hwpx is a zip. */
 const CFBF_SIGNATURE = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
@@ -54,6 +110,13 @@ const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
  * once, and the natural fix for that is a `default:` clause, which
  * permanently destroys the exhaustiveness check that must catch the next
  * code addition.
+ *
+ * `cancelled` and `output_too_large` were added in Phase 4. Both are engine
+ * reasons rather than route-layer codes because both are decided inside
+ * `runCli`, from a cause this module owns: only the code that started the
+ * child knows whether it ended because the caller went away or because it
+ * outran the stdout ceiling. A route-layer code would have to re-infer that
+ * from an error shape, which is exactly the guessing this rewrite removed.
  */
 export type HwpCliErrorReason = Extract<
   HwpErrorCode,
@@ -64,17 +127,46 @@ export type HwpCliErrorReason = Extract<
   | "bad_request"
   | "unsupported_format"
   | "protected"
+  | "cancelled"
+  | "output_too_large"
 >;
 
+/**
+ * Two channels, and which one you use decides who sees it.
+ *
+ * `message` is serialized into the `ErrorResponse` body and crosses the wire
+ * to an untrusted client, so it carries the operation and the outcome and
+ * nothing else — never the resolved binary path, never a staged temp path,
+ * never raw CLI stdout or stderr. `stderr` and `detail` are NOT serialized by
+ * `routes.ts`; they are where that context is retained.
+ *
+ * The scrub is a property of construction rather than a filter applied on the
+ * way out: a filter has to be remembered at every new throw site, and the one
+ * that is forgotten is the one that leaks.
+ *
+ * There is no logger in this package, per the no-`console` convention that
+ * holds across every package source tree. The host catches the error and
+ * decides what to do with `stderr` and `detail` — log them, surface them to
+ * an operator, discard them. This module does not make that choice for it.
+ */
 export class HwpCliError extends Error {
   constructor(
     public readonly reason: HwpCliErrorReason,
     message: string,
+    /** Raw child stderr, verbatim. Read by `protectedReasonFromStderr`. */
     public readonly stderr?: string,
+    /** Operator-facing context: the resolved binary path, CLI output. */
+    public readonly detail?: string,
   ) {
     super(message);
     this.name = "HwpCliError";
   }
+}
+
+/** `bin` alone, or `bin: output` — the standard shape of a `detail`. */
+function detailFor(bin: string, output?: string): string {
+  const trimmed = output?.trim() ?? "";
+  return trimmed === "" ? bin : `${bin}: ${trimmed}`;
 }
 
 export interface CliEngineOptions {
@@ -114,20 +206,89 @@ export interface DocumentInspection {
   capabilities: { editable: boolean; reason?: string };
 }
 
+/**
+ * Per-call options this transport accepts beyond the `HwpEngine` contract.
+ *
+ * Carried as an extra OPTIONAL trailing parameter on every spawning method,
+ * which keeps each method assignable to its `HwpEngine` counterpart: the
+ * shared interface in `packages/core` is not widened, so the three
+ * transports stay interchangeable.
+ */
+export interface CliCallOptions {
+  /**
+   * Aborting this terminates the child (SIGTERM, then SIGKILL after the
+   * grace) and rejects with reason `cancelled`. Route handlers pass
+   * `req.signal` so a client that disconnects does not leave an orphan.
+   */
+  signal?: AbortSignal;
+  /**
+   * Tenant scope from the server's `authorize` hook, salted into every cache
+   * key this engine owns (SEC-04, D-07). One engine instance serves every
+   * request a handler sees, so `inspections` and `snapshots` are otherwise a
+   * cross-tenant channel: two callers uploading identical bytes would share
+   * both entries.
+   *
+   * The engine RECEIVES a scope and never derives one — the single
+   * `authorize` call in routes.ts is the only place it is decided. Omitting
+   * it uses `DEFAULT_CALL_SCOPE`, so a direct `CliEngine` consumer with no
+   * tenancy of its own keeps working unchanged.
+   */
+  scope?: string;
+}
+
 export interface CliEngine extends HwpEngine {
   /**
    * Full read pipeline: cat --with-segments plus fields/bookmarks/slots/info.
    * `read()` is this with the extras dropped, per the pinned wire contract.
    */
-  describe(document: DocumentHandle): Promise<DocumentInspection>;
+  describe(document: DocumentHandle, call?: CliCallOptions): Promise<DocumentInspection>;
+  read(document: DocumentHandle, call?: CliCallOptions): Promise<CatEnvelope>;
+  render(
+    document: DocumentHandle,
+    options?: RenderOptions,
+    call?: CliCallOptions,
+  ): Promise<PageImage[]>;
+  edit(
+    document: DocumentHandle,
+    ops: EditOp[],
+    options?: EditOptions,
+    call?: CliCallOptions,
+  ): Promise<DocumentHandle>;
+  compose(
+    spec: DocumentSpecV2,
+    name: string,
+    call?: CliCallOptions,
+  ): Promise<ComposeResult>;
+  validate(document: DocumentHandle, call?: CliCallOptions): Promise<ValidationReport>;
   /**
    * Return the pre-edit snapshot of a document this engine edited, or null.
-   * Keyed by the edited document's content hash; consumed on use.
+   * Keyed by the edited document's content hash SALTED WITH THE CALL SCOPE;
+   * consumed on use. Takes the same trailing options as the spawning methods
+   * (it spawns nothing, but its read must salt exactly as `edit`'s write did,
+   * or a scoped write is findable by nobody).
    */
-  undo(document: DocumentHandle): DocumentHandle | null;
+  undo(document: DocumentHandle, call?: CliCallOptions): DocumentHandle | null;
   /** Resolved binary path and verified version. */
   binaryInfo(): Promise<{ bin: string; version: string }>;
 }
+
+/**
+ * The only `HWP_*` variables copied from the operator's environment.
+ *
+ * An explicit list of one rather than the `HWP_` prefix it replaces: hwp-cli
+ * 0.14.0 reads roughly two dozen `HWP_*` variables, the prefix is upstream's
+ * namespace, and upstream adds to it freely — so a prefix match silently
+ * admits whatever the next release invents. `HWP_CERTIFY_ORACLE_RUNTIME` is
+ * the illustration: hwp-cli reads it as a path to an executable
+ * (crates/hwp-cli/src/certification.rs), reachable only through `hwp
+ * certify`, which this engine never invokes.
+ *
+ * Of the whole set exactly two matter here, and one of them (`HWP_LANG`) is
+ * pinned unconditionally below, so the pass-through gave it nothing. A host
+ * that needs another variable should get a new option for it rather than a
+ * wider window onto the ambient environment.
+ */
+const HWP_ENV_ALLOWLIST = ["HWP_FONT_DIR"] as const;
 
 export function scrubbedEnv(locale?: string): Record<string, string> {
   // An inherited env is the usual way a subprocess reaches credentials it has
@@ -138,14 +299,15 @@ export function scrubbedEnv(locale?: string): Record<string, string> {
     const value = process.env[key];
     if (value !== undefined) env[key] = value;
   }
-  for (const [key, value] of Object.entries(process.env)) {
-    if (key.startsWith("HWP_") && value !== undefined) env[key] = value;
+  for (const key of HWP_ENV_ALLOWLIST) {
+    const value = process.env[key];
+    if (value !== undefined) env[key] = value;
   }
-  // The four locale variables are pinned AFTER the HWP_* pass-through, which
-  // is what currently copies an inherited HWP_LANG in. hwp-cli's precedence
+  // The four locale variables are pinned AFTER the allow-list, which is the
+  // only thing that could copy an inherited HWP_LANG in. hwp-cli's precedence
   // chain is --lang -> HWP_LANG -> LC_ALL -> LC_MESSAGES -> LANG
   // (i18n.rs:36-68); LC_MESSAGES is pinned alongside the other two so no link
-  // is left open for whoever widens the allow-list later. C.UTF-8 over
+  // is left open for whoever adds an entry to HWP_ENV_ALLOWLIST later. C.UTF-8 over
   // en_US.UTF-8 because it exists in slim container images, where an
   // ungenerated en_US.UTF-8 silently degrades to C and breaks UTF-8 handling.
   // hwp-cli's Lang::parse splits on `.`, `_`, `-`, `@` and lowercases the
@@ -163,6 +325,12 @@ interface RunResult {
   code: number;
 }
 
+/**
+ * Every terminal cause below is a value this module chose. Nothing is
+ * inferred from `error.signal`: measured, a built-in timeout and a foreign
+ * SIGTERM are byte-identical there, while a maxBuffer overflow and an abort
+ * set no signal at all.
+ */
 function runCli(
   bin: string,
   args: string[],
@@ -170,41 +338,112 @@ function runCli(
   // Required (not optional) on purpose: tsc then enumerates every call site
   // rather than letting one silently keep the default locale.
   locale: string | undefined,
+  // Required for the same reason: a once-per-process path (ensureVersion)
+  // must pass `undefined` explicitly, because one cancelled request must
+  // never poison binary verification for every later request.
+  requestSignal: AbortSignal | undefined,
 ): Promise<RunResult> {
   return new Promise((resolve, reject) => {
-    execFile(
+    // Already gone before the child exists: an aborted signal never
+    // re-dispatches, so a listener added now would never fire and the child
+    // would run to completion for a caller that stopped listening.
+    if (requestSignal?.aborted === true) {
+      reject(new HwpCliError("cancelled", `hwp ${args[0] ?? ""} was cancelled by the caller`));
+      return;
+    }
+    let cause: "timeout" | "cancelled" | null = null;
+    let escalation: ReturnType<typeof setTimeout> | undefined;
+
+    /**
+     * SIGTERM once, then SIGKILL after the grace, because execFile escalates
+     * never and `child.killed` means only that a signal was delivered.
+     *
+     * The kill is done here rather than by handing execFile a `signal`
+     * option: measured, Node's abort path destroys the child's stdio and
+     * fires the callback the instant it delivers SIGTERM, which would settle
+     * this promise — and so run withWorkDir's `finally` — while a
+     * signal-ignoring child still held the staged input. Killing the child
+     * directly leaves the callback on the real exit, which is what SEC-09's
+     * ordering clause needs. `escalation` doubles as the already-signalled
+     * guard, so a cancellation after a timeout does not re-send.
+     */
+    const signalChild = () => {
+      if (escalation !== undefined) return;
+      child.kill("SIGTERM");
+      escalation = setTimeout(() => child.kill("SIGKILL"), KILL_GRACE_MS);
+      escalation.unref();
+    };
+
+    const timer = setTimeout(() => {
+      cause = "timeout";
+      signalChild();
+    }, timeoutMs);
+    // `??=`: a cancellation arriving after the timeout fired must not
+    // relabel it, so two racing causes settle deterministically as whichever
+    // was recorded first.
+    const onCancel = () => {
+      cause ??= "cancelled";
+      signalChild();
+    };
+    requestSignal?.addEventListener("abort", onCancel, { once: true });
+
+    // The only settle site. It fires after the child has exited, which is
+    // what keeps withWorkDir's removal ordered after exit (SEC-09): never
+    // race this against a timer.
+    const child = execFile(
       bin,
       args,
       {
-        timeout: timeoutMs,
         maxBuffer: HWP_MAX_BUFFER,
         env: scrubbedEnv(locale),
         encoding: "utf8",
       },
       (error, stdout, stderr) => {
+        clearTimeout(timer);
+        if (escalation !== undefined) clearTimeout(escalation);
+        requestSignal?.removeEventListener("abort", onCancel);
+        // The recorded cause outranks the exit status, and is therefore read
+        // FIRST. `cause` is set only by the timer or the abort listener, and
+        // each of those also signalled the child - so a zero exit after one
+        // of them means the child chose to exit zero on SIGTERM (a wrapper
+        // that traps and cleans up), not that the run succeeded. Reading
+        // `error === null` first reported a blown deadline, or a request the
+        // caller had abandoned, as a normal 200 with a complete body.
+        if (cause === "timeout") {
+          reject(new HwpCliError("timeout", `hwp ${args[0] ?? ""} timed out after ${timeoutMs}ms`));
+          return;
+        }
+        if (cause === "cancelled") {
+          reject(new HwpCliError("cancelled", `hwp ${args[0] ?? ""} was cancelled by the caller`));
+          return;
+        }
         if (error === null) {
           resolve({ stdout, stderr, code: 0 });
           return;
         }
-        const killed = (error as { killed?: boolean }).killed === true;
-        const signal = (error as { signal?: string | null }).signal;
-        if (killed || signal === "SIGTERM") {
-          reject(new HwpCliError("timeout", `hwp ${args[0] ?? ""} timed out after ${timeoutMs}ms`));
-          return;
-        }
-        if ((error as { code?: unknown }).code === "ENOENT") {
+        const raw = (error as { code?: unknown }).code;
+        if (raw === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
           reject(new HwpCliError(
-            "unavailable",
-            `hwp binary not found: ${bin} (install hwp-cli >= 0.8.8, or set HWP_EDITOR_BIN / the bin option)`,
+            "output_too_large",
+            `hwp ${args[0] ?? ""} produced more than ${HWP_MAX_BUFFER} bytes on stdout`,
           ));
           return;
         }
-        const code = typeof (error as { code?: unknown }).code === "number"
-          ? ((error as { code: number }).code)
-          : 1;
+        if (raw === "ENOENT") {
+          // `binary not found` is pinned: packages/react/src/errors.ts
+          // substring-matches it for the pre-1.0 fallback classifier. The
+          // scrub moves the path off the message, it does not reword this.
+          reject(new HwpCliError(
+            "unavailable",
+            "hwp binary not found (install hwp-cli >= 0.8.8, or set HWP_EDITOR_BIN / the bin option)",
+            undefined,
+            detailFor(bin),
+          ));
+          return;
+        }
         // Non-zero exit still carries stdout/stderr; let callers that expect
         // failure output (validate) inspect it instead of always throwing.
-        resolve({ stdout, stderr, code });
+        resolve({ stdout, stderr, code: typeof raw === "number" ? raw : 1 });
       },
     );
   });
@@ -216,13 +455,18 @@ async function runCliOk(
   args: string[],
   timeoutMs: number | undefined,
   locale: string | undefined,
+  requestSignal: AbortSignal | undefined,
 ): Promise<RunResult> {
-  const result = await runCli(bin, args, timeoutMs, locale);
+  const result = await runCli(bin, args, timeoutMs, locale, requestSignal);
   if (result.code !== 0) {
+    // The subcommand and the exit code, and nothing else: the CLI's own text
+    // routinely names the staged input file, so interpolating it here would
+    // hand a temp path to whoever made the request.
     throw new HwpCliError(
       "failed",
-      `hwp ${args[0] ?? ""} failed (exit ${result.code}): ${result.stderr.trim() || result.stdout.trim()}`,
+      `hwp ${args[0] ?? ""} failed (exit ${result.code})`,
       result.stderr,
+      detailFor(bin, result.stderr.trim() || result.stdout.trim()),
     );
   }
   return result;
@@ -244,6 +488,25 @@ function versionAtLeast(v: [number, number, number], min: readonly [number, numb
 
 function sha256(data: Uint8Array): string {
   return createHash("sha256").update(data).digest("hex");
+}
+
+/** Scope used when a caller supplies none; see `CliCallOptions.scope`. */
+const DEFAULT_CALL_SCOPE = "default";
+
+/**
+ * The key for every entry in this engine's two caches: the content hash
+ * salted with the tenant scope (SEC-04, D-07).
+ *
+ * Written once so `inspections` and `snapshots` cannot disagree about the
+ * separator, and so `edit`'s snapshot write and `undo`'s read are the same
+ * expression. The `\0` separator is what makes the pair unambiguous: without
+ * it a scope ending in hex digits could produce the key some other scope
+ * produces for different content.
+ */
+function cacheKey(scope: string | undefined, data: Uint8Array): string {
+  return createHash("sha256")
+    .update(`${scope ?? DEFAULT_CALL_SCOPE}\0${sha256(data)}`)
+    .digest("hex");
 }
 
 function sniffExtension(document: DocumentHandle): ".hwp" | ".hwpx" {
@@ -268,11 +531,20 @@ async function tryJson(
   args: string[],
   timeoutMs: number | undefined,
   locale: string | undefined,
+  requestSignal: AbortSignal | undefined,
 ): Promise<unknown> {
   try {
-    const result = await runCliOk(bin, args, timeoutMs, locale);
+    const result = await runCliOk(bin, args, timeoutMs, locale, requestSignal);
     return JSON.parse(result.stdout) as unknown;
-  } catch {
+  } catch (error) {
+    // Best-effort covers this probe failing, not the whole request ending. A
+    // cancellation belongs to the request: swallowing it let describe()
+    // resolve - and then CACHE - an all-null inspection for a caller that was
+    // already gone, and answer 200 where the contract says 499. The cache
+    // never re-probes a hit, so that entry degraded every later request for
+    // the same document under the same scope. Rethrowing here is what keeps
+    // describe()'s cache write unreachable on a cancelled call.
+    if (error instanceof HwpCliError && error.reason === "cancelled") throw error;
     return null;
   }
 }
@@ -441,25 +713,80 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       const bin = resolveBin();
       let result: RunResult;
       try {
-        result = await runCli(bin, ["--version"], timeoutMs, opts.locale);
+        // No request signal, deliberately: this memo is shared by every
+        // later request in the process, so one cancellation must not poison
+        // binary verification for all of them.
+        result = await runCli(bin, ["--version"], timeoutMs, opts.locale, undefined);
       } catch (error) {
         if (error instanceof HwpCliError) throw error;
+        // `not executable` is pinned: packages/react/src/errors.ts
+        // substring-matches it for the pre-1.0 fallback classifier. The path
+        // and the underlying error text move to `detail`; the phrase stays.
         throw new HwpCliError(
           "unavailable",
-          `hwp binary is not executable: ${bin} (${error instanceof Error ? error.message : String(error)})`,
+          "hwp binary is not executable (set HWP_EDITOR_BIN or the bin option)",
+          undefined,
+          detailFor(bin, error instanceof Error ? error.message : String(error)),
         );
       }
       if (result.code !== 0) {
-        throw new HwpCliError("unavailable", `hwp --version failed for ${bin}: ${result.stderr.trim()}`);
+        throw new HwpCliError(
+          "unavailable",
+          `hwp --version failed (exit ${result.code})`,
+          result.stderr,
+          detailFor(bin, result.stderr),
+        );
       }
       const version = parseVersion(result.stdout);
       if (version === null) {
-        throw new HwpCliError("version", `cannot parse hwp --version output: ${result.stdout.trim()}`);
+        throw new HwpCliError(
+          "version",
+          "cannot parse a semver from the hwp --version output",
+          undefined,
+          detailFor(bin, result.stdout),
+        );
       }
+      // The parsed numbers are this engine's own reading, not CLI output, so
+      // stating them is what makes a version message actionable.
       if (!versionAtLeast(version, MIN_VERSION)) {
         throw new HwpCliError(
           "version",
-          `hwp ${version.join(".")} is too old; >= ${MIN_VERSION.join(".")} required (${bin})`,
+          `hwp ${version.join(".")} is too old; >= ${MIN_VERSION.join(".")} required`,
+          undefined,
+          detailFor(bin),
+        );
+      }
+      if (versionAtLeast(version, MAX_VERSION_EXCLUSIVE)) {
+        throw new HwpCliError(
+          "version",
+          `hwp ${version.join(".")} is newer than this engine supports; ` +
+            `< ${MAX_VERSION_EXCLUSIVE.join(".")} required`,
+          undefined,
+          detailFor(bin),
+        );
+      }
+      // Flag handshake, inside this same memo rather than a second one: it
+      // runs once per process for the same reason the version check does, and
+      // with the same explicitly `undefined` request signal, so one cancelled
+      // request can never poison binary verification for every later one.
+      const help = await runCli(bin, ["edit", "--help"], timeoutMs, opts.locale, undefined);
+      if (help.code !== 0) {
+        throw new HwpCliError(
+          "version",
+          `hwp edit --help failed (exit ${help.code}); the edit flag surface cannot be verified`,
+          help.stderr,
+          detailFor(bin, help.stderr),
+        );
+      }
+      const present = new Set([...help.stdout.matchAll(FLAG_TOKEN)].map((match) => match[1]!));
+      const missing = HANDSHAKE_FLAGS.filter((flag) => !present.has(flag));
+      if (missing.length > 0) {
+        throw new HwpCliError(
+          "version",
+          `hwp ${version.join(".")} does not accept ${missing.join(", ")} on edit; ` +
+            "the binary does not match this engine's edit grammar",
+          undefined,
+          detailFor(bin),
         );
       }
       return version.join(".");
@@ -467,7 +794,14 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
     return verifiedVersion;
   }
 
-  /** Per-call private workspace; removed on every path including failure. */
+  /**
+   * Per-call private workspace; removed on every path including failure.
+   *
+   * The removal is ordered strictly after child exit, and stays so only
+   * because `runCli` settles from the execFile callback alone (SEC-09). A
+   * racing timer that settled the promise early would run this `finally`
+   * while the child still held the directory.
+   */
   async function withWorkDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
     const dir = await mkdtemp(path.join(tmpdir(), "hwp-editor-"));
     try {
@@ -486,23 +820,27 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
   const inspections = new Map<string, DocumentInspection>();
   const snapshots = new Map<string, DocumentHandle>();
 
-  async function describe(document: DocumentHandle): Promise<DocumentInspection> {
+  async function describe(
+    document: DocumentHandle,
+    call?: CliCallOptions,
+  ): Promise<DocumentInspection> {
     await ensureVersion();
     const bin = resolveBin();
-    const hash = sha256(document.data);
-    const cached = inspections.get(hash);
+    const key = cacheKey(call?.scope, document.data);
+    const cached = inspections.get(key);
     if (cached !== undefined) return cached;
+    const signal = call?.signal;
     const inspection = await withWorkDir(async (dir) => {
       const file = await stage(dir, document);
-      const cat = await runCliOk(bin, ["cat", file, "--format", "markdown", "--with-segments"], timeoutMs, opts.locale);
+      const cat = await runCliOk(bin, ["cat", file, "--format", "markdown", "--with-segments"], timeoutMs, opts.locale, signal);
       const envelope = parseCatEnvelope(cat.stdout);
       // Best-effort extras: a document that cats fine but fails fields should
       // still read; the extras inform editing UI, not the wire contract.
       const [fields, bookmarks, slots, info] = await Promise.all([
-        tryJson(bin, ["fields", file, "--json"], timeoutMs, opts.locale),
-        tryJson(bin, ["bookmarks", file, "--json"], timeoutMs, opts.locale),
-        tryJson(bin, ["slots", file, "--json"], timeoutMs, opts.locale),
-        tryJson(bin, ["info", file, "--json"], timeoutMs, opts.locale),
+        tryJson(bin, ["fields", file, "--json"], timeoutMs, opts.locale, signal),
+        tryJson(bin, ["bookmarks", file, "--json"], timeoutMs, opts.locale, signal),
+        tryJson(bin, ["slots", file, "--json"], timeoutMs, opts.locale, signal),
+        tryJson(bin, ["info", file, "--json"], timeoutMs, opts.locale, signal),
       ]);
       return {
         envelope,
@@ -517,18 +855,18 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       const oldest = inspections.keys().next().value;
       if (oldest !== undefined) inspections.delete(oldest);
     }
-    inspections.set(hash, inspection);
+    inspections.set(key, inspection);
     return inspection;
   }
 
   const engine: CliEngine = {
-    async read(document) {
-      return (await describe(document)).envelope;
+    async read(document, call) {
+      return (await describe(document, call)).envelope;
     },
 
     describe,
 
-    async render(document, options = {}) {
+    async render(document, options = {}, call) {
       await ensureVersion();
       const bin = resolveBin();
       const requested = options.format ?? "svg";
@@ -555,7 +893,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
             "render", input, "-o", outBase,
             "--format", format, "--pages", pages, "--dpi", String(dpi),
             "--report", reportPath,
-          ], timeoutMs, opts.locale);
+          ], timeoutMs, opts.locale, call?.signal);
           // Multi-page renders land as page-<n>.<ext>; a single selected page
           // keeps the exact -o name. The report's selected_pages pins numbers.
           const filePattern = new RegExp(`^page-(\\d+)\\.${format}$`);
@@ -600,9 +938,13 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
             // while a PNG one surfaces directly. That is D-16 meeting the
             // retry D-15 deliberately kept, not a bug to "fix".
             if (size === null) {
+              // The page number identifies it for the client; the staged file
+              // name would only tell them where this server keeps its temps.
               throw new HwpCliError(
                 "failed",
-                `unreadable ${format} page dimensions in ${file}`,
+                `unreadable ${format} page dimensions on page ${page}`,
+                undefined,
+                detailFor(bin, file),
               );
             }
             images.push({
@@ -628,7 +970,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       });
     },
 
-    async edit(document, ops: EditOp[], options: EditOptions = {}) {
+    async edit(document, ops: EditOp[], options: EditOptions = {}, call?: CliCallOptions) {
       await ensureVersion();
       const bin = resolveBin();
       if (!Array.isArray(ops)) {
@@ -645,9 +987,9 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         // compose() has no input DocumentHandle to inspect (its signature is
         // (spec, name)), so the pre-flight has no subject there; the stderr
         // backstop below covers it.
-        const cached = inspections.get(sha256(document.data))?.capabilities;
+        const cached = inspections.get(cacheKey(call?.scope, document.data))?.capabilities;
         const capabilities =
-          cached ?? documentEditability(await tryJson(bin, ["info", input, "--json"], timeoutMs, opts.locale));
+          cached ?? documentEditability(await tryJson(bin, ["info", input, "--json"], timeoutMs, opts.locale, call?.signal));
         if (!capabilities.editable) {
           throw new HwpCliError(
             "protected",
@@ -658,11 +1000,12 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         const args = ["edit", input, "-o", output, ...opsToArgv(ops)];
         if (options.verify !== false) args.push("--verify");
         if (options.allowPartial === true) args.push("--allow-partial");
-        await runCliOk(bin, args, timeoutMs, opts.locale).catch(rethrowProtected);
+        await runCliOk(bin, args, timeoutMs, opts.locale, call?.signal).catch(rethrowProtected);
         return new Uint8Array(await readFile(output));
       });
-      // Pre-edit snapshot keyed by the edited hash: undo(edited) -> original.
-      snapshots.set(sha256(edited), { name: document.name, data: document.data });
+      // Pre-edit snapshot keyed by the edited hash SALTED WITH THIS CALL'S
+      // SCOPE: undo(edited, same scope) -> original, and no other scope.
+      snapshots.set(cacheKey(call?.scope, edited), { name: document.name, data: document.data });
       if (snapshots.size > 256) {
         const oldest = snapshots.keys().next().value;
         if (oldest !== undefined) snapshots.delete(oldest);
@@ -670,14 +1013,16 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       return { name: document.name, data: edited };
     },
 
-    undo(document) {
-      const key = sha256(document.data);
+    undo(document, call) {
+      // Salts identically to the `edit` write above; any divergence here makes
+      // every scoped snapshot unreachable rather than merely mis-scoped.
+      const key = cacheKey(call?.scope, document.data);
       const snapshot = snapshots.get(key) ?? null;
       if (snapshot !== null) snapshots.delete(key);
       return snapshot;
     },
 
-    async compose(spec: DocumentSpecV2, name: string) {
+    async compose(spec: DocumentSpecV2, name: string, call?: CliCallOptions) {
       await ensureVersion();
       const bin = resolveBin();
       const outName = safeOutputName(name, ".hwpx");
@@ -690,6 +1035,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
           ["compose", specPath, "-o", outPath, "--report"],
           timeoutMs,
           opts.locale,
+          call?.signal,
         ).catch(rethrowProtected);
         let report: unknown;
         try {
@@ -704,21 +1050,24 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       });
     },
 
-    async validate(document) {
+    async validate(document, call) {
       await ensureVersion();
       const bin = resolveBin();
       return withWorkDir(async (dir) => {
         const file = await stage(dir, document);
         // Exit 1 means "invalid" and still prints the JSON report.
-        const result = await runCli(bin, ["validate", file, "--json"], timeoutMs, opts.locale);
+        const result = await runCli(bin, ["validate", file, "--json"], timeoutMs, opts.locale, call?.signal);
         let parsed: { valid?: unknown; errors?: unknown };
         try {
           parsed = JSON.parse(result.stdout) as { valid?: unknown; errors?: unknown };
         } catch {
+          // "no JSON report" is what distinguishes this from a plain non-zero
+          // validate exit, which is a legitimate "invalid document" result.
           throw new HwpCliError(
             "failed",
-            `hwp validate failed (exit ${result.code}): ${result.stderr.trim() || "no JSON report"}`,
+            `hwp validate failed (exit ${result.code}): no JSON report`,
             result.stderr,
+            detailFor(bin, result.stderr.trim() || result.stdout.trim()),
           );
         }
         const rawErrors = Array.isArray(parsed.errors) ? parsed.errors : [];
