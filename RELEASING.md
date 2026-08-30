@@ -421,6 +421,19 @@ prop. Judgement: does NOT block `1.0.0` - the published behavior is correct and 
 right - but `docs/integration-web.md` should show the conversion, because the first thing an
 outside developer has in hand is a `File` from an input element.
 
+### A4c. The candidate bump was reverted
+
+The manifests were returned to `1.0.0` immediately after the candidate published, on
+2026-08-31. The released `1.0.0` is NOT built from a prerelease manifest, and the tag the
+release workflow verifies agrees with the manifests as a result - D-08 would fail the release
+before any publish otherwise.
+
+Worth stating because the two ranges are not the same and the candidate could not have proved
+the released one: a prerelease does not satisfy a caret range over its own release, so
+`1.0.0-rc.0` never satisfies `^1.0.0`. The candidate proved `^1.0.0-rc.0`. The identical
+assertion runs again after `1.0.0` publishes, against `^1.0.0`, which is why that second run is
+not a duplicate of the Phase 5 dedupe check.
+
 ### A5. Record the replication delay observed during the candidate publish
 
 - Time from a successful `npm publish` to a successful install of that exact version:
