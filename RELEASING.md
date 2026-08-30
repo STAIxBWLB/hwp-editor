@@ -236,33 +236,83 @@ Performed once, at the first release, and **not to be repeated** - a second rele
 "The recurring release" above. It is kept because it is the record of how trusted publishing
 was established on these three packages, for the day it has to be re-established.
 
-Values that are only knowable from the run itself are marked `TBD` until the bootstrap fills
-them in.
+Values that are only knowable from the run itself were filled in from the bootstrap of
+2026-08-31, read back from each service rather than copied from what was entered. Where a
+recorded value contradicts what this document expected beforehand, the expectation is
+corrected in place and the contradiction is stated - A2 is the one that matters.
 
 ### A1. Publish the release candidate by hand
 
 npm cannot bind a trusted publisher to a package that does not exist, so the first publish of
 every package is manual no matter what. That single hand-run publish is the release candidate.
 
-It went out under `--tag next`, so `latest` stayed empty and no plain `npm install` could
-resolve anything at all until `1.0.0` - not even accidentally onto the prerelease.
+It went out under `--tag next`. That was supposed to leave `latest` empty so no plain
+`npm install` could resolve anything at all until `1.0.0`. **It did not.** See A2 - npm set
+`latest` anyway on each package's first publish, contradicting its own documentation, and the
+correction is a step rather than an assumption for exactly that reason.
 
-- Version published: `TBD`
-- Date: `TBD`
-- Account: `TBD`
+- Version published: `1.0.0-rc.0`, all three packages
+- Date: 2026-08-31
+- Account: `staix` (2FA `auth-and-writes`, security key)
+- Order: core, then react, then server
+- Published sha1, matching the inspected tarballs byte for byte:
+  core `ddaa21128fdfea73848c7042624e40b9e2eb5b7b`,
+  react `2d943fa238ff4af583003032678d2471be665c32`,
+  server `7bc49c8370495659f2892141255493e8f838247b`
 
 ### A2. Confirm the dist-tag state immediately afterwards
 
 ```sh
-npm dist-tag ls @hwp-editor/core       # expect: next: <rc version>, and nothing else
+npm dist-tag ls @hwp-editor/core       # observed: BOTH next and latest at the rc version
 ```
 
 npm documents that publishing sets `latest` "unless the `--tag` option is used", with no
-carve-out for a package's first version, but that could not be verified without publishing, so
-it is a checked step rather than an assumption. If a `latest` tag appeared anyway, remove it -
-`npm dist-tag rm @hwp-editor/core latest` - and repeat for react and server.
+carve-out for a package's first version. Checking it rather than assuming it was the right
+call: the documentation is wrong, and so was the remedy this section used to prescribe.
 
-- Observed on core / react / server: `TBD`
+- Observed on core / react / server: **`next` AND `latest`, both at `1.0.0-rc.0`, on all three.**
+
+  This contradicts the documented behavior quoted above. `npm dist-tag` docs state that
+  publishing sets `latest` "unless the `--tag` option is used", and `--tag next` WAS used - the
+  proof is that `next` is set, which a publish without the flag would not have done. npm
+  appears to assign `latest` on a package's first publish regardless, presumably because a
+  package cannot exist without one. There is no carve-out for this in the documentation.
+
+  Consequence while it stands: `npm install @hwp-editor/core` resolves `1.0.0-rc.0`, which is
+  precisely what Phase 1's D-01 exists to prevent. Verified by installing into a scratch app.
+
+  **There is no correction.** The remedy this section originally prescribed - `npm dist-tag rm
+  <pkg> latest` - does not work. Attempted on all three packages with the OTP satisfied, the
+  registry answered:
+
+  ```
+  npm error code E400
+  npm error 400 Bad Request - DELETE https://registry.npmjs.org/-/package/@hwp-editor%2fcore/dist-tags/latest
+  ```
+
+  Identical for react and server. npm will not let a package exist without a `latest`, so the
+  tag can be moved but never removed. The `npm dist-tag` documentation does not say this; it
+  describes `rm` as clearing "a tag that is no longer in use" with no carve-out, exactly as it
+  describes `--tag` as suppressing `latest` on publish. Both statements are wrong about a
+  package's first version.
+
+  So the sequence is not recoverable, only outgrown: publishing `1.0.0` under `--tag latest`
+  moves `latest` onto it, and from that moment the intended state holds. What cannot be
+  recovered is the window between the candidate and `1.0.0`, during which
+  `npm install @hwp-editor/core` hands out a prerelease.
+
+  **What this costs D-01.** Phase 1 decided that `1.0.0` must be the first version anyone can
+  install through `latest`. That is now false and cannot be made true. The decision's purpose -
+  that no consumer accidentally receives a prerelease as if it were the release - survives only
+  because these packages had no consumers during the window. A project with existing users
+  would have shipped them a prerelease on a plain `npm install`.
+
+  **What to do differently.** A first publish cannot avoid setting `latest`, so the candidate
+  cannot be hidden behind `next` on a package that does not yet exist. If a future scope needs
+  a genuinely invisible candidate, the only mechanism that delivers it is staged publishing
+  (`npm stage publish`), which holds the version for review before it becomes public at all -
+  and which the trusted-publisher configuration here deliberately does NOT allow, since
+  `--allow-publish` was selected alone.
 
 ### A3. Configure the trusted publisher on each of the three packages
 
@@ -279,19 +329,45 @@ The same five fields on all three:
 Two routes exist. The CLI one is the reproducible record and is preferred:
 
 ```sh
-npm trust github --workflow release.yml --environment npm-publish --allow-publish
+npm trust github @hwp-editor/core   --file release.yml --repo STAIxBWLB/hwp-editor --env npm-publish --allow-publish
+npm trust github @hwp-editor/react  --file release.yml --repo STAIxBWLB/hwp-editor --env npm-publish --allow-publish
+npm trust github @hwp-editor/server --file release.yml --repo STAIxBWLB/hwp-editor --env npm-publish --allow-publish
+npm trust list @hwp-editor/core     # read the values back rather than trusting what you typed
 ```
 
-It needs npm >= 11.15.0, write access to the package and 2FA on the account, and it still
-requires the package to exist first. The other route is the settings form for each package on
+The flag is `--file`, not `--workflow`, and the package is a positional argument - the earlier
+spelling here was written from the docs rather than from `npm trust github --help`.
+
+`--allow-publish` is required, not optional. A trusted-publisher configuration created after
+2026-05-20 must name at least one allowed action, and an npm CLI without the flag sends none:
+measured on npm 11.12.1, which HAS `npm trust` but not `--allow-publish`, the request fails
+with a bare `E400 Bad Request` on `POST /-/package/<pkg>/trust` and no explanation. npm 11.19.1
+carries the flag and succeeds. So the real floor for this command is higher than the floor for
+trusted publishing itself; use `npx npm@latest` if the installed npm is older.
+
+It also needs write access to the package and 2FA on the account, and it still requires the
+package to exist first. The other route is the settings form for each package on
 npmjs.com, which requires the same prior publish.
 
 Every field is case-sensitive and must match exactly. The observable symptom of any mismatch is
 a bare **404 on the publish**, not a clear authorization error: npm rejects the OIDC exchange
 and then attempts an unauthenticated publish of a scoped package.
 
-- Route used: `TBD`
-- Date configured: `TBD`
+- Route used: CLI, `npx npm@11.19.1 trust github ...` (the installed npm 11.12.1 lacks
+  `--allow-publish` and fails with E400)
+- Date configured: 2026-08-31
+- Read back from npm with `npm trust list`, not from what was typed. All three identical
+  apart from the id:
+
+  | Package | id | file | repository | environment | permissions |
+  |---|---|---|---|---|---|
+  | `@hwp-editor/core` | `5d07ef53-f73f-4510-92f5-b5c3093c4ae2` | `release.yml` | `STAIxBWLB/hwp-editor` | `npm-publish` | `publish` |
+  | `@hwp-editor/react` | `3132319e-b663-4f36-be61-0bea37aa2eb2` | `release.yml` | `STAIxBWLB/hwp-editor` | `npm-publish` | `publish` |
+  | `@hwp-editor/server` | `1a5c1c43-d205-400f-bbe5-767c6d94a576` | `release.yml` | `STAIxBWLB/hwp-editor` | `npm-publish` | `publish` |
+
+  Each value was compared against its source: the workflow filename against
+  `ls .github/workflows/`, the environment against the `environment:` line in the publish job,
+  and the repository against `gh repo view --json nameWithOwner`.
 
 ### A4. Create the deployment environment
 
@@ -306,12 +382,73 @@ Leave **"prevent users from approving workflow runs that they triggered" off** w
 single active maintainer. It is a reasonable setting with two genuinely available reviewers,
 and a deadlocked release with one.
 
-- Required reviewer(s): `TBD`
-- Date created: `TBD`
+- Required reviewer(s): `entelecheia` (one)
+- Date created: 2026-08-31
+- Created through the REST API rather than the settings page, so the record is a command:
+  `PUT /repos/STAIxBWLB/hwp-editor/environments/npm-publish` with
+  `{"prevent_self_review": false, "reviewers": [{"type": "User", "id": 1177283}],
+  "deployment_branch_policy": null}`
+- Read back: `required_reviewers`, reviewer `entelecheia`, `prevent_self_review: false`,
+  no deployment branch policy
+- No branch ruleset and no branch protection rule was added, and none existed before. Confirmed
+  after creating the environment, not only before: `gh api .../rulesets` returns 0 and
+  `gh api .../branches/main/protection` returns 404. An environment protection rule is a
+  different mechanism from a required status check and does not touch PKG-10's settings half.
+
+### A4b. What the candidate actually did when mounted
+
+D-02's manual half, performed 2026-08-31 against the published `1.0.0-rc.0` in a scratch app
+outside the workspace. The app installed `@hwp-editor/react` and `@hwp-editor/server` from the
+registry, served the handler against a real `hwp 0.16.0`, imported the stylesheet from
+`@hwp-editor/react/style.css`, and mounted the editor over an HTTP engine.
+
+- The editor rendered **with its own styling**: dark chrome, laid-out toolbar, the three side
+  panels as tabs. This is the criterion the stylesheet subpath fails, and it passed.
+- A real HWPX opened and its page rendered **as an image**, with the Korean table intact.
+- Clicking the page **hit-tested to a paragraph**: the region highlighted and the panel showed
+  `Selected paragraph (section 0, paragraph 1)` with the document's own text.
+- An edit applied and the re-render showed it. The server log carries the whole round trip:
+  `edit` 200 on a 7292-byte body, then `read`, `render` and `validate` all 200 against the
+  edited 6951-byte document.
+
+One defect found, and it is in the integration docs rather than in the packages. The `file`
+prop is a `DocumentHandle` - `{ name, data: Uint8Array }` - not a browser `File`. Passing a
+`File` type-checks nowhere in a plain JS host and fails at runtime in a way that points at the
+wrong thing: `createHttpEngine` builds its multipart part from `document.data`, so an undefined
+`data` produces an EMPTY file part, and the server answers
+`400 file is not an HWP or HWPX document`. The message accuses the document; the fault is the
+prop. Judgement: does NOT block `1.0.0` - the published behavior is correct and the types are
+right - but `docs/integration-web.md` should show the conversion, because the first thing an
+outside developer has in hand is a `File` from an input element.
+
+### A4c. The candidate bump was reverted
+
+The manifests were returned to `1.0.0` immediately after the candidate published, on
+2026-08-31. The released `1.0.0` is NOT built from a prerelease manifest, and the tag the
+release workflow verifies agrees with the manifests as a result - D-08 would fail the release
+before any publish otherwise.
+
+Worth stating because the two ranges are not the same and the candidate could not have proved
+the released one: a prerelease does not satisfy a caret range over its own release, so
+`1.0.0-rc.0` never satisfies `^1.0.0`. The candidate proved `^1.0.0-rc.0`. The identical
+assertion runs again after `1.0.0` publishes, against `^1.0.0`, which is why that second run is
+not a duplicate of the Phase 5 dedupe check.
 
 ### A5. Record the replication delay observed during the candidate publish
 
-- Time from a successful `npm publish` to a successful install of that exact version: `TBD`
+- Time from a successful `npm publish` to a successful install of that exact version:
+  **still 404 roughly four to five minutes after publish; installable 54s and 56s after that.**
+
+  Measured on react and server with a real install into a fresh directory and a fresh npm cache
+  per attempt, `--prefer-online` set. The first probe answered with a 404 naming each package by
+  name, minutes after npmjs.com's own package list already showed all three as published - so a
+  404 from a fresh cache is NOT evidence of absence, exactly as `registry_probe`'s contract
+  says. A second probe found the packument present with `versions: []`, and the versions
+  appeared about a minute later.
+
+  This is the hazard `ABSENCE_CONFIRM_SECONDS` exists for, observed in practice on the very
+  first publish this project ever made. A skip check that concluded absence from that first 404
+  would have re-published an already-spent version.
 
 This is the only empirical datapoint this project has for how long the registry takes. The
 workflow does not depend on it: `wait_for_install` retries against a ten-minute deadline

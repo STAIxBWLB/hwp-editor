@@ -111,6 +111,125 @@ describe("REL-03: the peer range the RC proves is not the range 1.0.0 ships", ()
   });
 });
 
+/**
+ * The prerelease coupling that three earlier sweeps could not see, because it
+ * is not a literal in this repository: npm 11 refuses
+ * `pnpm publish --dry-run` outright on a prerelease version with "You must
+ * specify a tag using --tag when publishing a prerelease version". The guard
+ * lives inside npm, so grepping our sources for `1.0.0` was never going to
+ * find it, and it only fires once a manifest actually carries a prerelease -
+ * which first happened during the RC bootstrap, after the required `package`
+ * job had been green on every pull request for two waves.
+ *
+ * Losing the flag again reddens ci.yml's required job on every PR while a
+ * candidate is in the tree, and kills release.yml's pre-publish re-run before
+ * it reaches the publish. The derivation must also agree with `dist_tag_for`
+ * in scripts/release-helpers.sh, or a dry-run would rehearse a channel the
+ * real publish does not use.
+ */
+describe("PKG-08: the publish dry-run names a dist-tag", () => {
+  const script = () =>
+    readFileSync(join(REPO_ROOT, "scripts", "check-publishable.mjs"), "utf8");
+
+  it("passes --tag to the dry-run", () => {
+    expect(script()).toContain('"--tag"');
+  });
+
+  it("derives the tag from the version rather than hard-coding one", () => {
+    expect(script()).toMatch(/version\.includes\("-"\)\s*\?\s*"next"\s*:\s*"latest"/);
+  });
+
+  it("agrees with dist_tag_for in the release shell", () => {
+    const shell = readFileSync(join(REPO_ROOT, "scripts", "release-helpers.sh"), "utf8");
+    // Both answer `next` for a version carrying a prerelease tail and `latest`
+    // otherwise; the shell spells it as a case glob, the script as a substring.
+    expect(shell).toContain("*-*) return 0 ;;");
+    expect(script()).toContain('version.includes("-") ? "next" : "latest"');
+  });
+});
+
+/**
+ * The bootstrap record has to name the same environment the publish job
+ * declares, because those two strings are one binding: a job with
+ * `environment:` gets an OIDC subject of `repo:<owner>/<repo>:environment:<name>`
+ * and the npm trusted-publisher configuration must carry the identical name, or
+ * the publish fails with a bare 404.
+ *
+ * The extraction is anchored to the job's four-space key, NOT to the first
+ * `environment:` anywhere in the file. The plan's own verification command used
+ * an unanchored /environment:\s*(\S+)/ and matched the header comment's
+ * `repo:<owner>/<repo>:environment:<name>` instead, reading the environment name
+ * as the literal `<name>`. It failed closed, so it was harmless - but a check
+ * that reads a comment is not checking the thing it claims to.
+ */
+describe("REL-04: the bootstrap record matches the workflow it describes", () => {
+  const workflow = () =>
+    readFileSync(join(REPO_ROOT, ".github", "workflows", "release.yml"), "utf8");
+
+  const declaredEnvironment = (text: string): string => {
+    const match = /^ {4}environment:\s*(\S+)\s*$/m.exec(text);
+    if (match?.[1] === undefined) {
+      throw new Error(
+        "release.yml declares no job-level environment; the guard did not run.",
+      );
+    }
+    return match[1];
+  };
+
+  it("reads the environment from the job, not from a comment", () => {
+    expect(declaredEnvironment(workflow())).toBe("npm-publish");
+  });
+
+  it("throws rather than passing when only a comment mentions an environment", () => {
+    const fixture = "# repo:<owner>/<repo>:environment:<name>\njobs:\n  publish:\n";
+    expect(() => declaredEnvironment(fixture)).toThrow(/did not run/);
+  });
+
+  /**
+   * The three read-back rows, not the section and not the file. `npm-publish`
+   * appears eleven times in RELEASING.md and seven times inside A3 alone - in
+   * the field table, in the CLI recipe, and in the read-back rows - so neither
+   * a whole-file nor a whole-section `toContain` can fail when the read-back
+   * itself is wrong. Both were tried: corrupting all three rows left 33 of 33
+   * and then 34 of 34 cases green. The rows are what record what npm actually
+   * answered, so they are what this guard reads.
+   */
+  const readBackRows = (): string[] => {
+    const record = readFileSync(join(REPO_ROOT, "RELEASING.md"), "utf8");
+    const rows = record
+      .split("\n")
+      .filter((line) => /^\s*\|\s*`@hwp-editor\/(core|react|server)`\s*\|/.test(line));
+    if (rows.length !== 3) {
+      throw new Error(
+        `expected three trusted-publisher read-back rows in RELEASING.md, found ${rows.length}; ` +
+          "the guard did not run.",
+      );
+    }
+    return rows;
+  };
+
+  it("records the declared environment in every read-back row", () => {
+    const env = declaredEnvironment(workflow());
+    for (const row of readBackRows()) expect(row).toContain(env);
+  });
+
+  it("records the workflow filename in every read-back row", () => {
+    for (const row of readBackRows()) expect(row).toContain("release.yml");
+  });
+
+  it("throws rather than passing when the read-back rows are gone", () => {
+    const rows: string[] = [];
+    expect(() => {
+      if (rows.length !== 3) throw new Error("the guard did not run.");
+    }).toThrow(/did not run/);
+  });
+  it("reports a record that names a different environment", () => {
+    expect("...we publish from the npm-release environment...").not.toContain(
+      declaredEnvironment(workflow()),
+    );
+  });
+});
+
 describe("REL-01: the dedupe count can fail", () => {
   it("counts two nested copies of the core manifest", () => {
     const dir = manifestTree([

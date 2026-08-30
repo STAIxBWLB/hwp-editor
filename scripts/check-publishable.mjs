@@ -170,7 +170,17 @@ for (const dir of PACKAGE_DIRS) {
   // combined stdout/stderr are evidence. A zero exit alone cannot prove that
   // pnpm attempted the package, while matching output cannot excuse a failed
   // command.
-  const result = spawnSync("pnpm", ["publish", "--dry-run", "--no-git-checks"], {
+  // --tag is mandatory, not cosmetic: npm 11 refuses outright with "You must
+  // specify a tag using --tag when publishing a prerelease version", so a
+  // workspace at 1.0.0-rc.0 reddens ci.yml's required `package` job on every
+  // pull request and kills release.yml's pre-publish re-run before it reaches
+  // the publish. The derivation matches dist_tag_for in
+  // scripts/release-helpers.sh deliberately - one convention, so a dry-run
+  // cannot rehearse a channel the real publish would not use. Measured against
+  // npm 11.12.1: without the flag the dry-run exits 1 on a prerelease; with it
+  // the same command prints `+ @hwp-editor/core@1.0.0-rc.0`.
+  const distTag = version.includes("-") ? "next" : "latest";
+  const result = spawnSync("pnpm", ["publish", "--dry-run", "--no-git-checks", "--tag", distTag], {
     cwd: join(repoRoot, "packages", dir),
     encoding: "utf8",
   });

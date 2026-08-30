@@ -32,6 +32,26 @@ const engine = createHttpEngine("https://hwp.halla.ai/api/hwp-editor", {
 });
 ```
 
+### Opening a document
+
+`HwpEditor`'s `file` prop is a `DocumentHandle`, not a browser `File`. The two are easy to
+confuse because a file input hands you the latter, and the failure is misleading: the HTTP
+engine builds its multipart part from `document.data`, so a `File` produces an EMPTY part and
+the server answers `400 file is not an HWP or HWPX document`. The message accuses the document;
+the cause is the prop.
+
+```ts
+import { HwpEditor } from "@hwp-editor/react";
+import "@hwp-editor/react/style.css"; // not auto-injected
+
+async function toHandle(file: File) {
+  return { name: file.name, data: new Uint8Array(await file.arrayBuffer()) };
+}
+
+// <input type="file" onChange={async (e) => setDoc(await toHandle(e.target.files[0]))} />
+<HwpEditor engine={engine} file={doc} />;
+```
+
 Notes:
 
 - **Auth is the host's problem by design.** `HttpEngineOptions.fetch`
