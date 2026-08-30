@@ -421,8 +421,38 @@ function stepBlocks(body: string[]): string[][] {
 }
 
 /**
+ * The one value `EXPECTED_VERSION` may carry, matched exactly.
+ *
+ * An exact match rather than "names the variable non-empty", because the
+ * variable's mere presence proves nothing: `check-publishable.mjs` skips its
+ * comparison on an EMPTY value as well as an absent one, and there are two
+ * quiet spellings that render empty. `EXPECTED_VERSION: ""` satisfies any
+ * is-non-blank pattern, since the quote character is itself non-whitespace. And
+ * `${{ env.WHATEVER }}` for a variable that is not set renders as the empty
+ * string, so a plausible-looking indirection through a job-level `env` that
+ * someone later renamed disables D-08 while reading as tidier than the
+ * original. Only `github.ref_name` is guaranteed to be populated on the tag
+ * push that is this workflow's sole trigger, so it is the only value that
+ * cannot fail open, and it is what this guard demands.
+ */
+const EXPECTED_VERSION_VALUE = "${{ github.ref_name }}";
+
+/**
+ * The value on a step's own `EXPECTED_VERSION:` line, with surrounding quotes
+ * stripped so the legal YAML spellings of one string compare equal.
+ */
+function expectedVersionValue(step: string[]): string | undefined {
+  for (const line of step) {
+    const match = /^ {10}EXPECTED_VERSION:(.*)$/.exec(line);
+    if (match?.[1] === undefined) continue;
+    return match[1].trim().replace(/^(['"])([\s\S]*)\1$/, "$2");
+  }
+  return undefined;
+}
+
+/**
  * REL-02 check 5: the verify job sets EXPECTED_VERSION on the step that runs
- * `check-publishable.mjs`, not merely somewhere in the job.
+ * `check-publishable.mjs`, to a value that cannot render empty.
  */
 function expectedVersionViolations(dir: string): string[] {
   const hosts = readWorkflows(dir).filter((workflow) => workflow.jobs.has(VERIFY_JOB_ID));
@@ -447,17 +477,19 @@ function expectedVersionViolations(dir: string): string[] {
   const violations: string[] = [];
   for (const step of steps) {
     const declaresStepEnv = step.some((line) => /^ {8}env:\s*$/.test(line));
-    const namesVariable = step.some((line) => /^ {10}EXPECTED_VERSION:\s*\S/.test(line));
-    if (declaresStepEnv && namesVariable) continue;
+    const value = expectedVersionValue(step);
+    if (declaresStepEnv && value === EXPECTED_VERSION_VALUE) continue;
     violations.push(
       `${host.name} job "${VERIFY_JOB_ID}" runs ${CHECK_PUBLISHABLE} without an ` +
-        `env: mapping naming EXPECTED_VERSION in that step's own block. The ` +
-        `script skips its comparison when the variable is absent or empty, by ` +
-        `design, so that ci.yml's pull-request job stays green with no tag in ` +
-        `scope - and that same silence means a misspelling, a deletion, or an ` +
-        `env hoisted to job level disables D-08's tag/manifest comparison while ` +
-        `verify still reports success. It is the only pre-publish gate on an ` +
-        `irreversible path, and the one property here that fails open`,
+        `env: mapping setting EXPECTED_VERSION to ${EXPECTED_VERSION_VALUE} in ` +
+        `that step's own block; found ${JSON.stringify(value)}. The script skips ` +
+        `its comparison when the variable is absent OR EMPTY, by design, so that ` +
+        `ci.yml's pull-request job stays green with no tag in scope - and that ` +
+        `same silence means a misspelling, a deletion, an env hoisted to job ` +
+        `level, or a value that renders empty disables D-08's tag/manifest ` +
+        `comparison while verify still reports success. It is the only ` +
+        `pre-publish gate on an irreversible path, and the one property here ` +
+        `that fails open`,
     );
   }
   return violations;
@@ -726,6 +758,43 @@ describe("REL-02: the release path carries no stored credential", () => {
       fixtureDir({ "release.yml": planted }),
     );
     expect(violations.join("\n")).toContain("EXPECTED_VERSION");
+  });
+
+  it("reports a violation when the value is the empty string", () => {
+    // The third and quietest way to disable D-08, and the one a check for a
+    // non-blank value waves through: `""` is two non-whitespace characters and
+    // an empty value, and the script's silence on it is identical to its
+    // silence on a deleted line.
+    const planted = RELEASE_THREE_JOBS.replace(
+      "          EXPECTED_VERSION: ${{ github.ref_name }}\n",
+      '          EXPECTED_VERSION: ""\n',
+    );
+    const violations = expectedVersionViolations(
+      fixtureDir({ "release.yml": planted }),
+    );
+    expect(violations.join("\n")).toContain("EXPECTED_VERSION");
+  });
+
+  it("reports a violation for an expression that renders empty when unset", () => {
+    // `${{ env.RELEASE_TAG }}` reads as an indirection someone tidied up; for a
+    // variable that no longer exists GitHub substitutes the empty string, and
+    // verify goes green with the gate off.
+    const planted = RELEASE_THREE_JOBS.replace(
+      "${{ github.ref_name }}",
+      "${{ env.RELEASE_TAG }}",
+    );
+    const violations = expectedVersionViolations(
+      fixtureDir({ "release.yml": planted }),
+    );
+    expect(violations.join("\n")).toContain("env.RELEASE_TAG");
+  });
+
+  it("accepts the same value quoted, so the rule is not merely textual", () => {
+    const planted = RELEASE_THREE_JOBS.replace(
+      "EXPECTED_VERSION: ${{ github.ref_name }}",
+      'EXPECTED_VERSION: "${{ github.ref_name }}"',
+    );
+    expect(expectedVersionViolations(fixtureDir({ "release.yml": planted }))).toEqual([]);
   });
 
   it("reports a violation when the env is hoisted to job level", () => {
