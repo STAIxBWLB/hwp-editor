@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 env:
-  # Pinned, not `latest`. The engine gates on >= 0.8.8 and < 1.0.0
+  # Pinned, not `latest`. The engine gates on >= 0.16.0 and < 1.0.0
   # (packages/server/src/cli-engine.ts MIN_VERSION / MAX_VERSION_EXCLUSIVE),
   # so a future upstream 1.0.0 would fall outside the ceiling and turn this job
   # red overnight for reasons that are not this repository's fault.
@@ -30,14 +30,17 @@ jobs:
   # network-downloaded binary on the release path.
   #
   # A red run here is to be TRIAGED, NOT TOLERATED. The tolerance makes the job
-  # unable to block, which is the point, but combined with a tag pinned well
-  # above the 0.8.8 contract floor it also makes this the only place a hwp-cli
-  # contract drift ever appears: op-flag spellings (packages/core/src/ops.ts),
-  # the segment-envelope shape (packages/core/src/segments.ts) and the error
-  # markers (packages/react/src/errors.ts) are all pinned to the 0.8.x contract
-  # and enforced by cli-engine.ts's flag handshake. If that grammar moved
-  # between 0.8.8 and the pinned tag, this job going red is the signal, and a
-  # red check nobody reads is the same as no check at all.
+  # unable to block, which is the point, but it also makes this the only place a
+  # hwp-cli contract drift ever appears: op-flag spellings
+  # (packages/core/src/ops.ts), the segment-envelope shape
+  # (packages/core/src/segments.ts) and the error markers
+  # (packages/react/src/errors.ts) are all pinned to the 0.16.x contract and
+  # enforced by cli-engine.ts's flag handshake. The pinned tag and the contract
+  # floor are now the same version, so the span this job once swept is closed:
+  # what it detects from here is drift ABOVE 0.16.0, the next time either the
+  # tag or the floor moves. Narrower, and still the only automated evidence that
+  # the pinned contract holds against a real binary; a red check nobody reads is
+  # the same as no check at all.
   e2e:
     runs-on: ubuntu-latest
     continue-on-error: true
