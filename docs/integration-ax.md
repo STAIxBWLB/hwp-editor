@@ -16,31 +16,48 @@ browser                          ax (Next.js)
                                 bin/hwp (hwp-cli, pinned release)
 ```
 
-## 1. Vendoring the packages
+## 1. Installing the packages
 
-The packages are no longer `private`: all three read `1.0.0` and carry
-`publishConfig.access: public`. Nothing is on npm yet, though, so until the
-release phase publishes them ax still takes them as tarballs:
+All three are on npm at `1.0.0`, published with provenance from a tag-triggered
+workflow. Install the one you mount; core arrives on its own as a single deduped
+peer, so naming it is unnecessary and naming a different version of it is how you
+end up with two copies:
 
-`pnpm pack` each package in this repo (`packages/core`, `packages/react`,
-`packages/server`), commit or artifact-store the `.tgz` files, and depend on
-them with `"@hwp-editor/core": "file:./vendor/hwp-editor-core-1.0.0.tgz"` (and
-`link:` for local dev if both repos are checked out side by side). The file
-name carries the packed version, so it moves with every version bump. Tarballs
-make the deploy hermetic and reviewable; bump by re-packing.
+```sh
+pnpm add @hwp-editor/react @hwp-editor/server
+```
 
-Once `1.0.0` is on npm this whole section collapses into
-`pnpm add @hwp-editor/react`, with `@hwp-editor/core` arriving as a single
-deduped peer.
+```ts
+import { HwpEditor } from "@hwp-editor/react";
+import "@hwp-editor/react/style.css"; // not auto-injected
+```
 
-A git dependency is not an option. `github:STAIxBWLB/hwp-editor#<sha>` installs
-the repository root, which is named `hwp-editor` and declares no `main` or
-`exports`, and even a subdirectory selector pointing at `packages/core` would
-resolve entry points under `dist/`, which is gitignored and has no `prepare`
-script to build it on install.
+The stylesheet import is not optional decoration. Nothing injects it, and an
+install that omits it produces an editor that loads, imports and renders
+*unstyled* - a failure no import probe notices, which is why the release
+candidate was checked by mounting it and looking at it.
 
-Keep the pin in one place (a `.hwp-editor-version` file or the lockfile) and
-bump deliberately, the same discipline as the binary pin below.
+`@hwp-editor/core` is a `peerDependency` of react and server with a `^1.0.0`
+range, so a host that also depends on core directly must keep it inside that
+range or npm resolves two copies. The published range is asserted on every
+release by `scripts/smoke-registry.mjs`, which installs react and server from
+the registry *without naming core* and fails if more than one copy appears.
+
+**This section used to describe vendoring.** Before the release ax took the
+packages as `pnpm pack` tarballs referenced by `file:` path, because nothing was
+on npm. That path is superseded. `sites/ax/scripts/vendor-hwp-editor.sh` still
+exists and is Phase 7's to remove (EXT-03); until then, a reader looking at that
+script should know the registry is now the supported route.
+
+A git dependency is still not an option, and that reasoning survives
+publication. `github:STAIxBWLB/hwp-editor#<sha>` installs the repository root,
+which is named `hwp-editor` and declares no `main` or `exports`, and even a
+subdirectory selector pointing at `packages/core` would resolve entry points
+under `dist/`, which is gitignored and has no `prepare` script to build it on
+install.
+
+Keep the version pin in one place (the lockfile) and bump deliberately, the same
+discipline as the binary pin below.
 
 ## 2. Provisioning the binary (fetch-hwp-cli.sh pattern)
 

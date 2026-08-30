@@ -167,6 +167,18 @@ prompt.
 Skipping this leaves `npm install @hwp-editor/core@next` handing people a stale prerelease
 after a stable release exists.
 
+### 7b. Check the integration documents against what a consumer now installs
+
+A release that changes how a host obtains these packages makes the integration guides wrong,
+and nothing fails when it does - the guides are prose, and no test reads them. `1.0.0` turned
+`docs/integration-ax.md` section 1 from a vendoring recipe into a stale one, because the
+section itself predicted the change and then had to be made into the thing it predicted.
+
+So after any release that changes the install story - the first publish, a major, a rename, a
+change to the peer range or the stylesheet subpath - read `docs/integration-*.md` and the
+package READMEs and correct whatever is now false. This is a step rather than a note because
+it has no automated gate and never will.
+
 ### 8. Release notes
 
 The `release-notes` job creates the GitHub Release for the tag with `gh release create
