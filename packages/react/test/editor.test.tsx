@@ -209,7 +209,7 @@ describe.each(LOCALES)("HwpEditor engine error states — locale=%s", (locale) =
   function failingEngine(message: string): ReturnType<typeof createMockEngine> {
     const engine = createMockEngine();
     engine.capabilities = async () => ({
-      version: "0.8.8-test",
+      version: "0.16.0-test",
       editable: true,
       formats: ["hwp", "hwpx"],
     });

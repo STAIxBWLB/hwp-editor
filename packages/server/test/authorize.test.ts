@@ -72,7 +72,7 @@ function stubEngine(overrides: Partial<HwpEngine> = {}): HwpEngine {
       return { valid: true, errors: [] };
     },
     async capabilities() {
-      return { version: "0.8.8", editable: true, formats: ["hwp", "hwpx"] };
+      return { version: "0.16.0", editable: true, formats: ["hwp", "hwpx"] };
     },
     ...overrides,
   };
@@ -102,7 +102,7 @@ function countingEngine(): { engine: HwpEngine; calls: string[] } {
     },
     async capabilities() {
       calls.push("capabilities");
-      return { version: "0.8.8", editable: true, formats: ["hwp", "hwpx"] };
+      return { version: "0.16.0", editable: true, formats: ["hwp", "hwpx"] };
     },
   });
   return { engine, calls };
@@ -160,7 +160,7 @@ describe("authorize", () => {
     expect(read.status).toBe(200);
     const caps = await handler(new Request(`${BASE}/capabilities`));
     expect(caps.status).toBe(200);
-    expect((await caps.json()).version).toBe("0.8.8");
+    expect((await caps.json()).version).toBe("0.16.0");
   });
 
   it("is called once per request with the live Request and the action name", async () => {
@@ -673,7 +673,7 @@ describe("scope isolation", () => {
         return { valid: true, errors: [] };
       },
       async capabilities() {
-        return { version: "0.8.8", editable: true, formats: ["hwp", "hwpx"] };
+        return { version: "0.16.0", editable: true, formats: ["hwp", "hwpx"] };
       },
     };
     return { engine: engine as unknown as HwpEngine, seen };

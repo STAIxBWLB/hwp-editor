@@ -37,7 +37,7 @@ export interface EditOptions {
 }
 
 export interface Capabilities {
-  /** hwp-cli version string, e.g. "0.8.8". */
+  /** hwp-cli version string, e.g. "0.16.0". */
   version: string;
   /** Whether the engine can apply edits right now. */
   editable: boolean;
