@@ -2,9 +2,11 @@
  * Types and parser for the `hwp cat --format markdown --with-segments`
  * one-line JSON envelope: {"markdown": ..., "segments": [...]}.
  *
- * Segment shape verified against hwp-cli v0.8.8 output (see
- * test/fixtures/cat-segments-*.json): keys are `start`, `end` (character
- * offsets into `markdown`), `kind` ("para"), `section`, `para`.
+ * Segment shape verified against hwp-cli v0.16.0 output: both captures under
+ * test/fixtures/cat-segments-*.json were re-produced byte for byte by the
+ * 0.16.0 binary, so the envelope has not moved since they were taken. Keys
+ * are `start`, `end` (character offsets into `markdown`), `kind` ("para"),
+ * `section`, `para`.
  */
 
 export interface Segment {
@@ -12,7 +14,7 @@ export interface Segment {
   start: number;
   /** End character offset into `markdown` (exclusive). */
   end: number;
-  /** Segment kind; hwp-cli v0.8.8 emits "para". */
+  /** Segment kind; hwp-cli v0.16.0 emits "para". */
   kind: string;
   /** 0-based HWP section index. */
   section: number;
