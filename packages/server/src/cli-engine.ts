@@ -402,16 +402,23 @@ function runCli(
         clearTimeout(timer);
         if (escalation !== undefined) clearTimeout(escalation);
         requestSignal?.removeEventListener("abort", onCancel);
-        if (error === null) {
-          resolve({ stdout, stderr, code: 0 });
-          return;
-        }
+        // The recorded cause outranks the exit status, and is therefore read
+        // FIRST. `cause` is set only by the timer or the abort listener, and
+        // each of those also signalled the child - so a zero exit after one
+        // of them means the child chose to exit zero on SIGTERM (a wrapper
+        // that traps and cleans up), not that the run succeeded. Reading
+        // `error === null` first reported a blown deadline, or a request the
+        // caller had abandoned, as a normal 200 with a complete body.
         if (cause === "timeout") {
           reject(new HwpCliError("timeout", `hwp ${args[0] ?? ""} timed out after ${timeoutMs}ms`));
           return;
         }
         if (cause === "cancelled") {
           reject(new HwpCliError("cancelled", `hwp ${args[0] ?? ""} was cancelled by the caller`));
+          return;
+        }
+        if (error === null) {
+          resolve({ stdout, stderr, code: 0 });
           return;
         }
         const raw = (error as { code?: unknown }).code;
