@@ -193,7 +193,7 @@ describe("routes (stub engine)", () => {
     const unavailable = async (): Promise<never> => {
       throw new HwpCliError(
         "unavailable",
-        "hwp binary not found: /missing/hwp (install hwp-cli >= 0.8.8, or set HWP_EDITOR_BIN / the bin option)",
+        "hwp binary not found: /missing/hwp (install hwp-cli >= 0.16.0, or set HWP_EDITOR_BIN / the bin option)",
       );
     };
     const engine = stubEngine({

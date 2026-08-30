@@ -27,7 +27,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_HELP_FIXTURE = path.join(HERE, "fixtures", "edit-help.txt");
 
 /** A version inside the accepted range, so the fake survives the floor check. */
-const DEFAULT_VERSION = "0.14.0";
+const DEFAULT_VERSION = "0.16.0";
 
 /** 39 characters plus the newline `yes` appends: 40 bytes per line. */
 const OVERFLOW_LINE = "012345678901234567890123456789012345678";
@@ -35,7 +35,7 @@ const OVERFLOW_LINE = "012345678901234567890123456789012345678";
 export type FakeBinMode = "ok" | "fail" | "overflow" | "hang" | "slow" | "graceful";
 
 export interface FakeBinOptions {
-  /** What `--version` prints; default `0.14.0`. */
+  /** What `--version` prints; default `0.16.0`. */
   version?: string;
   /** What every subcommand other than `--version`/`edit --help`/`info` does. */
   mode?: FakeBinMode;
