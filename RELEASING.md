@@ -236,8 +236,10 @@ Performed once, at the first release, and **not to be repeated** - a second rele
 "The recurring release" above. It is kept because it is the record of how trusted publishing
 was established on these three packages, for the day it has to be re-established.
 
-Values that are only knowable from the run itself are marked `TBD` until the bootstrap fills
-them in.
+Values that are only knowable from the run itself were filled in from the bootstrap of
+2026-08-31, read back from each service rather than copied from what was entered. Where a
+recorded value contradicts what this document expected beforehand, the expectation is
+corrected in place and the contradiction is stated - A2 is the one that matters.
 
 ### A1. Publish the release candidate by hand
 
@@ -308,19 +310,45 @@ The same five fields on all three:
 Two routes exist. The CLI one is the reproducible record and is preferred:
 
 ```sh
-npm trust github --workflow release.yml --environment npm-publish --allow-publish
+npm trust github @hwp-editor/core   --file release.yml --repo STAIxBWLB/hwp-editor --env npm-publish --allow-publish
+npm trust github @hwp-editor/react  --file release.yml --repo STAIxBWLB/hwp-editor --env npm-publish --allow-publish
+npm trust github @hwp-editor/server --file release.yml --repo STAIxBWLB/hwp-editor --env npm-publish --allow-publish
+npm trust list @hwp-editor/core     # read the values back rather than trusting what you typed
 ```
 
-It needs npm >= 11.15.0, write access to the package and 2FA on the account, and it still
-requires the package to exist first. The other route is the settings form for each package on
+The flag is `--file`, not `--workflow`, and the package is a positional argument - the earlier
+spelling here was written from the docs rather than from `npm trust github --help`.
+
+`--allow-publish` is required, not optional. A trusted-publisher configuration created after
+2026-05-20 must name at least one allowed action, and an npm CLI without the flag sends none:
+measured on npm 11.12.1, which HAS `npm trust` but not `--allow-publish`, the request fails
+with a bare `E400 Bad Request` on `POST /-/package/<pkg>/trust` and no explanation. npm 11.19.1
+carries the flag and succeeds. So the real floor for this command is higher than the floor for
+trusted publishing itself; use `npx npm@latest` if the installed npm is older.
+
+It also needs write access to the package and 2FA on the account, and it still requires the
+package to exist first. The other route is the settings form for each package on
 npmjs.com, which requires the same prior publish.
 
 Every field is case-sensitive and must match exactly. The observable symptom of any mismatch is
 a bare **404 on the publish**, not a clear authorization error: npm rejects the OIDC exchange
 and then attempts an unauthenticated publish of a scoped package.
 
-- Route used: `TBD`
-- Date configured: `TBD`
+- Route used: CLI, `npx npm@11.19.1 trust github ...` (the installed npm 11.12.1 lacks
+  `--allow-publish` and fails with E400)
+- Date configured: 2026-08-31
+- Read back from npm with `npm trust list`, not from what was typed. All three identical
+  apart from the id:
+
+  | Package | id | file | repository | environment | permissions |
+  |---|---|---|---|---|---|
+  | `@hwp-editor/core` | `5d07ef53-f73f-4510-92f5-b5c3093c4ae2` | `release.yml` | `STAIxBWLB/hwp-editor` | `npm-publish` | `publish` |
+  | `@hwp-editor/react` | `3132319e-b663-4f36-be61-0bea37aa2eb2` | `release.yml` | `STAIxBWLB/hwp-editor` | `npm-publish` | `publish` |
+  | `@hwp-editor/server` | `1a5c1c43-d205-400f-bbe5-767c6d94a576` | `release.yml` | `STAIxBWLB/hwp-editor` | `npm-publish` | `publish` |
+
+  Each value was compared against its source: the workflow filename against
+  `ls .github/workflows/`, the environment against the `environment:` line in the publish job,
+  and the repository against `gh repo view --json nameWithOwner`.
 
 ### A4. Create the deployment environment
 
@@ -335,8 +363,18 @@ Leave **"prevent users from approving workflow runs that they triggered" off** w
 single active maintainer. It is a reasonable setting with two genuinely available reviewers,
 and a deadlocked release with one.
 
-- Required reviewer(s): `TBD`
-- Date created: `TBD`
+- Required reviewer(s): `entelecheia` (one)
+- Date created: 2026-08-31
+- Created through the REST API rather than the settings page, so the record is a command:
+  `PUT /repos/STAIxBWLB/hwp-editor/environments/npm-publish` with
+  `{"prevent_self_review": false, "reviewers": [{"type": "User", "id": 1177283}],
+  "deployment_branch_policy": null}`
+- Read back: `required_reviewers`, reviewer `entelecheia`, `prevent_self_review: false`,
+  no deployment branch policy
+- No branch ruleset and no branch protection rule was added, and none existed before. Confirmed
+  after creating the environment, not only before: `gh api .../rulesets` returns 0 and
+  `gh api .../branches/main/protection` returns 404. An environment protection rule is a
+  different mechanism from a required status check and does not touch PKG-10's settings half.
 
 ### A5. Record the replication delay observed during the candidate publish
 

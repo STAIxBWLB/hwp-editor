@@ -148,6 +148,58 @@ describe("PKG-08: the publish dry-run names a dist-tag", () => {
   });
 });
 
+/**
+ * The bootstrap record has to name the same environment the publish job
+ * declares, because those two strings are one binding: a job with
+ * `environment:` gets an OIDC subject of `repo:<owner>/<repo>:environment:<name>`
+ * and the npm trusted-publisher configuration must carry the identical name, or
+ * the publish fails with a bare 404.
+ *
+ * The extraction is anchored to the job's four-space key, NOT to the first
+ * `environment:` anywhere in the file. The plan's own verification command used
+ * an unanchored /environment:\s*(\S+)/ and matched the header comment's
+ * `repo:<owner>/<repo>:environment:<name>` instead, reading the environment name
+ * as the literal `<name>`. It failed closed, so it was harmless - but a check
+ * that reads a comment is not checking the thing it claims to.
+ */
+describe("REL-04: the bootstrap record matches the workflow it describes", () => {
+  const workflow = () =>
+    readFileSync(join(REPO_ROOT, ".github", "workflows", "release.yml"), "utf8");
+
+  const declaredEnvironment = (text: string): string => {
+    const match = /^ {4}environment:\s*(\S+)\s*$/m.exec(text);
+    if (match?.[1] === undefined) {
+      throw new Error(
+        "release.yml declares no job-level environment; the guard did not run.",
+      );
+    }
+    return match[1];
+  };
+
+  it("reads the environment from the job, not from a comment", () => {
+    expect(declaredEnvironment(workflow())).toBe("npm-publish");
+  });
+
+  it("throws rather than passing when only a comment mentions an environment", () => {
+    const fixture = "# repo:<owner>/<repo>:environment:<name>\njobs:\n  publish:\n";
+    expect(() => declaredEnvironment(fixture)).toThrow(/did not run/);
+  });
+
+  it("records that environment name in RELEASING.md", () => {
+    // Read the document here rather than through the helper further down: that
+    // one is local to its own describe block, and reaching for it would make
+    // this case depend on where in the file it happens to sit.
+    const record = readFileSync(join(REPO_ROOT, "RELEASING.md"), "utf8");
+    expect(record).toContain(declaredEnvironment(workflow()));
+  });
+
+  it("reports a record that names a different environment", () => {
+    expect("...we publish from the npm-release environment...").not.toContain(
+      declaredEnvironment(workflow()),
+    );
+  });
+});
+
 describe("REL-01: the dedupe count can fail", () => {
   it("counts two nested copies of the core manifest", () => {
     const dir = manifestTree([
