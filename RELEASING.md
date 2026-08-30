@@ -167,6 +167,18 @@ prompt.
 Skipping this leaves `npm install @hwp-editor/core@next` handing people a stale prerelease
 after a stable release exists.
 
+### 7b. Check the integration documents against what a consumer now installs
+
+A release that changes how a host obtains these packages makes the integration guides wrong,
+and nothing fails when it does - the guides are prose, and no test reads them. `1.0.0` turned
+`docs/integration-ax.md` section 1 from a vendoring recipe into a stale one, because the
+section itself predicted the change and then had to be made into the thing it predicted.
+
+So after any release that changes the install story - the first publish, a major, a rename, a
+change to the peer range or the stylesheet subpath - read `docs/integration-*.md` and the
+package READMEs and correct whatever is now false. This is a step rather than a note because
+it has no automated gate and never will.
+
 ### 8. Release notes
 
 The `release-notes` job creates the GitHub Release for the tag with `gh release create
@@ -433,6 +445,34 @@ the released one: a prerelease does not satisfy a caret range over its own relea
 `1.0.0-rc.0` never satisfies `^1.0.0`. The candidate proved `^1.0.0-rc.0`. The identical
 assertion runs again after `1.0.0` publishes, against `^1.0.0`, which is why that second run is
 not a duplicate of the Phase 5 dedupe check.
+
+### A4d. What the 1.0.0 release actually did
+
+Run: https://github.com/STAIxBWLB/hwp-editor/actions/runs/33333393346, 2026-08-31.
+`verify`, `publish` and `release-notes` all succeeded.
+
+- The `publish` job sat at **Waiting** and required an explicit approval before any step in it
+  ran. D-07's human stop is real, not nominal.
+- **npm 11.19.1.** `actions/setup-node` supplied 10.9.8, below the 11.5.1 trusted-publishing
+  floor, and the explicit `npm install -g "npm@^11.5.1"` step is what cleared it. Without that
+  step the publish fails on a version nobody would think to check.
+- Order held: core, then the installability wait, then react and server.
+- **No token fallback anywhere.** The log carries no ENEEDAUTH, no `NODE_AUTH_TOKEN`, no
+  `_authToken`. The workflow omits `registry-url` on `setup-node` and the OIDC exchange worked,
+  which settles the question that guard was added for: omitting it is safe, and npm's own
+  documentation example includes it.
+- **Provenance attached, and A1 is closed.** Every package logged
+  `Signed provenance statement with source and build information from GitHub Actions` and
+  `Provenance statement published to transparency log: https://search.sigstore.dev`.
+  `npm audit signatures` on a fresh install of all three reports verified attestations. So
+  `npm publish <tarball> --provenance` does generate an attestation for a pre-packed tarball -
+  the thing the research could only measure as flag acceptance, because a dry-run
+  short-circuits before generation.
+- `latest` moved to `1.0.0` on all three, which is what finally makes D-01's intent true after
+  the candidate broke it. `next` was moved onto `1.0.0` by hand afterwards, per step 7.
+- `smoke-registry.mjs` passes against `1.0.0`, asserting the resolved peer as `^1.0.0` and a
+  single core copy. That is the range the candidate could not exercise, since a prerelease does
+  not satisfy a caret over its own release - which is why the same assertion runs twice.
 
 ### A5. Record the replication delay observed during the candidate publish
 
