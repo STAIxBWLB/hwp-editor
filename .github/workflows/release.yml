@@ -1,0 +1,283 @@
+name: release
+
+# 1. TRIGGER. Tag-triggered, unlike ci.yml and e2e.yml, which are pull_request
+# only. A tag arrives having passed nothing, so the verify job below re-runs the
+# whole verification for this exact commit before anything irreversible happens
+# (D-05, D-06). `on: release: published` was rejected because pushing a tag
+# without also creating a Release is then a silent no-op, and workflow_dispatch
+# with a typed version was rejected because it loosens the tie between what git
+# records and what the registry receives.
+#
+# The filter is a glob, not a semver matcher, so `v*.*.*` also matches a
+# prerelease tag such as v1.0.0-rc.1. That is deliberate: the stop for a
+# mistakenly pushed tag is the environment approval on the publish job, not a
+# narrower pattern. A pattern that quietly ignored some tags would make a
+# mistyped tag look like a release that ran and did nothing. What a prerelease
+# tag must NOT do is land on `latest`; point 10 is how that is prevented.
+#
+# 2. THE E2E JOB IS UNREACHABLE FROM HERE, and must stay so. It lives alone in
+# e2e.yml, and Actions' `needs:` key resolves only within one workflow file, so
+# no job in this file can depend on it (PKG-10, asserted by
+# packages/server/test/repo-guards.test.ts). This phase also adds NO branch
+# ruleset: a required e2e check would put fork-supplied code and a
+# network-downloaded binary on the release path, which is the settings half of
+# the same guarantee that e2e.yml's header records.
+#
+# 3. NO REGISTRY INPUT ON actions/setup-node, anywhere in this file. Supplying
+# one makes the action write `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}`
+# into the runner's .npmrc; with no token secret configured - which is the
+# intended state under trusted publishing - the value substitutes to empty, and
+# the npm CLI reads the mere presence of that line as "credentials are
+# configured". It then never starts the OIDC exchange and the publish fails with
+# ENEEDAUTH or a bare 404 (06-RESEARCH.md Pitfall 1, actions/setup-node#1551).
+# Most tutorials online still recommend adding `registry-url` here. Do not. The
+# steps below copy ci.yml's setup-node step shape verbatim, and a guard in
+# repo-guards.test.ts keeps a future edit from reintroducing the input.
+#
+# 4. THE NPM CLI IS UPGRADED ON THE RUNNER. Node 22 bundles an npm on the 10.x
+# line, which predates trusted publishing entirely; the failure that produces is
+# indistinguishable from point 3's - a bare 404 at publish time, after the point
+# where anything can be inspected. That is why `npm --version` is printed as a
+# step rather than assumed in a comment: it is the only evidence in the job log
+# that the CLI on the runner can perform the exchange at all.
+#
+# 5. THE ENVIRONMENT NAME IS HALF OF A BINDING, not a local setting. When a job
+# targets a deployment environment, GitHub mints the OIDC token with a subject
+# claim of the form repo:<owner>/<repo>:environment:<name>; without one the
+# subject takes the ref form instead. The npm trusted publisher for these three
+# packages is configured WITH the environment name, so the two must agree
+# exactly. Dropping the environment line from the publish job is not a harmless
+# simplification: it changes the subject claim, the exchange stops matching, and
+# the publish fails with a bare 404 (D-07, 06-RESEARCH.md Pitfall 3). The
+# approval attached to that environment is also the only human stop between a
+# pushed tag and a permanent registry write.
+#
+# 6. THE ALREADY-PUBLISHED CHECK RUNS BEFORE THE ATTEMPT, never as a tolerated
+# conflict. `--provenance` generates and uploads an attestation even when the
+# publish itself fails, so swallowing a 409 leaves conflicting provenance behind
+# on a version number that is permanently spent (npm/cli#7654, via
+# 06-RESEARCH.md Pitfall 4). The check may therefore conclude "not published"
+# only from an explicit registry 404 naming the probed package at the probed
+# version; any other failure is a network fact, not an absence fact, and fails
+# the job rather than licensing a re-publish. Even one such 404 is not enough on
+# its own - see point 7.
+#
+# 7. THE WAIT AFTER CORE IS A REAL INSTALL, not a metadata poll, and each
+# attempt gets a fresh cache directory. Measured against registry.npmjs.org: a
+# packument is served `cache-control: public, max-age=300` from a CDN edge,
+# while a tarball is `immutable`. They are different cache objects with
+# different lifetimes, so a metadata read can go green - or stay stale-negative -
+# independently of whether the bytes a consumer needs are servable. This is why
+# `npm view` appears nowhere below. The consumer-visible failure this ordering
+# prevents is npm resolving react or server, following the core peer range, and
+# reporting a 404 for @hwp-editor/core (D-10, REL-05).
+#
+# The same five minutes cut the other way for point 6's check, which is why
+# absence is concluded only from two 404s separated by more than the packument
+# max-age. A re-run started inside that window can otherwise read 404 for a
+# version that is permanently spent, re-publish it, and produce exactly the
+# conflicting provenance point 6 exists to prevent.
+#
+# 8. THIS WORKFLOW PROVISIONS NO hwp BINARY, and must never gain one. Nothing on
+# the release path needs it: the real-binary suites in packages/server self-skip
+# through describeBin, and neither release script touches it. Adding a download
+# here would create exactly the network dependency on another repository's
+# release schedule that ci.yml's D-04 comment exists to avoid.
+#
+# 9. THE WRITE SCOPE LIVES ONLY ON release-notes (D-16). The job that runs
+# `npm publish` cannot write to this repository; the job that creates the
+# Release cannot mint a publish token. Those Release notes are this project's
+# changelog by decision - no CHANGELOG.md is maintained - which is why creating
+# the Release is part of the release path rather than a manual afterthought.
+#
+# 10. THE DIST-TAG IS DERIVED FROM THE VERSION AND ALWAYS PASSED EXPLICITLY.
+# `npm publish` writes `latest` when no --tag is given, so an approved
+# prerelease tag would put an RC on `latest` for every consumer - a violation of
+# Phase 1's D-01, and one no automated step can undo, because `npm dist-tag` is
+# not among a trusted publisher's allowed actions (06-RESEARCH.md §4). A version
+# carrying a prerelease identifier therefore publishes under `next`, matching
+# the hand-published RC, and every other version under `latest`; neither case
+# leaves the choice to npm's default. The same derivation drives `--prerelease`
+# on the GitHub Release, so a candidate is never presented as the stable one.
+#
+# 11. THE SHELL THAT DECIDES ALL OF THIS LIVES IN scripts/release-helpers.sh,
+# not in a heredoc here. Every function in it decides something irreversible,
+# and inside a workflow file none of it can be run, linted or tested before the
+# publish it governs. Committed, it is read by shellcheck and driven branch by
+# branch against a stub npm by packages/server/test/release-helpers.test.ts.
+#
+# No repository secret is referenced anywhere below. That absence is the whole
+# content of REL-02: the only credential on this path is an ephemeral OIDC
+# token minted per run.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  # One group for the whole repository, deliberately NOT keyed on the ref. A
+  # per-tag group lets two releases overlap, and the approval gate makes that
+  # ordinary rather than exotic: v1.0.0 can sit waiting for a reviewer while
+  # v1.0.1 is pushed and approved first, so the older run finishes last and its
+  # `npm publish --tag latest` moves `latest` backward. Interleaving also lets
+  # core, react and server point at different versions mid-run. Distinct tags
+  # queue here instead.
+  group: release
+  # Never cancel a run that may be mid-publish: the second half of a cancelled
+  # release is not recoverable by pushing the tag again. With one group, this
+  # makes a second tag wait rather than displace the first.
+  #
+  # Accepted cost, stated rather than hidden: an Actions concurrency group holds
+  # at most one running and one pending member, and a newly queued member
+  # cancels the pending one even with cancel-in-progress false. So a THIRD tag
+  # pushed while one release runs and another waits drops the middle one.
+  #
+  # That is the better of the two failures, because they are not symmetric. A
+  # dropped pending run published nothing and spent no version number; it shows
+  # as `cancelled` in Actions and is recovered by re-running it. A `latest` moved
+  # backward cannot be recovered by this workflow at all: `npm dist-tag` is
+  # outside a trusted publisher's allowed actions, so undoing it needs a human
+  # with an authenticated, 2FA-gated npm session. RELEASING.md carries the
+  # operational half - do not push a release tag while another is pending.
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # pnpm before setup-node: setup-node's pnpm cache shells out to
+      # `pnpm store path`. No version input - the pin comes from packageManager.
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # D-06's single cell: Node 22 with the workspace's own React 19, not
+      # ci.yml's four-cell matrix. The merge already bought the matrix result
+      # for this commit; what a tag has never bought is any result at all.
+      #
+      # Three separate steps, as in ci.yml, so a step that runs nothing stays
+      # visible in the log instead of absorbed into one green line.
+      - run: pnpm -r build
+      - run: pnpm -r typecheck
+      - run: pnpm -r test
+
+      # D-08. EXPECTED_VERSION is attached to THIS STEP, not to the job. The
+      # script skips the comparison silently when the variable is absent or
+      # empty, which is what keeps ci.yml's pull-request `package` job green
+      # with no tag in scope - and that same silence means a misspelling, a
+      # deletion, or an `env` hoisted to job level would disable the only
+      # pre-publish gate on an irreversible path while this job still reports
+      # success. repo-guards.test.ts asserts the wiring for that reason.
+      - name: Tag and manifests agree
+        env:
+          EXPECTED_VERSION: ${{ github.ref_name }}
+        run: node scripts/check-publishable.mjs
+
+      - name: Consumer tarball smoke test
+        run: node scripts/smoke-consumer.mjs
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    # See header point 5: this name and the environment recorded in the npm
+    # trusted-publisher configuration are one binding, not two settings.
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write
+    # Generous enough to contain three five-minute absence confirmations (point
+    # 7) plus the ten-minute replication wait plus three publishes, and still
+    # bounded.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # Header point 4. The floor is the first npm that implements trusted
+      # publishing; the print below is the job's evidence that it took.
+      - name: Install an npm that can perform the OIDC exchange
+        run: npm install -g "npm@^11.5.1"
+      - run: npm --version
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Derive the version from the tag
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          packs="$RUNNER_TEMP/packs"
+          mkdir -p "$packs"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "PACKS=$packs" >> "$GITHUB_ENV"
+          echo "publishing $version from tag $GITHUB_REF_NAME"
+
+      # REL-05's ordering is three separate steps on purpose. A single loop over
+      # the three package names with the wait tucked inside a conditional would
+      # behave identically at runtime and be unreviewable here.
+      #
+      # Each step sources the helpers because every `run:` block is its own
+      # shell. The file is committed (header point 11), so what runs here is what
+      # shellcheck and the test suite read.
+      - name: Publish @hwp-editor/core
+        run: |
+          . ./scripts/release-helpers.sh
+          publish_package core
+
+      - name: Wait until core is installable from the registry
+        run: |
+          . ./scripts/release-helpers.sh
+          wait_for_install "@hwp-editor/core" "$VERSION"
+
+      - name: Publish @hwp-editor/react and @hwp-editor/server
+        run: |
+          . ./scripts/release-helpers.sh
+          publish_package react
+          publish_package server
+
+  release-notes:
+    needs: publish
+    runs-on: ubuntu-latest
+    # The only job in this file with a write scope, and it is deliberately not
+    # the one that publishes (header point 9, D-16).
+    permissions:
+      contents: write
+    steps:
+      # Checked out so the gh CLI resolves this repository from the remote.
+      - uses: actions/checkout@v5
+
+      # gh is preinstalled on the runner, so no third-party action joins the
+      # release path. --verify-tag refuses to invent a Release for a tag that
+      # does not exist; the view-first shape makes a Re-run failed jobs after a
+      # partial run a no-op rather than a duplicate-name failure.
+      #
+      # A prerelease tag gets --prerelease --latest=false, from the same
+      # derivation that chooses the npm dist-tag (header point 10). Without it a
+      # candidate is presented as the stable, newest Release while npm correctly
+      # holds it back under `next` - the two halves of one release disagreeing
+      # about what it is.
+      - name: Create the GitHub Release for this tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          . ./scripts/release-helpers.sh
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "[skip] a Release already exists for $GITHUB_REF_NAME"
+            exit 0
+          fi
+          if is_prerelease "${GITHUB_REF_NAME#v}"; then
+            gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag \
+              --prerelease --latest=false
+          else
+            gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag
+          fi

@@ -40,6 +40,22 @@ const LOCKFILE = join(REPO_ROOT, "pnpm-lock.yaml");
 /** The job id `.github/workflows/e2e.yml` declares, per 05-03-SUMMARY.md. */
 const E2E_JOB_ID = "e2e";
 
+/**
+ * The deployment environment `.github/workflows/release.yml`'s publish job
+ * targets, and the environment name recorded in the npm trusted-publisher
+ * configuration of all three packages (D-07). The two are one binding. If it is
+ * ever changed deliberately, this constant and the three publisher
+ * configurations on npmjs.com move together.
+ */
+const PUBLISH_ENVIRONMENT = "npm-publish";
+
+/** The job id in `.github/workflows/release.yml` that runs D-08's comparison. */
+const VERIFY_JOB_ID = "verify";
+const PUBLISH_JOB_ID = "publish";
+
+/** The script D-08's tag/manifest comparison lives in. */
+const CHECK_PUBLISHABLE = "scripts/check-publishable.mjs";
+
 /** esbuild floor that clears GHSA-g7r4-m6w7-qqqr. */
 const ESBUILD_FLOOR = "0.28.1";
 
@@ -47,6 +63,8 @@ interface WorkflowFile {
   name: string;
   /** Job id in declaration order, mapped to the lines of that job's body. */
   jobs: Map<string, string[]>;
+  /** Every line of the file, comments included. Strip with `withoutComments`. */
+  lines: string[];
 }
 
 /**
@@ -94,14 +112,15 @@ function readWorkflows(dir: string): WorkflowFile[] {
     );
   }
   return names.map((name) => {
-    const jobs = parseJobs(readFileSync(join(dir, name), "utf8"));
+    const text = readFileSync(join(dir, name), "utf8");
+    const jobs = parseJobs(text);
     if (jobs.size === 0) {
       throw new Error(
         `PKG-10 guard parsed no job out of ${name}; either the file declares ` +
           `none or its indentation is no longer the two-space form this guard reads.`,
       );
     }
-    return { name, jobs };
+    return { name, jobs, lines: text.split("\n") };
   });
 }
 
@@ -212,6 +231,305 @@ function esbuildFloorViolations(lockfilePath: string): string[] {
   return violations;
 }
 
+/**
+ * Lines with whole-line comments removed.
+ *
+ * Load-bearing, not tidiness. This repository's convention is that workflow
+ * comments carry the decision record, so every string the REL-02 checks below
+ * forbid is ALSO explained in prose in the file it is forbidden from -
+ * `.github/workflows/release.yml`'s header states at length why it passes no
+ * registry input to `actions/setup-node` and why it references no secret.
+ * Matching raw text would let a file's own explanation of why it avoids a thing
+ * satisfy the check that it avoids that thing. A guard a file's own explanation
+ * can defeat is worse than no guard, because it reads as coverage.
+ */
+function withoutComments(lines: string[]): string[] {
+  return lines.filter((line) => !/^\s*#/.test(line));
+}
+
+/** `id-token: write`, wherever a job's permissions block puts it. */
+const OIDC_SCOPE = /^\s+id-token:\s*write\s*$/;
+
+/** `contents: write`, likewise. */
+const CONTENTS_WRITE_SCOPE = /^\s+contents:\s*write\s*$/;
+
+/**
+ * REL-02 check 1: no workflow passes a registry input to `actions/setup-node`.
+ */
+function registryInputViolations(dir: string): string[] {
+  const violations: string[] = [];
+  for (const workflow of readWorkflows(dir)) {
+    for (const line of withoutComments(workflow.lines)) {
+      if (!/^\s*registry-url\s*:/.test(line)) continue;
+      violations.push(
+        `${workflow.name} passes ${line.trim()} to actions/setup-node; the action ` +
+          `then writes an _authToken line into the runner's .npmrc, and with no ` +
+          `token configured - the intended state under trusted publishing - the ` +
+          `value substitutes to empty. The npm CLI reads the presence of that ` +
+          `line as "auth is configured", never starts the OIDC exchange, and the ` +
+          `publish fails with a bare 404`,
+      );
+    }
+  }
+  return violations;
+}
+
+/**
+ * REL-02 check 2: no workflow references a repository secret.
+ */
+function storedCredentialViolations(dir: string): string[] {
+  const violations: string[] = [];
+  for (const workflow of readWorkflows(dir)) {
+    for (const line of withoutComments(workflow.lines)) {
+      if (!/secrets\./.test(line)) continue;
+      violations.push(
+        `${workflow.name} reads ${line.trim()}; REL-02's whole content is that no ` +
+          `stored credential exists, and the only credential on the release path ` +
+          `is the ephemeral OIDC token minted per run. The likeliest innocent ` +
+          `trip is the automatic GITHUB_TOKEN reached as secrets.GITHUB_TOKEN - ` +
+          `that one is not a stored credential and is not what REL-02 forbids, ` +
+          `but release.yml reaches it through the workflow-token expression ` +
+          `(github.token) instead, so this check stays a flat prohibition. Use ` +
+          `that spelling rather than relaxing this guard`,
+      );
+    }
+  }
+  return violations;
+}
+
+/**
+ * The environment a job targets, read only in the scalar form
+ * (`    environment: npm-publish`). The mapping form is deliberately unread: a
+ * shape change there reports a violation rather than passing silently, which is
+ * the safe direction for a value whose other half lives on npmjs.com.
+ */
+function environmentName(body: string[]): string | undefined {
+  for (const line of body) {
+    const scalar = /^ {4}environment:\s*(\S+)\s*$/.exec(line);
+    if (scalar?.[1] !== undefined) return scalar[1];
+  }
+  return undefined;
+}
+
+/**
+ * REL-02 check 3: the OIDC scope and the deployment environment are one
+ * binding, and the environment is named exactly `npm-publish`.
+ */
+function oidcEnvironmentViolations(dir: string): string[] {
+  const violations: string[] = [];
+  let oidcJobs = 0;
+  const coupling =
+    `the two are one binding, not two settings: a job that targets an ` +
+    `environment gets an OIDC subject claim of the form ` +
+    `repo:<owner>/<repo>:environment:<name>, which does not match a publisher ` +
+    `configured without one, so dropping either side breaks the exchange ` +
+    `rather than loosening it`;
+  for (const workflow of readWorkflows(dir)) {
+    for (const [id, rawBody] of workflow.jobs) {
+      const body = withoutComments(rawBody);
+      const grantsOidc = body.some((line) => OIDC_SCOPE.test(line));
+      const environment = environmentName(body);
+      if (grantsOidc) oidcJobs += 1;
+      if (grantsOidc && environment === undefined) {
+        violations.push(
+          `${workflow.name} job "${id}" grants id-token: write but targets no ` +
+            `environment; ${coupling}`,
+        );
+      }
+      if (!grantsOidc && environment !== undefined) {
+        violations.push(
+          `${workflow.name} job "${id}" targets environment "${environment}" but ` +
+            `grants no id-token: write; ${coupling}`,
+        );
+      }
+      if (grantsOidc && environment !== undefined && environment !== PUBLISH_ENVIRONMENT) {
+        violations.push(
+          `${workflow.name} job "${id}" targets environment "${environment}", not ` +
+            `"${PUBLISH_ENVIRONMENT}". The literal name matters as much as the ` +
+            `coupling, because the other half of the binding lives on npmjs.com ` +
+            `where no repository test can see it: renaming the environment on ` +
+            `this side alone leaves this guard passing and the first publish ` +
+            `failing with a bare 404`,
+        );
+      }
+    }
+  }
+  if (oidcJobs === 0) {
+    throw new Error(
+      `REL-02 guard found no job granting id-token: write in ${dir}; the guard ` +
+        `did not run. It verifies a coupling, so an absent OIDC scope means it ` +
+        `verified nothing rather than that the coupling holds.`,
+    );
+  }
+  return violations;
+}
+
+/**
+ * REL-02 check 4: no job holds both the repository write scope and the OIDC
+ * write scope.
+ */
+function writeScopeViolations(dir: string): string[] {
+  const violations: string[] = [];
+  let writeJobs = 0;
+  for (const workflow of readWorkflows(dir)) {
+    for (const [id, rawBody] of workflow.jobs) {
+      const body = withoutComments(rawBody);
+      const grantsContentsWrite = body.some((line) => CONTENTS_WRITE_SCOPE.test(line));
+      if (grantsContentsWrite) writeJobs += 1;
+      if (!grantsContentsWrite) continue;
+      if (!body.some((line) => OIDC_SCOPE.test(line))) continue;
+      violations.push(
+        `${workflow.name} job "${id}" grants both contents: write and ` +
+          `id-token: write; D-16 scopes the write to the job that creates the ` +
+          `GitHub Release precisely so the job that runs npm publish cannot ` +
+          `write to this repository`,
+      );
+    }
+  }
+  if (writeJobs === 0) {
+    throw new Error(
+      `REL-02 guard found no job granting contents: write in ${dir}; the guard ` +
+        `did not run. It verifies a separation, so with no write scope anywhere ` +
+        `there is nothing to separate.`,
+    );
+  }
+  return violations;
+}
+
+/**
+ * A job body split into its step blocks. A step opens at `      - ` and runs
+ * until the next one or until a job-level key (four spaces or fewer) closes it;
+ * a step's own continuation lines are indented deeper than its dash. This is
+ * what makes an `env:` hoisted to job level land in no step block at all, which
+ * is the distinction check 5 exists to draw.
+ */
+function stepBlocks(body: string[]): string[][] {
+  const blocks: string[][] = [];
+  let current: string[] | undefined;
+  for (const line of body) {
+    if (/^ {6}- /.test(line)) {
+      current = [line];
+      blocks.push(current);
+      continue;
+    }
+    if (/^ {0,4}\S/.test(line)) {
+      current = undefined;
+      continue;
+    }
+    current?.push(line);
+  }
+  return blocks;
+}
+
+/**
+ * The one value `EXPECTED_VERSION` may carry, matched exactly.
+ *
+ * An exact match rather than "names the variable non-empty", because the
+ * variable's mere presence proves nothing: `check-publishable.mjs` skips its
+ * comparison on an EMPTY value as well as an absent one, and there are two
+ * quiet spellings that render empty. `EXPECTED_VERSION: ""` satisfies any
+ * is-non-blank pattern, since the quote character is itself non-whitespace. And
+ * `${{ env.WHATEVER }}` for a variable that is not set renders as the empty
+ * string, so a plausible-looking indirection through a job-level `env` that
+ * someone later renamed disables D-08 while reading as tidier than the
+ * original. Only `github.ref_name` is guaranteed to be populated on the tag
+ * push that is this workflow's sole trigger, so it is the only value that
+ * cannot fail open, and it is what this guard demands.
+ */
+const EXPECTED_VERSION_VALUE = "${{ github.ref_name }}";
+
+/**
+ * The value on a step's own `EXPECTED_VERSION:` line, with surrounding quotes
+ * stripped so the legal YAML spellings of one string compare equal.
+ */
+function expectedVersionValue(step: string[]): string | undefined {
+  for (const line of step) {
+    const match = /^ {10}EXPECTED_VERSION:(.*)$/.exec(line);
+    if (match?.[1] === undefined) continue;
+    return match[1].trim().replace(/^(['"])([\s\S]*)\1$/, "$2");
+  }
+  return undefined;
+}
+
+/**
+ * REL-02 check 5: the verify job sets EXPECTED_VERSION on the step that runs
+ * `check-publishable.mjs`, to a value that cannot render empty.
+ */
+/**
+ * A workflow that can publish must serialize across ALL release tags, not per
+ * ref. A per-tag concurrency group lets two releases overlap, and the approval
+ * gate (D-07) makes that ordinary: v1.0.0 can wait for a reviewer while v1.0.1
+ * is pushed and approved first, so the older run finishes last and its
+ * `npm publish --tag latest` moves `latest` backward. The failure is invisible
+ * until two tags are in flight, which is why it needs a standing assertion.
+ */
+function releaseConcurrencyViolations(dir: string): string[] {
+  const hosts = readWorkflows(dir).filter((workflow) => workflow.jobs.has(PUBLISH_JOB_ID));
+  const violations: string[] = [];
+  for (const host of hosts) {
+    const group = withoutComments(host.lines).find((line) =>
+      /^\s*group:/.test(line),
+    );
+    if (group === undefined) {
+      violations.push(`${host.name}: declares job "${PUBLISH_JOB_ID}" with no concurrency group`);
+      continue;
+    }
+    if (/\$\{\{/.test(group)) {
+      violations.push(
+        `${host.name}: concurrency group is expression-keyed (${group.trim()}), so distinct ` +
+          `tags get distinct groups and two releases can interleave`,
+      );
+    }
+  }
+  if (hosts.length === 0) {
+    throw new Error(
+      `REL-02 guard found no workflow declaring a job id "${PUBLISH_JOB_ID}"; the guard did not run.`,
+    );
+  }
+  return violations;
+}
+
+function expectedVersionViolations(dir: string): string[] {
+  const hosts = readWorkflows(dir).filter((workflow) => workflow.jobs.has(VERIFY_JOB_ID));
+  const host = hosts.length === 1 ? hosts[0] : undefined;
+  if (host === undefined) {
+    const found = hosts.map((workflow) => workflow.name).join(", ") || "none";
+    throw new Error(
+      `REL-02 guard expected exactly one workflow file to declare a job id ` +
+        `"${VERIFY_JOB_ID}", found ${hosts.length} (${found}); the guard did not run.`,
+    );
+  }
+  const body = withoutComments(host.jobs.get(VERIFY_JOB_ID) ?? []);
+  const steps = stepBlocks(body).filter((step) =>
+    step.some((line) => line.includes(CHECK_PUBLISHABLE)),
+  );
+  if (steps.length === 0) {
+    throw new Error(
+      `REL-02 guard found no step running ${CHECK_PUBLISHABLE} in ${host.name} ` +
+        `job "${VERIFY_JOB_ID}"; the guard did not run.`,
+    );
+  }
+  const violations: string[] = [];
+  for (const step of steps) {
+    const declaresStepEnv = step.some((line) => /^ {8}env:\s*$/.test(line));
+    const value = expectedVersionValue(step);
+    if (declaresStepEnv && value === EXPECTED_VERSION_VALUE) continue;
+    violations.push(
+      `${host.name} job "${VERIFY_JOB_ID}" runs ${CHECK_PUBLISHABLE} without an ` +
+        `env: mapping setting EXPECTED_VERSION to ${EXPECTED_VERSION_VALUE} in ` +
+        `that step's own block; found ${JSON.stringify(value)}. The script skips ` +
+        `its comparison when the variable is absent OR EMPTY, by design, so that ` +
+        `ci.yml's pull-request job stays green with no tag in scope - and that ` +
+        `same silence means a misspelling, a deletion, an env hoisted to job ` +
+        `level, or a value that renders empty disables D-08's tag/manifest ` +
+        `comparison while verify still reports success. It is the only ` +
+        `pre-publish gate on an irreversible path, and the one property here ` +
+        `that fails open`,
+    );
+  }
+  return violations;
+}
+
 function fixtureDir(files: Record<string, string>): string {
   const dir = mkdtempSync(join(tmpdir(), "hwped-repo-guard-"));
   for (const [name, text] of Object.entries(files)) {
@@ -239,6 +557,41 @@ jobs:
       - uses: actions/checkout@v5
   package:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+`;
+
+/** The shape of `.github/workflows/release.yml`, reduced to what REL-02 reads. */
+const RELEASE_THREE_JOBS = `name: release
+on:
+  push:
+    tags:
+      - "v*.*.*"
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Tag and manifests agree
+        env:
+          EXPECTED_VERSION: \${{ github.ref_name }}
+        run: node scripts/check-publishable.mjs
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+  release-notes:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v5
 `;
@@ -326,5 +679,199 @@ describe("PKG-11: no esbuild below the advisory floor is resolved", () => {
     expect(() => esbuildFloorViolations(join(dir, "pnpm-lock.yaml"))).toThrow(
       /the guard did not run/,
     );
+  });
+});
+
+/**
+ * Five properties of `.github/workflows/release.yml` that no other test can
+ * notice, because each of them fails for the first time at publish time - on an
+ * irreversible path, against a version number that is permanently spent whether
+ * the publish succeeds or not.
+ */
+describe("REL-02: the release path carries no stored credential", () => {
+  it("serializes releases across every tag, not per ref", () => {
+    const violations = releaseConcurrencyViolations(WORKFLOWS_DIR);
+    expect(
+      violations,
+      `two release tags could publish concurrently:\n${violations.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  it("reports a violation for a concurrency group keyed on the ref", () => {
+    const dir = fixtureDir({
+      "release.yml":
+        "concurrency:\n  group: release-${{ github.ref }}\n  cancel-in-progress: false\n" +
+        "jobs:\n  publish:\n    runs-on: ubuntu-latest\n",
+    });
+    expect(releaseConcurrencyViolations(dir).join("\n")).toContain("interleave");
+  });
+
+  it("does not mistake a commented-out expression for the real group", () => {
+    const dir = fixtureDir({
+      "release.yml":
+        "concurrency:\n  # not release-${{ github.ref }}, deliberately\n  group: release\n" +
+        "jobs:\n  publish:\n    runs-on: ubuntu-latest\n",
+    });
+    expect(releaseConcurrencyViolations(dir)).toEqual([]);
+  });
+
+  it("passes no registry input to actions/setup-node in any workflow", () => {
+    const violations = registryInputViolations(WORKFLOWS_DIR);
+    expect(
+      violations,
+      `a workflow now disables the OIDC exchange:\n${violations.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  it("reports a violation for a workflow carrying a registry input", () => {
+    const planted = CI_TWO_JOBS.replace(
+      "  package:",
+      "      - uses: actions/setup-node@v5\n" +
+        "        with:\n" +
+        "          registry-url: https://registry.npmjs.org\n" +
+        "  package:",
+    );
+    const violations = registryInputViolations(fixtureDir({ "ci.yml": planted }));
+    expect(violations.join("\n")).toContain("never starts the OIDC exchange");
+  });
+
+  it("references no repository secret in any workflow", () => {
+    const violations = storedCredentialViolations(WORKFLOWS_DIR);
+    expect(
+      violations,
+      `a workflow now reads a stored credential:\n${violations.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  it("reports a violation for a workflow reading a secret", () => {
+    const planted = CI_TWO_JOBS.replace(
+      "  package:",
+      "      - run: npm publish\n" +
+        "        env:\n" +
+        "          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}\n" +
+        "  package:",
+    );
+    const violations = storedCredentialViolations(fixtureDir({ "ci.yml": planted }));
+    expect(violations.join("\n")).toContain("no stored credential exists");
+  });
+
+  it("couples the OIDC scope to the npm-publish environment", () => {
+    const violations = oidcEnvironmentViolations(WORKFLOWS_DIR);
+    expect(
+      violations,
+      `the OIDC/environment binding no longer holds:\n${violations.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  it("reports a violation when a job grants the OIDC scope with no environment", () => {
+    const planted = RELEASE_THREE_JOBS.replace("    environment: npm-publish\n", "");
+    const violations = oidcEnvironmentViolations(
+      fixtureDir({ "release.yml": planted }),
+    );
+    expect(violations.join("\n")).toContain("targets no environment");
+  });
+
+  it("reports a violation when the environment is renamed on this side only", () => {
+    // The rename that a coupling-only check waves through: both halves are
+    // present, so the binding "looks" intact, and the first publish 404s
+    // because the publisher on npmjs.com still expects the old name.
+    const planted = RELEASE_THREE_JOBS.replace(
+      "    environment: npm-publish\n",
+      "    environment: npm-release\n",
+    );
+    const violations = oidcEnvironmentViolations(
+      fixtureDir({ "release.yml": planted }),
+    );
+    expect(violations.join("\n")).toContain(`not "${PUBLISH_ENVIRONMENT}"`);
+  });
+
+  it("keeps the repository write scope off the publishing job", () => {
+    const violations = writeScopeViolations(WORKFLOWS_DIR);
+    expect(
+      violations,
+      `a publishing job can now write to this repository:\n${violations.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  it("reports a violation when one job holds both write scopes", () => {
+    const planted = RELEASE_THREE_JOBS.replace(
+      "      contents: read\n      id-token: write\n",
+      "      contents: write\n      id-token: write\n",
+    );
+    const violations = writeScopeViolations(fixtureDir({ "release.yml": planted }));
+    expect(violations.join("\n")).toContain("both contents: write and id-token: write");
+  });
+
+  it("sets EXPECTED_VERSION on the step that runs check-publishable.mjs", () => {
+    const violations = expectedVersionViolations(WORKFLOWS_DIR);
+    expect(
+      violations,
+      `D-08's tag comparison is no longer wired:\n${violations.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  it("reports a violation when the step carries no env at all", () => {
+    const planted = RELEASE_THREE_JOBS.replace(
+      "        env:\n          EXPECTED_VERSION: ${{ github.ref_name }}\n",
+      "",
+    );
+    const violations = expectedVersionViolations(
+      fixtureDir({ "release.yml": planted }),
+    );
+    expect(violations.join("\n")).toContain("EXPECTED_VERSION");
+  });
+
+  it("reports a violation when the value is the empty string", () => {
+    // The third and quietest way to disable D-08, and the one a check for a
+    // non-blank value waves through: `""` is two non-whitespace characters and
+    // an empty value, and the script's silence on it is identical to its
+    // silence on a deleted line.
+    const planted = RELEASE_THREE_JOBS.replace(
+      "          EXPECTED_VERSION: ${{ github.ref_name }}\n",
+      '          EXPECTED_VERSION: ""\n',
+    );
+    const violations = expectedVersionViolations(
+      fixtureDir({ "release.yml": planted }),
+    );
+    expect(violations.join("\n")).toContain("EXPECTED_VERSION");
+  });
+
+  it("reports a violation for an expression that renders empty when unset", () => {
+    // `${{ env.RELEASE_TAG }}` reads as an indirection someone tidied up; for a
+    // variable that no longer exists GitHub substitutes the empty string, and
+    // verify goes green with the gate off.
+    const planted = RELEASE_THREE_JOBS.replace(
+      "${{ github.ref_name }}",
+      "${{ env.RELEASE_TAG }}",
+    );
+    const violations = expectedVersionViolations(
+      fixtureDir({ "release.yml": planted }),
+    );
+    expect(violations.join("\n")).toContain("env.RELEASE_TAG");
+  });
+
+  it("accepts the same value quoted, so the rule is not merely textual", () => {
+    const planted = RELEASE_THREE_JOBS.replace(
+      "EXPECTED_VERSION: ${{ github.ref_name }}",
+      'EXPECTED_VERSION: "${{ github.ref_name }}"',
+    );
+    expect(expectedVersionViolations(fixtureDir({ "release.yml": planted }))).toEqual([]);
+  });
+
+  it("reports a violation when the env is hoisted to job level", () => {
+    // Hoisting reads as a tidy-up and disables D-08 exactly as a deletion does:
+    // a job-level env is not the step's env, and the script's silence on an
+    // absent variable is identical either way.
+    const planted = RELEASE_THREE_JOBS.replace(
+      "        env:\n          EXPECTED_VERSION: ${{ github.ref_name }}\n",
+      "",
+    ).replace(
+      "  verify:\n    runs-on: ubuntu-latest\n",
+      "  verify:\n    runs-on: ubuntu-latest\n    env:\n      EXPECTED_VERSION: ${{ github.ref_name }}\n",
+    );
+    const violations = expectedVersionViolations(
+      fixtureDir({ "release.yml": planted }),
+    );
+    expect(violations.join("\n")).toContain("that step's own block");
   });
 });
