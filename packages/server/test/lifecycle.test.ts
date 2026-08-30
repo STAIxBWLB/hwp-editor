@@ -394,10 +394,10 @@ describe("handshake", () => {
 
 describe("capabilities", () => {
   it("reports the resolved binary version with no hwp-cli installed", async () => {
-    const { bin } = createFakeBin({ version: "0.14.0" });
+    const { bin } = createFakeBin({ version: "0.16.0" });
     const engine = createCliEngine({ bin });
     await expect(engine.capabilities()).resolves.toEqual({
-      version: "0.14.0",
+      version: "0.16.0",
       editable: true,
       formats: ["hwp", "hwpx"],
     });

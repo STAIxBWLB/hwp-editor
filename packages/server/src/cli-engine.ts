@@ -52,7 +52,7 @@ const HWP_MAX_BUFFER = 32 * 1024 * 1024;
  * 60s budget makes the exact figure uncritical.
  */
 const KILL_GRACE_MS = 3_000;
-const MIN_VERSION: readonly [number, number, number] = [0, 8, 8];
+const MIN_VERSION: readonly [number, number, number] = [0, 16, 0];
 
 /**
  * Upper bound on the accepted binary, EXCLUSIVE.
@@ -435,7 +435,7 @@ function runCli(
           // scrub moves the path off the message, it does not reword this.
           reject(new HwpCliError(
             "unavailable",
-            "hwp binary not found (install hwp-cli >= 0.8.8, or set HWP_EDITOR_BIN / the bin option)",
+            "hwp binary not found (install hwp-cli >= 0.16.0, or set HWP_EDITOR_BIN / the bin option)",
             undefined,
             detailFor(bin),
           ));
