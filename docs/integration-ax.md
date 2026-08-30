@@ -46,7 +46,7 @@ bump deliberately, the same discipline as the binary pin below.
 
 Provision the binary with a pinned fetch script that follows this shape:
 
-- The release tag lives in `.hwp-cli-version` (must be `>= v0.8.8`).
+- The release tag lives in `.hwp-cli-version` (must be `>= v0.16.0`).
 - Releases are published on
   [`STAIxBWLB/hwp-cli`](https://github.com/STAIxBWLB/hwp-cli/releases). Each tag
   ships one archive per target plus a sibling `.sha256`:
@@ -146,4 +146,4 @@ Theming: map ax's tokens onto the `--hwped-*` contract — see
 - **Timeout**: the engine caps every CLI call at 60s (`HWP_TIMEOUT_MS`);
   the Vercel function limit must exceed that for big renders.
 - **Cold start**: the first call per process verifies `hwp --version`
-  (>= 0.8.8); subsequent calls reuse the memoized result.
+  (>= 0.16.0); subsequent calls reuse the memoized result.
