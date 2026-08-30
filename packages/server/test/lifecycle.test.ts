@@ -35,11 +35,36 @@ const MAX_BUFFER = 32 * 1024 * 1024;
 const KILL_GRACE_MS = 3_000;
 
 /**
- * Budget for the timeout cases. Comfortably above the cost of spawning a
- * `#!/bin/sh` fake (a few hundred ms under vitest) and far below the `slow`
- * and `hang` fakes' own durations, so what times out is the subcommand.
+ * Budget for the timeout cases. Far below the `slow` and `hang` fakes' own
+ * durations (5 s and 60 s), so what times out is always the subcommand.
+ *
+ * It is NOT comfortably above the cost of spawning a `#!/bin/sh` fake, which is
+ * what the earlier wording assumed. Measured on an idle 14-core machine, the
+ * FIRST execution of a freshly written fake costs 431-608 ms and a second
+ * execution of the same file costs 17-32 ms - a first-execution security scan,
+ * not shell startup. So a fresh fake's handshake ate up to 60% of this budget
+ * with nothing else running, and sampling it while the rest of the suite ran
+ * put 8 of 29 handshakes over 1000 ms, peaking at 1582 ms. That is what turned
+ * these four cases red intermittently, always with `hwp --version timed out
+ * after 1000ms` - the SETUP failing, never the behaviour under test.
+ *
+ * The budget is unchanged. `warmBin` below moves the first execution out from
+ * under it instead, which is the actual defect: a setup step should not share
+ * the deadline of the thing it is setting up.
  */
 const TIMEOUT_MS = 1_000;
+
+/**
+ * Execute a freshly created fake once, under a budget that is not the one being
+ * measured, so the run that follows pays ~20 ms rather than ~430 ms.
+ *
+ * Every caller pairs a fake bin with TIMEOUT_MS; those four are the only places
+ * in this package that give an engine a budget under 30 s, so this is the whole
+ * blast radius.
+ */
+async function warmBin(bin: string): Promise<void> {
+  await createCliEngine({ bin, timeoutMs: 30_000 }).capabilities();
+}
 
 /**
  * Per-call work directories only: `hwp-editor-sessions-*` belongs to the
@@ -128,10 +153,11 @@ describe("runCli terminal causes", () => {
 
   it("reports an over-budget child as timeout, naming the budget", async () => {
     const { bin } = createFakeBin({ mode: "slow" });
+    await warmBin(bin);
     const engine = createCliEngine({ bin, timeoutMs: TIMEOUT_MS });
-    // Warm the version memo first: `--version` runs under the same budget,
-    // and spawning a `#!/bin/sh` fake is not free. Without this the timeout
-    // under test could be the handshake's rather than the subcommand's.
+    // Warm the memo too: `--version` runs under the same budget as the
+    // subcommand, so without this the timeout under test could be the
+    // handshake's. Cheap now that warmBin has already executed the file.
     await engine.capabilities();
     const error = await engine.read(DOC).then(
       () => null,
@@ -144,6 +170,7 @@ describe("runCli terminal causes", () => {
 
   it("escalates a SIGTERM-ignoring child to SIGKILL instead of hanging", async () => {
     const { bin } = createFakeBin({ mode: "hang" });
+    await warmBin(bin);
     const engine = createCliEngine({ bin, timeoutMs: TIMEOUT_MS });
     await engine.capabilities();
     const before = workDirs();
@@ -182,6 +209,7 @@ describe("runCli terminal causes", () => {
 
   it("keeps the first cause when a cancellation follows a timeout", async () => {
     const { bin } = createFakeBin({ mode: "slow" });
+    await warmBin(bin);
     const engine = createCliEngine({ bin, timeoutMs: TIMEOUT_MS });
     await engine.capabilities();
     const controller = new AbortController();
@@ -223,9 +251,10 @@ describe("a recorded cause outranks a zero exit status", () => {
    */
   it("reports a timeout as timeout when the child traps SIGTERM and exits 0", async () => {
     const { bin } = createFakeBin({ mode: "graceful", stdout: ENVELOPE });
+    await warmBin(bin);
     const engine = createCliEngine({ bin, timeoutMs: TIMEOUT_MS });
-    // Warm the version memo: ensureVersion passes no signal and no deadline
-    // of its own, and must not be what this case measures.
+    // Warm the memo: ensureVersion passes no signal and no deadline of its
+    // own, and must not be what this case measures.
     await engine.capabilities();
     await expect(engine.read(DOC)).rejects.toMatchObject({ reason: "timeout" });
   }, 30_000);
