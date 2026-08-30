@@ -263,13 +263,12 @@ correction is a step rather than an assumption for exactly that reason.
 ### A2. Confirm the dist-tag state immediately afterwards
 
 ```sh
-npm dist-tag ls @hwp-editor/core       # expect: next: <rc version>, and nothing else
+npm dist-tag ls @hwp-editor/core       # observed: BOTH next and latest at the rc version
 ```
 
 npm documents that publishing sets `latest` "unless the `--tag` option is used", with no
-carve-out for a package's first version, but that could not be verified without publishing, so
-it is a checked step rather than an assumption. If a `latest` tag appeared anyway, remove it -
-`npm dist-tag rm @hwp-editor/core latest` - and repeat for react and server.
+carve-out for a package's first version. Checking it rather than assuming it was the right
+call: the documentation is wrong, and so was the remedy this section used to prescribe.
 
 - Observed on core / react / server: **`next` AND `latest`, both at `1.0.0-rc.0`, on all three.**
 
@@ -282,18 +281,38 @@ it is a checked step rather than an assumption. If a `latest` tag appeared anywa
   Consequence while it stands: `npm install @hwp-editor/core` resolves `1.0.0-rc.0`, which is
   precisely what Phase 1's D-01 exists to prevent. Verified by installing into a scratch app.
 
-  Correction, which needs an authenticated session and is NOT something the release workflow
-  can do:
+  **There is no correction.** The remedy this section originally prescribed - `npm dist-tag rm
+  <pkg> latest` - does not work. Attempted on all three packages with the OTP satisfied, the
+  registry answered:
 
-  ```sh
-  npm dist-tag rm @hwp-editor/core latest
-  npm dist-tag rm @hwp-editor/react latest
-  npm dist-tag rm @hwp-editor/server latest
-  npm dist-tag ls @hwp-editor/core     # expect: next only
+  ```
+  npm error code E400
+  npm error 400 Bad Request - DELETE https://registry.npmjs.org/-/package/@hwp-editor%2fcore/dist-tags/latest
   ```
 
-  Publishing `1.0.0` under `--tag latest` would also overwrite it, so leaving it is survivable
-  but leaves the window open for as long as the candidate is the only version.
+  Identical for react and server. npm will not let a package exist without a `latest`, so the
+  tag can be moved but never removed. The `npm dist-tag` documentation does not say this; it
+  describes `rm` as clearing "a tag that is no longer in use" with no carve-out, exactly as it
+  describes `--tag` as suppressing `latest` on publish. Both statements are wrong about a
+  package's first version.
+
+  So the sequence is not recoverable, only outgrown: publishing `1.0.0` under `--tag latest`
+  moves `latest` onto it, and from that moment the intended state holds. What cannot be
+  recovered is the window between the candidate and `1.0.0`, during which
+  `npm install @hwp-editor/core` hands out a prerelease.
+
+  **What this costs D-01.** Phase 1 decided that `1.0.0` must be the first version anyone can
+  install through `latest`. That is now false and cannot be made true. The decision's purpose -
+  that no consumer accidentally receives a prerelease as if it were the release - survives only
+  because these packages had no consumers during the window. A project with existing users
+  would have shipped them a prerelease on a plain `npm install`.
+
+  **What to do differently.** A first publish cannot avoid setting `latest`, so the candidate
+  cannot be hidden behind `next` on a package that does not yet exist. If a future scope needs
+  a genuinely invisible candidate, the only mechanism that delivers it is staged publishing
+  (`npm stage publish`), which holds the version for review before it becomes public at all -
+  and which the trusted-publisher configuration here deliberately does NOT allow, since
+  `--allow-publish` was selected alone.
 
 ### A3. Configure the trusted publisher on each of the three packages
 
