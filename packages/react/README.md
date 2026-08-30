@@ -1,9 +1,22 @@
 # @hwp-editor/react
 
 Embeddable React UI for Korean HWP/HWPX documents, built on
-[`@hwp-editor/core`](../core). All document work (read/render/edit/compose/
+[`@hwp-editor/core`](https://www.npmjs.com/package/@hwp-editor/core). All document work (read/render/edit/compose/
 validate) goes through the `HwpEngine` interface — this package contains UI
 only.
+
+## Install
+
+```sh
+pnpm add @hwp-editor/react
+```
+
+`@hwp-editor/core` arrives as a peer, deduped to a single copy; you do not name
+it unless your own source imports from it. React 18 or 19 is a peer too.
+
+The stylesheet is **not** auto-injected. An install that skips the import below
+produces an editor that loads and renders unstyled, which no import check
+notices.
 
 ## Usage
 

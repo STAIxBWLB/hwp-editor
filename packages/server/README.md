@@ -6,6 +6,16 @@ work (read/render/edit/compose/validate) is delegated to that binary; this
 package contains no HWP parsing, only a hardened subprocess wrapper and a
 framework-agnostic `(Request) => Response` handler.
 
+## Install
+
+```sh
+pnpm add @hwp-editor/server
+```
+
+`@hwp-editor/core` arrives as a peer, deduped to a single copy. This package
+also needs the external `hwp` binary at runtime — see **Binary resolution**
+below; it is not an npm dependency and nothing installs it for you.
+
 ## Usage
 
 Next.js App Router:

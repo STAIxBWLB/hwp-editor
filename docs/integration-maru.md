@@ -60,8 +60,11 @@ without it ships English buttons to Korean users. This prop is the UI
 language only and is unrelated to the server-side `createCliEngine({ locale })`.
 Full prop reference: [packages/react/README.md](../packages/react/README.md).
 
-Until `@hwp-editor/core` is vendored into maru, `maru/src/lib/hwped.ts`
-provides typed invoke wrappers over the same commands with mirrored types.
+`@hwp-editor/core` is published — `pnpm add @hwp-editor/core` gets the real
+types. maru has not migrated yet: `maru/src/lib/hwped.ts` still provides typed
+invoke wrappers over the same commands with mirrored copies of those types.
+Replacing them with the published package is Phase 7 (EXT-04), not something to
+do from this repository.
 
 ## Theming: maru tokens → `--hwped-*`
 
