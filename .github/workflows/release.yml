@@ -130,6 +130,19 @@ concurrency:
   # Never cancel a run that may be mid-publish: the second half of a cancelled
   # release is not recoverable by pushing the tag again. With one group, this
   # makes a second tag wait rather than displace the first.
+  #
+  # Accepted cost, stated rather than hidden: an Actions concurrency group holds
+  # at most one running and one pending member, and a newly queued member
+  # cancels the pending one even with cancel-in-progress false. So a THIRD tag
+  # pushed while one release runs and another waits drops the middle one.
+  #
+  # That is the better of the two failures, because they are not symmetric. A
+  # dropped pending run published nothing and spent no version number; it shows
+  # as `cancelled` in Actions and is recovered by re-running it. A `latest` moved
+  # backward cannot be recovered by this workflow at all: `npm dist-tag` is
+  # outside a trusted publisher's allowed actions, so undoing it needs a human
+  # with an authenticated, 2FA-gated npm session. RELEASING.md carries the
+  # operational half - do not push a release tag while another is pending.
   cancel-in-progress: false
 
 jobs:
