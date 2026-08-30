@@ -26,9 +26,9 @@
  *
  * Two further things this script never does:
  *
- * 1. It never reads an exit status as evidence. A per-package dry-run exits 0
- *    whether or not it named the package, so naming is asserted on captured
- *    output.
+ * 1. It never treats an exit status as sufficient evidence. The command must
+ *    succeed, and a successful per-package dry-run must also name the package
+ *    in captured output because a silent skip can still exit 0.
  * 2. It never infers privateness from a dry-run. A non-recursive dry-run names
  *    a `private: true` package instead of refusing it, so publishability is
  *    asserted from the manifests via `pnpm ls`, which reads them from disk and
@@ -125,20 +125,32 @@ for (const dir of PACKAGE_DIRS) {
   const { name } = manifests[dir];
   const expected = `${name}@${version}`;
 
-  // spawnSync rather than execFileSync because the assertion needs stderr as
-  // well as stdout, and execFileSync returns stdout only.
+  // spawnSync rather than execFileSync because both the termination state and
+  // combined stdout/stderr are evidence. A zero exit alone cannot prove that
+  // pnpm attempted the package, while matching output cannot excuse a failed
+  // command.
   const result = spawnSync("pnpm", ["publish", "--dry-run", "--no-git-checks"], {
     cwd: join(repoRoot, "packages", dir),
     encoding: "utf8",
   });
   const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
 
+  if (result.error !== undefined || result.signal !== null || result.status !== 0) {
+    console.error(output);
+    const termination =
+      result.error !== undefined
+        ? `could not start: ${result.error.message}`
+        : result.signal !== null
+          ? `was terminated by ${result.signal}`
+          : `exited with status ${result.status}`;
+    throw new Error(`publish dry-run for packages/${dir} ${termination}`);
+  }
+
   if (!output.includes(expected)) {
     console.error(output);
     throw new Error(
-      `publish dry-run for packages/${dir} does not name ${expected}. The exit status was ` +
-        `${result.status} and is deliberately not the evidence: a dry-run that skips a ` +
-        `package leaves the status at 0.`,
+      `publish dry-run for packages/${dir} exited successfully but does not name ${expected}; ` +
+        `a dry-run that silently skips a package can still leave the status at 0`,
     );
   }
   console.log(`[dry-run] publish would attempt ${expected}`);

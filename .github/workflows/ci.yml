@@ -90,9 +90,9 @@ jobs:
       # things about how it is anchored, because each replaces a specific
       # failure of the shell block it supersedes:
       #
-      # 1. It reads captured OUTPUT, never the exit status. A publish dry-run
-      #    that skips a package says so silently and still exits 0, so an
-      #    exit-code check would report green while PKG-01 was unmet.
+      # 1. It requires both command success and captured OUTPUT. A publish
+      #    dry-run that skips a package says so silently and still exits 0, so
+      #    exit status alone would report green while PKG-01 was unmet.
       # 2. It is per-package, not recursive. The recursive form consults the
       #    registry and omits any package whose version is already published;
       #    the non-recursive form names it regardless.
