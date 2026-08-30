@@ -6,7 +6,9 @@
  * SIGTERM-ignoring child and a cancelled request are all reachable without
  * an hwp-cli install.
  *
- * The `edit --help` fixture these fakes serve was captured from hwp 0.15.0.
+ * The `edit --help` fixture these fakes serve reproduces `hwp 0.16.0` output
+ * byte for byte, verified against the installed binary; the bytes are
+ * unchanged since an earlier capture.
  */
 
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -326,6 +328,21 @@ describe("handshake", () => {
     expect((error as HwpCliError).reason).toBe("version");
   }, 30_000);
 
+  it("refuses a binary one patch below the floor, not just an ancient one", async () => {
+    // The 0.7.0 case above sat below the *outgoing* floor too, so it stayed
+    // green whether or not the constant moved. 0.15.1 straddles: accepted
+    // under the old floor, refused under 0.16.0. This is the case that
+    // actually tests the floor's current value.
+    const { bin } = createFakeBin({ version: "0.15.1" });
+    const engine = createCliEngine({ bin });
+    const error = await engine.capabilities().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(HwpCliError);
+    expect((error as HwpCliError).reason).toBe("version");
+  }, 30_000);
+
   it("refuses a binary at the major-version ceiling, not just above it", async () => {
     const { bin } = createFakeBin({ version: "1.0.0" });
     const engine = createCliEngine({ bin });
@@ -379,10 +396,10 @@ describe("handshake", () => {
 
 describe("capabilities", () => {
   it("reports the resolved binary version with no hwp-cli installed", async () => {
-    const { bin } = createFakeBin({ version: "0.14.0" });
+    const { bin } = createFakeBin({ version: "0.16.0" });
     const engine = createCliEngine({ bin });
     await expect(engine.capabilities()).resolves.toEqual({
-      version: "0.14.0",
+      version: "0.16.0",
       editable: true,
       formats: ["hwp", "hwpx"],
     });

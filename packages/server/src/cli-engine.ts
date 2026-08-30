@@ -52,18 +52,19 @@ const HWP_MAX_BUFFER = 32 * 1024 * 1024;
  * 60s budget makes the exact figure uncritical.
  */
 const KILL_GRACE_MS = 3_000;
-const MIN_VERSION: readonly [number, number, number] = [0, 8, 8];
+const MIN_VERSION: readonly [number, number, number] = [0, 16, 0];
 
 /**
  * Upper bound on the accepted binary, EXCLUSIVE.
  *
  * The floor is hard because a binary below it lacks flags this engine emits.
- * The ceiling is deliberately only a major-version gate: the code pins 0.8.8
- * throughout while the binary shipping today is 0.15.0, so a tight numeric
- * range would refuse the current development environment on a version string
- * alone. A major bump is the one signal upstream gives that the contract may
- * have broken; everything below it is carried by the flag handshake, which
- * checks what the binary actually accepts rather than what it calls itself.
+ * The ceiling is deliberately only a major-version gate, and stays one now
+ * that the floor equals the tested tag. A major bump is the one signal
+ * upstream gives that the contract may have broken; everything below it is
+ * carried by the flag handshake, which checks what the binary actually
+ * accepts rather than what it calls itself. A tighter numeric ceiling would
+ * catch nothing the handshake misses, and would refuse a patch release on a
+ * version string alone.
  */
 const MAX_VERSION_EXCLUSIVE: readonly [number, number, number] = [1, 0, 0];
 
@@ -435,7 +436,7 @@ function runCli(
           // scrub moves the path off the message, it does not reword this.
           reject(new HwpCliError(
             "unavailable",
-            "hwp binary not found (install hwp-cli >= 0.8.8, or set HWP_EDITOR_BIN / the bin option)",
+            "hwp binary not found (install hwp-cli >= 0.16.0, or set HWP_EDITOR_BIN / the bin option)",
             undefined,
             detailFor(bin),
           ));
@@ -555,11 +556,13 @@ async function tryJson(
  * `check_body_readable()` refuses five conditions (Encrypted, CertEncrypted,
  * CertDrm, Drm, Signed) but `info --json` exposes only two of them as
  * booleans, so without this table four protection kinds pass the pre-flight
- * silently. Best-effort only: hwp-cli's 0.8.8 changelog states the
- * certificate/DRM/signature branches are unverified against a genuine
- * protected file, so the marker table behind `protectedReasonFromStderr`
- * (the stderr backstop, shared from core) is what actually carries the
- * requirement.
+ * silently. Best-effort only: the 0.8.7 changelog, which introduced these
+ * refusals, states the certificate/DRM/signature branches are unverified
+ * against a genuine protected file, and no release through 0.16.1 has since
+ * verified them - 0.11.0 added password-protected read and left those three
+ * on "their existing typed refusals". So the marker table behind
+ * `protectedReasonFromStderr` (the stderr backstop, shared from core) is what
+ * actually carries the requirement.
  */
 const PROTECTED_ATTRIBUTES: Readonly<Record<string, string>> = {
   "DRM 보안": "DRM-protected document (DRM 보안)",
@@ -568,7 +571,28 @@ const PROTECTED_ATTRIBUTES: Readonly<Record<string, string>> = {
   "전자 서명 정보": "signed document (전자 서명 정보)",
 };
 
-/** Distribution/encrypted documents: 0.8.8 can read them but refuses edit/fill. */
+/**
+ * Distribution/encrypted documents: hwp-cli reads them but refuses edit/fill.
+ *
+ * The origin is the 0.8.7 changelog, not a later one. 0.8.7 added reading of
+ * Hancom distribution documents to `cat`/`convert`/`render` and stated that
+ * the source-preserving edit path (`hwp edit`, `hwp fill`) still refuses
+ * them, because their content lives in ViewText streams rather than BodyText,
+ * so there is no source structure to rewrite against. Every section through
+ * 0.16.1 was checked and none reverses it; 0.11.0 corrects its own READMEs
+ * for having described these documents as refused "although they have been
+ * read since v0.8.7", which is about the read path, not the edit path.
+ *
+ * The evidence is upstream's, not ours. Besides the changelog, hwp-cli's
+ * own `crates/hwp-cli/src/commands/cat.rs` at tag v0.16.0 records that
+ * "the source-preserving edit path fails closed on a /ViewText-only
+ * document instead of writing anything", attributed to a 2026-08-20
+ * measurement against a genuine distribution document. This repository
+ * has no distribution-document fixture and hwp-cli cannot synthesize one,
+ * so the refusal has not been observed here. The reason strings below name no
+ * version on purpose: they reach the host as `capabilities.reason`, where a
+ * version number is a maintenance liability with no reader benefit.
+ */
 export function documentEditability(info: unknown): { editable: boolean; reason?: string } {
   if (typeof info !== "object" || info === null) return { editable: true };
   const record = info as Record<string, unknown>;
@@ -578,7 +602,7 @@ export function documentEditability(info: unknown): { editable: boolean; reason?
   if (record["distribution"] === true) {
     return {
       editable: false,
-      reason: "distribution (배포용) document; hwp-cli 0.8.8 refuses edit/fill",
+      reason: "distribution (배포용) document; hwp-cli refuses edit/fill",
     };
   }
   const attributes = record["attributes"];

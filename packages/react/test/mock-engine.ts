@@ -82,7 +82,7 @@ export function createMockEngine(opts?: {
     data: new TextEncoder().encode(name),
   });
   const capabilities: Capabilities = {
-    version: "0.8.8-test",
+    version: "0.16.0-test",
     editable: opts?.editable ?? true,
     ...(opts?.reason !== undefined ? { reason: opts.reason } : {}),
     formats: ["hwp", "hwpx"],
