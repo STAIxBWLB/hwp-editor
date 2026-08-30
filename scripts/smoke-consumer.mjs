@@ -297,6 +297,61 @@ const packedManifest = (tgz) =>
 const packedFiles = (tgz) =>
   capture("tar", ["-tzf", tgz], packDir).split("\n").filter(Boolean);
 
+// This is the public 1.0.0 file surface, not just a minimum-presence list.
+// Exact listings make a widened `files` allowlist or an unexpected build
+// artifact fail before the immutable tarball is published. The server chunk
+// hash is intentionally explicit: a changed bundle must be reviewed together
+// with the package surface instead of slipping through a prefix check.
+const EXPECTED_TARBALL_FILES = {
+  core: [
+    "package/LICENSE",
+    "package/README.md",
+    "package/dist/index.cjs",
+    "package/dist/index.cjs.map",
+    "package/dist/index.d.cts",
+    "package/dist/index.d.ts",
+    "package/dist/index.js",
+    "package/dist/index.js.map",
+    "package/package.json",
+    "package/schemas/document-spec-v1.schema.json",
+    "package/schemas/document-spec-v2.schema.json",
+    "package/schemas/template-data-v1.schema.json",
+    "package/schemas/template-spec-v1.schema.json",
+  ],
+  react: [
+    "package/LICENSE",
+    "package/README.md",
+    "package/dist/index.cjs",
+    "package/dist/index.cjs.map",
+    "package/dist/index.css",
+    "package/dist/index.css.map",
+    "package/dist/index.d.cts",
+    "package/dist/index.d.ts",
+    "package/dist/index.js",
+    "package/dist/index.js.map",
+    "package/package.json",
+  ],
+  server: [
+    "package/LICENSE",
+    "package/README.md",
+    "package/dist/chunk-4I65OVHB.js",
+    "package/dist/chunk-4I65OVHB.js.map",
+    "package/dist/index.cjs",
+    "package/dist/index.cjs.map",
+    "package/dist/index.d.cts",
+    "package/dist/index.d.ts",
+    "package/dist/index.js",
+    "package/dist/index.js.map",
+    "package/dist/next.cjs",
+    "package/dist/next.cjs.map",
+    "package/dist/next.d.cts",
+    "package/dist/next.d.ts",
+    "package/dist/next.js",
+    "package/dist/next.js.map",
+    "package/package.json",
+  ],
+};
+
 // Checked before the version assertion so that a core still sitting at 0.0.0
 // fails here, naming the range pnpm derived from it, rather than being masked
 // by the lockstep check below. A packed range of ^0.0.0 is exactly what a
@@ -338,11 +393,22 @@ for (const pkg of ["core", "react", "server"]) {
       throw new Error(`${pkg} tarball has no entry under ${prefix}; listing: ${files.join(", ")}`);
     }
   }
+
+  const expectedFiles = [...EXPECTED_TARBALL_FILES[pkg]].sort();
+  const actualFiles = [...files].sort();
+  const added = actualFiles.filter((file) => !expectedFiles.includes(file));
+  const removed = expectedFiles.filter((file) => !actualFiles.includes(file));
+  if (added.length > 0 || removed.length > 0) {
+    throw new Error(
+      `${pkg} tarball file surface changed; added: ${added.join(", ") || "(none)"}; ` +
+        `removed: ${removed.join(", ") || "(none)"}`,
+    );
+  }
 }
 if (new Set(Object.values(versions)).size !== 1) {
   throw new Error(`packed versions are not in lockstep: ${JSON.stringify(versions)}`);
 }
-console.log("[assert] all three tarballs read 1.0.0 and carry LICENSE, README.md and dist/");
+console.log("[assert] all three tarballs match the reviewed 1.0.0 file allowlists");
 
 // A file count rather than parsed dependency-listing or peer-warning output,
 // whose wording varies by package manager version and would break silently.
