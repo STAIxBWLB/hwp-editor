@@ -1,21 +1,48 @@
+import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { sep } from "node:path";
 
 import { describe } from "vitest";
 
 /**
- * The 0.8.8 debug binary (PATH carries 0.8.6, which is too old for
- * edit/compose --report/render --report). HWP_EDITOR_BIN overrides.
+ * Which binary the real-binary integration suites run against.
+ *
+ * This order deliberately mirrors `resolveBin` in
+ * `packages/server/src/cli-engine.ts`, minus its first link (the `bin`
+ * option, which no test passes): HWP_EDITOR_BIN, then HWP_CLI, then the bare
+ * name `hwp` off PATH. Restating the chain here is a knowing tier violation —
+ * binary resolution belongs to `cli-engine.ts` and a test should contribute
+ * nothing but an environment variable — but `resolveBin` is a closure inside
+ * `createCliEngine` and is not exported, so this file cannot call it. It is
+ * named above so that editing the engine's chain surfaces this file in a
+ * grep. If the two drift, this helper either skips suites the engine would
+ * have run, or runs suites against a binary the engine would not have chosen.
+ *
+ * HAS_BIN branches on the shape of BIN because `existsSync` cannot answer for
+ * a bare name: `existsSync("hwp")` is false even on a machine where hwp is
+ * installed on PATH, which would silently skip every integration suite while
+ * the run still reported green. So a value carrying a path separator is
+ * checked with `existsSync`, and a bare name is probed by actually running it.
  */
-export const DEBUG_BIN = "/Users/yj.lee/workspace/work/dev/hwp-cli/target/debug/hwp";
+export const BIN =
+  process.env.HWP_EDITOR_BIN?.trim() || process.env.HWP_CLI?.trim() || "hwp";
 
-export const BIN = process.env.HWP_EDITOR_BIN ?? DEBUG_BIN;
+function runnable(bin: string): boolean {
+  try {
+    execFileSync(bin, ["--version"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
-export const HAS_BIN = existsSync(BIN);
+export const HAS_BIN = BIN.includes(sep) ? existsSync(BIN) : runnable(BIN);
 
 if (!HAS_BIN) {
   console.warn(
-    `[hwp-editor/server tests] hwp-cli 0.8.8 binary not found at ${BIN} — ` +
-      "real-binary integration tests are skipped. Build hwp-cli or set HWP_EDITOR_BIN.",
+    `[hwp-editor/server tests] no runnable hwp binary at ${BIN} — ` +
+      "real-binary integration tests are skipped. Install hwp-cli, or set " +
+      "HWP_EDITOR_BIN / HWP_CLI.",
   );
 }
 
@@ -23,7 +50,7 @@ if (!HAS_BIN) {
 export const describeBin = HAS_BIN
   ? describe
   : (name: string, fn: () => void) =>
-      describe.skip(`${name} [skipped: no hwp-cli 0.8.8 binary at ${BIN}]`, fn);
+      describe.skip(`${name} [skipped: no runnable hwp binary at ${BIN}]`, fn);
 
 /** DocumentSpec v2 fixture: one replaceable paragraph + one 2x2 table. */
 export function sampleSpec() {
