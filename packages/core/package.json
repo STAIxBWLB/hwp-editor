@@ -1,6 +1,6 @@
 {
   "name": "@hwp-editor/core",
-  "version": "1.0.0",
+  "version": "1.0.0-rc.0",
   "description": "Framework-free core for hwp-editor: engine interface, typed hwp edit ops, segments, spec types, editor state.",
   "type": "module",
   "license": "MIT",

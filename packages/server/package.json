@@ -1,6 +1,6 @@
 {
   "name": "@hwp-editor/server",
-  "version": "1.0.0",
+  "version": "1.0.0-rc.0",
   "description": "Node server adapter for hwp-editor: spawns the hwp-cli binary behind the protocol.ts HTTP contract.",
   "type": "module",
   "license": "MIT",

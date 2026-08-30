@@ -1,6 +1,6 @@
 {
   "name": "@hwp-editor/react",
-  "version": "1.0.0",
+  "version": "1.0.0-rc.0",
   "description": "Embeddable React UI for hwp-editor: page canvas, segment inspector, table grid, fields panel, compose panel. Scoped CSS, themeable via CSS variables only.",
   "type": "module",
   "license": "MIT",
