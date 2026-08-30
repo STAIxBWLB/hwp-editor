@@ -76,7 +76,7 @@ pnpm -r typecheck
 
 Requires Node >= 22 and pnpm 10.
 
-Playground e2e (real binary; `HWP_EDITOR_BIN` overrides the default path):
+Playground e2e (real binary; `HWP_EDITOR_BIN` selects it, otherwise `hwp` on PATH):
 
 ```sh
 pnpm --filter playground seed

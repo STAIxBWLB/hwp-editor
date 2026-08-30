@@ -15,8 +15,15 @@ import { execFileSync } from "node:child_process";
 
 import { describe, expect, it } from "vitest";
 
-/** Absolute macOS home-directory root; see the header for why this shape. */
-const HOME_ROOT = "/Users/";
+/**
+ * Absolute macOS home-directory root; see the header for why this shape.
+ *
+ * Assembled from fragments rather than written as one literal so this file
+ * does not match its own pattern. The alternative -- excluding this path from
+ * the grep -- would blind the guard to a real machine path landing here, which
+ * is the one file where nobody would look for one.
+ */
+const HOME_ROOT = `/${"Users"}/`;
 
 function repoRoot(): string {
   try {

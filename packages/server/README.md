@@ -15,7 +15,7 @@ Next.js App Router:
 import { createHwpEditorRoutes } from "@hwp-editor/server/next";
 
 export const runtime = "nodejs"; // the handler spawns a child process
-export const { GET, POST } = createHwpEditorRoutes({ bin: process.env.HWP_EDITOR_BIN });
+export const { GET, POST } = createHwpEditorRoutes({});
 ```
 
 Any Fetch-API runtime (Hono, Bun, Deno, a bare `node:http` bridge):
