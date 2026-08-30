@@ -42,17 +42,25 @@ UNKNOWN_RETRY_SECONDS="${UNKNOWN_RETRY_SECONDS:-10}"
 # for its five-minute max-age - long enough to outlive the publish that
 # invalidated it.
 #
-# --omit=peer is load-bearing too, and is the whole reason the 44 can be
-# attributed. npm 7+ installs peerDependencies automatically, so a bare probe of
-# `@hwp-editor/react` also fetches `@hwp-editor/core`, `react` and `react-dom`;
-# a 404 for any of those would land in this log and a code-only match would read
-# it as "react is not there", licensing a re-publish of a react that already
-# exists. With peers omitted and no `dependencies` in any of the three
-# manifests, the probed package is the only thing fetched. The name check below
-# keeps that attribution true if a manifest ever gains a dependency: npm names
-# the exact spec in both wordings - `The requested resource '<spec>' could not be
-# found` (E404) and `No matching version found for <spec>.` (ETARGET), both
-# verified against npm 11.12.1.
+# --omit=peer is a speed flag and NOTHING MORE. It governs installation, not
+# resolution: npm still resolves an omitted peer and still fails the whole
+# install on its 404. Measured against npm 11 with a packed tarball whose only
+# peerDependencies entry is a nonexistent scoped package - the peer never
+# appears in node_modules and the install exits 1 with an E404 naming it. Do not
+# reintroduce the claim that this flag stops peers from being fetched; a probe
+# of `@hwp-editor/react` still reaches for `@hwp-editor/core`, `react` and
+# `react-dom`, and any of them can 404 here.
+#
+# So the attribution is done by WHERE the spec appears, not by whether it
+# appears. Searching the whole log for the probed spec is not enough: npm's
+# resolution failure prints a `While resolving: <root>@<version>` line naming
+# the ROOT of the resolution, which IS the probed spec, so a peer's 404 plus
+# that line satisfies a code check and a whole-file name check at the same time
+# and returns a confident, wrong 44. The match below is therefore confined to
+# the lines carrying the 404 itself, which name only the spec npm failed on:
+# `The requested resource '<spec>' could not be found` (E404) and
+# `No matching version found for <spec>.` (ETARGET), both verified against
+# npm 11.12.1.
 registry_probe() {
   probe_name="$1"
   probe_version="$2"
@@ -66,8 +74,8 @@ registry_probe() {
     return 0
   fi
   probe_status=1
-  if grep -qE 'npm (error|ERR!) code (E404|ETARGET)' "$probe_log" &&
-     grep -qF "$probe_name@$probe_version" "$probe_log"; then
+  if grep -E 'npm (error|ERR!) (404|notarget)' "$probe_log" |
+       grep -qF "$probe_name@$probe_version"; then
     probe_status=44
   else
     echo "probe of $probe_name@$probe_version failed for a non-404 reason:" >&2

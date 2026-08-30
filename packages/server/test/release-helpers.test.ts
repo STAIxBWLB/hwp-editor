@@ -8,7 +8,10 @@
  * Four defects lived there undetected for exactly that reason - a skipped
  * publish that also skipped the build, a prerelease landing on `latest`, a
  * single 404 read as authoritative absence, and a 404 about a peer read as a 404
- * about the probed package.
+ * about the probed package. The last of those took two attempts to close: the
+ * first fix leaned on `--omit=peer`, which turned out to govern installation
+ * rather than resolution, so the `peer404` case below reproduces npm's real
+ * output shape instead of the shape that fix assumed.
  *
  * Placement: the same reasoning as `repo-guards.test.ts` and
  * `release-guards.test.ts`. `pnpm -r test`, the command
@@ -52,12 +55,23 @@ type Outcome =
   | `e404:${string}`
   /** ETARGET naming `spec` */
   | `etarget:${string}`
+  /**
+   * The install fails resolving a PEER named `spec`, while the probed package
+   * itself resolves fine. Reproduced verbatim against npm 11 by packing a
+   * tarball whose only peerDependencies entry is a nonexistent scoped package
+   * and installing it with --omit=peer: the peer never lands in node_modules
+   * and the install fails anyway, because the flag governs installation and not
+   * resolution. The warn block names the ROOT of the resolution - the probed
+   * spec - which is what a whole-log search for that spec matches.
+   */
+  | `peer404:${string}`
   /** a 5xx, preceded by enough progress noise to bury a head-of-log print */
   | "noisy5xx";
 
 const STUB_NPM = `#!/bin/sh
 printf '%s\\n' "$*" >> "$CALLS_NPM"
 if [ "$1" != "install" ]; then exit 0; fi
+for a in "$@"; do probed="$a"; done
 n=$(cat "$COUNTER" 2>/dev/null || echo 0)
 n=$(( n + 1 ))
 echo "$n" > "$COUNTER"
@@ -75,6 +89,16 @@ case "$kind" in
   etarget)
     echo "npm error code ETARGET"
     echo "npm error notarget No matching version found for $spec."
+    exit 1 ;;
+  peer404)
+    echo "npm warn ERESOLVE overriding peer dependency"
+    echo "npm warn While resolving: $probed"
+    echo "npm warn Could not resolve dependency:"
+    echo "npm warn peer $spec from $probed"
+    echo "npm error code E404"
+    echo "npm error 404 Not Found - GET https://registry.npmjs.org/whatever - Not found"
+    echo "npm error 404"
+    echo "npm error 404  The requested resource '$spec' could not be found or you do not have permission to access it."
     exit 1 ;;
   noisy5xx)
     i=0
@@ -172,6 +196,10 @@ const PROBE = 'status=0\nregistry_probe "$NAME" "$VER" || status=$?\necho "probe
 
 const PROBE_ENV = { NAME: "@hwp-editor/react", VER: "1.0.0" };
 
+/** Report which branch `already_published` took, without tripping `set -e`. */
+const ALREADY =
+  'if already_published "$NAME" "$VER"; then echo "answer=published"; else echo "answer=absent"; fi';
+
 describe("registry_probe: what counts as absence", () => {
   it("answers 0 when the exact version installs", () => {
     const run = runHelpers(PROBE, ["ok"], PROBE_ENV);
@@ -189,14 +217,28 @@ describe("registry_probe: what counts as absence", () => {
   });
 
   it("does NOT answer 44 when the 404 is about a different package", () => {
-    // The defect this closes: npm 7+ auto-installs peerDependencies, so a bare
-    // probe of react also fetches core, react and react-dom. A code-only match
-    // reads core's momentary 404 as "react is not there" and licenses a
-    // re-publish of a react that already exists. 1 means "unknown", which
-    // `already_published` escalates into a failed job rather than a publish.
     const run = runHelpers(PROBE, ["e404:@hwp-editor/core@^1.0.0"], PROBE_ENV);
     expect(run.stdout).toContain("probe=1");
     expect(run.stdout).not.toContain("probe=44");
+  });
+
+  it("does NOT answer 44 when a PEER 404s and the log still names the probed spec", () => {
+    // The defect this closes, and the one --omit=peer does not: that flag
+    // governs installation, not resolution, so npm still resolves the peer and
+    // still fails the install on its 404. npm's warn block names the ROOT of
+    // the resolution - here `@hwp-editor/react@1.0.0` - so a whole-log search
+    // for the probed spec matches a line that says nothing about whether the
+    // probed package exists. Reading that as absence licenses a re-publish of
+    // an already-spent react on a recovery run.
+    const run = runHelpers(PROBE, ["peer404:@hwp-editor/core@^1.0.0"], PROBE_ENV);
+    expect(run.stdout).toContain("probe=1");
+    expect(run.stdout).not.toContain("probe=44");
+  });
+
+  it("fails the job rather than licensing a publish when a peer 404s", () => {
+    const run = runHelpers(ALREADY, ["peer404:@hwp-editor/core@^1.0.0"], PROBE_ENV);
+    expect(run.status).not.toBe(0);
+    expect(run.stdout).not.toContain("answer=absent");
   });
 
   it("answers 1 on a 5xx, which is a network fact and not an absence fact", () => {
@@ -204,7 +246,10 @@ describe("registry_probe: what counts as absence", () => {
     expect(run.stdout).toContain("probe=1");
   });
 
-  it("omits peers from the probe install, so no peer can be fetched at all", () => {
+  it("probes the exact spec, omitting peers from the install for speed only", () => {
+    // --omit=peer keeps react and react-dom out of the probe's node_modules. It
+    // does NOT stop npm resolving them, and it is not what makes the 44
+    // trustworthy - the case above is.
     const run = runHelpers(PROBE, ["ok"], PROBE_ENV);
     expect(run.npmCalls).toHaveLength(1);
     expect(run.npmCalls[0]).toContain("--omit=peer");
@@ -219,10 +264,6 @@ describe("registry_probe: what counts as absence", () => {
     expect(run.stderr).not.toContain("noise-0");
   });
 });
-
-/** Report which branch `already_published` took, without tripping `set -e`. */
-const ALREADY =
-  'if already_published "$NAME" "$VER"; then echo "answer=published"; else echo "answer=absent"; fi';
 
 describe("already_published: one 404 is not absence", () => {
   it("concludes absence only after a second 404 past the packument max-age", () => {
