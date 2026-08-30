@@ -27,8 +27,15 @@
  * assert. There is no try/catch anywhere: any stage that fails throws and stops
  * the script, and the exit hook prints where the evidence was left.
  *
- * Usage: node scripts/smoke-registry.mjs [version] [dist-tag]
- *        node scripts/smoke-registry.mjs 1.0.0-rc.0 next
+ * No dist-tag argument is accepted, and one passed anyway is ignored. Every
+ * stage here installs by exact version, so this script can say nothing about
+ * what `next` or `latest` resolve to; the earlier version of it took a dist-tag
+ * and echoed it into the log while never using it, which read as coverage that
+ * did not exist. That property is checked with `npm dist-tag ls` in the release
+ * checklist, against the registry, where it is actually observable.
+ *
+ * Usage: node scripts/smoke-registry.mjs [version]
+ *        node scripts/smoke-registry.mjs 1.0.0-rc.0
  */
 
 import { execFileSync } from "node:child_process";
@@ -95,7 +102,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const version =
     process.argv[2] ??
     JSON.parse(readFileSync(join(repoRoot, "packages", "core", "package.json"), "utf8")).version;
-  const distTag = process.argv[3] ?? "(none)";
 
   // A CI failure that deletes its own evidence cannot be triaged, so the scratch
   // directories survive a non-zero exit and their absolute paths are printed.
@@ -228,7 +234,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     });
   write(appDir, "tsconfig.bundler.json", tsconfig("esnext", "bundler"));
   write(appDir, "tsconfig.node16.json", tsconfig("node16", "node16"));
-  console.log(`[generate] scratch consumer at ${appDir} (version ${version}, dist-tag ${distTag})`);
+  console.log(`[generate] scratch consumer at ${appDir} (version ${version})`);
 
   // =========================================================================
   // Stage 2: install from the registry

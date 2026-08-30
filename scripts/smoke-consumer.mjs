@@ -404,6 +404,24 @@ console.log(
   `[assert] react and server declare core as a ${EXPECTED_PEER_RANGE} peer, never a dependency`,
 );
 
+// What the version leg of this loop does and does not cover, since
+// EXPECTED_VERSION stopped being a literal.
+//
+// For react and server it can fail, and catches the defect worth catching:
+// three manifests that have fallen out of lockstep, or a pack that shipped a
+// version nobody wrote. For CORE it is a round trip - EXPECTED_VERSION is read
+// from packages/core/package.json and compared against that same field after
+// `pnpm pack` - so it only proves that packing does not rewrite the version.
+//
+// The property that went with the literal is that CI refuses to go green unless
+// the packed artifacts carry the version a HUMAN reviewed. Nothing in this
+// script asserts that any more, and nothing here can: the script has no
+// independent notion of the intended version. That check now lives entirely in
+// the release workflow, where `EXPECTED_VERSION` carries the pushed tag into
+// scripts/check-publishable.mjs - and it is skipped when unset, by design, so
+// that ci.yml's pull-request job stays green with no tag in scope. The literal
+// is not coming back: it turned the `package` job red on every pull request
+// opened while an RC bump sat in the tree [06-RESEARCH.md §5].
 const versions = {};
 for (const pkg of ["core", "react", "server"]) {
   const manifest = packedManifest(tarballs[pkg]);
