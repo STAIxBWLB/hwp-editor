@@ -32,6 +32,7 @@
     "access": "public"
   },
   "scripts": {
+    "prepack": "pnpm run build",
     "build": "tsup",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"

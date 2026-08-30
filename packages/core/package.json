@@ -26,6 +26,7 @@
     "access": "public"
   },
   "scripts": {
+    "prepack": "pnpm run build",
     "build": "pnpm gen:types && tsup",
     "gen:types": "node scripts/gen-spec-types.mjs",
     "test": "vitest run",
