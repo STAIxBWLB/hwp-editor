@@ -127,17 +127,28 @@ installs `@hwp-editor/react` and `@hwp-editor/server` from the registry at that 
 once, at the expected version, declaring the expected range.
 
 ```sh
-mkdir /tmp/hwped-audit && cd /tmp/hwped-audit && npm init -y
+audit_dir="$(mktemp -d)" && cd "$audit_dir" && npm init -y
 npm install "@hwp-editor/core@$VERSION" "@hwp-editor/react@$VERSION" "@hwp-editor/server@$VERSION"
 npm audit signatures
 ```
+
+`mktemp -d`, not a fixed path: a `mkdir /tmp/<name>` fails when the directory survives an
+earlier attempt, and because these are three separate commands the failure stops only the
+first one. The `npm install` below it would then run wherever you happen to be standing,
+which during a release is usually this repository.
 
 Then open each package page on npmjs.com and confirm the **Provenance** badge. That third
 check is not decoration: publishing is `pnpm pack` followed by `npm publish` on the resulting
 tarball, and whether `--provenance` produces a real attestation for a pre-packed tarball was
 never established before the first release. This is the check that settles it.
 
-### 7. Move the `next` dist-tag - manual, authenticated
+### 7. Move the `next` dist-tag - manual, authenticated, stable releases only
+
+**Skip this step for a prerelease.** `dist_tag_for` in `scripts/release-helpers.sh` already
+published a prerelease under `next` and deliberately left `latest` where it was, so there is
+nothing to move and `latest` is expected NOT to equal `$VERSION`. The commands below are for a
+stable release, where the publish set `latest` and `next` is the tag left pointing at an older
+candidate.
 
 ```sh
 npm dist-tag add "@hwp-editor/core@$VERSION" next
