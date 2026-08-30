@@ -1,0 +1,113 @@
+name: ci
+
+# pull_request only, never the _target variant: a fork's branch must never run
+# with this repository's secrets in scope. Phase 5 needs no credential at all.
+on: [pull_request]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    strategy:
+      # One red cell must not hide the state of the other three.
+      fail-fast: false
+      matrix:
+        # 22 proves the declared engines.node floor runs; 24 proves current LTS
+        # does not break. The react axis exists because packages/react is the
+        # only package that imports React, and its published peer range is
+        # "^18 || ^19" - exactly these two values, neither more nor fewer.
+        node: [22, 24]
+        react: [18, 19]
+    steps:
+      - uses: actions/checkout@v5
+      # setup-node's pnpm cache shells out to `pnpm store path`, so pnpm must
+      # already exist or setup-node fails with "Unable to locate executable
+      # file: pnpm". Order here is load-bearing.
+      - uses: pnpm/action-setup@v6
+      # No version input on purpose: action-setup reads packageManager from the
+      # root package.json, so this workflow cannot drift from the repo's pin.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # After the frozen install (which would reject the lockfile this writes)
+      # and before the build. Scoped to the react filter only, so core and
+      # server are untouched. Deliberately carries no failure tolerance: a
+      # failed swap must fail the cell rather than quietly test React 19 twice.
+      - name: Install React 18 for the React 18 cells
+        if: matrix.react == 18
+        run: |
+          pnpm --filter @hwp-editor/react add -D \
+            react@^18.3.1 react-dom@^18.3.1 \
+            @types/react@^18.3.31 @types/react-dom@^18.3
+          pnpm --filter @hwp-editor/react list --depth 0 \
+            react react-dom @types/react @types/react-dom
+
+      # Three separate steps, not one chained command, so a step that runs
+      # nothing is visible in the job log instead of absorbed into a green line.
+      #
+      # D-04: this job deliberately provisions no hwp binary. Phase 4 built
+      # packages/server/test/fake-bin.ts and lifecycle.test.ts to prove every
+      # subprocess failure path with no binary present, and the remaining
+      # real-binary suites skip through describeBin. CI liveness therefore does
+      # not depend on another repository's release schedule. The one job that
+      # does need the binary is the e2e job, in its own workflow file.
+      - run: pnpm -r build
+      - run: pnpm -r typecheck
+      - run: pnpm -r test
+
+  package:
+    runs-on: ubuntu-latest
+    # No needs: edge to build-test. Installability is a function of packaging
+    # metadata, not of the runtime axis, so it need not wait for four cells.
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # This job deliberately runs no `pnpm -r build` of its own. It now
+      # reproduces the unguarded publish path a maintainer would take from a
+      # clean checkout - clone, install, publish - so every build inside it
+      # comes from the `prepack` hook in the three package manifests. A hook
+      # that stops firing therefore fails this job instead of hiding behind a
+      # build the job performed for it. The playground's `next build` keeps its
+      # coverage in build-test, which still runs `pnpm -r build` in all four
+      # matrix cells.
+
+      # Both assertions below live in scripts/check-publishable.mjs. Three
+      # things about how it is anchored, because each replaces a specific
+      # failure of the shell block it supersedes:
+      #
+      # 1. It requires both command success and captured OUTPUT. A publish
+      #    dry-run that skips a package says so silently and still exits 0, so
+      #    exit status alone would report green while PKG-01 was unmet.
+      # 2. It is per-package, not recursive. The recursive form consults the
+      #    registry and omits any package whose version is already published;
+      #    the non-recursive form names it regardless.
+      # 3. It is therefore blind to registry state by construction, so
+      #    publishing 1.0.0 in Phase 6 cannot turn this required job red on
+      #    every subsequent pull request. Privateness is asserted from the
+      #    workspace manifests rather than inferred from a dry-run staying
+      #    quiet about playground.
+      #
+      # D-09 is unchanged: the publish dry-run still runs on every pull request.
+      - name: Publish would attempt exactly the three packages
+        run: node scripts/check-publishable.mjs
+
+      # Self-packs, and the prepack hook is what builds, so it takes no
+      # arguments. It wipes packages/*/dist first, which is what makes its
+      # tarball assertions a proof of the hook.
+      - name: Consumer tarball smoke test
+        run: node scripts/smoke-consumer.mjs

@@ -1,0 +1,83 @@
+name: e2e (non-required)
+
+# pull_request only, never the _target variant: this job runs a fork's code and
+# additionally executes a binary downloaded from the network, so it must never
+# hold this repository's secrets. It references none.
+on: [pull_request]
+
+permissions:
+  contents: read
+
+env:
+  # Pinned, not `latest`. The engine gates on >= 0.8.8 and < 1.0.0
+  # (packages/server/src/cli-engine.ts MIN_VERSION / MAX_VERSION_EXCLUSIVE),
+  # so a future upstream 1.0.0 would fall outside the ceiling and turn this job
+  # red overnight for reasons that are not this repository's fault.
+  HWP_CLI_TAG: v0.16.0
+
+jobs:
+  # NON-GATING BY CONSTRUCTION.
+  #
+  # This job lives in its own workflow file on purpose. GitHub Actions' `needs:`
+  # key can only reference job IDs defined in the same workflow, so a publishing
+  # job authored in another workflow file is structurally unable to depend on
+  # this one. That is the mechanism; the job-level tolerance below is only the
+  # visible half. Do not move this job into ci.yml.
+  #
+  # Settings half: `main` carries no branch protection and no rulesets today.
+  # When a release workflow adds one, the check name produced by this workflow
+  # must stay out of it - a required e2e would put fork-supplied code and a
+  # network-downloaded binary on the release path.
+  #
+  # A red run here is to be TRIAGED, NOT TOLERATED. The tolerance makes the job
+  # unable to block, which is the point, but combined with a tag pinned well
+  # above the 0.8.8 contract floor it also makes this the only place a hwp-cli
+  # contract drift ever appears: op-flag spellings (packages/core/src/ops.ts),
+  # the segment-envelope shape (packages/core/src/segments.ts) and the error
+  # markers (packages/react/src/errors.ts) are all pinned to the 0.8.x contract
+  # and enforced by cli-engine.ts's flag handshake. If that grammar moved
+  # between 0.8.8 and the pinned tag, this job going red is the signal, and a
+  # red check nobody reads is the same as no check at all.
+  e2e:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      # pnpm before setup-node: setup-node's pnpm cache shells out to
+      # `pnpm store path`. No version input - the pin comes from packageManager.
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+
+      # D-05: the one job that provisions the binary. The checksum is verified
+      # BEFORE extraction, so a tampered or truncated download fails the step
+      # rather than being unpacked and then executed.
+      #
+      # The sidecar drops the archive extension - it is named
+      # hwp-<tag>-<target>.sha256, not hwp-<tag>-<target>.tar.gz.sha256 -
+      # while its single line still records the .tar.gz filename, so
+      # `sha256sum -c` resolves the archive from the working directory. The
+      # archive unpacks a single executable `hwp` at the top level, mode
+      # preserved, so no chmod is needed.
+      - name: Install hwp-cli
+        run: |
+          base="https://github.com/STAIxBWLB/hwp-cli/releases/download/$HWP_CLI_TAG"
+          asset="hwp-$HWP_CLI_TAG-x86_64-unknown-linux-gnu.tar.gz"
+          sums="hwp-$HWP_CLI_TAG-x86_64-unknown-linux-gnu.sha256"
+          curl -fsSL -O "$base/$asset" -O "$base/$sums"
+          sha256sum -c "$sums"
+          tar xzf "$asset"
+          echo "HWP_EDITOR_BIN=$PWD/hwp" >> "$GITHUB_ENV"
+
+      # HWP_EDITOR_BIN reaches the API route through the `pnpm dev` child that
+      # playwright.config.ts's webServer spawns, which inherits this
+      # environment; the config carries no env override precisely so it does.
+      - run: pnpm --filter playground seed
+      # --with-deps is the CI-only difference from the README's local command:
+      # a fresh runner lacks Chromium's system libraries.
+      - run: pnpm --filter playground exec playwright install --with-deps chromium
+      - run: pnpm --filter playground test:e2e

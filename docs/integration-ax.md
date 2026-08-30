@@ -18,14 +18,20 @@ browser                          ax (Next.js)
 
 ## 1. Vendoring the packages
 
-The packages are `private: true` workspace packages, not published to a
-registry, so ax takes them as tarballs:
+The packages are no longer `private`: all three read `1.0.0` and carry
+`publishConfig.access: public`. Nothing is on npm yet, though, so until the
+release phase publishes them ax still takes them as tarballs:
 
 `pnpm pack` each package in this repo (`packages/core`, `packages/react`,
 `packages/server`), commit or artifact-store the `.tgz` files, and depend on
-them with `"@hwp-editor/core": "file:./vendor/hwp-editor-core-0.0.0.tgz"` (and
-`link:` for local dev if both repos are checked out side by side). Tarballs
+them with `"@hwp-editor/core": "file:./vendor/hwp-editor-core-1.0.0.tgz"` (and
+`link:` for local dev if both repos are checked out side by side). The file
+name carries the packed version, so it moves with every version bump. Tarballs
 make the deploy hermetic and reviewable; bump by re-packing.
+
+Once `1.0.0` is on npm this whole section collapses into
+`pnpm add @hwp-editor/react`, with `@hwp-editor/core` arriving as a single
+deduped peer.
 
 A git dependency is not an option. `github:STAIxBWLB/hwp-editor#<sha>` installs
 the repository root, which is named `hwp-editor` and declares no `main` or
