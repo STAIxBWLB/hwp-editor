@@ -1,5 +1,5 @@
 /**
- * Integration tests against a real hwp-cli binary at or above the 0.8.8
+ * Integration tests against a real hwp-cli binary at or above the 0.16.0
  * floor. Skipped with a clear message when the binary is absent (see
  * helpers.ts). Version assertions check the floor, not an exact release:
  * the dev binary moves ahead of the floor as hwp-cli ships.
@@ -16,7 +16,7 @@ import { BIN, describeBin, multipartRequest, sampleSpec } from "./helpers.js";
 const engine = () => createCliEngine({ bin: BIN });
 
 /**
- * Mirrors the engine's MIN_VERSION floor ([0, 8, 8] in cli-engine.ts).
+ * Mirrors the engine's MIN_VERSION floor ([0, 16, 0] in cli-engine.ts).
  *
  * The accepted range is now bounded at both ends — MAX_VERSION_EXCLUSIVE is
  * [1, 0, 0] — but this still asserts the floor rather than an exact release,
@@ -28,23 +28,23 @@ const engine = () => createCliEngine({ bin: BIN });
  * ceiling and the flag handshake passed: `ensureVersion` runs both before it
  * resolves a version string.
  */
-function expectVersionAtLeast088(version: string) {
+function expectVersionAtLeast0160(version: string) {
   const [major = 0, minor = 0, patch = 0] = version.split(".").map(Number);
-  const ok = major > 0 || minor > 8 || (minor === 8 && patch >= 8);
-  expect(ok, `expected hwp-cli >= 0.8.8, got ${version}`).toBe(true);
+  const ok = major > 0 || minor > 16 || (minor === 16 && patch >= 0);
+  expect(ok, `expected hwp-cli >= 0.16.0, got ${version}`).toBe(true);
 }
 
 describeBin("cli-engine (real hwp-cli binary)", () => {
-  it("reports a verified >= 0.8.8 version", async () => {
+  it("reports a verified >= 0.16.0 version", async () => {
     const info = await engine().binaryInfo();
     expect(info.bin).toBe(BIN);
-    expectVersionAtLeast088(info.version);
+    expectVersionAtLeast0160(info.version);
     const caps = await engine().capabilities();
-    expectVersionAtLeast088(caps.version);
+    expectVersionAtLeast0160(caps.version);
     expect(caps).toMatchObject({ editable: true, formats: ["hwp", "hwpx"] });
   });
 
-  it("rejects binaries older than 0.8.8", async () => {
+  it("rejects binaries older than 0.16.0", async () => {
     // /bin/echo prints no semver — stands in for an unusable binary.
     const bad = createCliEngine({ bin: "/bin/echo" });
     await expect(bad.capabilities()).rejects.toThrow(HwpCliError);
@@ -167,7 +167,9 @@ describeBin("cli-engine (real hwp-cli binary)", () => {
     await expect(
       cli.edit(composed.document, [{ kind: "replace", find: "없는문자열", replace: "x" }]),
     ).rejects.toThrow(HwpCliError);
-    // 0.8.8 still refuses when *no* op matches, even with allowPartial.
+    // 0.16.0 still refuses when *no* op matches, even with allowPartial.
+    // Re-observed against the installed 0.16.0 binary rather than renumbered
+    // on trust; the assertion below is what re-verifies it on every run.
     await expect(
       cli.edit(composed.document, [{ kind: "replace", find: "없는문자열", replace: "x" }], {
         allowPartial: true,
@@ -235,7 +237,7 @@ describeBin("routes (real hwp-cli binary)", () => {
     const handler = createHwpEditorHandler({ engine: engine() });
     const res = await handler(new Request("http://localhost/api/hwp-editor/capabilities"));
     expect(res.status).toBe(200);
-    expectVersionAtLeast088((await res.json()).version);
+    expectVersionAtLeast0160((await res.json()).version);
   });
 
   /**
