@@ -1,10 +1,20 @@
 /**
  * Typed edit operations mirroring every repeatable flag of `hwp edit`.
  *
- * Flag spellings and value formats are pinned to hwp-cli v0.16.0,
- * crates/hwp-cli/src/cli.rs `EditArgs` (lines ~569-676). Each op serializes
- * to exactly one `--flag value` argv pair; repeatability is expressed by
- * emitting the flag once per op of that kind.
+ * Two serializations of the same `EditOp` union live here:
+ *
+ * - `opsToJson` emits the published `edit-ops-v1` JSON shape (hwp-cli
+ *   schemas/edit-ops-v1.schema.json, pinned to hwp-cli v0.20.0): a flat array
+ *   of flat tagged entries whose field names match the CLI's ops-channel
+ *   names. `@hwp-editor/server`'s CliEngine writes this into the per-call
+ *   work directory and passes it to `hwp edit --ops`. String payloads cross
+ *   as data, so values containing `=>`, `=` or `:` are kept verbatim — the
+ *   ambiguity the argv form's own caveat below warns about does not exist on
+ *   this path.
+ * - `opsToArgv`/`argvToOps` emit the separator-delimited `--flag value` argv
+ *   form (flag spellings pinned to crates/hwp-cli/src/cli.rs `EditArgs`,
+ *   lines ~569-676). The tauri host still crosses its bridge this way; its
+ *   migration to the ops file is host work, not engine adoption.
  */
 
 export type ParagraphAlignment =
@@ -122,13 +132,10 @@ export type EditOp =
 /**
  * `--flag` spelling for each op kind (cli.rs EditArgs long names).
  *
- * Published data, not an internal detail: `@hwp-editor/server`'s startup
- * handshake reads this table to check that the resolved binary actually
- * accepts every flag the grammar emits. Reading it here rather than copying
- * it there is the point — a hand-maintained second list would drift from the
- * grammar it is supposed to protect, and the drift would surface as a runtime
- * CLI failure instead of a refused binary. Adding an op kind therefore widens
- * the handshake automatically.
+ * Consumed by the tauri host's argv bridge. The CLI server's startup
+ * handshake no longer reads this table — it checks the flags the engine
+ * actually emits (`--ops` first), now that the server edit path crosses as
+ * an edit-ops-v1 JSON file rather than as per-op argv.
  */
 export const OP_FLAGS: Record<EditOp["kind"], string> = {
   "replace": "--replace",
@@ -265,6 +272,191 @@ export function opsToArgv(ops: EditOp[]): string[] {
     argv.push(OP_FLAGS[op.kind], opValue(op));
   }
   return argv;
+}
+
+/** One edit-ops-v1 array entry: a flat object tagged by its `op` field. */
+type OpsEntry = Record<string, unknown>;
+
+/**
+ * A bare number gains the unit the CLI flag on this path already implies
+ * (`--set-format size=16` is points, `--set-page width=210` is millimetres);
+ * an already-suffixed value passes through. edit-ops-v1's `unit` fields are
+ * suffixed strings, so this is where the two spellings meet.
+ */
+function withUnit(value: string, unit: "mm" | "pt" | "%"): string {
+  return /^-?\d+(\.\d+)?$/.test(value) ? `${value}${unit}` : value;
+}
+
+/** set-format props: same keys as the CLI flag; only `size` needs a unit. */
+function formatPropsEntry(props: Record<string, string>): OpsEntry {
+  const out: OpsEntry = {};
+  for (const [key, value] of Object.entries(props)) {
+    out[key] = key === "size" ? withUnit(value, "pt") : value;
+  }
+  return out;
+}
+
+/** set-para: edit-ops-v1 keeps the two line-spacing spellings apart. */
+function paraShapeEntry(key: ParaShapeKey, value: string): OpsEntry {
+  switch (key) {
+    case "line-spacing":
+      return value.endsWith("pt")
+        ? { line_spacing_pt: value }
+        : { line_spacing_pct: withUnit(value, "%") };
+    case "indent":
+      return { indent_mm: withUnit(value, "mm") };
+    case "left":
+      return { left_mm: withUnit(value, "mm") };
+    case "right":
+      return { right_mm: withUnit(value, "mm") };
+    case "top":
+      return { top_mm: withUnit(value, "mm") };
+    case "bottom":
+      return { bottom_mm: withUnit(value, "mm") };
+  }
+}
+
+function pageSetupEntry(key: PageSetupKey, value: string): OpsEntry {
+  switch (key) {
+    case "width":
+      return { width_mm: withUnit(value, "mm") };
+    case "height":
+      return { height_mm: withUnit(value, "mm") };
+    case "margin-left":
+      return { margin_left_mm: withUnit(value, "mm") };
+    case "margin-right":
+      return { margin_right_mm: withUnit(value, "mm") };
+    case "margin-top":
+      return { margin_top_mm: withUnit(value, "mm") };
+    case "margin-bottom":
+      return { margin_bottom_mm: withUnit(value, "mm") };
+    case "orientation":
+      return { orientation: value };
+  }
+}
+
+/** Serialize one op to its edit-ops-v1 entry. */
+function opsEntry(op: EditOp): OpsEntry {
+  switch (op.kind) {
+    case "replace":
+      return { op: "replace", from: op.find, to: op.replace };
+    case "set-cell":
+      return { op: "set_cell", table: op.table, row: op.row, col: op.col, text: op.value };
+    case "set-field":
+      return { op: "set_field", name: op.name, value: op.value };
+    case "set-meta":
+      return { op: "set_meta", key: op.key, value: op.value };
+    case "create-field":
+      return {
+        op: "create_field",
+        anchor: op.anchor,
+        name: op.name,
+        ...(op.value === undefined ? {} : { value: op.value }),
+      };
+    case "create-bookmark":
+      return { op: "create_bookmark", anchor: op.anchor, name: op.name };
+    case "create-hyperlink":
+      return {
+        op: "create_hyperlink",
+        anchor: op.anchor,
+        url: op.url,
+        ...(op.text === undefined ? {} : { display: op.text }),
+      };
+    case "insert-image":
+      return {
+        op: "insert_image",
+        anchor: op.anchor,
+        path: op.path,
+        ...(op.width === undefined || op.height === undefined
+          ? {}
+          : { width_mm: `${op.width}mm`, height_mm: `${op.height}mm` }),
+      };
+    case "seal":
+      return {
+        op: "seal",
+        anchor: op.anchor,
+        path: op.path,
+        ...(op.size === undefined ? {} : { size_mm: `${op.size}mm` }),
+      };
+    case "set-format":
+      // Reserved fields LAST: props is a free Record, so a caller-supplied
+      // "pattern" or "op" key must not override the op's own target.
+      return { ...formatPropsEntry(op.props), op: "set_format", pattern: op.find };
+    case "set-align":
+      return { op: "set_align", pattern: op.find, align: op.alignment };
+    case "insert-para":
+      return { op: "insert_para", anchor: op.anchor, text: op.text };
+    case "insert-para-before":
+      return { op: "insert_para", anchor: op.anchor, text: op.text, before: true };
+    case "delete-para":
+      return { op: "delete_para", matching: op.text };
+    case "add-row":
+      return {
+        op: "add_row",
+        table: op.table,
+        // The CLI's bare "end" is the schema's omitted `at`: both append.
+        ...(typeof op.at === "number" ? { at: op.at } : {}),
+        ...(op.count === undefined ? {} : { count: op.count }),
+        ...(op.templateRow === undefined ? {} : { template_row: op.templateRow }),
+      };
+    case "add-col":
+      return {
+        op: "add_col",
+        table: op.table,
+        ...(typeof op.at === "number" ? { at: op.at } : {}),
+        ...(op.count === undefined ? {} : { count: op.count }),
+      };
+    case "delete-row":
+      return { op: "delete_row", table: op.table, row: op.row };
+    case "delete-col":
+      return { op: "delete_col", table: op.table, col: op.col };
+    case "merge-cells":
+      return {
+        op: "merge_cells",
+        table: op.table,
+        r1: op.r1,
+        c1: op.c1,
+        r2: op.r2,
+        c2: op.c2,
+      };
+    case "split-cell":
+      return { op: "split_cell", table: op.table, row: op.row, col: op.col };
+    case "add-table":
+      return { op: "add_table", anchor: op.anchor, rows: op.rows };
+    case "clone-table":
+      return {
+        op: "clone_table",
+        source_table: op.sourceTable,
+        anchor: op.anchor,
+        ...(op.mode === undefined ? {} : { text_mode: op.mode }),
+      };
+    case "set-para":
+      return { op: "set_para", pattern: op.find, ...paraShapeEntry(op.key, op.value) };
+    case "set-page":
+      return { op: "set_page", ...pageSetupEntry(op.key, op.value) };
+    case "delete-image":
+      return { op: "delete_image", anchor: op.anchor };
+    case "delete-table":
+      return typeof op.target === "number"
+        ? { op: "delete_table", index: op.target }
+        : { op: "delete_table", anchor: op.target };
+    case "delete-field":
+      return { op: "delete_field", name: op.name };
+    case "delete-bookmark":
+      return { op: "delete_bookmark", name: op.name };
+  }
+}
+
+/**
+ * Serialize ops to the published `edit-ops-v1` JSON document: a flat array
+ * of flat tagged entries, in op order, whose field names match the hwp-cli
+ * ops-channel names (schemas/edit-ops-v1.schema.json). `@hwp-editor/server`
+ * writes the result into the per-call work directory and passes it to
+ * `hwp edit --ops`; hwp-cli validates the file against the schema before
+ * applying anything.
+ */
+export function opsToJson(ops: EditOp[]): string {
+  return JSON.stringify(ops.map(opsEntry));
 }
 
 /** Split `s` on the first occurrence of `sep`; null when absent. */

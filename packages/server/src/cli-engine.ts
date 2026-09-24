@@ -24,8 +24,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import {
-  OP_FLAGS,
-  opsToArgv,
+  opsToJson,
   parseCatEnvelope,
   protectedReasonFromDiagnostics,
   type Capabilities,
@@ -52,7 +51,7 @@ const HWP_MAX_BUFFER = 32 * 1024 * 1024;
  * 60s budget makes the exact figure uncritical.
  */
 const KILL_GRACE_MS = 3_000;
-const MIN_VERSION: readonly [number, number, number] = [0, 16, 0];
+const MIN_VERSION: readonly [number, number, number] = [0, 20, 0];
 
 /**
  * Upper bound on the accepted binary, EXCLUSIVE.
@@ -81,19 +80,23 @@ const FLAG_TOKEN = /(?:^|\s)(--[a-z][a-z0-9-]*)(?=[\s,=<]|$)/gm;
 
 /**
  * The flag surface the resolved binary must accept before this engine will
- * use it. Derived from the grammar's own table, so adding an op kind widens
- * the check automatically and no second list can drift.
+ * use it: exactly the flags this engine puts on an `edit` argv. `--ops`
+ * comes first because the edit path now crosses as an edit-ops-v1 JSON file;
+ * the per-op flags the old table checked are ones this engine no longer
+ * emits, so a handshake still built from them would verify nothing about
+ * the binary it just downloaded.
  *
- * Scope is `edit` only. `--verify` and `--allow-partial` are the two other
- * flags this engine puts on an `edit` argv and come out of the same 5.5 KB
- * help output for free. The flags hardcoded on the other eight subcommands
- * (cat, render, compose, validate, info, fields, bookmarks, slots) are a
- * known, accepted gap: `edit` is the whole 28-op surface and the highest-risk
- * one, and covering the rest would cost four or five more `--help` spawns on
- * every cold serverless start.
+ * Exported for `lifecycle.test.ts`, which asserts the contents directly so
+ * the constant cannot silently rot back to flags the engine retired.
+ *
+ * Scope is `edit` only. The flags hardcoded on the other subcommands (cat's
+ * `--segments`, render's `--layout-json`, compose, validate, info, fields,
+ * bookmarks, slots) are a known, accepted gap: `edit` carries the typed ops
+ * payload and is the highest-risk surface, and covering the rest would cost
+ * more `--help` spawns on every cold serverless start.
  */
-const HANDSHAKE_FLAGS: readonly string[] = [
-  ...Object.values(OP_FLAGS),
+export const HANDSHAKE_FLAGS: readonly string[] = [
+  "--ops",
   "--verify",
   "--allow-partial",
 ];
@@ -436,7 +439,7 @@ function runCli(
           // scrub moves the path off the message, it does not reword this.
           reject(new HwpCliError(
             "unavailable",
-            "hwp binary not found (install hwp-cli >= 0.16.0, or set HWP_EDITOR_BIN / the bin option)",
+            "hwp binary not found (install hwp-cli >= 0.20.0, or set HWP_EDITOR_BIN / the bin option)",
             undefined,
             detailFor(bin),
           ));
@@ -678,6 +681,79 @@ export function pngSize(data: Uint8Array): { width: number; height: number } | n
   return positiveSize(view.getUint32(16), view.getUint32(20));
 }
 
+/**
+ * Dimensions from a JPEG SOF marker. Exported for `render-size.test.ts`;
+ * engine-internal like `pngSize`.
+ *
+ * The SOI marker (`FF D8`) is validated before any segment is walked, and
+ * every segment's declared length bounds the walk, so a truncated or
+ * non-JPEG payload returns null instead of yielding two arbitrary uint16s.
+ */
+export function jpegSize(data: Uint8Array): { width: number; height: number } | null {
+  if (data.length < 4 || data[0] !== 0xff || data[1] !== 0xd8) return null;
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  let offset = 2;
+  while (offset + 1 < data.length) {
+    if (data[offset] !== 0xff) return null;
+    const marker = data[offset + 1]!;
+    // Standalone markers carry no length field.
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd9)) {
+      offset += 2;
+      continue;
+    }
+    if (offset + 4 > data.length) return null;
+    const length = view.getUint16(offset + 2);
+    if (length < 2 || offset + 2 + length > data.length) return null;
+    // SOF0-SOF15, excluding the DHT/C4, JPG/C8 and DAC/CC slots.
+    const isSof = marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
+    if (isSof) {
+      if (length < 7) return null;
+      // SOF payload: precision (1), height (2), width (2), all big-endian.
+      return positiveSize(view.getUint16(offset + 7), view.getUint16(offset + 5));
+    }
+    offset += 2 + length;
+  }
+  return null;
+}
+
+/**
+ * Dimensions from a WebP RIFF header. Exported for `render-size.test.ts`.
+ *
+ * All three container forms are answered — VP8X (extended), VP8L (lossless,
+ * the form hwp-cli emits) and VP8  (lossy) — each validated on its own
+ * signature bytes before a dimension is read.
+ */
+export function webpSize(data: Uint8Array): { width: number; height: number } | null {
+  if (data.length < 30) return null;
+  // "RIFF" .... "WEBP"
+  if (data[0] !== 0x52 || data[1] !== 0x49 || data[2] !== 0x46 || data[3] !== 0x46) return null;
+  if (data[8] !== 0x57 || data[9] !== 0x45 || data[10] !== 0x42 || data[11] !== 0x50) return null;
+  const fourcc = String.fromCharCode(data[12]!, data[13]!, data[14]!, data[15]!);
+  if (fourcc === "VP8X") {
+    // Canvas size minus one, 24-bit little-endian each.
+    const width = 1 + (data[24]! | (data[25]! << 8) | (data[26]! << 16));
+    const height = 1 + (data[27]! | (data[28]! << 8) | (data[29]! << 16));
+    return positiveSize(width, height);
+  }
+  if (fourcc === "VP8L") {
+    if (data[20] !== 0x2f) return null;
+    const b0 = data[21]!;
+    const b1 = data[22]!;
+    const b2 = data[23]!;
+    const b3 = data[24]!;
+    const width = 1 + (b0 | ((b1 & 0x3f) << 8));
+    const height = 1 + ((b1 >> 6) | (b2 << 2) | ((b3 & 0x0f) << 10));
+    return positiveSize(width, height);
+  }
+  if (fourcc === "VP8 ") {
+    // Frame start code 9D 01 2A, then 14-bit little-endian dimensions.
+    if (data[23] !== 0x9d || data[24] !== 0x01 || data[25] !== 0x2a) return null;
+    const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+    return positiveSize(view.getUint16(26, true) & 0x3fff, view.getUint16(28, true) & 0x3fff);
+  }
+  return null;
+}
+
 const SVG_UNITS = "pt|px|mm|in|cm|em|%";
 
 /**
@@ -856,7 +932,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
     const signal = call?.signal;
     const inspection = await withWorkDir(async (dir) => {
       const file = await stage(dir, document);
-      const cat = await runCliOk(bin, ["cat", file, "--format", "markdown", "--with-segments"], timeoutMs, opts.locale, signal);
+      const cat = await runCliOk(bin, ["cat", file, "--format", "markdown", "--with-segments", "--segments", "v2"], timeoutMs, opts.locale, signal);
       const envelope = parseCatEnvelope(cat.stdout);
       // Best-effort extras: a document that cats fine but fails fields should
       // still read; the extras inform editing UI, not the wire contract.
@@ -894,12 +970,6 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       await ensureVersion();
       const bin = resolveBin();
       const requested = options.format ?? "svg";
-      if (requested === "jpeg" || requested === "webp") {
-        throw new HwpCliError(
-          "unsupported_format",
-          `hwp-cli render supports png and svg only; got "${requested}"`,
-        );
-      }
       const dpi = options.dpi ?? 96;
       if (!Number.isFinite(dpi) || dpi < 36 || dpi > 600) {
         throw new HwpCliError("bad_request", `dpi must be within 36..=600; got ${options.dpi}`);
@@ -910,13 +980,14 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       }
       return withWorkDir(async (dir) => {
         const input = await stage(dir, document);
-        const attempt = async (format: "svg" | "png"): Promise<PageImage[]> => {
+        const attempt = async (format: PageImageFormat): Promise<PageImage[]> => {
           const outBase = path.join(dir, `page.${format}`);
           const reportPath = path.join(dir, "render-report.json");
+          const layoutPath = path.join(dir, "render-layout.json");
           await runCliOk(bin, [
             "render", input, "-o", outBase,
             "--format", format, "--pages", pages, "--dpi", String(dpi),
-            "--report", reportPath,
+            "--report", reportPath, "--layout-json", layoutPath,
           ], timeoutMs, opts.locale, call?.signal);
           // Multi-page renders land as page-<n>.<ext>; a single selected page
           // keeps the exact -o name. The report's selected_pages pins numbers.
@@ -951,7 +1022,11 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
             const size =
               format === "png"
                 ? pngSize(data)
-                : svgSize(Buffer.from(data).toString("utf8"));
+                : format === "svg"
+                  ? svgSize(Buffer.from(data).toString("utf8"))
+                  : format === "jpeg"
+                    ? jpegSize(data)
+                    : webpSize(data);
             // Output whose dimensions cannot be read cannot be trusted, so it
             // is discarded rather than handed to PageCanvas, whose aspectRatio
             // collapses on the zero the old fallback substituted (D-16).
@@ -1021,7 +1096,13 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
           );
         }
         const output = path.join(dir, `out${ext}`);
-        const args = ["edit", input, "-o", output, ...opsToArgv(ops)];
+        // The typed ops channel: op values cross as edit-ops-v1 JSON data,
+        // so a `find`/`value` containing `=>`, `=` or `:` is kept verbatim
+        // instead of being parsed as a CLI separator. hwp-cli validates the
+        // file against the published schema before applying anything.
+        const opsPath = path.join(dir, "ops.json");
+        await writeFile(opsPath, opsToJson(ops), { mode: 0o600 });
+        const args = ["edit", input, "-o", output, "--ops", opsPath];
         if (options.verify !== false) args.push("--verify");
         if (options.allowPartial === true) args.push("--allow-partial");
         await runCliOk(bin, args, timeoutMs, opts.locale, call?.signal).catch(rethrowProtected);

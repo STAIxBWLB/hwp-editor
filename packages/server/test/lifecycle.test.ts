@@ -6,9 +6,8 @@
  * SIGTERM-ignoring child and a cancelled request are all reachable without
  * an hwp-cli install.
  *
- * The `edit --help` fixture these fakes serve reproduces `hwp 0.16.0` output
- * byte for byte, verified against the installed binary; the bytes are
- * unchanged since an earlier capture.
+ * The `edit --help` fixture these fakes serve reproduces `hwp 0.20.0` output
+ * byte for byte, captured from the v0.20.0 release binary.
  */
 
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -18,7 +17,7 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createCliEngine, HwpCliError } from "../src/cli-engine.js";
+import { createCliEngine, HANDSHAKE_FLAGS, HwpCliError } from "../src/cli-engine.js";
 import { createHwpEditorHandler } from "../src/routes.js";
 import { createFakeBin, disposeFakeBins } from "./fake-bin.js";
 import { hwpxBytes, multipartRequest } from "./helpers.js";
@@ -117,19 +116,20 @@ async function waitForSpawn(log: () => string, subcommand: string): Promise<void
 const helpDirs: string[] = [];
 
 /**
- * The captured `edit --help` with the bare `--set-cell` flag dropped while
- * both `--set-cell-by-label` occurrences remain. This is the prefix collision
- * the handshake's word-boundary match exists for: a naive
- * `help.includes("--set-cell")` passes against this fixture.
+ * The captured `edit --help` with the `--ops` flag dropped while the other
+ * handshake flags (`--verify`, `--allow-partial`) remain: the binary a
+ * pre-0.20.0 release would be, accepted under the old per-op flag surface
+ * and refused under the current one. Renaming rather than deleting keeps the
+ * rest of the fixture byte-identical.
  *
  * The dir is named `hwp-editor-fake-*` so `workDirs()` keeps ignoring it.
  */
-function helpWithoutSetCell(): string {
+function helpWithoutOps(): string {
   const dir = mkdtempSync(path.join(tmpdir(), "hwp-editor-fake-help-"));
   helpDirs.push(dir);
   const source = readFileSync(path.join(HERE, "fixtures", "edit-help.txt"), "utf8");
   const file = path.join(dir, "edit-help.txt");
-  writeFileSync(file, source.replace("--set-cell <SET_CELL>", "--dropped-flag <SET_CELL>"));
+  writeFileSync(file, source.replace("--ops <FILE>", "--dropped-flag <FILE>"));
   return file;
 }
 
@@ -237,8 +237,9 @@ describe("runCli terminal causes", () => {
   }, 30_000);
 });
 
-/** A `cat` envelope the fake can print instantly, so `parseCatEnvelope` passes. */
-const ENVELOPE = '{"markdown":"# hi","segments":[]}';
+/** A v2 `cat` envelope the fake can print instantly, so `parseCatEnvelope` passes. */
+const ENVELOPE =
+  '{"schema_version":"1.0","contract":"hwp-segment-envelope-v2","markdown":"# hi","segments":[]}';
 
 describe("a recorded cause outranks a zero exit status", () => {
   /*
@@ -359,10 +360,10 @@ describe("handshake", () => {
 
   it("refuses a binary one patch below the floor, not just an ancient one", async () => {
     // The 0.7.0 case above sat below the *outgoing* floor too, so it stayed
-    // green whether or not the constant moved. 0.15.1 straddles: accepted
-    // under the old floor, refused under 0.16.0. This is the case that
+    // green whether or not the constant moved. 0.19.3 straddles: accepted
+    // under the old floor, refused under 0.20.0. This is the case that
     // actually tests the floor's current value.
-    const { bin } = createFakeBin({ version: "0.15.1" });
+    const { bin } = createFakeBin({ version: "0.19.3" });
     const engine = createCliEngine({ bin });
     const error = await engine.capabilities().then(
       () => null,
@@ -383,8 +384,23 @@ describe("handshake", () => {
     expect((error as HwpCliError).reason).toBe("version");
   }, 30_000);
 
-  it("refuses a binary missing a flag the op grammar emits, naming it", async () => {
-    const { bin } = createFakeBin({ helpFixture: helpWithoutSetCell() });
+  it("accepts a binary reporting exactly the floor", async () => {
+    // The boundary is inclusive: v0.20.0 is the release the floor names, so
+    // refusing it here would fail the e2e run against the release binary.
+    const { bin } = createFakeBin({ version: "0.20.0" });
+    const engine = createCliEngine({ bin });
+    await expect(engine.capabilities()).resolves.toMatchObject({ version: "0.20.0" });
+  }, 30_000);
+
+  it("checks the flags the engine emits, not the retired per-op ones", async () => {
+    // The handshake constant itself: if it ever drifts back to flags the
+    // edit path no longer emits, it verifies nothing about the binary it
+    // gates. Asserted directly so the rot surfaces here, not in a red e2e.
+    expect(HANDSHAKE_FLAGS).toEqual(["--ops", "--verify", "--allow-partial"]);
+  });
+
+  it("refuses a binary missing a flag the edit argv uses, naming it", async () => {
+    const { bin } = createFakeBin({ helpFixture: helpWithoutOps() });
     const engine = createCliEngine({ bin });
     const error = await engine.capabilities().then(
       () => null,
@@ -392,11 +408,10 @@ describe("handshake", () => {
     );
     expect(error).toBeInstanceOf(HwpCliError);
     expect((error as HwpCliError).reason).toBe("version");
-    // Named, and named alone: both `--set-cell-by-label` occurrences survive
-    // in the fixture, so a substring match would have found `--set-cell`
-    // inside one of them and let the binary through.
-    expect((error as HwpCliError).message).toContain("--set-cell");
-    expect((error as HwpCliError).message).not.toContain("--replace");
+    // Named, and named alone: `--verify` and `--allow-partial` survive in the
+    // fixture, so only `--ops` can be the refusal.
+    expect((error as HwpCliError).message).toContain("--ops");
+    expect((error as HwpCliError).message).not.toContain("--verify");
   }, 30_000);
 
   it("refuses a binary whose edit --help exits non-zero", async () => {
@@ -425,10 +440,10 @@ describe("handshake", () => {
 
 describe("capabilities", () => {
   it("reports the resolved binary version with no hwp-cli installed", async () => {
-    const { bin } = createFakeBin({ version: "0.16.0" });
+    const { bin } = createFakeBin({ version: "0.20.0" });
     const engine = createCliEngine({ bin });
     await expect(engine.capabilities()).resolves.toEqual({
-      version: "0.16.0",
+      version: "0.20.0",
       editable: true,
       formats: ["hwp", "hwpx"],
     });
@@ -506,7 +521,7 @@ describe("no leak: engine messages carry no path and no CLI output", () => {
     await collect(createCliEngine({ bin: createFakeBin({ version: "none" }).bin }).capabilities());
     await collect(createCliEngine({ bin: createFakeBin({ version: "0.7.0" }).bin }).capabilities());
     await collect(
-      createCliEngine({ bin: createFakeBin({ helpFixture: helpWithoutSetCell() }).bin }).capabilities(),
+      createCliEngine({ bin: createFakeBin({ helpFixture: helpWithoutOps() }).bin }).capabilities(),
     );
     await collect(createCliEngine({ bin: "/nonexistent/hwp" }).capabilities());
     expect(messages.length).toBeGreaterThanOrEqual(4);

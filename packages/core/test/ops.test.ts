@@ -1,10 +1,12 @@
 /**
- * opsToArgv/argvToOps tests. Expected flag spellings and value formats are
- * pinned to hwp-cli v0.16.0, crates/hwp-cli/src/cli.rs `EditArgs`
- * (lines ~569-676) — each test cites the clap long name from that struct.
+ * opsToArgv/argvToOps/opsToJson tests. Expected flag spellings and value
+ * formats are pinned to crates/hwp-cli/src/cli.rs `EditArgs` (lines
+ * ~569-676) — each test cites the clap long name from that struct — and the
+ * opsToJson expectations to schemas/edit-ops-v1.schema.json at hwp-cli
+ * v0.20.0.
  */
 import { describe, expect, it } from "vitest";
-import { argvToOps, opsToArgv, type EditOp } from "../src/ops.js";
+import { argvToOps, opsToArgv, opsToJson, type EditOp } from "../src/ops.js";
 
 describe("opsToArgv", () => {
   it("serializes one --flag value pair per op, in order", () => {
@@ -226,5 +228,125 @@ describe("argvToOps round-trip", () => {
 
   it("rejects a flag without a value", () => {
     expect(() => argvToOps(["--replace"])).toThrow(/no value/);
+  });
+});
+
+describe("opsToJson", () => {
+  const json = (ops: EditOp[]): unknown => JSON.parse(opsToJson(ops));
+
+  it("emits edit-ops-v1 tagged entries for the text ops", () => {
+    expect(
+      json([
+        { kind: "replace", find: "a=>b", replace: "c=d" },
+        { kind: "set-cell", table: 0, row: 1, col: 2, value: "v" },
+        { kind: "set-field", name: "n", value: "v" },
+        { kind: "set-meta", key: "author", value: "이영준" },
+        { kind: "create-field", anchor: "x", name: "f", value: "1" },
+        { kind: "create-field", anchor: "x", name: "g" },
+        { kind: "create-bookmark", anchor: "x", name: "b" },
+        { kind: "create-hyperlink", anchor: "x", text: "t", url: "https://a.b" },
+        { kind: "create-hyperlink", anchor: "x", url: "https://a.b" },
+        { kind: "delete-para", text: "t" },
+        { kind: "delete-image", anchor: "x" },
+        { kind: "delete-field", name: "f" },
+        { kind: "delete-bookmark", name: "b" },
+      ]),
+    ).toEqual([
+      // Separators inside string payloads cross as data, not grammar.
+      { op: "replace", from: "a=>b", to: "c=d" },
+      { op: "set_cell", table: 0, row: 1, col: 2, text: "v" },
+      { op: "set_field", name: "n", value: "v" },
+      { op: "set_meta", key: "author", value: "이영준" },
+      { op: "create_field", anchor: "x", name: "f", value: "1" },
+      { op: "create_field", anchor: "x", name: "g" },
+      { op: "create_bookmark", anchor: "x", name: "b" },
+      { op: "create_hyperlink", anchor: "x", display: "t", url: "https://a.b" },
+      { op: "create_hyperlink", anchor: "x", url: "https://a.b" },
+      { op: "delete_para", matching: "t" },
+      { op: "delete_image", anchor: "x" },
+      { op: "delete_field", name: "f" },
+      { op: "delete_bookmark", name: "b" },
+    ]);
+  });
+
+  it("emits edit-ops-v1 entries for the image, paragraph and table ops", () => {
+    expect(
+      json([
+        { kind: "insert-image", anchor: "x", path: "p.png", width: 10, height: 20 },
+        { kind: "insert-image", anchor: "x", path: "p.png" },
+        { kind: "seal", anchor: "x", path: "s.png", size: 20 },
+        { kind: "set-format", find: "t", props: { bold: "on", size: "16" } },
+        { kind: "set-align", find: "t", alignment: "justify" },
+        { kind: "insert-para", anchor: "x", text: "t" },
+        { kind: "insert-para-before", anchor: "x", text: "t" },
+        { kind: "add-row", table: 0, at: 2, count: 3, templateRow: 1 },
+        { kind: "add-row", table: 0, at: "end" },
+        { kind: "add-col", table: 1, at: "end", count: 2 },
+        { kind: "delete-row", table: 0, row: 4 },
+        { kind: "delete-col", table: 0, col: 3 },
+        { kind: "merge-cells", table: 0, r1: 0, c1: 0, r2: 1, c2: 1 },
+        { kind: "split-cell", table: 0, row: 0, col: 0 },
+        { kind: "add-table", anchor: "x", rows: [["a", "b"], ["c"]] },
+        { kind: "clone-table", sourceTable: 0, anchor: "x", mode: "blank" },
+        { kind: "delete-table", target: 1 },
+        { kind: "delete-table", target: "anchor text" },
+      ]),
+    ).toEqual([
+      { op: "insert_image", anchor: "x", path: "p.png", width_mm: "10mm", height_mm: "20mm" },
+      { op: "insert_image", anchor: "x", path: "p.png" },
+      { op: "seal", anchor: "x", path: "s.png", size_mm: "20mm" },
+      // The CLI flag's bare `size=16` is points; the schema wants the suffix.
+      { op: "set_format", pattern: "t", bold: "on", size: "16pt" },
+      { op: "set_align", pattern: "t", align: "justify" },
+      { op: "insert_para", anchor: "x", text: "t" },
+      { op: "insert_para", anchor: "x", text: "t", before: true },
+      { op: "add_row", table: 0, at: 2, count: 3, template_row: 1 },
+      // The CLI's bare "end" is the schema's omitted `at`: both append.
+      { op: "add_row", table: 0 },
+      { op: "add_col", table: 1, count: 2 },
+      { op: "delete_row", table: 0, row: 4 },
+      { op: "delete_col", table: 0, col: 3 },
+      { op: "merge_cells", table: 0, r1: 0, c1: 0, r2: 1, c2: 1 },
+      { op: "split_cell", table: 0, row: 0, col: 0 },
+      { op: "add_table", anchor: "x", rows: [["a", "b"], ["c"]] },
+      { op: "clone_table", source_table: 0, anchor: "x", text_mode: "blank" },
+      { op: "delete_table", index: 1 },
+      { op: "delete_table", anchor: "anchor text" },
+    ]);
+  });
+
+  it("keeps the reserved op/pattern fields when set-format props collide with them", () => {
+    // props is a free Record<string, string>; a caller-supplied "pattern" or
+    // "op" key is invalid on this channel (the CLI's schema rejects it), and
+    // it must never override the op's own target on the way there.
+    expect(
+      json([{ kind: "set-format", find: "target", props: { pattern: "other", op: "x", bold: "on" } }]),
+    ).toEqual([{ bold: "on", op: "set_format", pattern: "target" }]);
+  });
+
+  it("maps set-para/set-page keys to the schema's suffixed unit fields", () => {
+    expect(
+      json([
+        { kind: "set-para", find: "t", key: "line-spacing", value: "160%" },
+        { kind: "set-para", find: "t", key: "line-spacing", value: "160" },
+        { kind: "set-para", find: "t", key: "line-spacing", value: "12pt" },
+        { kind: "set-para", find: "t", key: "indent", value: "10" },
+        { kind: "set-para", find: "t", key: "indent", value: "-10" },
+        { kind: "set-para", find: "t", key: "top", value: "5" },
+        { kind: "set-page", key: "width", value: "210" },
+        { kind: "set-page", key: "margin-top", value: "25" },
+        { kind: "set-page", key: "orientation", value: "landscape" },
+      ]),
+    ).toEqual([
+      { op: "set_para", pattern: "t", line_spacing_pct: "160%" },
+      { op: "set_para", pattern: "t", line_spacing_pct: "160%" },
+      { op: "set_para", pattern: "t", line_spacing_pt: "12pt" },
+      { op: "set_para", pattern: "t", indent_mm: "10mm" },
+      { op: "set_para", pattern: "t", indent_mm: "-10mm" },
+      { op: "set_para", pattern: "t", top_mm: "5mm" },
+      { op: "set_page", width_mm: "210mm" },
+      { op: "set_page", margin_top_mm: "25mm" },
+      { op: "set_page", orientation: "landscape" },
+    ]);
   });
 });

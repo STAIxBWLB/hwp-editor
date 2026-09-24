@@ -21,6 +21,7 @@ export type { HwpErrorCode, HwpEngineErrorOptions } from "./errors.js";
 export {
   OP_FLAGS,
   opsToArgv,
+  opsToJson,
   argvToOps,
 } from "./ops.js";
 export type {
@@ -39,7 +40,7 @@ export {
   segmentRef,
   segmentText,
 } from "./segments.js";
-export type { CatEnvelope, Segment, SegmentRef } from "./segments.js";
+export type { CatEnvelope, Segment, SegmentKind, SegmentRef } from "./segments.js";
 export type {
   DocumentSpecV2,
   TemplateDataV1,
