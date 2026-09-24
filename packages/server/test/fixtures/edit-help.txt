@@ -10,6 +10,8 @@ Options:
           Help language (default: from locale, otherwise English). Also settable with HWP_LANG [possible values: en, ko]
   -o, --output <OUTPUT>
           Output file path
+      --ops <FILE>
+          Apply typed edit operations from a JSON file holding an edit-ops-v1 array ("-" reads stdin). The file's string payloads are taken as data, so "=>", "=", ":" and "@" inside them are kept verbatim instead of being parsed as CLI separators. Mutually exclusive with the individual edit flags
       --replace <REPLACE>
           Replace text, "find=>replace" (repeatable; replaces every match)
       --set-cell <SET_CELL>
@@ -31,17 +33,17 @@ Options:
       --insert-image <INSERT_IMAGE>
           Insert an image, "anchor=>path" or "anchor=>path@WxH" (mm): insert a picture after the anchor (repeatable)
       --seal <SEAL>
-          Stamp a seal, "anchor=>path" or "anchor=>path@size" (mm): float the seal over the anchor text (repeatable)
+          Stamp a seal, "anchor=>path" or "anchor=>path@size" (mm): float the seal over the anchor text; use an image with a transparent background, since the seal floats in front of the text and an opaque background hides whatever is under it (repeatable)
       --set-format <SET_FORMAT>
-          Character formatting, "find:property=value,..." (for example "Title:bold=on,size=16,color=#FF0000")
+          Character formatting, "find:property=value,..." (properties: bold|italic|underline|strike|size|color|font; for example "Title:bold=on,size=16,color=#FF0000,font=Noto Sans")
       --set-align <SET_ALIGN>
           Paragraph alignment, "find=alignment" (left/right/center/justify/distribute)
       --insert-para <INSERT_PARA>
-          Insert a paragraph, "anchor=>text": after the paragraph containing the anchor (repeatable)
+          Insert a paragraph, "anchor=>text": after the paragraph containing the anchor; the anchor is also searched inside table cells, nested tables and captions (repeatable)
       --insert-para-before <INSERT_PARA_BEFORE>
-          Insert a paragraph before, "anchor=>text": before the paragraph containing the anchor (repeatable)
+          Insert a paragraph before, "anchor=>text": before the paragraph containing the anchor; the anchor is also searched inside table cells, nested tables and captions (repeatable)
       --delete-para <DELETE_PARA>
-          Delete a paragraph, "text": delete the paragraph containing the text (repeatable)
+          Delete a paragraph, "text": delete the paragraph containing the text, inside table cells and captions as well; every list keeps at least one paragraph (repeatable)
       --add-row <ADD_ROW>
           Add table rows, "table[:at[:count[:template_row]]]": at omitted or "end" appends, a number inserts before that row; count defaults to 1; template_row donates row height and cell/paragraph/character styling, never text (repeatable, 0-based; merged tables supported)
       --add-col <ADD_COL>
@@ -59,7 +61,9 @@ Options:
       --clone-table <CLONE_TABLE>
           Clone a table, "source_table=>anchor[=>blank|keep]": deep-copy table source_table (0-based, recursive) after the anchor paragraph; blank (default) keeps structure/styles with empty cells, keep also clones supported content (nested tables, images) with remapped ids (repeatable)
       --set-para <SET_PARA>
-          Paragraph shape properties, "find=>key:value" (keys: line-spacing (% or Npt), indent, left, right, top, bottom (mm); repeatable)
+          Paragraph shape properties, "find=>key:value[,key:value]" (keys: line-spacing (% or Npt), indent, left, right, top, bottom (mm), align (left|right|center|justify|distribute); repeatable)
+      --set-cell-para <SET_CELL_PARA>
+          Paragraph shape for a whole cell, "table:row:col=>key:value[,key:value]": applies to every paragraph of the addressed cell with no text anchor; same keys as --set-para and it runs after --set-cell in one invocation (repeatable, 0-based)
       --set-page <SET_PAGE>
           Page setup, "key:value" (keys: width, height, margin-left, margin-right, margin-top, margin-bottom (mm), orientation (portrait|landscape); repeatable)
       --delete-image <DELETE_IMAGE>
@@ -72,9 +76,17 @@ Options:
           Delete a bookmark by name, "name" (repeatable; list names with hwp bookmarks)
       --style-tables <STYLE_TABLES>
           Style every eligible table (header shade/bold/center, content-proportional widths) under an official-document preset: official, report, plan, notice, minutes, or press. Skips single-column tables (frame blocks); byte-stable when applied twice
+      --table-placement <TABLE_PLACEMENT>
+          Set table placement: inline restores "treat as character" (글자처럼 취급), floating anchors the table to its paragraph so it can split across pages. Applies to every table, or to one table with --table. Byte-stable when applied twice [possible values: inline, floating]
+      --table <TABLE>
+          Restrict --table-placement to this zero-based recursive table index (same addressing as --label-table)
       --verify
           Verify by re-reading after writing
       --allow-partial
           Publish the matched edits even if some requests found no target (default: fail if any is unapplied)
+      --report <FILE>
+          Write an edit-report-v1 JSON file naming every op's status, how many pieces it touched, and the segment ids it changed as before/after pairs. Unlike "hwp compose --report" (a bare flag printing to stdout), this one takes a file path, matching --loss-report's shape
+      --dry-run
+          Apply the whole batch in memory and run the real writer and verifier, but publish no output file; prints the edit-report-v1 report to stdout unless --report is also given
   -h, --help
           Print help

@@ -1,5 +1,5 @@
 /**
- * Integration tests against a real hwp-cli binary at or above the 0.16.0
+ * Integration tests against a real hwp-cli binary at or above the 0.20.0
  * floor. Skipped with a clear message when the binary is absent (see
  * helpers.ts). Version assertions check the floor, not an exact release:
  * the dev binary moves ahead of the floor as hwp-cli ships.
@@ -16,7 +16,7 @@ import { BIN, describeBin, multipartRequest, sampleSpec } from "./helpers.js";
 const engine = () => createCliEngine({ bin: BIN });
 
 /**
- * Mirrors the engine's MIN_VERSION floor ([0, 16, 0] in cli-engine.ts).
+ * Mirrors the engine's MIN_VERSION floor ([0, 20, 0] in cli-engine.ts).
  *
  * The accepted range is now bounded at both ends — MAX_VERSION_EXCLUSIVE is
  * [1, 0, 0] — but this still asserts the floor rather than an exact release,
@@ -28,23 +28,23 @@ const engine = () => createCliEngine({ bin: BIN });
  * ceiling and the flag handshake passed: `ensureVersion` runs both before it
  * resolves a version string.
  */
-function expectVersionAtLeast0160(version: string) {
+function expectVersionAtLeast0200(version: string) {
   const [major = 0, minor = 0, patch = 0] = version.split(".").map(Number);
-  const ok = major > 0 || minor > 16 || (minor === 16 && patch >= 0);
-  expect(ok, `expected hwp-cli >= 0.16.0, got ${version}`).toBe(true);
+  const ok = major > 0 || minor > 20 || (minor === 20 && patch >= 0);
+  expect(ok, `expected hwp-cli >= 0.20.0, got ${version}`).toBe(true);
 }
 
 describeBin("cli-engine (real hwp-cli binary)", () => {
-  it("reports a verified >= 0.16.0 version", async () => {
+  it("reports a verified >= 0.20.0 version", async () => {
     const info = await engine().binaryInfo();
     expect(info.bin).toBe(BIN);
-    expectVersionAtLeast0160(info.version);
+    expectVersionAtLeast0200(info.version);
     const caps = await engine().capabilities();
-    expectVersionAtLeast0160(caps.version);
+    expectVersionAtLeast0200(caps.version);
     expect(caps).toMatchObject({ editable: true, formats: ["hwp", "hwpx"] });
   });
 
-  it("rejects binaries older than 0.16.0", async () => {
+  it("rejects binaries older than 0.20.0", async () => {
     // /bin/echo prints no semver — stands in for an unusable binary.
     const bad = createCliEngine({ bin: "/bin/echo" });
     await expect(bad.capabilities()).rejects.toThrow(HwpCliError);
@@ -137,12 +137,22 @@ describeBin("cli-engine (real hwp-cli binary)", () => {
     expect(png[0]!.width).toBeGreaterThan(0);
   });
 
-  it("render rejects jpeg/webp (hwp-cli supports png/svg only)", async () => {
+  it("render accepts jpeg and webp and returns valid images of each format", async () => {
     const cli = engine();
     const composed = await cli.compose(sampleSpec() as unknown as DocumentSpecV2, "fmt.hwpx");
-    await expect(cli.render(composed.document, { format: "jpeg" })).rejects.toMatchObject({
-      reason: "unsupported_format",
-    });
+    const jpeg = await cli.render(composed.document, { format: "jpeg", pages: "1" });
+    expect(jpeg).toHaveLength(1);
+    expect(jpeg[0]!.format).toBe("jpeg");
+    expect([...jpeg[0]!.data.slice(0, 2)]).toEqual([0xff, 0xd8]); // JPEG SOI
+    expect(jpeg[0]!.width).toBeGreaterThan(0);
+    expect(jpeg[0]!.height).toBeGreaterThan(0);
+    const webp = await cli.render(composed.document, { format: "webp", pages: "1" });
+    expect(webp).toHaveLength(1);
+    expect(webp[0]!.format).toBe("webp");
+    expect(Buffer.from(webp[0]!.data.slice(0, 4)).toString("ascii")).toBe("RIFF");
+    expect(Buffer.from(webp[0]!.data.slice(8, 12)).toString("ascii")).toBe("WEBP");
+    expect(webp[0]!.width).toBeGreaterThan(0);
+    expect(webp[0]!.height).toBeGreaterThan(0);
     await expect(cli.render(composed.document, { dpi: 10 })).rejects.toMatchObject({
       reason: "bad_request",
     });
@@ -167,9 +177,10 @@ describeBin("cli-engine (real hwp-cli binary)", () => {
     await expect(
       cli.edit(composed.document, [{ kind: "replace", find: "없는문자열", replace: "x" }]),
     ).rejects.toThrow(HwpCliError);
-    // 0.16.0 still refuses when *no* op matches, even with allowPartial.
-    // Re-observed against the installed 0.16.0 binary rather than renumbered
-    // on trust; the assertion below is what re-verifies it on every run.
+    // The 0.20.0 ops channel still refuses when *no* op matches, even with
+    // allowPartial. Re-observed against the v0.20.0 release binary rather
+    // than renumbered on trust; the assertion below is what re-verifies it
+    // on every run.
     await expect(
       cli.edit(composed.document, [{ kind: "replace", find: "없는문자열", replace: "x" }], {
         allowPartial: true,
@@ -237,7 +248,7 @@ describeBin("routes (real hwp-cli binary)", () => {
     const handler = createHwpEditorHandler({ engine: engine() });
     const res = await handler(new Request("http://localhost/api/hwp-editor/capabilities"));
     expect(res.status).toBe(200);
-    expectVersionAtLeast0160((await res.json()).version);
+    expectVersionAtLeast0200((await res.json()).version);
   });
 
   /**

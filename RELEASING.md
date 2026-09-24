@@ -12,7 +12,7 @@ per run. The steps that need a real npm login are the ones marked manual below, 
 manual for that reason.
 
 Engine range, for the local checks and for anyone mounting the editor: this repository
-supports hwp-cli `>= 0.16.0` and `< 1.0.0`, matching `MIN_VERSION` and `MAX_VERSION_EXCLUSIVE`
+supports hwp-cli `>= 0.20.0` and `< 1.0.0`, matching `MIN_VERSION` and `MAX_VERSION_EXCLUSIVE`
 in `packages/server/src/cli-engine.ts`. Nothing on the release path provisions or needs the
 binary - the real-binary suites self-skip - but a local `pnpm -r test` and the manual half of
 the release-candidate check both want one in that range on `HWP_EDITOR_BIN` or on `PATH`.

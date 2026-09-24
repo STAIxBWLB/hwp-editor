@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 
 import type { DocumentSpecV2 } from "@hwp-editor/core";
 
-import { createCliEngine, pngSize, svgSize } from "../src/cli-engine.js";
+import { createCliEngine, jpegSize, pngSize, svgSize, webpSize } from "../src/cli-engine.js";
 import { BIN, describeBin, sampleSpec } from "./helpers.js";
 
 /** The verified real hwp-cli PNG header: signature, length, `IHDR`. */
@@ -99,11 +99,79 @@ describe("svgSize", () => {
   });
 });
 
+/** A 13-byte JPEG: SOI plus one SOF0 segment carrying the given dimensions. */
+function jpeg(width: number, height: number): Uint8Array {
+  const data = new Uint8Array(13);
+  const view = new DataView(data.buffer);
+  data.set([0xff, 0xd8, 0xff, 0xc0], 0);
+  view.setUint16(4, 9); // segment length: its own 2 bytes + 7 payload bytes
+  data[6] = 8; // precision
+  view.setUint16(7, height);
+  view.setUint16(9, width);
+  return data;
+}
+
+/** A 30-byte lossless WebP (VP8L, the form hwp-cli emits) with the given dimensions. */
+function webpVp8l(width: number, height: number): Uint8Array {
+  const data = new Uint8Array(30);
+  data.set([0x52, 0x49, 0x46, 0x46], 0); // "RIFF"
+  data.set([0x57, 0x45, 0x42, 0x50], 8); // "WEBP"
+  data.set([0x56, 0x50, 0x38, 0x4c], 12); // "VP8L"
+  data[20] = 0x2f; // VP8L signature byte
+  const w = width - 1;
+  const h = height - 1;
+  data[21] = w & 0xff;
+  data[22] = ((w >> 8) & 0x3f) | ((h & 0x03) << 6);
+  data[23] = (h >> 2) & 0xff;
+  data[24] = (h >> 10) & 0x0f;
+  return data;
+}
+
+describe("jpegSize", () => {
+  it("reads the dimensions of a SOF0 segment", () => {
+    expect(jpegSize(jpeg(794, 1123))).toEqual({ width: 794, height: 1123 });
+  });
+
+  it("returns null for a short buffer or a non-JPEG payload", () => {
+    expect(jpegSize(new Uint8Array(3))).toBeNull();
+    expect(jpegSize(new Uint8Array(64))).toBeNull();
+  });
+
+  it("returns null when the SOI is right but no SOF segment follows", () => {
+    const data = new Uint8Array(16);
+    data.set([0xff, 0xd8, 0xff, 0xd9], 0); // SOI then EOI
+    expect(jpegSize(data)).toBeNull();
+  });
+
+  it("returns null for a well-formed segment carrying a zero dimension", () => {
+    expect(jpegSize(jpeg(0, 1123))).toBeNull();
+    expect(jpegSize(jpeg(794, 0))).toBeNull();
+  });
+});
+
+describe("webpSize", () => {
+  it("reads the dimensions of a VP8L header", () => {
+    expect(webpSize(webpVp8l(794, 1123))).toEqual({ width: 794, height: 1123 });
+    expect(webpSize(webpVp8l(1, 1))).toEqual({ width: 1, height: 1 });
+  });
+
+  it("returns null for a short buffer or a non-WebP payload", () => {
+    expect(webpSize(new Uint8Array(29))).toBeNull();
+    expect(webpSize(new Uint8Array(64))).toBeNull();
+  });
+
+  it("returns null when the RIFF/WEBP wrapper is right but the VP8L signature is not", () => {
+    const data = webpVp8l(794, 1123);
+    data[20] = 0x00;
+    expect(webpSize(data)).toBeNull();
+  });
+});
+
 describeBin("render dimensions (real hwp-cli binary)", () => {
   it("returns strictly positive dimensions on every page", async () => {
     const cli = createCliEngine({ bin: BIN });
     const composed = await cli.compose(sampleSpec() as unknown as DocumentSpecV2, "size.hwpx");
-    for (const format of ["svg", "png"] as const) {
+    for (const format of ["svg", "png", "jpeg", "webp"] as const) {
       const pages = await cli.render(composed.document, { format });
       expect(pages.length).toBeGreaterThan(0);
       for (const page of pages) {
