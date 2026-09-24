@@ -39,7 +39,7 @@ export {
   segmentRef,
   segmentText,
 } from "./segments.js";
-export type { CatEnvelope, Segment, SegmentRef } from "./segments.js";
+export type { CatEnvelope, Segment, SegmentKind, SegmentRef } from "./segments.js";
 export type {
   DocumentSpecV2,
   TemplateDataV1,

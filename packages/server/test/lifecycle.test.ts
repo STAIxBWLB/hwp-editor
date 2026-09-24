@@ -237,8 +237,9 @@ describe("runCli terminal causes", () => {
   }, 30_000);
 });
 
-/** A `cat` envelope the fake can print instantly, so `parseCatEnvelope` passes. */
-const ENVELOPE = '{"markdown":"# hi","segments":[]}';
+/** A v2 `cat` envelope the fake can print instantly, so `parseCatEnvelope` passes. */
+const ENVELOPE =
+  '{"schema_version":"1.0","contract":"hwp-segment-envelope-v2","markdown":"# hi","segments":[]}';
 
 describe("a recorded cause outranks a zero exit status", () => {
   /*

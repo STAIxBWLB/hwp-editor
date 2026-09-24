@@ -856,7 +856,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
     const signal = call?.signal;
     const inspection = await withWorkDir(async (dir) => {
       const file = await stage(dir, document);
-      const cat = await runCliOk(bin, ["cat", file, "--format", "markdown", "--with-segments"], timeoutMs, opts.locale, signal);
+      const cat = await runCliOk(bin, ["cat", file, "--format", "markdown", "--with-segments", "--segments", "v2"], timeoutMs, opts.locale, signal);
       const envelope = parseCatEnvelope(cat.stdout);
       // Best-effort extras: a document that cats fine but fails fields should
       // still read; the extras inform editing UI, not the wire contract.
