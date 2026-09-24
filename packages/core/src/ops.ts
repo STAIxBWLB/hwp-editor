@@ -379,7 +379,9 @@ function opsEntry(op: EditOp): OpsEntry {
         ...(op.size === undefined ? {} : { size_mm: `${op.size}mm` }),
       };
     case "set-format":
-      return { op: "set_format", pattern: op.find, ...formatPropsEntry(op.props) };
+      // Reserved fields LAST: props is a free Record, so a caller-supplied
+      // "pattern" or "op" key must not override the op's own target.
+      return { ...formatPropsEntry(op.props), op: "set_format", pattern: op.find };
     case "set-align":
       return { op: "set_align", pattern: op.find, align: op.alignment };
     case "insert-para":

@@ -315,6 +315,15 @@ describe("opsToJson", () => {
     ]);
   });
 
+  it("keeps the reserved op/pattern fields when set-format props collide with them", () => {
+    // props is a free Record<string, string>; a caller-supplied "pattern" or
+    // "op" key is invalid on this channel (the CLI's schema rejects it), and
+    // it must never override the op's own target on the way there.
+    expect(
+      json([{ kind: "set-format", find: "target", props: { pattern: "other", op: "x", bold: "on" } }]),
+    ).toEqual([{ bold: "on", op: "set_format", pattern: "target" }]);
+  });
+
   it("maps set-para/set-page keys to the schema's suffixed unit fields", () => {
     expect(
       json([
