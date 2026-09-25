@@ -172,7 +172,7 @@ Resolution order, first match wins:
 The resolved binary is verified once per engine instance, and must satisfy both
 checks:
 
-- **Version range**: at least `0.20.0`, and below `1.0.0`. The floor is hard: a
+- **Version range**: at least `0.20.0`, and below `2.0.0`. The floor is hard: a
   binary under it lacks flags this package emits. The ceiling is only a
   major-version gate, because a version string is what a binary calls itself.
 - **Flag handshake**: `hwp edit --help` must list the flags the edit path
