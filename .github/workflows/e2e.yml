@@ -9,9 +9,9 @@ permissions:
   contents: read
 
 env:
-  # Pinned, not `latest`. The engine gates on >= 0.16.0 and < 1.0.0
+  # Pinned, not `latest`. The engine gates on >= 0.20.0 and < 2.0.0
   # (packages/server/src/cli-engine.ts MIN_VERSION / MAX_VERSION_EXCLUSIVE),
-  # so a future upstream 1.0.0 would fall outside the ceiling and turn this job
+  # so a future upstream 2.0.0 would fall outside the ceiling and turn this job
   # red overnight for reasons that are not this repository's fault.
   HWP_CLI_TAG: v0.20.0
 
