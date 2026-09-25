@@ -19,7 +19,7 @@ const engine = () => createCliEngine({ bin: BIN });
  * Mirrors the engine's MIN_VERSION floor ([0, 20, 0] in cli-engine.ts).
  *
  * The accepted range is now bounded at both ends — MAX_VERSION_EXCLUSIVE is
- * [1, 0, 0] — but this still asserts the floor rather than an exact release,
+ * [2, 0, 0] — but this still asserts the floor rather than an exact release,
  * for the reason in the file header: the dev binary moves ahead of the floor
  * as hwp-cli ships. Pinning the range here would mean editing this suite on
  * every upstream patch release, and the ceiling itself is proven against a

@@ -64,8 +64,12 @@ const MIN_VERSION: readonly [number, number, number] = [0, 20, 0];
  * accepts rather than what it calls itself. A tighter numeric ceiling would
  * catch nothing the handshake misses, and would refuse a patch release on a
  * version string alone.
+ *
+ * Raised from [1, 0, 0] for hwp-cli 1.0.0, which carries 0.20.2's surface
+ * plus dependency security fixes: the flag handshake and the real-binary
+ * suites pass against it, so the next contract signal is 2.0.0.
  */
-const MAX_VERSION_EXCLUSIVE: readonly [number, number, number] = [1, 0, 0];
+const MAX_VERSION_EXCLUSIVE: readonly [number, number, number] = [2, 0, 0];
 
 /**
  * A long flag as `--help` prints it, matched on both boundaries.
