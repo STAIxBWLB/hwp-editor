@@ -18,7 +18,7 @@ browser                          ax (Next.js)
 
 ## 1. Installing the packages
 
-All three are on npm at `1.1.0`, published with provenance from a tag-triggered
+All three are on npm at `1.2.0`, published with provenance from a tag-triggered
 workflow. Install the one you mount; core arrives on its own as a single deduped
 peer, so naming it is unnecessary and naming a different version of it is how you
 end up with two copies:
@@ -32,7 +32,7 @@ peer, because this guide imports `createHttpEngine` from it directly. pnpm's
 strict `node_modules` layout does not expose an automatically installed peer to
 the application: a package resolves only what it declares, so an import of core
 from ax's own source fails unless ax declares core itself. Declaring it does not
-create a second copy - the range is the same `^1.1.0` the peer asks for, and
+create a second copy - the range is the same `^1.2.0` the peer asks for, and
 `scripts/smoke-registry.mjs` asserts the single-copy property on every release.
 
 ```ts
@@ -45,7 +45,7 @@ install that omits it produces an editor that loads, imports and renders
 *unstyled* - a failure no import probe notices, which is why the release
 candidate was checked by mounting it and looking at it.
 
-`@hwp-editor/core` is a `peerDependency` of react and server with a `^1.1.0`
+`@hwp-editor/core` is a `peerDependency` of react and server with a `^1.2.0`
 range, so a host that also depends on core directly must keep it inside that
 range or npm resolves two copies. The published range is asserted on every
 release by `scripts/smoke-registry.mjs`, which installs react and server from
