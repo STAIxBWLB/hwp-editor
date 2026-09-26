@@ -1,0 +1,64 @@
+name: font-less render (non-required)
+
+# docs/integration-ax.md section 2b, checked against a real binary. A serverless
+# runtime has no system fonts; hwp render then draws pages with rules but no
+# text while every call still succeeds. This proves the recipe's claim both
+# ways in a container with no fonts: without HWP_FONT_DIR the page loses its
+# text, and with it the text comes back.
+#
+# Its own file for the reason e2e.yml gives: a job alone in its workflow cannot
+# be reached by a needs: edge, so it cannot gate a publishing job. pull_request
+# only, no secrets: it runs a binary and a font downloaded from the network.
+on: [pull_request]
+
+permissions:
+  contents: read
+
+env:
+  # Same pin as e2e.yml; move them together.
+  HWP_CLI_TAG: v0.20.0
+
+jobs:
+  font-less-render:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      # cjk-fonts/, not fonts/: hwp-cli falls back to `fonts/` relative to its
+      # working directory, which would hand the bare run the fonts too.
+      # Both classes: a serif request (함초롬바탕, compose's default) only falls
+      # back to serif faces, so a sans-only directory still renders blank text.
+      - name: Fetch hwp-cli and the pinned Noto Sans and Serif CJK KR faces
+        run: |
+          base="https://github.com/STAIxBWLB/hwp-cli/releases/download/$HWP_CLI_TAG"
+          asset="hwp-$HWP_CLI_TAG-x86_64-unknown-linux-gnu.tar.gz"
+          sums="hwp-$HWP_CLI_TAG-x86_64-unknown-linux-gnu.sha256"
+          curl -fsSL -O "$base/$asset" -O "$base/$sums"
+          sha256sum -c "$sums"
+          tar xzf "$asset"
+          mkdir cjk-fonts
+          curl -fsSL -o cjk-fonts/NotoSansCJKkr-Regular.otf \
+            https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/Sans/OTF/Korean/NotoSansCJKkr-Regular.otf
+          curl -fsSL -o cjk-fonts/NotoSerifCJKkr-Regular.otf \
+            https://raw.githubusercontent.com/notofonts/noto-cjk/Serif2.003/Serif/OTF/Korean/NotoSerifCJKkr-Regular.otf
+          sha256sum -c <<'SUMS'
+          6bcb2a0703aa137e874fc2dffa85f6c21ba9a67fa329e81b8c801663af7e992a  cjk-fonts/NotoSansCJKkr-Regular.otf
+          77b4b741f864d27f15e90f275b17106dde90b2ad28f82bab72dc95805db5fb42  cjk-fonts/NotoSerifCJKkr-Regular.otf
+          SUMS
+      # Fixtures are not committed; the playground's seed script composes them
+      # with the binary. It is stdlib only, so the runner's preinstalled Node is
+      # enough (setup-node would try to cache pnpm, which this job never
+      # installs). Composing needs no fonts; only rendering does.
+      - name: Compose the Korean fixture
+        run: HWP_EDITOR_BIN="$PWD/hwp" node apps/playground/scripts/seed-fixtures.mjs
+      - name: Render with and without HWP_FONT_DIR where no fonts exist
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w debian:bookworm-slim sh -euc '
+            test -z "$(ls -A /usr/share/fonts 2>/dev/null)"
+            test ! -e fonts
+            ./hwp render apps/playground/fixtures/table-demo.hwpx -o /tmp/bare.svg
+            HWP_FONT_DIR=/w/cjk-fonts ./hwp render apps/playground/fixtures/table-demo.hwpx -o /tmp/fonts.svg
+            bare=$(grep -o "<path" /tmp/bare.svg | wc -l)
+            with=$(grep -o "<path" /tmp/fonts.svg | wc -l)
+            echo "path elements: no fonts=$bare, HWP_FONT_DIR=$with"
+            test "$with" -gt $((bare * 2))'

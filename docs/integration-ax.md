@@ -97,6 +97,55 @@ At runtime, point the engine at it with `HWP_EDITOR_BIN=<repo>/bin/hwp`
 (the CliEngine resolution order is: `bin` option → `HWP_EDITOR_BIN` →
 `HWP_CLI` → `hwp` on PATH).
 
+## 2b. Provisioning fonts
+
+`hwp render` draws text with fonts from the host, and a serverless runtime
+(Vercel included) has **no system fonts**. Without them nothing fails: every
+action answers 200, `read` returns the text, and each rendered page comes back
+with table rules and other strokes but **no text at all**. A developer Mac never
+shows this, because macOS supplies CJK system fonts.
+
+hwp-cli looks for render fonts in `--font-dir`, then `HWP_FONT_DIR`, then
+`fonts/` relative to its working directory. `@hwp-editor/server` passes no
+`--font-dir`, but `HWP_FONT_DIR` is the one `HWP_*` variable it copies into the
+child's environment. So:
+
+- Ship **both a sans and a serif** CJK face with the deployment, for example in `fonts/`.
+  hwp-cli picks fallbacks by the requested face's class. A serif request such as
+  함초롬바탕 (what `compose` writes by default) only tries serif faces, ending at
+  `Noto Serif CJK KR`. So a sans-only directory still renders that text blank. Noto Sans
+  CJK KR and Noto Serif CJK KR (SIL Open Font License, about 16 to 25 MB per face) are known
+  to work. These pinned upstream files are the ones the font-less CI check uses:
+  - `https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/Sans/OTF/Korean/NotoSansCJKkr-Regular.otf`
+    (sha256 `6bcb2a0703aa137e874fc2dffa85f6c21ba9a67fa329e81b8c801663af7e992a`)
+  - `https://raw.githubusercontent.com/notofonts/noto-cjk/Serif2.003/Serif/OTF/Korean/NotoSerifCJKkr-Regular.otf`
+    (sha256 `77b4b741f864d27f15e90f275b17106dde90b2ad28f82bab72dc95805db5fb42`)
+
+  The Bold faces from the same tags avoid synthetic bold.
+- **The family name has to match.** The fallback lists name `Noto Serif CJK KR`,
+  `Noto Sans CJK KR`, `NanumMyeongjo`, `NanumGothic` and a few platform faces. Some
+  builds report a different name: the Nanum OTFs say `NanumGothicOTF` and match
+  nothing. Check a face before shipping it:
+  `fc-query -f '%{family}\n' fonts/NotoSansCJKkr-Regular.otf` must list
+  `Noto Sans CJK KR`.
+- Set the variable before the first engine call, in the route module:
+
+  ```ts
+  process.env.HWP_FONT_DIR ??= path.join(process.cwd(), "fonts");
+  ```
+
+- Trace the directory into the function next to the binary; Next's tracer cannot
+  follow a runtime path:
+
+  ```ts
+  outputFileTracingIncludes: {
+    "/api/hwp-editor/**": ["./bin/hwp", "./fonts/**"],
+  },
+  ```
+
+To confirm, render a Korean document through the route and check the page shows
+its text. A page with only rules and boxes means the fonts are missing.
+
 ## 3. API route
 
 ```ts
@@ -168,6 +217,8 @@ Theming: map ax's tokens onto the `--hwped-*` contract — see
 - **Lambda size**: the hwp binary is ~tens of MB; keep it out of the
   serverless bundle (`serverExternalPackages` + `outputFileTracing` excludes,
   or a layer) and out of git (stamp file + `.gitignore`).
+- **Fonts**: the four Noto CJK KR faces (Sans/Serif, Regular/Bold) add about
+  80 MB to the editor function; section 2b explains why they have to be there.
 - **Timeout**: the engine caps every CLI call at 60s (`HWP_TIMEOUT_MS`);
   the Vercel function limit must exceed that for big renders.
 - **Cold start**: the first call per process verifies `hwp --version`

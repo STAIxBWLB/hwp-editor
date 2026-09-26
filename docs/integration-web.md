@@ -74,7 +74,9 @@ Notes:
 Self-host `@hwp-editor/server`. Run `createHwpEditorHandler()`
 (framework-agnostic `(Request) => Response`) on any Fetch-API runtime, or
 `createHwpEditorRoutes()` under Next.js; the [ax recipe](./integration-ax.md)
-covers provisioning and deployment details.
+covers provisioning and deployment details. That includes fonts
+([section 2b](./integration-ax.md#2b-provisioning-fonts)): a server without
+CJK system fonts renders pages with no text.
 
 A shared multi-host endpoint (one hardened deployment instead of a binary per
 app) is a plausible follow-up, but no such endpoint is published today.
