@@ -41,7 +41,9 @@ so referring to them by a fixed label goes stale the moment the copy or the
 locale changes. Protected/distribution documents open read-only with a notice
 (engine `capabilities().editable === false`).
 
-Keyboard: `Escape` clears the selection; `Cmd/Ctrl+Enter` applies pending ops.
+Keyboard: `Escape` clears the selection, or closes the new-document dialog
+when it is open (without touching the selection); `Cmd/Ctrl+Enter` applies
+pending ops.
 
 ## Props
 

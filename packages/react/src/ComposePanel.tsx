@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { JSX } from "react";
 import type { DocumentHandle, EditorError } from "@hwp-editor/core";
 import { ErrorLine } from "./ErrorLine.js";
@@ -43,6 +43,23 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<EditorError | null>(null);
+
+  // Escape is the way out of a modal, like the Cancel button. It listens on
+  // the document because focus is still on the trigger when the dialog
+  // opens. It leaves alone an Escape that ends an IME composition (Korean
+  // input), one another handler already consumed, and any press while a
+  // compose is in flight, the same state that disables Cancel.
+  const { onClose } = props;
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape" || event.isComposing || event.defaultPrevented) return;
+      if (busy) return;
+      event.preventDefault();
+      onClose();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [busy, onClose]);
 
   const compose = async (): Promise<void> => {
     setBusy(true);
