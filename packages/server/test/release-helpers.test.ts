@@ -32,7 +32,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -385,5 +385,41 @@ describe("publish_package: a skipped publish is not a skipped build", () => {
     const publish = run.npmCalls.find((call) => call.startsWith("publish"));
     expect(publish).toContain("--tag next");
     expect(publish).not.toContain("--tag latest");
+  });
+});
+
+describe("move_next_tag: next follows a stable release (#38)", () => {
+  const TOKEN = "npm_test_token_value_1234567890";
+
+  it("moves next on all three packages through a throwaway userconfig", () => {
+    const run = runHelpers('move_next_tag "$VER"', [], { VER: "1.2.0", NPM_DIST_TAG_TOKEN: TOKEN });
+    expect(run.status).toBe(0);
+    expect(run.npmCalls).toHaveLength(3);
+    const pkgs = ["core", "react", "server"];
+    run.npmCalls.forEach((call, i) => {
+      expect(call).toMatch(
+        new RegExp(`^--userconfig \\S+ dist-tag add @hwp-editor/${pkgs[i]}@1\\.2\\.0 next$`),
+      );
+    });
+    // The token rides in the file, never on the command line (argv shows in
+    // process listings and in npm's own logs).
+    expect(run.npmCalls.join("\n")).not.toContain(TOKEN);
+    // And the file is gone once the helper returns.
+    const cfg = run.npmCalls[0]!.split(" ")[1]!;
+    expect(existsSync(cfg)).toBe(false);
+  });
+
+  it("makes no npm call for a prerelease, which already published under next", () => {
+    const run = runHelpers('move_next_tag "$VER"', [], { VER: "1.3.0-rc.0", NPM_DIST_TAG_TOKEN: TOKEN });
+    expect(run.status).toBe(0);
+    expect(run.npmCalls).toEqual([]);
+    expect(run.stdout).toContain("[skip] 1.3.0-rc.0 is a prerelease");
+  });
+
+  it("warns and skips without a token, so a published release is not failed by it", () => {
+    const run = runHelpers('move_next_tag "$VER"', [], { VER: "1.2.0", NPM_DIST_TAG_TOKEN: "" });
+    expect(run.status).toBe(0);
+    expect(run.npmCalls).toEqual([]);
+    expect(run.stdout).toContain("::warning::NPM_DIST_TAG_TOKEN is not set");
   });
 });

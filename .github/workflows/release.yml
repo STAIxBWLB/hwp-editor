@@ -106,9 +106,17 @@ name: release
 # publish it governs. Committed, it is read by shellcheck and driven branch by
 # branch against a stub npm by packages/server/test/release-helpers.test.ts.
 #
-# No repository secret is referenced anywhere below. That absence is the whole
-# content of REL-02: the only credential on this path is an ephemeral OIDC
-# token minted per run.
+# 12. ONE STORED CREDENTIAL, AND ONLY AFTER EVERY PUBLISH (#38). Publishing
+# authenticates through the ephemeral OIDC token minted per run and nothing
+# else. Trusted publishing cannot run `npm dist-tag`, so moving `next` to a new
+# stable version (RELEASING.md step 7) reads one stored token,
+# NPM_DIST_TAG_TOKEN: an npm granular token limited to the three packages,
+# kept as an environment secret of npm-publish, so it exists for a run only
+# after the approval. It is referenced in exactly one step, the last one in
+# the publish job, and handed to npm through a throwaway userconfig by
+# move_next_tag - never NODE_AUTH_TOKEN or the runner's .npmrc, which would make
+# npm skip the OIDC exchange (point 3). REL-02's guard allows this one
+# reference in this one place and nothing else.
 
 on:
   push:
@@ -244,6 +252,17 @@ jobs:
           . ./scripts/release-helpers.sh
           publish_package react
           publish_package server
+
+      # Header point 12. Last on purpose, and continue-on-error: the packages are
+      # published by now, and failing this job would skip release-notes. A
+      # failure shows as an annotated step; RELEASING.md step 7 finishes by hand.
+      - name: Move the next dist-tag (stable releases)
+        continue-on-error: true
+        env:
+          NPM_DIST_TAG_TOKEN: ${{ secrets.NPM_DIST_TAG_TOKEN }}
+        run: |
+          . ./scripts/release-helpers.sh
+          move_next_tag "$VERSION"
 
   release-notes:
     needs: publish

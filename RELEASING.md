@@ -6,10 +6,12 @@ authenticated npm session on the `hwp-editor` organization and approval rights o
 repository's `npm-publish` deployment environment. The three packages version in lockstep, so
 one tag releases all three.
 
-The release itself carries no stored credential: `.github/workflows/release.yml` publishes
-through npm trusted publishing, and the only credential on that path is an OIDC token minted
-per run. The steps that need a real npm login are the ones marked manual below, and they are
-manual for that reason.
+Publishing carries no stored credential: `.github/workflows/release.yml` publishes through npm
+trusted publishing, and the only credential a publish ever sees is an OIDC token minted per
+run. One step after the publishes, moving `next` (step 7), reads a single stored token scoped
+to the three packages, because trusted publishing cannot run `npm dist-tag`. The steps that
+still need a real npm login are the ones marked manual below, and they are manual for that
+reason.
 
 Engine range, for the local checks and for anyone mounting the editor: this repository
 supports hwp-cli `>= 0.20.0` and `< 2.0.0`, matching `MIN_VERSION` and `MAX_VERSION_EXCLUSIVE`
@@ -142,27 +144,62 @@ check is not decoration: publishing is `pnpm pack` followed by `npm publish` on 
 tarball, and whether `--provenance` produces a real attestation for a pre-packed tarball was
 never established before the first release. This is the check that settles it.
 
-### 7. Move the `next` dist-tag - manual, authenticated, stable releases only
+### 7. Move the `next` dist-tag - automatic for stable releases
 
-**Skip this step for a prerelease.** `dist_tag_for` in `scripts/release-helpers.sh` already
-published a prerelease under `next` and deliberately left `latest` where it was, so there is
-nothing to move and `latest` is expected NOT to equal `$VERSION`. The commands below are for a
-stable release, where the publish set `latest` and `next` is the tag left pointing at an older
-candidate.
+The `publish` job's last step, `Move the next dist-tag (stable releases)`, points `next` at
+`$VERSION` for all three packages (`move_next_tag` in `scripts/release-helpers.sh`, #38). Check
+it in the job log: three `+next: @hwp-editor/<pkg>@$VERSION` lines. Then confirm:
+
+```sh
+npm dist-tag ls @hwp-editor/core          # latest and next both at $VERSION
+```
+
+For a prerelease the step does nothing. `dist_tag_for` already published the prerelease under
+`next` and deliberately left `latest` where it was, so `latest` is expected NOT to equal
+`$VERSION`.
+
+**How it is authorized.** Trusted publishing covers `npm publish` and `npm stage publish`
+only; `npm dist-tag` is not among a trusted publisher's allowed actions, so an OIDC token
+cannot do this. The step reads `NPM_DIST_TAG_TOKEN`, set up as follows:
+
+- It is an npm granular access token limited to `@hwp-editor/core`, `@hwp-editor/react` and
+  `@hwp-editor/server`, with read and write access and an expiry.
+- The organization is `auth-and-writes`, so the token needs its bypass-2FA option.
+- It is stored as an **environment secret of `npm-publish`**, not a repository secret. A run
+  can read it only after the step 4 approval.
+- `move_next_tag` hands it to npm through a throwaway userconfig, never `NODE_AUTH_TOKEN`.
+  That, and running only after the last publish, keeps it out of reach of every publish,
+  which would otherwise skip the OIDC exchange (release.yml header point 3).
+- `repo-guards.test.ts` allows this one reference in that one place and no other secret
+  anywhere.
+
+**When it did not happen.** The step is `continue-on-error`, so a missing, expired or
+rejected token leaves a warning or a failed step on an otherwise green run rather than
+skipping the release notes. Finish by hand from an `npm login` session (expect a 2FA prompt):
 
 ```sh
 npm dist-tag add "@hwp-editor/core@$VERSION" next
 npm dist-tag add "@hwp-editor/react@$VERSION" next
 npm dist-tag add "@hwp-editor/server@$VERSION" next
-npm dist-tag ls @hwp-editor/core          # confirm: latest and next both at $VERSION
 ```
 
-**This step is not in the workflow and cannot be.** A trusted publisher's allowed actions cover
-publishing only (`npm publish`, `npm stage publish`); `npm dist-tag` is not among them, so an
-OIDC token cannot authorize it. Automating it would mean storing a long-lived npm token in this
-repository, which would remove the one property the whole release path exists to have. Run it
-from an `npm login` session; the organization is set to `auth-and-writes`, so expect a 2FA
-prompt.
+**Rotating the token.** Create a replacement on npmjs.com with the same package scope, then
+`gh secret set NPM_DIST_TAG_TOKEN --env npm-publish --repo STAIxBWLB/hwp-editor` and paste it.
+Revoke the old token. Test it without a release by adding and removing a throwaway tag on each
+package. Re-pointing `next` at the version it already names would prove nothing: npm sees the
+tag already set and never sends the write.
+
+```sh
+read -rs NPM_DIST_TAG_TOKEN
+cfg="$(mktemp)" && printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_DIST_TAG_TOKEN" > "$cfg"
+unset NPM_DIST_TAG_TOKEN
+for p in core react server; do
+  v="$(npm view "@hwp-editor/$p" dist-tags.latest)"
+  npm --userconfig "$cfg" dist-tag add "@hwp-editor/$p@$v" token-check &&
+    npm --userconfig "$cfg" dist-tag rm "@hwp-editor/$p" token-check
+done
+rm -f "$cfg"
+```
 
 Skipping this leaves `npm install @hwp-editor/core@next` handing people a stale prerelease
 after a stable release exists.
