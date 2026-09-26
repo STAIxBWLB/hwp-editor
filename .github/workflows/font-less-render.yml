@@ -26,7 +26,9 @@ jobs:
       - uses: actions/checkout@v5
       # cjk-fonts/, not fonts/: hwp-cli falls back to `fonts/` relative to its
       # working directory, which would hand the bare run the fonts too.
-      - name: Fetch hwp-cli and one pinned CJK face
+      # Both classes: a serif request (함초롬바탕, compose's default) only falls
+      # back to serif faces, so a sans-only directory still renders blank text.
+      - name: Fetch hwp-cli and the pinned Noto Sans and Serif CJK KR faces
         run: |
           base="https://github.com/STAIxBWLB/hwp-cli/releases/download/$HWP_CLI_TAG"
           asset="hwp-$HWP_CLI_TAG-x86_64-unknown-linux-gnu.tar.gz"
@@ -37,7 +39,12 @@ jobs:
           mkdir cjk-fonts
           curl -fsSL -o cjk-fonts/NotoSansCJKkr-Regular.otf \
             https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/Sans/OTF/Korean/NotoSansCJKkr-Regular.otf
-          echo "6bcb2a0703aa137e874fc2dffa85f6c21ba9a67fa329e81b8c801663af7e992a  cjk-fonts/NotoSansCJKkr-Regular.otf" | sha256sum -c
+          curl -fsSL -o cjk-fonts/NotoSerifCJKkr-Regular.otf \
+            https://raw.githubusercontent.com/notofonts/noto-cjk/Serif2.003/Serif/OTF/Korean/NotoSerifCJKkr-Regular.otf
+          sha256sum -c <<'SUMS'
+          6bcb2a0703aa137e874fc2dffa85f6c21ba9a67fa329e81b8c801663af7e992a  cjk-fonts/NotoSansCJKkr-Regular.otf
+          77b4b741f864d27f15e90f275b17106dde90b2ad28f82bab72dc95805db5fb42  cjk-fonts/NotoSerifCJKkr-Regular.otf
+          SUMS
       # Fixtures are not committed; the playground's seed script composes them
       # with the binary. It is stdlib only, so the runner's preinstalled Node is
       # enough (setup-node would try to cache pnpm, which this job never
