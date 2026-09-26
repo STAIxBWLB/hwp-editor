@@ -185,8 +185,8 @@ npm dist-tag add "@hwp-editor/server@$VERSION" next
 
 **Rotating the token.** Create a replacement on npmjs.com with the same package scope, then
 `gh secret set NPM_DIST_TAG_TOKEN --env npm-publish --repo STAIxBWLB/hwp-editor` and paste it.
-Revoke the old token. Test it without a release by adding and removing a throwaway tag on each
-package. Re-pointing `next` at the version it already names would prove nothing: npm sees the
+Revoke the old token. Test it without a release by adding a throwaway tag to each package with
+the token. Re-pointing `next` at the version it already names would prove nothing: npm sees the
 tag already set and never sends the write.
 
 ```sh
@@ -195,13 +195,26 @@ cfg="$(mktemp)" && printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_DIST_TAG
 unset NPM_DIST_TAG_TOKEN
 for p in core react server; do
   v="$(npm view "@hwp-editor/$p" dist-tags.latest)"
-  npm --userconfig "$cfg" dist-tag add "@hwp-editor/$p@$v" token-check &&
-    npm --userconfig "$cfg" dist-tag rm "@hwp-editor/$p" token-check
+  npm --userconfig "$cfg" dist-tag add "@hwp-editor/$p@$v" token-check
 done
 rm -f "$cfg"
 ```
 
-Skipping this leaves `npm install @hwp-editor/core@next` handing people a stale prerelease
+The token cannot take the throwaway tag off again: when this test was first run on 2026-09-27,
+every `npm dist-tag add` with it succeeded and every `npm dist-tag rm` answered 403. That does
+not affect the release step, which only adds. Remove the tags from your own `npm login`
+session instead. The organization is `auth-and-writes`, so each removal asks for a one-time
+password: in an interactive terminal npm prompts for it, and where npm cannot prompt, give each
+command its own fresh code with `--otp`.
+
+```sh
+npm dist-tag rm @hwp-editor/core token-check    # each: add --otp=<code> where npm cannot prompt
+npm dist-tag rm @hwp-editor/react token-check
+npm dist-tag rm @hwp-editor/server token-check
+npm dist-tag ls @hwp-editor/core                # only latest and next remain
+```
+
+Skipping step 7 leaves `npm install @hwp-editor/core@next` handing people a stale prerelease
 after a stable release exists.
 
 ### 7b. Check the integration documents against what a consumer now installs
