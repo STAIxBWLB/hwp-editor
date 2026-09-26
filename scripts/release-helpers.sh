@@ -228,3 +228,38 @@ publish_package() {
   npm publish "$PACKS/hwp-editor-$pp_pkg-$VERSION.tgz" \
     --provenance --tag "$(dist_tag_for "$VERSION")"
 }
+
+# move_next_tag <version>
+# RELEASING.md step 7, automated for stable releases (#38): point `next` at the
+# version the publish just put on `latest`, so `@next` never hands out an older
+# candidate. A prerelease already published under `next`, so it is skipped.
+#
+# Trusted publishing cannot run `npm dist-tag`, so this reads a stored token,
+# NPM_DIST_TAG_TOKEN: an npm granular token limited to the three packages, kept
+# as an environment secret of npm-publish. It goes into a throwaway userconfig
+# (mktemp, mode 600, removed on exit), never NODE_AUTH_TOKEN or the runner's
+# .npmrc: npm treats either as configured credentials and would then skip the
+# OIDC exchange a publish needs (release.yml header point 3). That is also why
+# release.yml calls this only after the last publish.
+#
+# No token is a warning and a skip, not a failure: the packages are already
+# published, and the manual commands in RELEASING.md step 7 finish the job.
+move_next_tag() {
+  mnt_version="$1"
+  if is_prerelease "$mnt_version"; then
+    echo "[skip] $mnt_version is a prerelease; it was published under next"
+    return 0
+  fi
+  if [ -z "${NPM_DIST_TAG_TOKEN:-}" ]; then
+    echo "::warning::NPM_DIST_TAG_TOKEN is not set; move next by hand (RELEASING.md step 7)"
+    return 0
+  fi
+  mnt_cfg="$(mktemp)"
+  trap 'rm -f "$mnt_cfg"' EXIT
+  chmod 600 "$mnt_cfg"
+  printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_DIST_TAG_TOKEN" > "$mnt_cfg"
+  for mnt_pkg in core react server; do
+    npm --userconfig "$mnt_cfg" dist-tag add "@hwp-editor/$mnt_pkg@$mnt_version" next
+  done
+  rm -f "$mnt_cfg"
+}

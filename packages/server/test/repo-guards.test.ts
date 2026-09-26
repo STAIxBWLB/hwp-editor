@@ -275,13 +275,23 @@ function registryInputViolations(dir: string): string[] {
 }
 
 /**
- * REL-02 check 2: no workflow references a repository secret.
+ * The one stored credential REL-02 tolerates (#38): the npm token that moves
+ * `next` after a stable release, in release.yml only. Matched as a whole line
+ * so no other secret, and no other variable name for this one, gets through.
+ */
+const DIST_TAG_TOKEN_LINE =
+  /^\s*NPM_DIST_TAG_TOKEN: \$\{\{ secrets\.NPM_DIST_TAG_TOKEN \}\}\s*$/;
+
+/**
+ * REL-02 check 2: no workflow references a repository secret, except the one
+ * DIST_TAG_TOKEN_LINE in release.yml.
  */
 function storedCredentialViolations(dir: string): string[] {
   const violations: string[] = [];
   for (const workflow of readWorkflows(dir)) {
     for (const line of withoutComments(workflow.lines)) {
       if (!/secrets\./.test(line)) continue;
+      if (workflow.name === "release.yml" && DIST_TAG_TOKEN_LINE.test(line)) continue;
       violations.push(
         `${workflow.name} reads ${line.trim()}; REL-02's whole content is that no ` +
           `stored credential exists, and the only credential on the release path ` +
@@ -291,6 +301,44 @@ function storedCredentialViolations(dir: string): string[] {
           `but release.yml reaches it through the workflow-token expression ` +
           `(github.token) instead, so this check stays a flat prohibition. Use ` +
           `that spelling rather than relaxing this guard`,
+      );
+    }
+  }
+  return violations;
+}
+
+/**
+ * REL-02 check 3 (#38): the tolerated token is read once, after every publish,
+ * and never under the name npm itself consumes. Publishing must see no token at
+ * all, or npm skips the OIDC exchange (release.yml header point 3).
+ */
+function distTagTokenPlacementViolations(dir: string): string[] {
+  const violations: string[] = [];
+  for (const workflow of readWorkflows(dir)) {
+    const lines = withoutComments(workflow.lines);
+    if (lines.some((line) => /NODE_AUTH_TOKEN/.test(line))) {
+      violations.push(
+        `${workflow.name} sets NODE_AUTH_TOKEN; npm would then treat credentials ` +
+          `as configured and never start the OIDC exchange a publish needs`,
+      );
+    }
+    const uses = lines.flatMap((line, i) => (DIST_TAG_TOKEN_LINE.test(line) ? [i] : []));
+    if (uses.length === 0) continue;
+    if (workflow.name !== "release.yml" || uses.length > 1) {
+      violations.push(
+        `${workflow.name} reads NPM_DIST_TAG_TOKEN ${uses.length} time(s); it belongs ` +
+          `to exactly one step of release.yml`,
+      );
+      continue;
+    }
+    const lastPublish = lines.reduce(
+      (last, line, i) => (/publish_package\s/.test(line) ? i : last),
+      -1,
+    );
+    if (lastPublish < 0 || uses[0]! < lastPublish) {
+      violations.push(
+        `release.yml reads NPM_DIST_TAG_TOKEN before the last publish_package; a ` +
+          `publish step must run with no token in reach`,
       );
     }
   }
@@ -753,6 +801,42 @@ describe("REL-02: the release path carries no stored credential", () => {
     );
     const violations = storedCredentialViolations(fixtureDir({ "ci.yml": planted }));
     expect(violations.join("\n")).toContain("no stored credential exists");
+  });
+
+  it("tolerates NPM_DIST_TAG_TOKEN in release.yml and nowhere else (#38)", () => {
+    const tokenLine = "          NPM_DIST_TAG_TOKEN: ${{ secrets.NPM_DIST_TAG_TOKEN }}\n";
+    const withToken = CI_TWO_JOBS.replace(
+      "  package:",
+      "      - run: publish_package core\n        env:\n" + tokenLine + "  package:",
+    );
+    expect(storedCredentialViolations(fixtureDir({ "release.yml": withToken }))).toEqual([]);
+    expect(
+      storedCredentialViolations(fixtureDir({ "ci.yml": withToken })).join("\n"),
+    ).toContain("no stored credential exists");
+    const otherSecret = withToken.replace("secrets.NPM_DIST_TAG_TOKEN", "secrets.NPM_TOKEN");
+    expect(
+      storedCredentialViolations(fixtureDir({ "release.yml": otherSecret })).join("\n"),
+    ).toContain("no stored credential exists");
+  });
+
+  it("keeps the dist-tag token after every publish and out of NODE_AUTH_TOKEN", () => {
+    expect(distTagTokenPlacementViolations(WORKFLOWS_DIR)).toEqual([]);
+    const tokenStep = "      - run: move_next_tag\n        env:\n" +
+      "          NPM_DIST_TAG_TOKEN: ${{ secrets.NPM_DIST_TAG_TOKEN }}\n";
+    const before = CI_TWO_JOBS.replace(
+      "  package:",
+      tokenStep + "      - run: publish_package server\n  package:",
+    );
+    expect(
+      distTagTokenPlacementViolations(fixtureDir({ "release.yml": before })).join("\n"),
+    ).toContain("before the last publish_package");
+    const nodeAuth = CI_TWO_JOBS.replace(
+      "  package:",
+      "      - run: npm publish\n        env:\n          NODE_AUTH_TOKEN: x\n  package:",
+    );
+    expect(
+      distTagTokenPlacementViolations(fixtureDir({ "release.yml": nodeAuth })).join("\n"),
+    ).toContain("NODE_AUTH_TOKEN");
   });
 
   it("couples the OIDC scope to the npm-publish environment", () => {
