@@ -38,6 +38,14 @@ jobs:
           curl -fsSL -o cjk-fonts/NotoSansCJKkr-Regular.otf \
             https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/Sans/OTF/Korean/NotoSansCJKkr-Regular.otf
           echo "6bcb2a0703aa137e874fc2dffa85f6c21ba9a67fa329e81b8c801663af7e992a  cjk-fonts/NotoSansCJKkr-Regular.otf" | sha256sum -c
+      # Fixtures are not committed; the playground's seed script composes them
+      # with the binary (stdlib only, so no install is needed). Composing needs
+      # no fonts; only rendering does.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Compose the Korean fixture
+        run: HWP_EDITOR_BIN="$PWD/hwp" node apps/playground/scripts/seed-fixtures.mjs
       - name: Render with and without HWP_FONT_DIR where no fonts exist
         run: |
           docker run --rm -v "$PWD:/w" -w /w debian:bookworm-slim sh -euc '
