@@ -61,9 +61,11 @@ defaults to English; setting one does not set the other. See
 
 `locale` sets `HWP_LANG` only; `LANG`, `LC_ALL` and `LC_MESSAGES` stay
 pinned to `C.UTF-8` regardless, so changing the language cannot accidentally
-change the encoding. Every other `HWP_*` variable (`HWP_FONT_DIR` and
-friends), plus `PATH` and `HOME`, still passes through from the parent
-environment unchanged; everything else is stripped.
+change the encoding. `HWP_FONT_DIR` is the only other `HWP_*` variable
+copied from the parent environment; together with `PATH` and `HOME` it passes
+through unchanged, and everything else is stripped. A server with no CJK
+system fonts needs `HWP_FONT_DIR`, or its pages render without text; see
+[docs/integration-ax.md section 2b](docs/integration-ax.md#2b-provisioning-fonts).
 
 ## Develop
 

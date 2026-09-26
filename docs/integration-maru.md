@@ -17,6 +17,12 @@ webview                                 Rust (src-tauri)
                               hwp binary (MARU_HWP_BIN → PATH → ~/.maru/skills/hwpx/)
 ```
 
+Fonts come from the desktop OS, which on macOS and Windows supplies CJK faces.
+A Linux desktop without CJK fonts renders pages with no text. Install them, or
+point `HWP_FONT_DIR` at a font directory ([ax recipe section
+2b](./integration-ax.md#2b-provisioning-fonts) has the faces and the
+family-name check).
+
 ## Commands
 
 Payloads mirror `packages/core/src/protocol.ts`, with two Tauri deltas:
