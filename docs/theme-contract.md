@@ -14,13 +14,29 @@ them up — including dark-mode swaps done by an ancestor theme attribute.
 | `--hwped-muted` | secondary text / disabled | `#6b7280` | `#9ca3af` |
 | `--hwped-accent` | primary actions, selection | `#1f5fbf` | `#5b8def` |
 | `--hwped-border` | hairline borders | `#d7dbe0` | `#33373f` |
+| `--hwped-error` | destructive actions, error line and badge | `#b91c1c` | `#f87171` |
+| `--hwped-warning` | transient warning (timeout) | `#a16207` | `#fbbf24` |
+| `--hwped-success` | success badge | `#15803d` | `#4ade80` |
 | `--hwped-radius` | corner radius | `6px` | `6px` |
 | `--hwped-font` | font stack | Pretendard → system Korean stack | same |
 
 Defaults ship in `packages/react/src/theme.css` with a
 `prefers-color-scheme: dark` fallback, so an unmapped host still gets a sane
 dark editor. A host that manages its own dark mode (class/attribute switch)
-must map both themes itself — media-query fallbacks do not follow host state.
+must map both themes itself; media-query fallbacks do not follow host state.
+
+Every other tone the editor paints is derived from these with `color-mix`:
+
+- the canvas "desk" behind the pages
+- the segmented-control track
+- hover and press tints
+- status tints (badges, the error line, destructive buttons)
+- the focus ring
+
+So a host that maps the variables above gets the whole palette in light and
+dark, and there is nothing further to map. The derived names (`--_hwped-*`)
+are private and may change. `color-mix` needs Safari 16.2+, Chrome/Edge 111+
+or Firefox 113+.
 
 ## Per-host mapping examples
 

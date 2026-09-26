@@ -2,14 +2,31 @@
  * Scoped stylesheet for @hwp-editor/react. Every class carries the `hwped`
  * prefix; the root element gets `.hwped.hwped-root`. No global selectors,
  * no component-kit assumptions.
+ *
+ * Design notes (HIG-derived, #34): depth comes from tone and shadow rather
+ * than extra lines; every control answers on press, not on release; status
+ * is tinted by kind; motion is short, and dropped under reduced motion.
+ *
+ * Every tone below is DERIVED from the public --hwped-* tokens with
+ * color-mix, so a host that maps those tokens (light or dark) gets the whole
+ * palette. The --_hwped-* names are private and not part of the contract.
  */
 
 .hwped {
+  --_hwped-desk: color-mix(in srgb, var(--hwped-fg) 5%, var(--hwped-bg));
+  --_hwped-fill: color-mix(in srgb, var(--hwped-fg) 7%, var(--hwped-bg));
+  --_hwped-hover: color-mix(in srgb, var(--hwped-accent) 9%, var(--hwped-bg));
+  --_hwped-press: color-mix(in srgb, var(--hwped-accent) 16%, var(--hwped-bg));
+  --_hwped-hairline: color-mix(in srgb, var(--hwped-border) 75%, transparent);
+  --_hwped-ring: 0 0 0 3px color-mix(in srgb, var(--hwped-accent) 35%, transparent);
+  --_hwped-quick: 100ms ease-out;
+
   background: var(--hwped-bg);
   color: var(--hwped-fg);
   font-family: var(--hwped-font);
   font-size: 13px;
   line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
 }
 
 .hwped *,
@@ -34,13 +51,18 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--hwped-border);
+  min-height: 44px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--_hwped-hairline);
+  background: var(--hwped-bg);
   flex: 0 0 auto;
+  position: relative;
+  z-index: 1;
 }
 
 .hwped-title {
   font-weight: 600;
+  letter-spacing: -0.01em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -58,10 +80,11 @@
    row. That is why every sibling below carries `flex: 0 0 auto` (G-03-1). */
 .hwped-notice {
   color: var(--hwped-muted);
-  border: 1px solid var(--hwped-border);
-  border-radius: var(--hwped-radius);
-  padding: 1px 8px;
+  background: var(--_hwped-fill);
+  border-radius: 999px;
+  padding: 2px 10px;
   font-size: 12px;
+  letter-spacing: 0.01em;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -69,27 +92,33 @@
   flex: 0 1 auto;
 }
 
+/* Status reads by kind, not by outline: a tinted pill in the kind's color. */
 .hwped-badge {
-  border-radius: var(--hwped-radius);
-  padding: 1px 8px;
+  border-radius: 999px;
+  padding: 2px 10px;
   font-size: 12px;
-  border: 1px solid var(--hwped-border);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  border: 1px solid transparent;
+  background: var(--_hwped-fill);
   flex: 0 0 auto;
 }
 
 .hwped-badge-ok {
   color: var(--hwped-success);
-  border-color: var(--hwped-success);
+  background: color-mix(in srgb, var(--hwped-success) 14%, transparent);
 }
 
 .hwped-badge-err {
   color: var(--hwped-error);
-  border-color: var(--hwped-error);
+  background: color-mix(in srgb, var(--hwped-error) 14%, transparent);
 }
 
 .hwped-count {
   color: var(--hwped-muted);
   font-size: 12px;
+  letter-spacing: 0.01em;
+  font-variant-numeric: tabular-nums;
   flex: 0 0 auto;
 }
 
@@ -97,40 +126,86 @@
 
 .hwped-btn {
   font: inherit;
+  font-weight: 500;
   color: var(--hwped-fg);
   background: var(--hwped-bg);
   border: 1px solid var(--hwped-border);
   border-radius: var(--hwped-radius);
-  padding: 3px 10px;
+  min-height: 28px;
+  padding: 3px 12px;
   cursor: pointer;
+  transition:
+    background-color var(--_hwped-quick),
+    border-color var(--_hwped-quick),
+    transform var(--_hwped-quick);
 }
 
 .hwped-btn:hover:not(:disabled) {
-  border-color: var(--hwped-accent);
+  background: var(--_hwped-hover);
+  border-color: color-mix(in srgb, var(--hwped-accent) 55%, var(--hwped-border));
+}
+
+/* Feedback on press, instantly - never only on release. */
+.hwped-btn:active:not(:disabled) {
+  background: var(--_hwped-press);
+  transform: scale(0.97);
 }
 
 .hwped-btn:disabled {
   color: var(--hwped-muted);
+  background: transparent;
+  border-color: var(--_hwped-hairline);
   cursor: not-allowed;
-  opacity: 0.6;
+  opacity: 0.55;
 }
 
 .hwped-btn-primary {
   background: var(--hwped-accent);
   border-color: var(--hwped-accent);
   color: #ffffff;
+  font-weight: 600;
+}
+
+.hwped-btn-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--hwped-accent) 88%, #000000);
+  border-color: color-mix(in srgb, var(--hwped-accent) 88%, #000000);
+}
+
+.hwped-btn-primary:active:not(:disabled) {
+  background: color-mix(in srgb, var(--hwped-accent) 78%, #000000);
+}
+
+/* A disabled primary keeps a trace of its accent, but must not read as live. */
+.hwped-btn-primary:disabled {
+  color: var(--hwped-muted);
+  background: color-mix(in srgb, var(--hwped-accent) 14%, var(--hwped-bg));
+  border-color: transparent;
+  opacity: 1;
+}
+
+/* Destructive reads as destructive at rest, not only on hover. */
+.hwped-btn-danger {
+  color: var(--hwped-error);
 }
 
 .hwped-btn-danger:hover:not(:disabled) {
   border-color: var(--hwped-error);
   color: var(--hwped-error);
+  background: color-mix(in srgb, var(--hwped-error) 9%, var(--hwped-bg));
 }
 
 .hwped-btn-link {
   border: none;
+  background: none;
+  min-height: 0;
   padding: 0;
   color: var(--hwped-accent);
   text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.hwped-btn-link:hover:not(:disabled) {
+  background: none;
 }
 
 /* Scoped to direct toolbar children on purpose: `.hwped-btn` is reused by
@@ -148,15 +223,39 @@
   background: var(--hwped-bg);
   border: 1px solid var(--hwped-border);
   border-radius: var(--hwped-radius);
-  padding: 4px 8px;
+  min-height: 28px;
+  padding: 4px 9px;
   width: 100%;
+  transition:
+    border-color var(--_hwped-quick),
+    box-shadow var(--_hwped-quick);
 }
 
+.hwped-input::placeholder,
+.hwped-textarea::placeholder {
+  color: var(--hwped-muted);
+  opacity: 0.8;
+}
+
+.hwped-input:hover:not(:disabled),
+.hwped-textarea:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--hwped-fg) 30%, var(--hwped-border));
+}
+
+/* One focus treatment everywhere: accent edge plus a soft ring. */
 .hwped-input:focus,
-.hwped-textarea:focus,
-.hwped-btn:focus-visible {
-  outline: 2px solid var(--hwped-accent);
-  outline-offset: 1px;
+.hwped-textarea:focus {
+  outline: none;
+  border-color: var(--hwped-accent);
+  box-shadow: var(--_hwped-ring);
+}
+
+.hwped-btn:focus-visible,
+.hwped-tab:focus-visible,
+.hwped-preset:focus-visible,
+.hwped-cell:focus-visible {
+  outline: none;
+  box-shadow: var(--_hwped-ring);
 }
 
 .hwped-input-narrow {
@@ -167,7 +266,12 @@
 .hwped-check {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.hwped-check input {
+  accent-color: var(--hwped-accent);
 }
 
 /* ---- layout ---- */
@@ -178,64 +282,92 @@
   min-height: 0;
 }
 
+/* The desk: a tone below the chrome, so the page reads as a sheet on it. */
 .hwped-canvas {
   flex: 1 1 auto;
   overflow: auto;
-  padding: 16px;
+  padding: 24px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 16px;
+  gap: 24px;
+  background: var(--_hwped-desk);
 }
 
 .hwped-side {
   flex: 0 0 300px;
-  border-left: 1px solid var(--hwped-border);
+  border-left: 1px solid var(--_hwped-hairline);
+  background: var(--hwped-bg);
   display: flex;
   flex-direction: column;
   min-height: 0;
 }
 
+/* Tabs as a segmented control: a recessed track, the active segment raised. */
 .hwped-tabs {
   display: flex;
-  border-bottom: 1px solid var(--hwped-border);
+  gap: 2px;
+  margin: 10px 12px 2px;
+  padding: 3px;
+  background: var(--_hwped-fill);
+  border-radius: calc(var(--hwped-radius) + 2px);
   flex: 0 0 auto;
 }
 
 .hwped-tab {
   font: inherit;
+  font-weight: 500;
   flex: 1 1 0;
-  padding: 6px 0;
+  min-height: 26px;
+  padding: 3px 0;
   background: none;
   border: none;
-  border-bottom: 2px solid transparent;
+  border-radius: var(--hwped-radius);
   color: var(--hwped-muted);
   cursor: pointer;
+  transition:
+    background-color var(--_hwped-quick),
+    color var(--_hwped-quick),
+    transform var(--_hwped-quick);
+}
+
+.hwped-tab:hover:not(.hwped-tab-active) {
+  color: var(--hwped-fg);
+}
+
+.hwped-tab:active {
+  transform: scale(0.97);
 }
 
 .hwped-tab-active {
   color: var(--hwped-fg);
-  border-bottom-color: var(--hwped-accent);
+  background: var(--hwped-bg);
   font-weight: 600;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.12),
+    0 0 0 0.5px rgba(0, 0, 0, 0.06);
 }
 
 .hwped-panel {
-  padding: 10px;
+  padding: 12px;
   overflow: auto;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
 }
 
 .hwped-field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
 }
 
 .hwped-label {
   font-size: 12px;
-  color: var(--hwped-muted);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1.35;
+  color: color-mix(in srgb, var(--hwped-fg) 72%, var(--hwped-bg));
 }
 
 .hwped-row {
@@ -245,10 +377,38 @@
   flex-wrap: wrap;
 }
 
+/* A role="group" row of peer actions (alignment) reads as one joined control. */
+.hwped-row[role="group"] {
+  gap: 0;
+  flex-wrap: nowrap;
+}
+
+.hwped-row[role="group"] > .hwped-btn {
+  flex: 1 1 0;
+  padding-inline: 6px;
+  border-radius: 0;
+  margin-left: -1px;
+}
+
+.hwped-row[role="group"] > .hwped-btn:first-child {
+  margin-left: 0;
+  border-radius: var(--hwped-radius) 0 0 var(--hwped-radius);
+}
+
+.hwped-row[role="group"] > .hwped-btn:last-child {
+  border-radius: 0 var(--hwped-radius) var(--hwped-radius) 0;
+}
+
+.hwped-row[role="group"] > .hwped-btn:hover:not(:disabled),
+.hwped-row[role="group"] > .hwped-btn:focus-visible {
+  position: relative;
+  z-index: 1;
+}
+
 .hwped-quote {
-  border: 1px solid var(--hwped-border);
+  background: var(--_hwped-fill);
   border-radius: var(--hwped-radius);
-  padding: 6px 8px;
+  padding: 8px 10px;
   max-height: 120px;
   overflow: auto;
   white-space: pre-wrap;
@@ -263,44 +423,57 @@
 .hwped-empty {
   margin: auto;
   text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
 }
 
+/* An error is a band in the kind's tint with a leading bar, not bare red text. */
 .hwped-error {
   color: var(--hwped-error);
   margin: 0;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--hwped-border);
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--hwped-error) 9%, var(--hwped-bg));
+  border-bottom: 1px solid var(--_hwped-hairline);
+  box-shadow: inset 3px 0 0 currentColor;
 }
 
 .hwped-error-kind {
   display: inline-block;
   margin-right: 8px;
-  padding: 0 6px;
-  border: 1px solid currentColor;
-  border-radius: var(--hwped-radius);
+  padding: 0 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 14%, transparent);
   font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 /* timeout is transient (retry may succeed); unavailable/protected are not. */
 .hwped-error-timeout {
   color: var(--hwped-warning);
+  background: color-mix(in srgb, var(--hwped-warning) 10%, var(--hwped-bg));
 }
 
 /* ---- page canvas ---- */
 
+/* Paper on the desk: layered shadow, the larger layer giving it thickness. */
 .hwped-page {
   position: relative;
   width: min(100%, 720px);
-  border: 1px solid var(--hwped-border);
-  border-radius: 2px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+  border-radius: 3px;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--hwped-fg) 8%, transparent),
+    0 1px 2px rgba(0, 0, 0, 0.08),
+    0 8px 24px rgba(0, 0, 0, 0.12);
   background: #ffffff;
   cursor: text;
 }
 
 .hwped-page:focus-visible {
   outline: 2px solid var(--hwped-accent);
-  outline-offset: 2px;
+  outline-offset: 3px;
 }
 
 .hwped-page-svg,
@@ -321,15 +494,20 @@
   left: 0;
   right: 0;
   pointer-events: none;
+  transition: background-color var(--_hwped-quick);
 }
 
+/* Mark the selection without covering it: a light wash and an inset rule. */
 .hwped-band-selected {
-  background: color-mix(in srgb, var(--hwped-accent) 22%, transparent);
-  outline: 1px solid var(--hwped-accent);
+  background: color-mix(in srgb, var(--hwped-accent) 9%, transparent);
+  box-shadow:
+    inset 3px 0 0 var(--hwped-accent),
+    inset 0 0 0 1px color-mix(in srgb, var(--hwped-accent) 45%, transparent);
 }
 
 .hwped-band-pending {
-  background: color-mix(in srgb, var(--hwped-accent) 10%, transparent);
+  background: color-mix(in srgb, var(--hwped-accent) 6%, transparent);
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--hwped-accent) 45%, transparent);
 }
 
 /* ---- table grid ---- */
@@ -351,10 +529,19 @@
   border: none;
   background: none;
   color: var(--hwped-fg);
-  padding: 4px 6px;
+  padding: 5px 8px;
   text-align: left;
   cursor: pointer;
-  min-height: 24px;
+  min-height: 28px;
+  transition: background-color var(--_hwped-quick);
+}
+
+.hwped-cell:hover {
+  background: var(--_hwped-hover);
+}
+
+.hwped-cell:active {
+  background: var(--_hwped-press);
 }
 
 .hwped-cell-selected {
@@ -374,46 +561,57 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
 .hwped-field-item {
-  border-bottom: 1px solid var(--hwped-border);
-  padding-bottom: 8px;
+  border-bottom: 1px solid var(--_hwped-hairline);
+  padding-bottom: 10px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
 }
 
 /* ---- compose dialog ---- */
 
+/* Dim to focus: a modal task gets a scrim that pushes the editor back. */
 .hwped-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.4);
+  background: rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(6px) saturate(120%);
+  -webkit-backdrop-filter: blur(6px) saturate(120%);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 1000;
+  animation: hwped-fade-in 160ms ease-out;
 }
 
 .hwped-dialog {
   background: var(--hwped-bg);
   color: var(--hwped-fg);
-  border: 1px solid var(--hwped-border);
-  border-radius: var(--hwped-radius);
+  border: 1px solid var(--_hwped-hairline);
+  border-radius: calc(var(--hwped-radius) * 2);
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.12),
+    0 24px 64px rgba(0, 0, 0, 0.28);
   width: min(560px, calc(100vw - 32px));
   max-height: calc(100vh - 64px);
   overflow: auto;
-  padding: 16px;
+  padding: 20px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
+  animation: hwped-materialize 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .hwped-dialog-title {
   margin: 0;
-  font-size: 15px;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.015em;
 }
 
 .hwped-presets {
@@ -424,20 +622,97 @@
 
 .hwped-preset {
   font: inherit;
+  font-weight: 500;
   border: 1px solid var(--hwped-border);
-  border-radius: var(--hwped-radius);
+  border-radius: 999px;
   background: var(--hwped-bg);
   color: var(--hwped-fg);
-  padding: 4px 10px;
+  min-height: 28px;
+  padding: 3px 12px;
   cursor: pointer;
+  transition:
+    background-color var(--_hwped-quick),
+    border-color var(--_hwped-quick),
+    transform var(--_hwped-quick);
+}
+
+.hwped-preset:hover:not(.hwped-preset-active) {
+  background: var(--_hwped-hover);
+}
+
+.hwped-preset:active {
+  transform: scale(0.97);
 }
 
 .hwped-preset-active {
   border-color: var(--hwped-accent);
+  background: color-mix(in srgb, var(--hwped-accent) 12%, var(--hwped-bg));
   color: var(--hwped-accent);
   font-weight: 600;
 }
 
 .hwped-dialog-actions {
   justify-content: flex-end;
+  padding-top: 4px;
+}
+
+@keyframes hwped-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Materialize, don't just fade: the surface arrives with a slight scale. */
+@keyframes hwped-materialize {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+
+/* ---- accessibility preferences ---- */
+
+@media (prefers-reduced-motion: reduce) {
+  .hwped *,
+  .hwped *::before,
+  .hwped *::after {
+    transition-duration: 0ms !important;
+  }
+
+  .hwped-btn:active:not(:disabled),
+  .hwped-tab:active,
+  .hwped-preset:active {
+    transform: none;
+  }
+
+  .hwped-overlay,
+  .hwped-dialog {
+    animation: none;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .hwped-overlay {
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .hwped {
+    --_hwped-hairline: var(--hwped-fg);
+  }
+
+  .hwped-btn,
+  .hwped-input,
+  .hwped-textarea,
+  .hwped-preset,
+  .hwped-grid td {
+    border-color: var(--hwped-fg);
+  }
+
+  .hwped-tabs {
+    box-shadow: inset 0 0 0 1px var(--hwped-fg);
+  }
 }
