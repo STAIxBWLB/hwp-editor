@@ -211,7 +211,8 @@ command its own fresh code with `--otp`.
 npm dist-tag rm @hwp-editor/core token-check    # each: add --otp=<code> where npm cannot prompt
 npm dist-tag rm @hwp-editor/react token-check
 npm dist-tag rm @hwp-editor/server token-check
-npm dist-tag ls @hwp-editor/core                # only latest and next remain
+# Check all three: one removal can fail (say its code expired) while the others succeed.
+for p in core react server; do npm dist-tag ls "@hwp-editor/$p"; done   # only latest and next
 ```
 
 Skipping step 7 leaves `npm install @hwp-editor/core@next` handing people a stale prerelease
