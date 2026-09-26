@@ -469,6 +469,67 @@ describe.each(LOCALES)("HwpEditor compose flow — locale=%s", (locale) => {
     expect(alert.querySelector(".hwped-error-kind")).toBeNull();
     cleanup();
   });
+
+  /** Open the compose dialog from the empty state; returns the dialog. */
+  async function openDialog(
+    engine: ReturnType<typeof createMockEngine>,
+  ): Promise<HTMLElement> {
+    render(<HwpEditor locale={locale} engine={engine} file={null} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: t["canvas.createCta"] }),
+    );
+    return screen.findByRole("dialog", { name: t["compose.title"] });
+  }
+
+  it("closes on Escape even while focus is still on the trigger", async () => {
+    const dialog = await openDialog(createMockEngine());
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(dialog.isConnected).toBe(false);
+    cleanup();
+  });
+
+  it("closes on Escape pressed inside a field", async () => {
+    const dialog = await openDialog(createMockEngine());
+    fireEvent.keyDown(screen.getByLabelText(t["compose.titleLabel"]), {
+      key: "Escape",
+    });
+    expect(dialog.isConnected).toBe(false);
+    cleanup();
+  });
+
+  it("keeps the dialog for an Escape that ends an IME composition", async () => {
+    const dialog = await openDialog(createMockEngine());
+    fireEvent.keyDown(screen.getByLabelText(t["compose.titleLabel"]), {
+      key: "Escape",
+      isComposing: true,
+    });
+    expect(dialog.isConnected).toBe(true);
+    cleanup();
+  });
+
+  it("closing the dialog with Escape keeps the page selection", async () => {
+    render(<HwpEditor locale={locale} engine={createMockEngine()} file={file} />);
+    await selectPara(t, 1);
+    fireEvent.click(screen.getByRole("button", { name: t["toolbar.newDocument"] }));
+    const dialog = await screen.findByRole("dialog", { name: t["compose.title"] });
+    const title = screen.getByLabelText(t["compose.titleLabel"]);
+    fireEvent.keyDown(title, { key: "Escape" });
+    expect(dialog.isConnected).toBe(false);
+    // Still selected: the inspector shows the paragraph's replace field.
+    expect(screen.getByLabelText(t["segment.replaceLabel"])).toBeTruthy();
+    cleanup();
+  });
+
+  it("ignores Escape while a compose is in flight, like the disabled Cancel", async () => {
+    const engine = createMockEngine();
+    engine.compose = () => new Promise(() => {});
+    const dialog = await openDialog(engine);
+    fireEvent.click(screen.getByRole("button", { name: t["compose.submit"] }));
+    await screen.findByRole("button", { name: t["compose.submitting"] });
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(dialog.isConnected).toBe(true);
+    cleanup();
+  });
 });
 
 describe("HwpEditor table flow", () => {

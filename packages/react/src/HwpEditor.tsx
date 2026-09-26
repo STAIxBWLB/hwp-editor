@@ -379,6 +379,9 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
 
     const onKeyDown = (e: KeyboardEvent<HTMLDivElement>): void => {
       if (e.key === "Escape") {
+        // With the compose dialog open, Escape belongs to the dialog (it
+        // closes it); one press must not also drop the page selection.
+        if (composing) return;
         store.dispatch({ type: "select", selection: null });
       } else if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
         e.preventDefault();
