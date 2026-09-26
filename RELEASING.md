@@ -204,17 +204,17 @@ The token cannot take the throwaway tag off again: when this test was first run 
 every `npm dist-tag add` with it succeeded and every `npm dist-tag rm` answered 403. That does
 not affect the release step, which only adds. Remove the tags from your own `npm login`
 session instead. The organization is `auth-and-writes`, so each removal asks for a one-time
-password: in an interactive terminal npm opens the browser for it, and where npm cannot prompt,
-pass a fresh code with `--otp`.
+password: in an interactive terminal npm prompts for it, and where npm cannot prompt, give each
+command its own fresh code with `--otp`.
 
 ```sh
-npm dist-tag rm @hwp-editor/core token-check    # add --otp=<code> where npm cannot prompt
+npm dist-tag rm @hwp-editor/core token-check    # each: add --otp=<code> where npm cannot prompt
 npm dist-tag rm @hwp-editor/react token-check
 npm dist-tag rm @hwp-editor/server token-check
 npm dist-tag ls @hwp-editor/core                # only latest and next remain
 ```
 
-Skipping this leaves `npm install @hwp-editor/core@next` handing people a stale prerelease
+Skipping step 7 leaves `npm install @hwp-editor/core@next` handing people a stale prerelease
 after a stable release exists.
 
 ### 7b. Check the integration documents against what a consumer now installs
