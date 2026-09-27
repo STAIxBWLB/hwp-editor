@@ -13,7 +13,7 @@ env:
   # (packages/server/src/cli-engine.ts MIN_VERSION / MAX_VERSION_EXCLUSIVE),
   # so a future upstream 2.0.0 would fall outside the ceiling and turn this job
   # red overnight for reasons that are not this repository's fault.
-  HWP_CLI_TAG: v0.20.0
+  HWP_CLI_TAG: v1.3.1
 
 jobs:
   # NON-GATING BY CONSTRUCTION.
@@ -34,13 +34,14 @@ jobs:
   # hwp-cli contract drift ever appears: op-flag spellings
   # (packages/core/src/ops.ts), the segment-envelope shape
   # (packages/core/src/segments.ts) and the error markers
-  # (packages/react/src/errors.ts) are all pinned to the 0.16.x contract and
-  # enforced by cli-engine.ts's flag handshake. The pinned tag and the contract
-  # floor are now the same version, so the span this job once swept is closed:
-  # what it detects from here is drift ABOVE 0.16.0, the next time either the
-  # tag or the floor moves. Narrower, and still the only automated evidence that
-  # the pinned contract holds against a real binary; a red check nobody reads is
-  # the same as no check at all.
+  # (packages/react/src/errors.ts) are all pinned to the 0.20.x contract and
+  # enforced by cli-engine.ts's flag handshake. The pinned tag tracks the
+  # newest upstream release the contract was verified against (1.3.1 kept the
+  # v2 segment envelope and the edit surface unchanged), so what this job
+  # detects from here is drift BETWEEN the floor and the next upstream release,
+  # the next time either the tag or the floor moves. It is the only automated
+  # evidence that the pinned contract holds against a real binary; a red check
+  # nobody reads is the same as no check at all.
   e2e:
     runs-on: ubuntu-latest
     continue-on-error: true

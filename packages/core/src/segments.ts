@@ -7,7 +7,9 @@
  *
  * Segment shape verified against the hwp-cli v0.20.0 release binary: both
  * captures under test/fixtures/cat-segments-*.json were re-produced by that
- * binary from the commands recorded in the test file.
+ * binary from the commands recorded in the test file. Re-verified unchanged
+ * against v1.3.1 (same contract, schema_version, kinds, and wire keys), so
+ * the strict parser below accepts the 0.20.x and 1.3.x envelopes alike.
  *
  * The wire envelope carries `{id, kind, path: {section, indices},
  * char_range: {start, end}, style, direct}` per segment, with ranges that
