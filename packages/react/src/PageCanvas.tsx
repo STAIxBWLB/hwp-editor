@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import type { JSX, MouseEvent } from "react";
-import type { PageImage, Segment } from "@hwp-editor/core";
+import type { CatEnvelope, EditOp, PageImage, Segment } from "@hwp-editor/core";
 import { base64, segmentAtRef, segmentRef, segmentText } from "@hwp-editor/core";
 import { nearestSegment, segmentBand } from "./geometry.js";
 import { sanitizeSvg } from "./sanitize.js";
@@ -17,31 +17,10 @@ export function PageCanvas(): JSX.Element {
   const { state, store, envelope, t } = useHwpEditorContext();
   const { pages, selection, pendingOps } = state;
 
-  // Segments covered by queued text-targeting ops, highlighted as pending.
-  const pendingSegments = useMemo(() => {
-    if (envelope === null) return new Set<string>();
-    const keys = new Set<string>();
-    for (const op of pendingOps) {
-      if ("address" in op) {
-        for (const segment of envelope.segments) {
-          const matches = op.address.id !== undefined
-            ? segment.id === op.address.id
-            : segment.section === op.address.at.section && segment.para === op.address.at.paragraph;
-          if (matches) keys.add(segment.id ?? `${segment.section}:${segment.para}`);
-        }
-        continue;
-      }
-      const target = opSearchText(op);
-      if (target === null || target === "") continue;
-      for (const segment of envelope.segments) {
-        const plain = plainSegmentText(segmentText(envelope, segment));
-        if (plain.includes(target)) {
-          keys.add(segment.id ?? `${segment.section}:${segment.para}`);
-        }
-      }
-    }
-    return keys;
-  }, [envelope, pendingOps]);
+  const pendingSegments = useMemo(
+    () => pendingSegmentKeys(envelope, pendingOps),
+    [envelope, pendingOps],
+  );
 
   const selectedSegment =
     envelope !== null && selection !== null
@@ -202,4 +181,27 @@ function opSearchText(op: {
   if ("anchor" in op && typeof op.anchor === "string") return op.anchor;
   if (op.kind === "delete-para" && typeof op.text === "string") return op.text;
   return null;
+}
+
+
+function pendingSegmentKeys(envelope: CatEnvelope | null, ops: EditOp[]): Set<string> {
+  const keys = new Set<string>();
+  if (envelope === null) return keys;
+  for (const segment of envelope.segments) {
+    if (ops.some((op) => targetsSegment(op, envelope, segment))) {
+      keys.add(segment.id ?? `${segment.section}:${segment.para}`);
+    }
+  }
+  return keys;
+}
+
+function targetsSegment(op: EditOp, envelope: CatEnvelope, segment: Segment): boolean {
+  if ("address" in op) {
+    return op.address.id !== undefined
+      ? segment.id === op.address.id
+      : segment.section === op.address.at.section && segment.para === op.address.at.paragraph;
+  }
+  const target = opSearchText(op);
+  return target !== null && target !== "" &&
+    plainSegmentText(segmentText(envelope, segment)).includes(target);
 }
