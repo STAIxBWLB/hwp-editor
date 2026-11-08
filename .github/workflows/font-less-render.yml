@@ -14,6 +14,10 @@ on: [pull_request]
 permissions:
   contents: read
 
+concurrency:
+  group: font-less-render-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   # Same pin as e2e.yml; move them together.
   HWP_CLI_TAG: v1.3.1
@@ -21,7 +25,7 @@ env:
 jobs:
   font-less-render:
     runs-on: ubuntu-latest
-    continue-on-error: true
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
       # cjk-fonts/, not fonts/: hwp-cli falls back to `fonts/` relative to its
@@ -62,3 +66,12 @@ jobs:
             with=$(grep -o "<path" /tmp/fonts.svg | wc -l)
             echo "path elements: no fonts=$bare, HWP_FONT_DIR=$with"
             test "$with" -gt $((bare * 2))'
+
+      - name: Report font-less render advisory failure
+        if: ${{ failure() }}
+        run: |
+          echo "::warning title=Font-less render advisory::Optional render verification failed; inspect this job's logs."
+          {
+            echo '### Font-less render advisory failed'
+            echo 'This optional check is outside ci-ok. Inspect the failed step logs before accepting render compatibility.'
+          } >> "$GITHUB_STEP_SUMMARY"

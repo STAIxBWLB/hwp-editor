@@ -156,6 +156,7 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       # pnpm before setup-node: setup-node's pnpm cache shells out to
@@ -267,6 +268,7 @@ jobs:
   release-notes:
     needs: publish
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     # The only job in this file with a write scope, and it is deliberately not
     # the one that publishes (header point 9, D-16).
     permissions:

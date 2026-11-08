@@ -8,6 +8,10 @@ on: [pull_request]
 permissions:
   contents: read
 
+concurrency:
+  group: e2e-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   # Pinned, not `latest`. The engine gates on >= 0.20.0 and < 2.0.0
   # (packages/server/src/cli-engine.ts MIN_VERSION / MAX_VERSION_EXCLUSIVE),
@@ -44,6 +48,7 @@ jobs:
   # nobody reads is the same as no check at all.
   e2e:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     continue-on-error: true
     steps:
       - uses: actions/checkout@v5
