@@ -485,7 +485,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           </header>
 
           {state.pendingOps.length > 0 && (
-            <ol aria-label={t("toolbar.pendingEdits", { count: state.pendingOps.length })}>
+            <ol className="hwped-pending-list" aria-label={t("toolbar.pendingList")}>
               {state.pendingOps.map((op, index) => (
                 <li key={index}>
                   {op.kind}: {"address" in op

@@ -29,6 +29,7 @@ export const en = {
   // Toolbar
   "toolbar.toolsAria": "Editing tools",
   "toolbar.readOnly": "Read-only",
+  "toolbar.pendingList": "Pending edit targets",
   "toolbar.pendingEdits": (p: { count: number }): string =>
     p.count === 1 ? "1 pending edit" : `${p.count} pending edits`,
   "toolbar.revert": "Undo edit",
@@ -166,6 +167,7 @@ export type Locale = "en" | "ko";
 export const ko: MessageTable = {
   "toolbar.toolsAria": "편집 도구",
   "toolbar.readOnly": "읽기 전용",
+  "toolbar.pendingList": "대기 편집 대상",
   "toolbar.pendingEdits": (p) => `대기 편집 ${p.count}`,
   "toolbar.revert": "되돌리기",
   "toolbar.apply": "적용",

@@ -183,7 +183,11 @@ describe("SegmentInspector op emission (TEST-03)", () => {
     await selectPara(engine, 1, envelope);
     fireEvent.click(screen.getByLabelText(en["segment.bold"]));
     clickBtn("segment.formatSubmit");
-    expect(screen.getByRole("list").textContent).toContain("1234567890abcdef.0.1.0");
+    expect(screen.getByLabelText(en["toolbar.pendingEdits"]({ count: 1 }), { exact: true }).textContent)
+      .toBe(en["toolbar.pendingEdits"]({ count: 1 }));
+    expect(screen.getByRole("list", { name: en["toolbar.pendingList"] }).className)
+      .toBe("hwped-pending-list");
+    expect(screen.getByRole("list", { name: en["toolbar.pendingList"] }).textContent).toContain("1234567890abcdef.0.1.0");
     expect(await applyOps(engine, 1)).toEqual([
       { kind: "set-format", address: { id: "1234567890abcdef.0.1.0" }, props: { bold: "on" } },
     ]);
