@@ -16,11 +16,49 @@
  * Usage: node scripts/smoke-consumer.mjs
  */
 
+import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+/** Keep the full file multiset; only tsup's eight-character hash may vary. */
+function normalizeTarballFiles(files) {
+  return files.map((file) => file.replace(
+    /^(package\/dist\/chunk-)[A-Z0-9]{8}(\.js(?:\.map)?)$/,
+    "$1<hash>$2",
+  )).sort();
+}
+
+function assertTarballSurface(pkg, files, expected) {
+  const actualFiles = normalizeTarballFiles(files);
+  const expectedFiles = normalizeTarballFiles(expected);
+  if (JSON.stringify(actualFiles) !== JSON.stringify(expectedFiles)) {
+    throw new Error(
+      `${pkg} tarball file surface changed; expected: ${expectedFiles.join(", ")}; ` +
+        `actual: ${actualFiles.join(", ")}`,
+    );
+  }
+}
+
+// Exercise the actual comparison, including multiplicity after normalization.
+const surfaceFixture = ["package/dist/chunk-AAAAAAAA.js", "package/dist/chunk-AAAAAAAA.js.map", "package/dist/index.js"];
+const renamedFixture = surfaceFixture.map((file) => file.replace("AAAAAAAA", "B1234567"));
+assert.doesNotThrow(() => assertTarballSurface("self-check", renamedFixture.toReversed(), surfaceFixture));
+for (const changed of [
+  renamedFixture.slice(1),
+  [...renamedFixture, "package/dist/chunk-CCCCCCCC.js"],
+  [...renamedFixture, renamedFixture[0]],
+  renamedFixture.map((file) => file.replace("index.js", "other.js")),
+  renamedFixture.map((file) => file.replace("B1234567", "unexpected-name")),
+]) {
+  assert.throws(() => assertTarballSurface("self-check", changed, surfaceFixture), /file surface changed/);
+}
+if (process.argv.includes("--check-file-surface")) {
+  console.log("[assert] hash renames pass; missing, extra, duplicate and non-hash file changes fail");
+  process.exit(0);
+}
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const TSC = join(repoRoot, "node_modules", ".bin", "tsc");
@@ -324,8 +362,8 @@ const packedFiles = (tgz) =>
 // This is the public 1.0.0 file surface, not just a minimum-presence list.
 // Exact listings make a widened `files` allowlist or an unexpected build
 // artifact fail before the immutable tarball is published. The server chunk
-// hash is intentionally explicit: a changed bundle must be reviewed together
-// with the package surface instead of slipping through a prefix check.
+// hash is normalized: content changes do not change the package surface.
+// Chunk counts, extensions and all non-hashed filenames remain exact.
 const EXPECTED_TARBALL_FILES = {
   core: [
     "package/LICENSE",
@@ -358,8 +396,8 @@ const EXPECTED_TARBALL_FILES = {
   server: [
     "package/LICENSE",
     "package/README.md",
-    "package/dist/chunk-4JKUUAY5.js",
-    "package/dist/chunk-4JKUUAY5.js.map",
+    "package/dist/chunk-<hash>.js",
+    "package/dist/chunk-<hash>.js.map",
     "package/dist/index.cjs",
     "package/dist/index.cjs.map",
     "package/dist/index.d.cts",
@@ -445,16 +483,7 @@ for (const pkg of ["core", "react", "server"]) {
     }
   }
 
-  const expectedFiles = [...EXPECTED_TARBALL_FILES[pkg]].sort();
-  const actualFiles = [...files].sort();
-  const added = actualFiles.filter((file) => !expectedFiles.includes(file));
-  const removed = expectedFiles.filter((file) => !actualFiles.includes(file));
-  if (added.length > 0 || removed.length > 0) {
-    throw new Error(
-      `${pkg} tarball file surface changed; added: ${added.join(", ") || "(none)"}; ` +
-        `removed: ${removed.join(", ") || "(none)"}`,
-    );
-  }
+  assertTarballSurface(pkg, files, EXPECTED_TARBALL_FILES[pkg]);
 }
 if (new Set(Object.values(versions)).size !== 1) {
   throw new Error(`packed versions are not in lockstep: ${JSON.stringify(versions)}`);
