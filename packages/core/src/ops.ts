@@ -547,7 +547,7 @@ function need<T>(v: T | null, flag: string | undefined, value: string): T {
   return v;
 }
 
-function parseOp(flag: string | undefined, value: string): EditOp {
+function parseOp(flag: string | undefined, value: string): LegacyEditOp {
   switch (flag) {
     case "--replace": {
       const [find, replace] = need(splitFirst(value, "=>"), flag, value);

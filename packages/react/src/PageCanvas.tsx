@@ -27,7 +27,7 @@ export function PageCanvas(): JSX.Element {
           const matches = op.address.id !== undefined
             ? segment.id === op.address.id
             : segment.section === op.address.at.section && segment.para === op.address.at.paragraph;
-          if (matches) keys.add(`${segment.section}:${segment.para}`);
+          if (matches) keys.add(segment.id ?? `${segment.section}:${segment.para}`);
         }
         continue;
       }
@@ -36,7 +36,7 @@ export function PageCanvas(): JSX.Element {
       for (const segment of envelope.segments) {
         const plain = plainSegmentText(segmentText(envelope, segment));
         if (plain.includes(target)) {
-          keys.add(`${segment.section}:${segment.para}`);
+          keys.add(segment.id ?? `${segment.section}:${segment.para}`);
         }
       }
     }
@@ -108,7 +108,7 @@ function bandsForPage(
   if (envelope === null) return [];
   const bands: Band[] = [];
   for (const segment of envelope.segments) {
-    const key = `${segment.section}:${segment.para}`;
+    const key = segment.id ?? `${segment.section}:${segment.para}`;
     const isSelected = selected === segment;
     const isPending = !isSelected && pendingKeys.has(key);
     if (!isSelected && !isPending) continue;

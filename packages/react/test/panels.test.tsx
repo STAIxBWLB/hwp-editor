@@ -174,6 +174,20 @@ describe("SegmentInspector op emission (TEST-03)", () => {
     },
   );
 
+  it("addresses only the selected duplicate and lists its pending target", async () => {
+    const envelope = envelopeOf(["반복문구", "반복문구"]);
+    envelope.segments[0]!.id = "1234567890abcdef.0.0";
+    envelope.segments[1]!.id = "1234567890abcdef.0.1";
+    const engine = createMockEngine({ envelope });
+    await selectPara(engine, 1, envelope);
+    fireEvent.click(screen.getByLabelText(en["segment.bold"]));
+    clickBtn("segment.formatSubmit");
+    expect(screen.getByRole("list").textContent).toContain("1234567890abcdef.0.1");
+    expect(await applyOps(engine, 1)).toEqual([
+      { kind: "set-format", address: { id: "1234567890abcdef.0.1" }, props: { bold: "on" } },
+    ]);
+  });
+
   it("queues set-format with ONLY the props that were set", async () => {
     const engine = await openInspector();
     fireEvent.change(screen.getByLabelText(en["segment.sizeAria"]), {

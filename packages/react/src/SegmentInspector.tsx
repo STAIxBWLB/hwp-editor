@@ -104,7 +104,7 @@ export function SegmentInspector(): JSX.Element {
           <button
             type="button"
             className="hwped-btn"
-            disabled={disabled || replaceWith === ""}
+            disabled={disabled || replaceWith === "" || find === ""}
             onClick={() =>
               store.dispatch({
                 type: "queueOp",
