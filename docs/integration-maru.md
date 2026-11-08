@@ -41,7 +41,12 @@ Payloads mirror `packages/core/src/protocol.ts`, with two Tauri deltas:
   escape guard), `{ name, dataBase64 }` otherwise. Paths are preferred —
   base64 only when the document is in-memory.
 - `opsArgv` is `opsToArgv(ops)` output, computed JS-side. Rust splices the
-  fragments into `hwp edit` verbatim and owns no op grammar.
+  fragments into `hwp edit` verbatim and owns no op grammar. Addressed segment
+  edits cannot be represented by these flags: `opsToArgv` rejects them before
+  invoking the host. The HTTP/CLI transport supports these edits through
+  `edit-ops-v1` JSON. A Tauri host must adopt that JSON channel before enabling
+  addressed segment editing; falling back to text selectors can edit duplicate
+  occurrences unintentionally.
 - Rust errors are prefixed strings: `cli_missing:`, `hwp_timeout:`,
   `hwp_failed:`, `hwp_parse_failed:`, `hwped_bad_request:`. The engine wraps
   them as `<cmd> failed: <detail>`.

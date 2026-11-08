@@ -295,3 +295,16 @@ describe("createTauriEngine protection backstop", () => {
     expect(err.message).toBe(`hwped_edit failed: ${detail}`);
   });
 });
+
+
+it("rejects addressed edits before invoking the legacy Tauri host", async () => {
+  const calls: string[] = [];
+  const invoke: TauriInvoke = async <T>(cmd: string) => {
+    calls.push(cmd);
+    return {} as T;
+  };
+  await expect(createTauriEngine(invoke).edit({ name: "test.hwpx", data: new Uint8Array() }, [
+    { kind: "set-format", address: { at: { section: 0, paragraph: 1 }, chars: [0, 3] }, props: { bold: "on" } },
+  ])).rejects.toThrow(/JSON transport/);
+  expect(calls).toEqual([]);
+});

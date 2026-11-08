@@ -47,10 +47,11 @@ describeBin("cli-engine (real hwp-cli binary)", () => {
   it("AC2: bolds three WCHARs in only the addressed repeated phrase", async () => {
     const cli = engine();
     const phrase = "반복문구입니다.";
-    const spec = sampleSpec();
-    spec.document.sections[0]!.blocks = [0, 1].map(() => ({
-      type: "paragraph", runs: [{ type: "text", text: phrase }],
-    }));
+    const spec = { version: "2.0", document: { version: "1.0", sections: [{
+      blocks: [0, 1].map(() => ({
+        type: "paragraph", runs: [{ type: "text", text: phrase }],
+      })),
+    }] } };
     const { document } = await cli.compose(spec as unknown as DocumentSpecV2, "repeated.hwpx");
     const before = await cli.read(document);
     const paragraphs = before.segments.filter((segment) => segment.kind === "para");
