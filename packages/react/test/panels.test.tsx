@@ -132,7 +132,7 @@ describe("SegmentInspector op emission (TEST-03)", () => {
     clickBtn("segment.insertBefore");
 
     expect(await applyOps(engine, 1)).toEqual([
-      { kind: "insert-para-before", anchor: HEADING, text: "머리말" },
+      { kind: "insert-para-before", address: { at: { section: 0, paragraph: 0 } }, text: "머리말" },
     ]);
   });
 
@@ -144,7 +144,7 @@ describe("SegmentInspector op emission (TEST-03)", () => {
     clickBtn("segment.insertAfter");
 
     expect(await applyOps(engine, 1)).toEqual([
-      { kind: "insert-para", anchor: HEADING, text: "꼬리말" },
+      { kind: "insert-para", address: { at: { section: 0, paragraph: 0 } }, text: "꼬리말" },
     ]);
   });
 
@@ -153,7 +153,7 @@ describe("SegmentInspector op emission (TEST-03)", () => {
     clickBtn("segment.deletePara");
 
     expect(await applyOps(engine, 1)).toEqual([
-      { kind: "delete-para", text: HEADING },
+      { kind: "delete-para", address: { at: { section: 0, paragraph: 0 } } },
     ]);
   });
 
@@ -169,7 +169,7 @@ describe("SegmentInspector op emission (TEST-03)", () => {
       clickBtn(key);
 
       expect(await applyOps(engine, 1)).toEqual([
-        { kind: "set-align", find: HEADING, alignment },
+        { kind: "set-align", address: { at: { section: 0, paragraph: 0 } }, alignment },
       ]);
     },
   );
@@ -184,7 +184,7 @@ describe("SegmentInspector op emission (TEST-03)", () => {
     // bold and color were never touched: their keys must be absent, not
     // present-and-empty — the conditional spread is the contract.
     expect(await applyOps(engine, 1)).toEqual([
-      { kind: "set-format", find: HEADING, props: { size: "12" } },
+      { kind: "set-format", address: { at: { section: 0, paragraph: 0 } }, props: { size: "12" } },
     ]);
   });
 
@@ -202,7 +202,7 @@ describe("SegmentInspector op emission (TEST-03)", () => {
     expect(await applyOps(engine, 1)).toEqual([
       {
         kind: "set-format",
-        find: HEADING,
+        address: { at: { section: 0, paragraph: 0 } },
         props: { bold: "on", size: "14", color: "#FF0000" },
       },
     ]);
@@ -358,9 +358,9 @@ describe("panel edge cases (TEST-03)", () => {
     clickBtn("segment.insertAfter");
 
     expect(await applyOps(engine, 3)).toEqual([
-      { kind: "set-align", find: HEADING, alignment: "center" },
-      { kind: "delete-para", text: HEADING },
-      { kind: "insert-para", anchor: HEADING, text: "마지막" },
+      { kind: "set-align", address: { at: { section: 0, paragraph: 0 } }, alignment: "center" },
+      { kind: "delete-para", address: { at: { section: 0, paragraph: 0 } } },
+      { kind: "insert-para", address: { at: { section: 0, paragraph: 0 } }, text: "마지막" },
     ]);
   });
 });

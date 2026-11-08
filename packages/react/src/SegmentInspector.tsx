@@ -64,6 +64,9 @@ export function SegmentInspector(): JSX.Element {
   }
 
   const find = currentText;
+  const address = segment.id !== undefined
+    ? { id: segment.id }
+    : { at: { section: selection.section, paragraph: selection.para } };
   const disabled = !editable;
 
   return (
@@ -101,11 +104,11 @@ export function SegmentInspector(): JSX.Element {
           <button
             type="button"
             className="hwped-btn"
-            disabled={disabled || replaceWith === "" || find === ""}
+            disabled={disabled || replaceWith === ""}
             onClick={() =>
               store.dispatch({
                 type: "queueOp",
-                op: { kind: "replace", find, replace: replaceWith },
+                op: { kind: "replace", address, find, replace: replaceWith },
               })
             }
           >
@@ -131,11 +134,11 @@ export function SegmentInspector(): JSX.Element {
           <button
             type="button"
             className="hwped-btn"
-            disabled={disabled || insertText === "" || find === ""}
+            disabled={disabled || insertText === ""}
             onClick={() =>
               store.dispatch({
                 type: "queueOp",
-                op: { kind: "insert-para-before", anchor: find, text: insertText },
+                op: { kind: "insert-para-before", address, text: insertText },
               })
             }
           >
@@ -144,11 +147,11 @@ export function SegmentInspector(): JSX.Element {
           <button
             type="button"
             className="hwped-btn"
-            disabled={disabled || insertText === "" || find === ""}
+            disabled={disabled || insertText === ""}
             onClick={() =>
               store.dispatch({
                 type: "queueOp",
-                op: { kind: "insert-para", anchor: find, text: insertText },
+                op: { kind: "insert-para", address, text: insertText },
               })
             }
           >
@@ -157,11 +160,11 @@ export function SegmentInspector(): JSX.Element {
           <button
             type="button"
             className="hwped-btn hwped-btn-danger"
-            disabled={disabled || find === ""}
+            disabled={disabled}
             onClick={() =>
               store.dispatch({
                 type: "queueOp",
-                op: { kind: "delete-para", text: find },
+                op: { kind: "delete-para", address },
               })
             }
           >
@@ -182,11 +185,11 @@ export function SegmentInspector(): JSX.Element {
               key={align.value}
               type="button"
               className="hwped-btn"
-              disabled={disabled || find === ""}
+              disabled={disabled}
               onClick={() =>
                 store.dispatch({
                   type: "queueOp",
-                  op: { kind: "set-align", find, alignment: align.value },
+                  op: { kind: "set-align", address, alignment: align.value },
                 })
               }
             >
@@ -233,7 +236,6 @@ export function SegmentInspector(): JSX.Element {
             className="hwped-btn"
             disabled={
               disabled ||
-              find === "" ||
               (!bold && fontSize === "" && color === "")
             }
             onClick={() => {
@@ -243,7 +245,7 @@ export function SegmentInspector(): JSX.Element {
               if (color !== "") props["color"] = color;
               store.dispatch({
                 type: "queueOp",
-                op: { kind: "set-format", find, props },
+                op: { kind: "set-format", address, props },
               });
             }}
           >

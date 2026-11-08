@@ -25,6 +25,9 @@ export {
   argvToOps,
 } from "./ops.js";
 export type {
+  AddressedEditOp,
+  EditAddress,
+  ParagraphAddress,
   CloneTableMode,
   EditOp,
   MetaKey,

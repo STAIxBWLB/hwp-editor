@@ -48,6 +48,8 @@ const SEGMENT_KINDS: readonly SegmentKind[] = [
 ];
 
 export interface Segment {
+  /** Checksummed v2 id; optional for older host-projected envelopes. */
+  id?: string;
   /** Start character offset into `markdown` (inclusive), from `char_range.start`. */
   start: number;
   /** End character offset into `markdown` (exclusive), from `char_range.end`. */
@@ -67,6 +69,8 @@ export interface CatEnvelope {
 
 /** Source coordinate of a segment in the document body. */
 export interface SegmentRef {
+  /** Disambiguates nested segments sharing a top-level paragraph. */
+  id?: string;
   section: number;
   para: number;
 }
@@ -97,6 +101,7 @@ function projectSegment(raw: unknown): Segment {
     throw new Error("segments envelope: malformed segment");
   }
   return {
+    id,
     start: range.start,
     end: range.end,
     kind: kind as SegmentKind,
@@ -127,7 +132,8 @@ export function parseCatEnvelope(json: string): CatEnvelope {
 
 /** Extract the source coordinate of a segment. */
 export function segmentRef(segment: Segment): SegmentRef {
-  return { section: segment.section, para: segment.para };
+  return { section: segment.section, para: segment.para,
+    ...(segment.id === undefined ? {} : { id: segment.id }) };
 }
 
 /** Find the outermost segment covering a character offset into `markdown`. */
@@ -144,7 +150,7 @@ export function segmentAtRef(
   ref: SegmentRef,
 ): Segment | undefined {
   return envelope.segments.find(
-    (s) => s.section === ref.section && s.para === ref.para,
+    (s) => ref.id !== undefined ? s.id === ref.id : s.section === ref.section && s.para === ref.para,
   );
 }
 

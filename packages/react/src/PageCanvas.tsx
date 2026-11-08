@@ -22,6 +22,15 @@ export function PageCanvas(): JSX.Element {
     if (envelope === null) return new Set<string>();
     const keys = new Set<string>();
     for (const op of pendingOps) {
+      if ("address" in op) {
+        for (const segment of envelope.segments) {
+          const matches = op.address.id !== undefined
+            ? segment.id === op.address.id
+            : segment.section === op.address.at.section && segment.para === op.address.at.paragraph;
+          if (matches) keys.add(`${segment.section}:${segment.para}`);
+        }
+        continue;
+      }
       const target = opSearchText(op);
       if (target === null || target === "") continue;
       for (const segment of envelope.segments) {

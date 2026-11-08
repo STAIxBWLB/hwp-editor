@@ -350,3 +350,41 @@ describe("opsToJson", () => {
     ]);
   });
 });
+
+
+describe("addressed edit-ops-v1", () => {
+  const address = { id: "1234567890abcdef.0.1" };
+  it("serializes every addressed arm without text selectors", () => {
+    const ops: EditOp[] = [
+      { kind: "replace", address, find: "반복문구", replace: "수정" },
+      { kind: "set-format", address: { ...address, chars: [0, 3] }, props: { bold: "on" } },
+      { kind: "set-align", address, alignment: "center" },
+      { kind: "set-para", address, key: "line-spacing", value: "180" },
+      { kind: "insert-para", address, text: "뒤" },
+      { kind: "insert-para-before", address, text: "앞" },
+      { kind: "delete-para", address },
+      { kind: "move-para", address, to: { address: { at: { section: 0, paragraph: 0 } }, position: "before" } },
+      { kind: "indent-para", address },
+      { kind: "outdent-para", address },
+    ];
+    expect(JSON.parse(opsToJson(ops))).toEqual([
+      { op: "replace", address, from: "반복문구", to: "수정" },
+      { op: "set_format", address: { ...address, chars: [0, 3] }, bold: "on" },
+      { op: "set_align", address, align: "center" },
+      { op: "set_para", address, line_spacing_pct: "180%" },
+      { op: "insert_para", address, text: "뒤" },
+      { op: "insert_para", address, text: "앞", before: true },
+      { op: "delete_para", address },
+      { op: "move_para", address, to: { address: { at: { section: 0, paragraph: 0 } }, position: "before" } },
+      { op: "indent_para", address },
+      { op: "outdent_para", address },
+    ]);
+    for (const op of ops) expect(() => opsToArgv([op])).toThrow(/JSON transport/);
+  });
+  it("keeps reserved format fields under serializer control", () => {
+    expect(JSON.parse(opsToJson([{ kind: "set-format", address,
+      props: { bold: "on", op: "delete_para", address: "bad", pattern: "all" } }]))).toEqual([
+      { op: "set_format", address, bold: "on" },
+    ]);
+  });
+});

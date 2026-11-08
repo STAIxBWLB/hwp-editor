@@ -44,6 +44,27 @@ describeBin("cli-engine (real hwp-cli binary)", () => {
     expect(caps).toMatchObject({ editable: true, formats: ["hwp", "hwpx"] });
   });
 
+  it("AC2: bolds three WCHARs in only the addressed repeated phrase", async () => {
+    const cli = engine();
+    const phrase = "반복문구입니다.";
+    const spec = sampleSpec();
+    spec.document.sections[0]!.blocks = [0, 1].map(() => ({
+      type: "paragraph", runs: [{ type: "text", text: phrase }],
+    }));
+    const { document } = await cli.compose(spec as unknown as DocumentSpecV2, "repeated.hwpx");
+    const before = await cli.read(document);
+    const paragraphs = before.segments.filter((segment) => segment.kind === "para");
+    expect(paragraphs).toHaveLength(2);
+    expect(paragraphs[1]!.id).toBeDefined();
+    const edited = await cli.edit(document, [{ kind: "set-format",
+      address: { id: paragraphs[1]!.id!, chars: [0, 3] }, props: { bold: "on" } }]);
+    const after = await cli.read(edited);
+    expect(after.markdown).toBe(`${phrase}\n\n**반복문**구입니다.\n\n`);
+    // Explicit find-and-replace still supports a document-wide text pattern.
+    const replaced = await cli.edit(document, [{ kind: "replace", find: phrase, replace: "수정" }]);
+    expect((await cli.read(replaced)).markdown).toBe("수정\n\n수정\n\n");
+  });
+
   it("rejects binaries older than 0.20.0", async () => {
     // /bin/echo prints no semver — stands in for an unusable binary.
     const bad = createCliEngine({ bin: "/bin/echo" });

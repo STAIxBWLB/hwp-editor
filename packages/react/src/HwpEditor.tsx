@@ -484,6 +484,18 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
             </button>
           </header>
 
+          {state.pendingOps.length > 0 && (
+            <ol aria-label={t("toolbar.pendingEdits", { count: state.pendingOps.length })}>
+              {state.pendingOps.map((op, index) => (
+                <li key={index}>
+                  {op.kind}: {"address" in op
+                    ? JSON.stringify(op.address)
+                    : "find" in op ? op.find : "anchor" in op ? op.anchor : op.kind}
+                </li>
+              ))}
+            </ol>
+          )}
+
           {state.status === "error" && state.error !== null && (
             <ErrorLine prefix={t("error.prefix.apply")} {...state.error} />
           )}
