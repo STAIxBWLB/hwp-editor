@@ -178,13 +178,14 @@ describe("SegmentInspector op emission (TEST-03)", () => {
     const envelope = envelopeOf(["반복문구", "반복문구"]);
     envelope.segments[0]!.id = "1234567890abcdef.0.0";
     envelope.segments[1]!.id = "1234567890abcdef.0.1";
+    envelope.segments.push({ ...envelope.segments[1]!, kind: "run", id: "1234567890abcdef.0.1.0" });
     const engine = createMockEngine({ envelope });
     await selectPara(engine, 1, envelope);
     fireEvent.click(screen.getByLabelText(en["segment.bold"]));
     clickBtn("segment.formatSubmit");
-    expect(screen.getByRole("list").textContent).toContain("1234567890abcdef.0.1");
+    expect(screen.getByRole("list").textContent).toContain("1234567890abcdef.0.1.0");
     expect(await applyOps(engine, 1)).toEqual([
-      { kind: "set-format", address: { id: "1234567890abcdef.0.1" }, props: { bold: "on" } },
+      { kind: "set-format", address: { id: "1234567890abcdef.0.1.0" }, props: { bold: "on" } },
     ]);
   });
 
@@ -198,7 +199,7 @@ describe("SegmentInspector op emission (TEST-03)", () => {
     // bold and color were never touched: their keys must be absent, not
     // present-and-empty — the conditional spread is the contract.
     expect(await applyOps(engine, 1)).toEqual([
-      { kind: "set-format", address: { at: { section: 0, paragraph: 0 } }, props: { size: "12" } },
+      { kind: "set-format", address: { at: { section: 0, paragraph: 0, run: 0 } }, props: { size: "12" } },
     ]);
   });
 
@@ -216,7 +217,7 @@ describe("SegmentInspector op emission (TEST-03)", () => {
     expect(await applyOps(engine, 1)).toEqual([
       {
         kind: "set-format",
-        address: { at: { section: 0, paragraph: 0 } },
+        address: { at: { section: 0, paragraph: 0, run: 0 } },
         props: { bold: "on", size: "14", color: "#FF0000" },
       },
     ]);

@@ -135,7 +135,10 @@ export type ParagraphAddress =
   | { at: { section: number; paragraph: number }; id?: never };
 
 /** WCHAR [start, end) offsets within the source paragraph, not markdown. */
-export type EditAddress = ParagraphAddress & { chars?: [number, number] };
+export type EditAddress = (
+  | { id: string; at?: never }
+  | { at: { section: number; paragraph: number; run: number }; id?: never }
+) & { chars?: [number, number] };
 
 export type AddressedEditOp =
   | { kind: "replace"; address: ParagraphAddress; find: string; replace: string }

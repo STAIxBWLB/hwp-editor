@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { JSX } from "react";
-import type { ParagraphAlignment } from "@hwp-editor/core";
+import type { CatEnvelope, EditAddress, ParagraphAlignment, Segment } from "@hwp-editor/core";
 import { segmentAtRef, segmentText } from "@hwp-editor/core";
 import { plainSegmentText } from "./text.js";
 import { useHwpEditorContext } from "./context.js";
@@ -243,10 +243,9 @@ export function SegmentInspector(): JSX.Element {
               if (bold) props["bold"] = "on";
               if (fontSize !== "") props["size"] = fontSize;
               if (color !== "") props["color"] = color;
-              store.dispatch({
-                type: "queueOp",
-                op: { kind: "set-format", address, props },
-              });
+              for (const target of formatAddresses(envelope!, segment)) {
+                store.dispatch({ type: "queueOp", op: { kind: "set-format", address: target, props } });
+              }
             }}
           >
             {t("segment.formatSubmit")}
@@ -255,4 +254,20 @@ export function SegmentInspector(): JSX.Element {
       </div>
     </div>
   );
+}
+
+
+/** set_format addresses runs; paragraph operations keep the paragraph id. */
+function formatAddresses(envelope: CatEnvelope, segment: Segment): EditAddress[] {
+  const runs = envelope.segments.filter((run) => {
+    if (run.kind !== "run" || run.section !== segment.section || run.para !== segment.para) return false;
+    if (run.start < segment.start || run.end > segment.end) return false;
+    if (segment.indices === undefined || run.indices === undefined) return true;
+    return run.indices.length === segment.indices.length + 1 &&
+      segment.indices.every((index, at) => run.indices![at] === index);
+  });
+  const at = { section: segment.section, paragraph: segment.para };
+  return runs.length > 0
+    ? runs.map((run, index) => run.id !== undefined ? { id: run.id } : { at: { ...at, run: index } })
+    : [{ at: { ...at, run: 0 } }];
 }

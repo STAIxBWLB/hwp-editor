@@ -49,6 +49,8 @@ const SEGMENT_KINDS: readonly SegmentKind[] = [
 export interface Segment {
   /** Checksummed v2 id; optional for older host-projected envelopes. */
   id?: string;
+  /** Full v2 nesting path, including run index for run segments. */
+  indices?: number[];
   /** Start character offset into `markdown` (inclusive), from `char_range.start`. */
   start: number;
   /** End character offset into `markdown` (exclusive), from `char_range.end`. */
@@ -101,6 +103,7 @@ function projectSegment(raw: unknown): Segment {
   }
   return {
     id,
+    indices: p.indices,
     start: range.start,
     end: range.end,
     kind: kind as SegmentKind,

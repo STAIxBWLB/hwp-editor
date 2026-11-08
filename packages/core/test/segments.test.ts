@@ -36,6 +36,7 @@ describe("parseCatEnvelope", () => {
     expect(env.segments).toHaveLength(5);
     expect(env.segments[0]).toEqual({
       id: "175b9dd4192615d5.0.0",
+      indices: [0],
       start: 0,
       end: 12,
       kind: "para",

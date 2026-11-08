@@ -56,9 +56,11 @@ describeBin("cli-engine (real hwp-cli binary)", () => {
     const before = await cli.read(document);
     const paragraphs = before.segments.filter((segment) => segment.kind === "para");
     expect(paragraphs).toHaveLength(2);
-    expect(paragraphs[1]!.id).toBeDefined();
+    const run = before.segments.find((segment) =>
+      segment.kind === "run" && segment.para === paragraphs[1]!.para);
+    expect(run?.id).toBeDefined();
     const edited = await cli.edit(document, [{ kind: "set-format",
-      address: { id: paragraphs[1]!.id!, chars: [0, 3] }, props: { bold: "on" } }]);
+      address: { id: run!.id!, chars: [0, 3] }, props: { bold: "on" } }]);
     const after = await cli.read(edited);
     expect(after.markdown).toBe(`${phrase}\n\n**반복문**구입니다.\n\n`);
     // Explicit find-and-replace still supports a document-wide text pattern.

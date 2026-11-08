@@ -304,7 +304,7 @@ it("rejects addressed edits before invoking the legacy Tauri host", async () => 
     return {} as T;
   };
   await expect(createTauriEngine(invoke).edit({ name: "test.hwpx", data: new Uint8Array() }, [
-    { kind: "set-format", address: { at: { section: 0, paragraph: 1 }, chars: [0, 3] }, props: { bold: "on" } },
+    { kind: "set-format", address: { at: { section: 0, paragraph: 1, run: 0 }, chars: [0, 3] }, props: { bold: "on" } },
   ])).rejects.toThrow(/JSON transport/);
   expect(calls).toEqual([]);
 });
