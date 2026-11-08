@@ -189,6 +189,26 @@ describe("SegmentInspector op emission (TEST-03)", () => {
     ]);
   });
 
+  it("queues every immediate run of a styled paragraph in one edit call", async () => {
+    const envelope = envelopeOf(["서식 있는 문단", "다른 문단"]);
+    const para = envelope.segments[0]!;
+    para.id = "1234567890abcdef.0.0";
+    para.indices = [0];
+    envelope.segments.push(
+      { ...para, kind: "run", id: "1234567890abcdef.0.0.0", indices: [0, 0], end: 3 },
+      { ...para, kind: "run", id: "1234567890abcdef.0.0.1", indices: [0, 1], start: 3 },
+      { ...para, kind: "run", id: "1234567890abcdef.0.0.2.0", indices: [0, 2, 0] },
+    );
+    const engine = createMockEngine({ envelope });
+    await selectPara(engine, 0, envelope);
+    fireEvent.click(screen.getByLabelText(en["segment.bold"]));
+    clickBtn("segment.formatSubmit");
+    expect(await applyOps(engine, 2)).toEqual([
+      { kind: "set-format", address: { id: "1234567890abcdef.0.0.0" }, props: { bold: "on" } },
+      { kind: "set-format", address: { id: "1234567890abcdef.0.0.1" }, props: { bold: "on" } },
+    ]);
+  });
+
   it("queues set-format with ONLY the props that were set", async () => {
     const engine = await openInspector();
     fireEvent.change(screen.getByLabelText(en["segment.sizeAria"]), {
