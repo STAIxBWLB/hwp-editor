@@ -57,6 +57,21 @@ describe("render-layout-v1 retention", () => {
     expect(pages[1]!.layout).toEqual({ width_pt: 400, height_pt: 500, rows: [], truncated: true });
   });
 
+  it.each(["1.1", "1.12"])("accepts additive schema version %s", async (schema_version) => {
+    const pages = await createCliEngine({ bin: renderBin({ ...artifact, schema_version }) }).render(document);
+    expect(pages[0]!.layout!.rows).toEqual(artifact.pages[0]!.rows);
+  });
+
+  it.each([
+    { x0: 180, y0: 40, x1: 20, y1: 55 },
+    { x0: 20, y0: 55, x1: 180, y1: 40 },
+  ])("rejects inverted boxes %j with actionable diagnostics", async (box) => {
+    const layout = { ...artifact, pages: [{ ...artifact.pages[0], rows: [{ ...row, box }] }, artifact.pages[1]] };
+    await expect(createCliEngine({ bin: renderBin(layout) }).render(document)).rejects.toMatchObject({
+      reason: "failed", message: expect.stringContaining("row.box must satisfy x0 <= x1 and y0 <= y1"),
+    });
+  });
+
   it("uses the report page for a single selected page, not image-array index", async () => {
     const layout = { ...artifact, selected_pages: [3], pages: [artifact.pages[1]] };
     const [page] = await createCliEngine({ bin: renderBin(layout, [3]) }).render(document, { pages: "3" });
@@ -73,12 +88,13 @@ describe("render-layout-v1 retention", () => {
   it.each([
     "not json",
     { ...artifact, contract: "unknown" },
+    { ...artifact, schema_version: "2.0" },
     { ...artifact, pages: [{ ...artifact.pages[0], width_pt: 0 }, artifact.pages[1]] },
     { ...artifact, pages: [{ ...artifact.pages[0], rows: [{ ...row, box: { x0: 1 } }] }, artifact.pages[1]] },
     { ...artifact, pages: [{ ...artifact.pages[0], rows: [{ ...row, source_chars: { start: 8, end: 2 } }] }, artifact.pages[1]] },
     { ...artifact, pages: [artifact.pages[0]] },
   ])("rejects malformed present geometry instead of claiming exact selection", async (layout) => {
     await expect(createCliEngine({ bin: renderBin(layout) }).render(document, { format: "png" }))
-      .rejects.toMatchObject({ reason: "failed", message: "invalid render layout geometry" });
+      .rejects.toMatchObject({ reason: "failed", message: expect.stringMatching(/invalid render layout geometry: .+; check that the hwp-cli version pinned in cli-engine[.]ts emits render-layout-v1/) });
   });
 });

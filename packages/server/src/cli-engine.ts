@@ -797,24 +797,31 @@ export function svgSize(source: string): { width: number; height: number } | nul
 }
 
 /** Only validated render-layout-v1 geometry may drive exact selection. */
-function layoutRow(value: unknown): value is LayoutRow {
-  if (typeof value !== "object" || value === null) return false;
+function layoutRow(value: unknown): LayoutRow {
+  if (typeof value !== "object" || value === null) throw new Error("row must be an object");
   const row = value as Record<string, unknown>;
-  if (typeof row.id !== "string" || row.id.length === 0 ||
-      typeof row.kind !== "string" ||
-      !["para", "table", "cell", "bookmark"].includes(row.kind)) return false;
+  if (typeof row.id !== "string" || row.id.length === 0) throw new Error("row.id must be a nonempty string");
+  if (typeof row.kind !== "string" ||
+      !["para", "table", "cell", "bookmark"].includes(row.kind)) throw new Error("row.kind is unsupported");
   if (row.box !== null) {
-    if (typeof row.box !== "object" || row.box === null) return false;
+    if (typeof row.box !== "object" || row.box === null) throw new Error("row.box must be an object or null");
     const box = row.box as Record<string, unknown>;
-    if (![box.x0, box.y0, box.x1, box.y1].every((n) => typeof n === "number" && Number.isFinite(n))) return false;
+    if (![box.x0, box.y0, box.x1, box.y1].every((n) => typeof n === "number" && Number.isFinite(n))) {
+      throw new Error("row.box coordinates must be finite numbers");
+    }
+    if ((box.x0 as number) > (box.x1 as number) || (box.y0 as number) > (box.y1 as number)) {
+      throw new Error("row.box must satisfy x0 <= x1 and y0 <= y1");
+    }
   }
   if (row.source_chars !== null) {
-    if (typeof row.source_chars !== "object" || row.source_chars === null) return false;
+    if (typeof row.source_chars !== "object" || row.source_chars === null) throw new Error("row.source_chars must be an object or null");
     const range = row.source_chars as Record<string, unknown>;
-    if (![range.start, range.end].every((n) => typeof n === "number" && Number.isSafeInteger(n) && n >= 0)) return false;
-    if ((range.end as number) < (range.start as number)) return false;
+    if (![range.start, range.end].every((n) => typeof n === "number" && Number.isSafeInteger(n) && n >= 0) ||
+        (range.end as number) < (range.start as number)) {
+      throw new Error("row.source_chars must contain ordered nonnegative integer offsets");
+    }
   }
-  return true;
+  return row as unknown as LayoutRow;
 }
 
 async function readRenderLayouts(file: string): Promise<Map<number, PageLayout> | undefined> {
@@ -829,29 +836,41 @@ async function readRenderLayouts(file: string): Promise<Map<number, PageLayout> 
   }
   try {
     const raw = JSON.parse(source) as Record<string, unknown>;
-    if (raw === null || raw.contract !== "hwp-render-layout-v1" || raw.schema_version !== "1.0" ||
-        typeof raw.truncated !== "boolean" || !Array.isArray(raw.selected_pages) ||
-        raw.selected_pages.length === 0 || !Array.isArray(raw.pages)) throw new Error();
+    if (typeof raw !== "object" || raw === null) throw new Error("artifact must be an object");
+    if (raw.contract !== "hwp-render-layout-v1") throw new Error("contract must be hwp-render-layout-v1");
+    if (typeof raw.schema_version !== "string" || !/^1[.][0-9]+$/.test(raw.schema_version)) {
+      throw new Error("schema_version must be 1.x");
+    }
+    if (typeof raw.truncated !== "boolean") throw new Error("truncated must be a boolean");
+    if (!Array.isArray(raw.selected_pages) || raw.selected_pages.length === 0) throw new Error("selected_pages must be a nonempty array");
+    if (!Array.isArray(raw.pages)) throw new Error("pages must be an array");
     const selected = raw.selected_pages as unknown[];
     if (!selected.every((n) => typeof n === "number" && Number.isSafeInteger(n) && n > 0) ||
-        new Set(selected).size !== selected.length) throw new Error();
+        new Set(selected).size !== selected.length) throw new Error("selected_pages must contain unique positive integers");
     const layouts = new Map<number, PageLayout>();
     for (const value of raw.pages) {
-      if (typeof value !== "object" || value === null) throw new Error();
+      if (typeof value !== "object" || value === null) throw new Error("pages entry must be an object");
       const page = value as Record<string, unknown>;
-      if (typeof page.page !== "number" || !selected.includes(page.page) || layouts.has(page.page) ||
-          typeof page.width_pt !== "number" || !Number.isFinite(page.width_pt) || page.width_pt <= 0 ||
-          typeof page.height_pt !== "number" || !Number.isFinite(page.height_pt) || page.height_pt <= 0 ||
-          !Array.isArray(page.rows) || !page.rows.every(layoutRow)) throw new Error();
+      if (typeof page.page !== "number" || !selected.includes(page.page) || layouts.has(page.page)) {
+        throw new Error("pages.page must uniquely match selected_pages");
+      }
+      if (typeof page.width_pt !== "number" || !Number.isFinite(page.width_pt) || page.width_pt <= 0) {
+        throw new Error("pages.width_pt must be a positive finite number");
+      }
+      if (typeof page.height_pt !== "number" || !Number.isFinite(page.height_pt) || page.height_pt <= 0) {
+        throw new Error("pages.height_pt must be a positive finite number");
+      }
+      if (!Array.isArray(page.rows)) throw new Error("pages.rows must be an array");
       layouts.set(page.page, {
         width_pt: page.width_pt, height_pt: page.height_pt,
-        rows: page.rows, truncated: raw.truncated,
+        rows: page.rows.map(layoutRow), truncated: raw.truncated,
       });
     }
-    if (layouts.size !== selected.length) throw new Error();
+    if (layouts.size !== selected.length) throw new Error("pages must account for every selected_pages entry");
     return layouts;
-  } catch {
-    throw new HwpCliError("failed", "invalid render layout geometry");
+  } catch (error) {
+    const cause = error instanceof SyntaxError ? "artifact is not valid JSON" : (error as Error).message;
+    throw new HwpCliError("failed", `invalid render layout geometry: ${cause}; check that the hwp-cli version pinned in cli-engine.ts emits render-layout-v1 (hwp-render-layout-v1, schema 1.x)`);
   }
 }
 
