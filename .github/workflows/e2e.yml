@@ -25,17 +25,17 @@ jobs:
   # This job lives in its own workflow file on purpose. GitHub Actions' `needs:`
   # key can only reference job IDs defined in the same workflow, so a publishing
   # job authored in another workflow file is structurally unable to depend on
-  # this one. That is the mechanism; the job-level tolerance below is only the
-  # visible half. Do not move this job into ci.yml.
+  # this one. It is also excluded from ci-ok, the required-check aggregate.
+  # Keep this job in its separate advisory workflow, outside ci-ok needs.
   #
   # Settings half: `main` carries no branch protection and no rulesets today.
   # When a release workflow adds one, the check name produced by this workflow
   # must stay out of it - a required e2e would put fork-supplied code and a
   # network-downloaded binary on the release path.
   #
-  # A red run here is to be TRIAGED, NOT TOLERATED. The tolerance makes the job
-  # unable to block, which is the point, but it also makes this the only place a
-  # hwp-cli contract drift ever appears: op-flag spellings
+  # A red run here is to be TRIAGED, NOT TOLERATED. Failures stay red and emit
+  # an advisory warning and step summary. This is where hwp-cli contract drift
+  # appears: op-flag spellings
   # (packages/core/src/ops.ts), the segment-envelope shape
   # (packages/core/src/segments.ts) and the error markers
   # (packages/react/src/errors.ts) are all pinned to the 0.20.x contract and
@@ -49,7 +49,6 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v5
       # pnpm before setup-node: setup-node's pnpm cache shells out to
@@ -90,3 +89,12 @@ jobs:
       # a fresh runner lacks Chromium's system libraries.
       - run: pnpm --filter playground exec playwright install --with-deps chromium
       - run: pnpm --filter playground test:e2e
+
+      - name: Report e2e advisory failure
+        if: ${{ failure() }}
+        run: |
+          echo "::warning title=E2E advisory::Optional e2e verification failed; inspect this job's logs."
+          {
+            echo '### E2E advisory failed'
+            echo 'This optional check is outside ci-ok. Inspect the failed step logs before accepting CLI compatibility.'
+          } >> "$GITHUB_STEP_SUMMARY"

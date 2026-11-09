@@ -114,7 +114,6 @@ jobs:
       - name: Consumer tarball smoke test
         run: node scripts/smoke-consumer.mjs
 
-
   # Owner-required check: ci-ok. Advisory workflows stay outside this graph.
   ci-ok:
     if: ${{ always() }}

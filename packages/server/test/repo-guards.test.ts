@@ -154,13 +154,6 @@ function e2eGatingViolations(dir: string): string[] {
         `e2e job would become able to gate a publishing job`,
     );
   }
-  const body = host.jobs.get(E2E_JOB_ID) ?? [];
-  if (!body.some((line) => /^ {4}continue-on-error:\s*true\s*$/.test(line))) {
-    violations.push(
-      `${host.name} job "${E2E_JOB_ID}" does not carry continue-on-error: true, ` +
-        `so a red e2e run reddens the pull request`,
-    );
-  }
   return violations;
 }
 
@@ -592,7 +585,6 @@ on: [pull_request]
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v5
 `;
@@ -646,7 +638,7 @@ jobs:
 `;
 
 describe("PKG-10: the e2e job never gates a publishing job", () => {
-  it("keeps the e2e job alone in its workflow file and tolerant of failure", () => {
+  it("keeps the e2e job alone in its workflow file", () => {
     const violations = e2eGatingViolations(WORKFLOWS_DIR);
     expect(
       violations,
@@ -657,18 +649,16 @@ describe("PKG-10: the e2e job never gates a publishing job", () => {
   it("reports a violation when the two workflows are merged into one file", () => {
     const merged = CI_TWO_JOBS.replace(
       "  package:",
-      "  e2e:\n    runs-on: ubuntu-latest\n    continue-on-error: true\n  package:",
+      "  e2e:\n    runs-on: ubuntu-latest\n  package:",
     );
     const violations = e2eGatingViolations(fixtureDir({ "ci.yml": merged }));
     expect(violations.join("\n")).toContain("needs: edge");
   });
 
-  it("reports a violation when the e2e job loses continue-on-error", () => {
-    const gating = E2E_ALONE.replace("    continue-on-error: true\n", "");
-    const violations = e2eGatingViolations(
-      fixtureDir({ "ci.yml": CI_TWO_JOBS, "e2e.yml": gating }),
-    );
-    expect(violations.join("\n")).toContain("continue-on-error: true");
+  it("accepts a separate e2e workflow with visible failures", () => {
+    expect(e2eGatingViolations(
+      fixtureDir({ "ci.yml": CI_TWO_JOBS, "e2e.yml": E2E_ALONE }),
+    )).toEqual([]);
   });
 
   it("fails rather than passing when no workflow file can be read", () => {
@@ -1018,11 +1008,21 @@ describe("CI-2: bounded workflows and an explicit gating aggregate", () => {
     }).status).toBe(1);
   });
 
-  it("reports a failed font-less advisory through a warning and summary", () => {
-    const body = workflows.find((workflow) => workflow.name === "font-less-render.yml")!
-      .jobs.get("font-less-render")!.join("\n");
-    expect(body).not.toMatch(/^ {4}continue-on-error:/m);
-    const report = body.split("      - name: Report font-less render advisory failure\n")[1]!;
+  it("never hides job failures behind job-level continue-on-error", () => {
+    for (const workflow of workflows) {
+      for (const [id, lines] of workflow.jobs) {
+        expect(lines.join("\n"), `${workflow.name}:${id}`).not.toMatch(/^ {4}continue-on-error:/m);
+      }
+    }
+  });
+
+  it.each([
+    ["font-less-render.yml", "font-less-render", "font-less render", "Font-less render"],
+    ["e2e.yml", "e2e", "e2e", "E2E"],
+  ])("reports a failed %s advisory through a warning and summary", (file, job, step, title) => {
+    const body = workflows.find((workflow) => workflow.name === file)!
+      .jobs.get(job)!.join("\n");
+    const report = body.split(`      - name: Report ${step} advisory failure\n`)[1]!;
     expect(report).toContain("        if: ${{ failure() }}");
     const script = report.split("        run: |\n")[1]!.replace(/^ {10}/gm, "");
     const summary = join(mkdtempSync(join(tmpdir(), "hwped-advisory-")), "summary.md");
@@ -1030,7 +1030,7 @@ describe("CI-2: bounded workflows and an explicit gating aggregate", () => {
       env: { ...process.env, GITHUB_STEP_SUMMARY: summary }, encoding: "utf8",
     });
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("::warning title=Font-less render advisory::");
-    expect(readFileSync(summary, "utf8")).toContain("### Font-less render advisory failed");
+    expect(result.stdout).toContain(`::warning title=${title} advisory::`);
+    expect(readFileSync(summary, "utf8")).toContain(`### ${title} advisory failed`);
   });
 });
