@@ -824,6 +824,48 @@ function layoutRow(value: unknown): LayoutRow {
   return row as unknown as LayoutRow;
 }
 
+function layoutPage(value: unknown): { page: number; width_pt: number; height_pt: number; rows: LayoutRow[] } {
+  if (typeof value !== "object" || value === null) throw new Error("pages entry must be an object");
+  const page = value as Record<string, unknown>;
+  if (typeof page.page !== "number") throw new Error("pages.page must be a number");
+  if (typeof page.width_pt !== "number" || !Number.isFinite(page.width_pt) || page.width_pt <= 0) {
+    throw new Error("pages.width_pt must be a positive finite number");
+  }
+  if (typeof page.height_pt !== "number" || !Number.isFinite(page.height_pt) || page.height_pt <= 0) {
+    throw new Error("pages.height_pt must be a positive finite number");
+  }
+  if (!Array.isArray(page.rows)) throw new Error("pages.rows must be an array");
+  return { page: page.page, width_pt: page.width_pt, height_pt: page.height_pt, rows: page.rows.map(layoutRow) };
+}
+
+function parseRenderLayouts(source: string): Map<number, PageLayout> {
+  const raw = JSON.parse(source) as Record<string, unknown>;
+  if (typeof raw !== "object" || raw === null) throw new Error("artifact must be an object");
+  if (raw.contract !== "hwp-render-layout-v1") throw new Error("contract must be hwp-render-layout-v1");
+  if (typeof raw.schema_version !== "string" || !/^1[.][0-9]+$/.test(raw.schema_version)) {
+    throw new Error("schema_version must be 1.x");
+  }
+  if (typeof raw.truncated !== "boolean") throw new Error("truncated must be a boolean");
+  if (!Array.isArray(raw.selected_pages) || raw.selected_pages.length === 0) throw new Error("selected_pages must be a nonempty array");
+  if (!Array.isArray(raw.pages)) throw new Error("pages must be an array");
+  const selected = raw.selected_pages as unknown[];
+  if (!selected.every((n) => typeof n === "number" && Number.isSafeInteger(n) && n > 0) ||
+      new Set(selected).size !== selected.length) throw new Error("selected_pages must contain unique positive integers");
+  const layouts = new Map<number, PageLayout>();
+  for (const value of raw.pages) {
+    const page = layoutPage(value);
+    if (!selected.includes(page.page) || layouts.has(page.page)) {
+      throw new Error("pages.page must uniquely match selected_pages");
+    }
+    layouts.set(page.page, {
+      width_pt: page.width_pt, height_pt: page.height_pt,
+      rows: page.rows, truncated: raw.truncated,
+    });
+  }
+  if (layouts.size !== selected.length) throw new Error("pages must account for every selected_pages entry");
+  return layouts;
+}
+
 async function readRenderLayouts(file: string): Promise<Map<number, PageLayout> | undefined> {
   let source: string;
   try {
@@ -835,39 +877,7 @@ async function readRenderLayouts(file: string): Promise<Map<number, PageLayout> 
     throw error;
   }
   try {
-    const raw = JSON.parse(source) as Record<string, unknown>;
-    if (typeof raw !== "object" || raw === null) throw new Error("artifact must be an object");
-    if (raw.contract !== "hwp-render-layout-v1") throw new Error("contract must be hwp-render-layout-v1");
-    if (typeof raw.schema_version !== "string" || !/^1[.][0-9]+$/.test(raw.schema_version)) {
-      throw new Error("schema_version must be 1.x");
-    }
-    if (typeof raw.truncated !== "boolean") throw new Error("truncated must be a boolean");
-    if (!Array.isArray(raw.selected_pages) || raw.selected_pages.length === 0) throw new Error("selected_pages must be a nonempty array");
-    if (!Array.isArray(raw.pages)) throw new Error("pages must be an array");
-    const selected = raw.selected_pages as unknown[];
-    if (!selected.every((n) => typeof n === "number" && Number.isSafeInteger(n) && n > 0) ||
-        new Set(selected).size !== selected.length) throw new Error("selected_pages must contain unique positive integers");
-    const layouts = new Map<number, PageLayout>();
-    for (const value of raw.pages) {
-      if (typeof value !== "object" || value === null) throw new Error("pages entry must be an object");
-      const page = value as Record<string, unknown>;
-      if (typeof page.page !== "number" || !selected.includes(page.page) || layouts.has(page.page)) {
-        throw new Error("pages.page must uniquely match selected_pages");
-      }
-      if (typeof page.width_pt !== "number" || !Number.isFinite(page.width_pt) || page.width_pt <= 0) {
-        throw new Error("pages.width_pt must be a positive finite number");
-      }
-      if (typeof page.height_pt !== "number" || !Number.isFinite(page.height_pt) || page.height_pt <= 0) {
-        throw new Error("pages.height_pt must be a positive finite number");
-      }
-      if (!Array.isArray(page.rows)) throw new Error("pages.rows must be an array");
-      layouts.set(page.page, {
-        width_pt: page.width_pt, height_pt: page.height_pt,
-        rows: page.rows.map(layoutRow), truncated: raw.truncated,
-      });
-    }
-    if (layouts.size !== selected.length) throw new Error("pages must account for every selected_pages entry");
-    return layouts;
+    return parseRenderLayouts(source);
   } catch (error) {
     const cause = error instanceof SyntaxError ? "artifact is not valid JSON" : (error as Error).message;
     throw new HwpCliError("failed", `invalid render layout geometry: ${cause}; check that the hwp-cli version pinned in cli-engine.ts emits render-layout-v1 (hwp-render-layout-v1, schema 1.x)`);
