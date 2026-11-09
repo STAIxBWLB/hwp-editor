@@ -855,6 +855,16 @@ async function readRenderLayouts(file: string): Promise<Map<number, PageLayout> 
   }
 }
 
+/** A present artifact must account for every image we return. */
+function pageLayoutFields(layouts: Map<number, PageLayout> | undefined, page: number): Pick<PageImage, "layout"> {
+  if (layouts === undefined) return {};
+  const layout = layouts.get(page);
+  if (layout === undefined) {
+    throw new HwpCliError("failed", "render layout is missing a rendered page");
+  }
+  return { layout };
+}
+
 function parseSinglePage(pages: string | undefined): number | null {
   if (pages !== undefined && /^\d+$/.test(pages)) return Number(pages);
   return null;
@@ -1089,9 +1099,6 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
               suffix !== null
                 ? Number(suffix[1])
                 : (selected?.[i] ?? parseSinglePage(options.pages) ?? i + 1);
-            if (layouts !== undefined && !layouts.has(page)) {
-              throw new HwpCliError("failed", "render layout is missing a rendered page");
-            }
             const size =
               format === "png"
                 ? pngSize(data)
@@ -1126,7 +1133,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
               dpi,
               format,
               data,
-              ...(layouts?.has(page) ? { layout: layouts.get(page)! } : {}),
+              ...pageLayoutFields(layouts, page),
             });
           }
           return images;

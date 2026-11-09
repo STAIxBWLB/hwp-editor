@@ -1,7 +1,7 @@
 /** Exact layout rows take precedence; older hosts keep the linear flow model. */
 
-import type { CatEnvelope, LayoutRow, PageImage, Segment } from "@hwp-editor/core";
-import { segmentAtOffset } from "@hwp-editor/core";
+import type { CatEnvelope, PageImage, Segment } from "@hwp-editor/core";
+import { segmentAtOffset, segmentAtRef } from "@hwp-editor/core";
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -78,11 +78,6 @@ export function segmentBand(
 }
 
 
-/** Segment for a rendered rectangle. Ranges in the two artifacts never mix. */
-export function segmentForRow(envelope: CatEnvelope, row: LayoutRow): Segment | undefined {
-  return envelope.segments.find((segment) => segment.id === row.id);
-}
-
 /** Resolve both axes in page coordinates, favoring inner text over its table. */
 export function segmentOnPage(
   envelope: CatEnvelope,
@@ -103,7 +98,7 @@ export function segmentOnPage(
   let bestArea = Infinity;
   for (const row of rows) {
     const box = row.box;
-    const segment = segmentForRow(envelope, row);
+    const segment = segmentAtRef(envelope, { id: row.id, section: 0, para: 0 });
     if (box === null || segment === undefined) continue;
     const dx = Math.max(box.x0 - x, 0, x - box.x1);
     const dy = Math.max(box.y0 - y, 0, y - box.y1);
