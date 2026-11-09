@@ -148,7 +148,7 @@ describe("SegmentInspector op emission (TEST-03)", () => {
     fireEvent.click(page, { clientY: clientYForPara(makeEnvelope(), 0) });
     expect(await screen.findByText(messages["segment.addressedUnavailable"])).toBeTruthy();
     const panel = screen.getByRole("region", { name: messages["segment.panelAria"] });
-    for (const control of panel.querySelectorAll("input, textarea, button")) {
+    for (const control of Array.from(panel.querySelectorAll("input, textarea, button"))) {
       expect((control as HTMLButtonElement).disabled).toBe(true);
       fireEvent.click(control);
     }
