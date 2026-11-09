@@ -22,6 +22,7 @@
 import type {
   Capabilities,
   PageImageFormat,
+  PageLayout,
   ValidationReport,
 } from "./engine.js";
 import type { EditOp } from "./ops.js";
@@ -39,6 +40,7 @@ export interface RenderPageWire {
   format: PageImageFormat;
   /** Base64-encoded image bytes. */
   dataBase64: string;
+  layout?: PageLayout;
 }
 
 /** POST /render response. */

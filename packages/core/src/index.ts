@@ -5,6 +5,8 @@ export type {
   EditOptions,
   HwpEngine,
   PageImage,
+  LayoutRow,
+  PageLayout,
   PageImageFormat,
   RenderOptions,
   ValidationError,

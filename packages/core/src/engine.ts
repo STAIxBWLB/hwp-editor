@@ -11,6 +11,24 @@ export interface DocumentHandle {
 
 export type PageImageFormat = "png" | "jpeg" | "webp" | "svg";
 
+/** render-layout-v1 row. IDs join the segment envelope; source_chars are UTF-16
+ * source-paragraph offsets, never markdown offsets. Duplicate IDs are retained. */
+export interface LayoutRow {
+  id: string;
+  kind: "para" | "table" | "cell" | "bookmark";
+  box: { x0: number; y0: number; x1: number; y1: number } | null;
+  source_chars: { start: number; end: number } | null;
+}
+
+/** Geometry in points (top-left origin), independent of render DPI/format. */
+export interface PageLayout {
+  width_pt: number;
+  height_pt: number;
+  rows: LayoutRow[];
+  /** Missing rows are inconclusive when recording reached the engine span cap. */
+  truncated: boolean;
+}
+
 export interface PageImage {
   /** 1-based page number. */
   page: number;
@@ -19,6 +37,8 @@ export interface PageImage {
   dpi: number;
   format: PageImageFormat;
   data: Uint8Array;
+  /** Absent on older hosts; an empty row list means measured empty geometry. */
+  layout?: PageLayout;
 }
 
 export interface RenderOptions {

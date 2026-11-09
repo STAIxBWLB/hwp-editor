@@ -176,6 +176,7 @@ export function createHttpEngine(
           height: p.height,
           dpi: p.dpi,
           format: p.format,
+          ...(p.layout === undefined ? {} : { layout: p.layout }),
           data: fromBase64(p.dataBase64),
         }),
       );

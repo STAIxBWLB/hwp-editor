@@ -93,6 +93,25 @@ describe("routes (stub engine)", () => {
     expect(body.pages[0].page).toBe(2);
   });
 
+  it("POST /render preserves page layout geometry on the wire", async () => {
+    const layout = {
+      width_pt: 595, height_pt: 842, truncated: true,
+      rows: [
+        { id: "p2", kind: "para" as const, box: { x0: 50, y0: 70, x1: 120, y1: 85 }, source_chars: { start: 0, end: 6 } },
+        { id: "p2", kind: "para" as const, box: null, source_chars: null },
+      ],
+    };
+    const engine = stubEngine({
+      async render() {
+        return [{ page: 2, width: 794, height: 1123, dpi: 96, format: "png", data: new Uint8Array([1]), layout }];
+      },
+    });
+    const handler = createHwpEditorHandler({ engine, sessions: false });
+    const res = await handler(multipartRequest(`${BASE}/render`, { file: DOC, pages: "2" }));
+    expect(res.status).toBe(200);
+    expect((await res.json()).pages[0].layout).toEqual(layout);
+  });
+
   it("POST /render rejects a non-numeric dpi", async () => {
     const handler = createHwpEditorHandler({ engine: stubEngine(), sessions: false });
     const res = await handler(multipartRequest(`${BASE}/render`, { file: DOC, dpi: "abc" }));

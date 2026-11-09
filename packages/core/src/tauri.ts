@@ -232,6 +232,7 @@ export function createTauriEngine(
           height: p.height,
           dpi: p.dpi,
           format: p.format,
+          ...(p.layout === undefined ? {} : { layout: p.layout }),
           data: base64.decode(p.dataBase64),
         }),
       );

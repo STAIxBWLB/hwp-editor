@@ -59,6 +59,32 @@ const tableSpecPath = join(fixturesDir, "_table-demo.spec.json");
 writeFileSync(tableSpecPath, JSON.stringify(tableSpec));
 specs.push({ spec: tableSpecPath, out: "table-demo.hwpx" });
 
+// Exact-selection fixture: varied text lengths and alignments across page breaks.
+const layoutSpec = {
+  version: "2.0",
+  document: {
+    version: "1.0",
+    styles: {
+      body: { font_size_pt: 11, spacing_after_pt: 12 },
+      right: { font_size_pt: 11, align: "right", spacing_after_pt: 12 },
+      large: { font_size_pt: 19, spacing_after_pt: 16 },
+    },
+    sections: [{
+      page: { width_mm: 150, height_mm: 180, margin_left_mm: 15, margin_right_mm: 15,
+        margin_top_mm: 15, margin_bottom_mm: 15 },
+      blocks: Array.from({ length: 12 }, (_, index) => [
+        ...(index > 0 && index % 4 === 0 ? [{ type: "break", kind: "page" }] : []),
+        { type: "paragraph", style: index % 4 === 0 ? "large" : index % 2 ? "right" : "body",
+          runs: [{ type: "text", text: `위치 검증 문단 ${index + 1}. ` +
+            (index % 3 === 0 ? "서로 다른 길이의 문장을 실제 배치 좌표로 선택합니다. ".repeat(3) : "짧은 본문입니다.") }] },
+      ]).flat(),
+    }],
+  },
+};
+const layoutSpecPath = join(fixturesDir, "_layout-demo.spec.json");
+writeFileSync(layoutSpecPath, JSON.stringify(layoutSpec));
+specs.push({ spec: layoutSpecPath, out: "z-layout-demo.hwpx" });
+
 for (const { spec, out } of specs) {
   const target = join(fixturesDir, out);
   execFileSync(BIN, ["compose", spec, "-o", target], {
@@ -68,6 +94,7 @@ for (const { spec, out } of specs) {
   console.log(`seeded ${out}`);
 }
 rmSync(tableSpecPath, { force: true });
+rmSync(layoutSpecPath, { force: true });
 
 const fixtures = readdirSync(fixturesDir).filter((f) => /\.hwpx?$/.test(f)).sort();
 for (const f of fixtures) cpSync(join(fixturesDir, f), join(publicDir, f));

@@ -314,3 +314,20 @@ describe("FormData construction", () => {
     expect(partial.body().get("verify")).toBeNull();
   });
 });
+
+
+describe("render layout transport", () => {
+  it.each([undefined, { width_pt: 600, height_pt: 800, truncated: true, rows: [
+    { id: "para-1", kind: "para", box: { x0: 10, y0: 20, x1: 200, y1: 40 }, source_chars: { start: 0, end: 5 } },
+    { id: "para-1", kind: "para", box: null, source_chars: null },
+  ] }])("preserves optional layout while decoding image bytes", async (layout) => {
+    const engine = createHttpEngine("/api", { fetch: stubFetch(JSON.stringify({ pages: [{
+      page: 3, width: 1200, height: 1600, dpi: 144, format: "png",
+      dataBase64: base64.encode(new Uint8Array([1, 2])), ...(layout === undefined ? {} : { layout }),
+    }] }), { status: 200 }) });
+    const [page] = await engine.render(doc);
+    expect(page?.page).toBe(3);
+    expect(page?.data).toEqual(new Uint8Array([1, 2]));
+    expect(page?.layout).toEqual(layout);
+  });
+});

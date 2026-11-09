@@ -38,6 +38,8 @@ import {
   type HwpErrorCode,
   type PageImage,
   type PageImageFormat,
+  type PageLayout,
+  type LayoutRow,
   type RenderOptions,
   type ValidationError,
   type ValidationReport,
@@ -794,6 +796,65 @@ export function svgSize(source: string): { width: number; height: number } | nul
   return positiveSize(Number(viewBox[1]), Number(viewBox[2]));
 }
 
+/** Only validated render-layout-v1 geometry may drive exact selection. */
+function layoutRow(value: unknown): value is LayoutRow {
+  if (typeof value !== "object" || value === null) return false;
+  const row = value as Record<string, unknown>;
+  if (typeof row.id !== "string" || row.id.length === 0 ||
+      typeof row.kind !== "string" ||
+      !["para", "table", "cell", "bookmark"].includes(row.kind)) return false;
+  if (row.box !== null) {
+    if (typeof row.box !== "object" || row.box === null) return false;
+    const box = row.box as Record<string, unknown>;
+    if (![box.x0, box.y0, box.x1, box.y1].every((n) => typeof n === "number" && Number.isFinite(n))) return false;
+  }
+  if (row.source_chars !== null) {
+    if (typeof row.source_chars !== "object" || row.source_chars === null) return false;
+    const range = row.source_chars as Record<string, unknown>;
+    if (![range.start, range.end].every((n) => typeof n === "number" && Number.isSafeInteger(n) && n >= 0)) return false;
+    if ((range.end as number) < (range.start as number)) return false;
+  }
+  return true;
+}
+
+async function readRenderLayouts(file: string): Promise<Map<number, PageLayout> | undefined> {
+  let source: string;
+  try {
+    source = await readFile(file, "utf8");
+  } catch (error) {
+    // Older hosts/fakes may not emit the optional artifact. A present but
+    // invalid artifact is a producer error, never a measured empty page.
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  try {
+    const raw = JSON.parse(source) as Record<string, unknown>;
+    if (raw === null || raw.contract !== "hwp-render-layout-v1" || raw.schema_version !== "1.0" ||
+        typeof raw.truncated !== "boolean" || !Array.isArray(raw.selected_pages) ||
+        raw.selected_pages.length === 0 || !Array.isArray(raw.pages)) throw new Error();
+    const selected = raw.selected_pages as unknown[];
+    if (!selected.every((n) => typeof n === "number" && Number.isSafeInteger(n) && n > 0) ||
+        new Set(selected).size !== selected.length) throw new Error();
+    const layouts = new Map<number, PageLayout>();
+    for (const value of raw.pages) {
+      if (typeof value !== "object" || value === null) throw new Error();
+      const page = value as Record<string, unknown>;
+      if (typeof page.page !== "number" || !selected.includes(page.page) || layouts.has(page.page) ||
+          typeof page.width_pt !== "number" || !Number.isFinite(page.width_pt) || page.width_pt <= 0 ||
+          typeof page.height_pt !== "number" || !Number.isFinite(page.height_pt) || page.height_pt <= 0 ||
+          !Array.isArray(page.rows) || !page.rows.every(layoutRow)) throw new Error();
+      layouts.set(page.page, {
+        width_pt: page.width_pt, height_pt: page.height_pt,
+        rows: page.rows, truncated: raw.truncated,
+      });
+    }
+    if (layouts.size !== selected.length) throw new Error();
+    return layouts;
+  } catch {
+    throw new HwpCliError("failed", "invalid render layout geometry");
+  }
+}
+
 function parseSinglePage(pages: string | undefined): number | null {
   if (pages !== undefined && /^\d+$/.test(pages)) return Number(pages);
   return null;
@@ -990,6 +1051,8 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
           const outBase = path.join(dir, `page.${format}`);
           const reportPath = path.join(dir, "render-report.json");
           const layoutPath = path.join(dir, "render-layout.json");
+          // A PNG retry must not reuse a partial SVG attempt's geometry.
+          await rm(layoutPath, { force: true });
           await runCliOk(bin, [
             "render", input, "-o", outBase,
             "--format", format, "--pages", pages, "--dpi", String(dpi),
@@ -1016,6 +1079,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
           } catch {
             selected = null;
           }
+          const layouts = await readRenderLayouts(layoutPath);
           const images: PageImage[] = [];
           for (let i = 0; i < files.length; i++) {
             const file = files[i]!;
@@ -1025,6 +1089,9 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
               suffix !== null
                 ? Number(suffix[1])
                 : (selected?.[i] ?? parseSinglePage(options.pages) ?? i + 1);
+            if (layouts !== undefined && !layouts.has(page)) {
+              throw new HwpCliError("failed", "render layout is missing a rendered page");
+            }
             const size =
               format === "png"
                 ? pngSize(data)
@@ -1059,6 +1126,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
               dpi,
               format,
               data,
+              ...(layouts?.has(page) ? { layout: layouts.get(page)! } : {}),
             });
           }
           return images;

@@ -96,6 +96,19 @@ describe("createTauriEngine commands", () => {
     ]);
   });
 
+  it("preserves layout from a capable Tauri host", async () => {
+    const layout = { width_pt: 600, height_pt: 800, truncated: false, rows: [
+      { id: "para-1", kind: "para", box: null, source_chars: null },
+      { id: "para-1", kind: "para", box: { x0: 10, y0: 20, x1: 200, y1: 40 }, source_chars: { start: 2, end: 6 } },
+    ] };
+    const { invoke } = mockInvoke({ hwped_render: { pages: [{
+      page: 3, width: 1200, height: 1600, dpi: 144, format: "png", dataBase64: "AQI=", layout,
+    }] } });
+    const [page] = await createTauriEngine(invoke).render(doc);
+    expect(page?.layout).toEqual(layout);
+    expect(page?.data).toEqual(new Uint8Array([1, 2]));
+  });
+
   it("edit serializes ops via opsToArgv and forwards flags", async () => {
     const edited = new Uint8Array([9, 9]);
     const { invoke, calls } = mockInvoke({
