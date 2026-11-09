@@ -131,7 +131,8 @@ const tableEnvelope = parseCatEnvelope(JSON.stringify(tableFixture));
 describe("SegmentInspector op emission (TEST-03)", () => {
   it("disables character formatting for a v2 paragraph without immediate runs", async () => {
     const engine = createMockEngine({ envelope: tableEnvelope });
-    await selectPara(engine, 2, tableEnvelope);
+    await selectPara(engine, tableEnvelope.segments.findIndex(segment =>
+      segment.kind === "para" && segment.para === 2 && segment.indices?.length === 1), tableEnvelope);
     fireEvent.click(screen.getByRole("tab", { name: en["tabs.para"] }));
     fireEvent.click(screen.getByLabelText(en["segment.bold"]));
     const submit = screen.getByRole("button", { name: en["segment.formatSubmit"] });
