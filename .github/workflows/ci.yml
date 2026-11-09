@@ -8,12 +8,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       # One red cell must not hide the state of the other three.
       fail-fast: false
@@ -66,6 +67,7 @@ jobs:
 
   package:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     # No needs: edge to build-test. Installability is a function of packaging
     # metadata, not of the runtime axis, so it need not wait for four cells.
     steps:
@@ -111,3 +113,24 @@ jobs:
       # tarball assertions a proof of the hook.
       - name: Consumer tarball smoke test
         run: node scripts/smoke-consumer.mjs
+
+  # Owner-required check: ci-ok. Advisory workflows stay outside this graph.
+  ci-ok:
+    if: ${{ always() }}
+    needs: [build-test, package]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every gating job to succeed
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          node <<'NODE'
+          const jobs = Object.entries(JSON.parse(process.env.NEEDS_JSON));
+          const failed = jobs.filter(([, job]) => job.result !== "success");
+          if (jobs.length === 0 || failed.length > 0) {
+            console.error("Gating jobs did not all succeed:", failed);
+            process.exit(1);
+          }
+          console.log("All gating jobs succeeded");
+          NODE

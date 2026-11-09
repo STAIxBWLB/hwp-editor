@@ -26,6 +26,7 @@
  * guard did not run" is a failure, not a clean tree.
  */
 
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -151,13 +152,6 @@ function e2eGatingViolations(dir: string): string[] {
       `${host.name} declares "${E2E_JOB_ID}" alongside ${others.join(", ")}; ` +
         `a job in the same workflow file can carry a needs: edge to it, so the ` +
         `e2e job would become able to gate a publishing job`,
-    );
-  }
-  const body = host.jobs.get(E2E_JOB_ID) ?? [];
-  if (!body.some((line) => /^ {4}continue-on-error:\s*true\s*$/.test(line))) {
-    violations.push(
-      `${host.name} job "${E2E_JOB_ID}" does not carry continue-on-error: true, ` +
-        `so a red e2e run reddens the pull request`,
     );
   }
   return violations;
@@ -591,7 +585,6 @@ on: [pull_request]
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v5
 `;
@@ -645,7 +638,7 @@ jobs:
 `;
 
 describe("PKG-10: the e2e job never gates a publishing job", () => {
-  it("keeps the e2e job alone in its workflow file and tolerant of failure", () => {
+  it("keeps the e2e job alone in its workflow file", () => {
     const violations = e2eGatingViolations(WORKFLOWS_DIR);
     expect(
       violations,
@@ -656,18 +649,16 @@ describe("PKG-10: the e2e job never gates a publishing job", () => {
   it("reports a violation when the two workflows are merged into one file", () => {
     const merged = CI_TWO_JOBS.replace(
       "  package:",
-      "  e2e:\n    runs-on: ubuntu-latest\n    continue-on-error: true\n  package:",
+      "  e2e:\n    runs-on: ubuntu-latest\n  package:",
     );
     const violations = e2eGatingViolations(fixtureDir({ "ci.yml": merged }));
     expect(violations.join("\n")).toContain("needs: edge");
   });
 
-  it("reports a violation when the e2e job loses continue-on-error", () => {
-    const gating = E2E_ALONE.replace("    continue-on-error: true\n", "");
-    const violations = e2eGatingViolations(
-      fixtureDir({ "ci.yml": CI_TWO_JOBS, "e2e.yml": gating }),
-    );
-    expect(violations.join("\n")).toContain("continue-on-error: true");
+  it("accepts a separate e2e workflow with visible failures", () => {
+    expect(e2eGatingViolations(
+      fixtureDir({ "ci.yml": CI_TWO_JOBS, "e2e.yml": E2E_ALONE }),
+    )).toEqual([]);
   });
 
   it("fails rather than passing when no workflow file can be read", () => {
@@ -957,5 +948,89 @@ describe("REL-02: the release path carries no stored credential", () => {
       fixtureDir({ "release.yml": planted }),
     );
     expect(violations.join("\n")).toContain("that step's own block");
+  });
+});
+
+describe("CI-2: bounded workflows and an explicit gating aggregate", () => {
+  const workflows = readWorkflows(WORKFLOWS_DIR);
+  const ci = workflows.find((workflow) => workflow.name === "ci.yml")!;
+  const aggregate = ci.jobs.get("ci-ok")!.join("\n");
+
+  it("gives every job a positive timeout", () => {
+    for (const workflow of workflows) {
+      for (const [id, lines] of workflow.jobs) {
+        expect(lines.join("\n"), `${workflow.name}:${id}`).toMatch(/^ {4}timeout-minutes: [1-9][0-9]*$/m);
+      }
+    }
+  });
+
+  it("only cancels superseded pull-request runs", () => {
+    for (const name of ["ci.yml", "e2e.yml", "font-less-render.yml"]) {
+      const text = workflows.find((workflow) => workflow.name === name)!.lines.join("\n");
+      expect(text).toContain("github.event.pull_request.number || github.run_id");
+      expect(text).toContain("  cancel-in-progress: ${{ github.event_name == 'pull_request' }}");
+    }
+    const release = workflows.find((workflow) => workflow.name === "release.yml")!.lines.join("\n");
+    expect(release).toContain("  cancel-in-progress: false");
+  });
+
+  it("always aggregates every other CI job, excluding advisory workflows", () => {
+    expect(aggregate).toContain("    if: ${{ always() }}");
+    const dependencies = /^ {4}needs: \[([^\]]+)\]$/m.exec(aggregate)![1]!
+      .split(",").map((id) => id.trim()).sort();
+    expect(dependencies).toEqual([...ci.jobs.keys()].filter((id) => id !== "ci-ok").sort());
+    expect(dependencies).not.toContain("e2e");
+    expect(dependencies).not.toContain("font-less-render");
+    expect(aggregate).toContain("NEEDS_JSON: ${{ toJSON(needs) }}");
+  });
+
+  const nodeScript = /node <<'NODE'\n([\s\S]+?)\n {10}NODE/.exec(aggregate)![1]!
+    .replace(/^ {10}/gm, "");
+  it("accepts successful gating jobs", () => {
+    const result = spawnSync(process.execPath, ["-e", nodeScript], {
+      env: { ...process.env, NEEDS_JSON: JSON.stringify({ "build-test": { result: "success" }, package: { result: "success" } }) },
+    });
+    expect(result.status).toBe(0);
+  });
+
+  it.each(["failure", "cancelled", "skipped", undefined])("rejects a %s gating result", (result) => {
+    for (const id of ["build-test", "package"]) {
+      const needs = { "build-test": { result: "success" }, package: { result: "success" }, [id]: { result } };
+      expect(spawnSync(process.execPath, ["-e", nodeScript], {
+        env: { ...process.env, NEEDS_JSON: JSON.stringify(needs) },
+      }).status).toBe(1);
+    }
+  });
+
+  it("rejects an empty dependency map", () => {
+    expect(spawnSync(process.execPath, ["-e", nodeScript], {
+      env: { ...process.env, NEEDS_JSON: "{}" },
+    }).status).toBe(1);
+  });
+
+  it("never hides job failures behind job-level continue-on-error", () => {
+    for (const workflow of workflows) {
+      for (const [id, lines] of workflow.jobs) {
+        expect(lines.join("\n"), `${workflow.name}:${id}`).not.toMatch(/^ {4}continue-on-error:/m);
+      }
+    }
+  });
+
+  it.each([
+    ["font-less-render.yml", "font-less-render", "font-less render", "Font-less render"],
+    ["e2e.yml", "e2e", "e2e", "E2E"],
+  ])("reports a failed %s advisory through a warning and summary", (file, job, step, title) => {
+    const body = workflows.find((workflow) => workflow.name === file)!
+      .jobs.get(job)!.join("\n");
+    const report = body.split(`      - name: Report ${step} advisory failure\n`)[1]!;
+    expect(report).toContain("        if: ${{ failure() }}");
+    const script = report.split("        run: |\n")[1]!.replace(/^ {10}/gm, "");
+    const summary = join(mkdtempSync(join(tmpdir(), "hwped-advisory-")), "summary.md");
+    const result = spawnSync("bash", ["-e", "-c", script], {
+      env: { ...process.env, GITHUB_STEP_SUMMARY: summary }, encoding: "utf8",
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(`::warning title=${title} advisory::`);
+    expect(readFileSync(summary, "utf8")).toContain(`### ${title} advisory failed`);
   });
 });
