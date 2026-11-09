@@ -84,6 +84,7 @@ export function createMockEngine(opts?: {
   const capabilities: Capabilities = {
     version: "0.16.0-test",
     editable: opts?.editable ?? true,
+    editOps: "v1",
     ...(opts?.reason !== undefined ? { reason: opts.reason } : {}),
     formats: ["hwp", "hwpx"],
   };

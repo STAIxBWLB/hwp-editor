@@ -379,7 +379,7 @@ describe("addressed edit-ops-v1", () => {
       { op: "indent_para", address },
       { op: "outdent_para", address },
     ]);
-    for (const op of ops) expect(() => opsToArgv([op])).toThrow(/JSON transport/);
+    for (const op of ops) expect(() => opsToArgv([op])).toThrow(/Update the host and Tauri client.*docs\/integration-maru[.]md/);
   });
   it("keeps reserved format fields under serializer control", () => {
     expect(JSON.parse(opsToJson([{ kind: "set-format", address,

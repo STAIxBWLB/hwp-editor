@@ -1194,7 +1194,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
 
     async capabilities(): Promise<Capabilities> {
       const version = await ensureVersion();
-      return { version, editable: true, formats: ["hwp", "hwpx"] };
+      return { version, editable: true, editOps: "v1", formats: ["hwp", "hwpx"] };
     },
 
     async binaryInfo() {

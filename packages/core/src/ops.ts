@@ -294,7 +294,7 @@ export function opsToArgv(ops: EditOp[]): string[] {
   const argv: string[] = [];
   for (const op of ops) {
     if ("address" in op) {
-      throw new Error("Addressed edits require the edit-ops-v1 JSON transport; the argv bridge cannot represent addresses");
+      throw new Error("Addressed edits require the edit-ops-v1 JSON transport; the argv bridge cannot represent addresses. Update the host and Tauri client to use the edit-ops-v1 JSON channel (docs/integration-maru.md)");
     }
     argv.push(OP_FLAGS[op.kind], opValue(op));
   }

@@ -24,7 +24,7 @@ const ALIGNMENTS: { value: ParagraphAlignment; key: MessageKey }[] = [
  * All controls queue EditOps; nothing touches the engine until Apply.
  */
 export function SegmentInspector(): JSX.Element {
-  const { state, store, envelope, editable, t } = useHwpEditorContext();
+  const { state, store, envelope, editable, capabilities, t } = useHwpEditorContext();
   const { selection } = state;
 
   const segment =
@@ -67,7 +67,8 @@ export function SegmentInspector(): JSX.Element {
   const address = segment.id !== undefined
     ? { id: segment.id }
     : { at: { section: selection.section, paragraph: selection.para } };
-  const disabled = !editable;
+  const addressedUnavailable = capabilities?.editOps !== "v1";
+  const disabled = !editable || addressedUnavailable;
   const formatTargets = formatAddresses(envelope!, segment);
 
   return (
@@ -76,6 +77,7 @@ export function SegmentInspector(): JSX.Element {
       role="region"
       aria-label={t("segment.panelAria")}
     >
+      {addressedUnavailable && <p className="hwped-hint" role="status">{t("segment.addressedUnavailable")}</p>}
       <div className="hwped-field">
         <span className="hwped-label">
           {t("segment.selectedPara", {

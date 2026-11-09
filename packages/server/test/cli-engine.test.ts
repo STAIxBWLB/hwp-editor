@@ -41,7 +41,7 @@ describeBin("cli-engine (real hwp-cli binary)", () => {
     expectVersionAtLeast0200(info.version);
     const caps = await engine().capabilities();
     expectVersionAtLeast0200(caps.version);
-    expect(caps).toMatchObject({ editable: true, formats: ["hwp", "hwpx"] });
+    expect(caps).toMatchObject({ editable: true, editOps: "v1", formats: ["hwp", "hwpx"] });
   });
 
   it("AC2: bolds three WCHARs in only the addressed repeated phrase", async () => {

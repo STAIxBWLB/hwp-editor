@@ -21,11 +21,11 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { CatEnvelope, DocumentHandle, EditOp } from "@hwp-editor/core";
 import tableFixture from "../../core/test/fixtures/cat-segments-table.json";
-import { parseCatEnvelope } from "@hwp-editor/core";
+import { base64, createTauriEngine, parseCatEnvelope } from "@hwp-editor/core";
 import { targetsSegment } from "../src/PageCanvas.js";
 import { HwpEditor } from "../src/HwpEditor.js";
-import { en } from "../src/messages.js";
-import { clientYForPara, createMockEngine, makeEnvelope } from "./mock-engine.js";
+import { en, ko } from "../src/messages.js";
+import { clientYForPara, createMockEngine, makeEnvelope, makePage } from "./mock-engine.js";
 
 afterEach(cleanup);
 
@@ -129,6 +129,49 @@ function clickBtn(key: keyof typeof en): void {
 const tableEnvelope = parseCatEnvelope(JSON.stringify(tableFixture));
 
 describe("SegmentInspector op emission (TEST-03)", () => {
+  it.each([["en", en], ["ko", ko]] as const)("disables addressed edits on an argv-only Tauri host (%s)", async (locale, messages) => {
+    const commands: string[] = [];
+    const pageImage = makePage();
+    const responses: Record<string, unknown> = {
+      hwped_capabilities: { version: "1.3.1", editable: true, formats: ["hwp", "hwpx"] },
+      hwped_read: makeEnvelope(),
+      hwped_render: { pages: [{ ...pageImage, dataBase64: base64.encode(pageImage.data) }] },
+      hwped_validate: { valid: true, errors: [] },
+    };
+    const engine = createTauriEngine(async (command) => {
+      commands.push(command);
+      if (!(command in responses)) throw new Error(`unexpected command ${command}`);
+      return responses[command] as never;
+    });
+    render(<HwpEditor locale={locale} engine={engine} file={file} />);
+    const page = await screen.findByRole("button", { name: messages["page.label"]({ page: 1 }) });
+    fireEvent.click(page, { clientY: clientYForPara(makeEnvelope(), 0) });
+    expect(await screen.findByText(messages["segment.addressedUnavailable"])).toBeTruthy();
+    const panel = screen.getByRole("region", { name: messages["segment.panelAria"] });
+    for (const control of panel.querySelectorAll("input, textarea, button")) {
+      expect((control as HTMLButtonElement).disabled).toBe(true);
+      fireEvent.click(control);
+    }
+    expect(screen.getByLabelText(messages["toolbar.pendingEdits"]({ count: 0 }), { exact: true })).toBeTruthy();
+    expect(commands).not.toContain("hwped_edit");
+  });
+
+  it("uses a paragraph address after clicking past a final formatted paragraph", async () => {
+    const envelope = envelopeOf(["첫 문단", "마지막 서식 문단"]);
+    const paragraph = envelope.segments[1]!;
+    paragraph.id = "1234567890abcdef.0.1";
+    paragraph.indices = [1];
+    envelope.segments.push({ ...paragraph, kind: "run", id: "1234567890abcdef.0.1.0", indices: [1, 0], start: paragraph.start + 2 });
+    const engine = createMockEngine({ envelope });
+    render(<HwpEditor engine={engine} file={file} />);
+    const page = await screen.findByRole("button", { name: en["page.label"]({ page: 1 }) });
+    fireEvent.click(page, { clientY: 842 });
+    clickBtn("segment.alignCenter");
+    expect(await applyOps(engine, 1)).toEqual([
+      { kind: "set-align", address: { id: paragraph.id }, alignment: "center" },
+    ]);
+  });
+
   it("disables character formatting for a v2 paragraph without immediate runs", async () => {
     const engine = createMockEngine({ envelope: tableEnvelope });
     await selectPara(engine, tableEnvelope.segments.findIndex(segment =>

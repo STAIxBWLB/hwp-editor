@@ -47,6 +47,11 @@ Payloads mirror `packages/core/src/protocol.ts`, with two Tauri deltas:
   `edit-ops-v1` JSON. A Tauri host must adopt that JSON channel before enabling
   addressed segment editing; falling back to text selectors can edit duplicate
   occurrences unintentionally.
+- `Capabilities.editOps: "v1"` means both the client and the host support JSON
+  ops. Without it, the inspector disables addressed-edit controls and shows a
+  localized upgrade reason. The current argv-only Tauri bridge must leave the
+  flag absent; add it only when both sides send/accept the edit-ops-v1 JSON
+  channel. Other legacy argv controls remain available.
 - Rust errors are prefixed strings: `cli_missing:`, `hwp_timeout:`,
   `hwp_failed:`, `hwp_parse_failed:`, `hwped_bad_request:`. The engine wraps
   them as `<cmd> failed: <detail>`.

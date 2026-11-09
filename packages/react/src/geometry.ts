@@ -28,10 +28,11 @@ export function nearestSegment(
   const offset = clickOffset(envelope, pageIndex, yFraction, pageCount);
   const hit = segmentAtOffset(envelope, offset);
   if (hit !== undefined) return hit;
-  // Between segments (blank spacing): pick the nearest by start offset.
+  // Between segments: pick a paragraph, never a run address for paragraph edits.
   let best: Segment | undefined;
   let bestDistance = Number.POSITIVE_INFINITY;
   for (const segment of envelope.segments) {
+    if (segment.kind !== "para") continue;
     const distance = Math.abs(segment.start - offset);
     if (distance < bestDistance) {
       best = segment;

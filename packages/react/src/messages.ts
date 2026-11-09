@@ -99,6 +99,7 @@ export const en = {
   // SegmentInspector
   "segment.panelAria": "Paragraph editor",
   "segment.hint": "Click the page to select a paragraph to edit.",
+  "segment.addressedUnavailable": "This host cannot apply addressed edits. Update the host and Tauri client to use the edit-ops-v1 JSON channel, then advertise editOps: v1. See docs/integration-maru.md.",
   "segment.selectedPara": (p: { section: number; para: number }): string =>
     `Selected paragraph (section ${p.section}, paragraph ${p.para})`,
   "segment.emptyPara": "(empty paragraph)",
@@ -223,6 +224,7 @@ export const ko: MessageTable = {
 
   "segment.panelAria": "문단 편집",
   "segment.hint": "페이지를 클릭해 편집할 문단을 선택하세요.",
+  "segment.addressedUnavailable": "이 호스트는 주소 기반 편집을 지원하지 않습니다. 호스트와 Tauri 클라이언트를 edit-ops-v1 JSON 채널로 업데이트한 뒤 editOps: v1 지원을 표시하세요. docs/integration-maru.md를 참고하세요.",
   "segment.selectedPara": (p) => `선택 문단 (구역 ${p.section}, 문단 ${p.para})`,
   "segment.emptyPara": "(빈 문단)",
   "segment.replaceLabel": "텍스트 교체",

@@ -37,6 +37,8 @@ export interface EditOptions {
 }
 
 export interface Capabilities {
+  /** JSON edit-ops-v1 supported by both this client and its host. Absent on argv-only hosts. */
+  editOps?: "v1";
   /** hwp-cli version string, e.g. "0.16.0". */
   version: string;
   /** Whether the engine can apply edits right now. */
