@@ -16,6 +16,9 @@ Run these passes and tag every finding with its pass:
   the `hwp` binary, secrets in workflows or logs.
 - **Compliance**: the change matches the issue spec and the approved plan, and respects the invariants
   below. Workflow changes are also checked for a timeout on every job and PR-only cancellation.
+- **Instruction prose** (changes to REVIEW.md, agent instructions, skill files or prompts): each
+  directive says what to do, when and where, and names the failure it prevents; rationale and history
+  stay out of the agent-read text. Nits unless runtime behavior changes.
 
 ## Repo focus
 
