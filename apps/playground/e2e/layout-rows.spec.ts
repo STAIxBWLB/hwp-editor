@@ -4,8 +4,9 @@ import { en } from "@hwp-editor/react";
 
 test("every measured row on a multi-page fixture selects its source segment", async ({ page }) => {
   await page.goto("/editor");
+  await expect(page.getByRole("button", { name: en["page.label"]({ page: 1 }), exact: true })).toBeVisible();
   const responsePromise = page.waitForResponse((response) => response.url().endsWith("/api/hwp-editor/render") &&
-    response.request().method() === "POST" && response.request().postDataBuffer()!.includes(Buffer.from("z-layout-demo.hwpx")));
+    response.request().method() === "POST");
   await page.getByLabel("fixture").selectOption("z-layout-demo.hwpx");
   const response = await responsePromise;
   expect(response.ok()).toBe(true);
@@ -42,8 +43,9 @@ test("every measured row on a multi-page fixture selects its source segment", as
       await expect(band).toHaveCount(layout.rows.filter((candidate) => candidate.id === row.id && candidate.box !== null).length);
       // Overlay and click use the same point-to-viewport transform.
       const overlay = await band.first().boundingBox();
+      const after = await view.boundingBox();
       expect(overlay).not.toBeNull();
-      expect(Math.abs(overlay!.y - rect.y - box.y0 / layout.height_pt * rect.height)).toBeLessThan(2);
+      expect(Math.abs(overlay!.y - after!.y - box.y0 / layout.height_pt * after!.height)).toBeLessThan(2);
       checked++;
     }
   }

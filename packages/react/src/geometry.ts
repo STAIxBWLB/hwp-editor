@@ -94,7 +94,8 @@ export function segmentOnPage(
   const x = clamp(xFraction, 0, 1) * width_pt;
   const y = clamp(yFraction, 0, 1) * height_pt;
   let best: Segment | undefined;
-  let bestDistance = Infinity;
+  let bestVertical = Infinity;
+  let bestHorizontal = Infinity;
   let bestArea = Infinity;
   for (const row of rows) {
     const box = row.box;
@@ -106,10 +107,13 @@ export function segmentOnPage(
     // Beyond a truncated prefix, a nearer recorded row may hide an omitted row.
     if (page.layout.truncated && distance > 0) continue;
     const area = Math.max(0, box.x1 - box.x0) * Math.max(0, box.y1 - box.y0);
-    if (distance < bestDistance || (distance === bestDistance &&
-      (area < bestArea || (area === bestArea && row.kind === "para" && best?.kind !== "para")))) {
+    // In page margins, preserve reading order before horizontal proximity.
+    if (dy < bestVertical || (dy === bestVertical && (dx < bestHorizontal ||
+      (dx === bestHorizontal && (area < bestArea ||
+        (area === bestArea && row.kind === "para" && best?.kind !== "para")))))) {
       best = segment;
-      bestDistance = distance;
+      bestVertical = dy;
+      bestHorizontal = dx;
       bestArea = area;
     }
   }

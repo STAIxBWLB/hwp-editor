@@ -50,6 +50,11 @@ describe("layout geometry", () => {
     expect(segmentOnPage(envelope, capped, 400 / 600, 110 / 800, 0, 1)).toBeUndefined();
   });
 
+  it("keeps top-margin clicks on the first row instead of a horizontally nearer table", () => {
+    const margin = { ...page, layout: { ...page.layout!, rows: [row("left", 60, 250, 80, 95), row("right", 300, 500, 100, 120)] } };
+    expect(segmentOnPage(envelope, margin, 400 / 600, 20 / 800, 0, 1)).toBe(left);
+  });
+
   it("uses the nearest measured rectangle for whitespace and flow only for older hosts", () => {
     const textOnly = { ...page, layout: { ...page.layout!, rows: [row("left", 60, 250), row("right", 300, 500)] } };
     expect(segmentOnPage(envelope, textOnly, 490 / 600, 130 / 800, 0, 1)).toBe(right);
