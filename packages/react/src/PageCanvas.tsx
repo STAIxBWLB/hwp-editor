@@ -200,7 +200,7 @@ export function targetsSegment(op: EditOp, envelope: CatEnvelope, segment: Segme
     if (op.address.id !== undefined) return segment.id === op.address.id;
     const at = op.address.at;
     if (segment.section !== at.section || segment.para !== at.paragraph) return false;
-    return at.run !== undefined
+    return "run" in at
       ? segment.kind === "run" && segment.indices?.length === 2 && segment.indices[1] === at.run
       : segment.kind === "para" && (segment.indices === undefined || segment.indices.length === 1);
   }
