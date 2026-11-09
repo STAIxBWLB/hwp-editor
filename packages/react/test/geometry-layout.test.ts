@@ -44,6 +44,12 @@ describe("layout geometry", () => {
     }
   });
 
+  it("uses known hits but never guesses past a truncated recorded prefix", () => {
+    const capped = { ...page, layout: { ...page.layout!, truncated: true, rows: [row("left", 60, 250)] } };
+    expect(segmentOnPage(envelope, capped, 100 / 600, 110 / 800, 0, 1)).toBe(left);
+    expect(segmentOnPage(envelope, capped, 400 / 600, 110 / 800, 0, 1)).toBeUndefined();
+  });
+
   it("uses the nearest measured rectangle for whitespace and flow only for older hosts", () => {
     const textOnly = { ...page, layout: { ...page.layout!, rows: [row("left", 60, 250), row("right", 300, 500)] } };
     expect(segmentOnPage(envelope, textOnly, 490 / 600, 130 / 800, 0, 1)).toBe(right);

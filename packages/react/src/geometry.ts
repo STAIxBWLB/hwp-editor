@@ -103,6 +103,8 @@ export function segmentOnPage(
     const dx = Math.max(box.x0 - x, 0, x - box.x1);
     const dy = Math.max(box.y0 - y, 0, y - box.y1);
     const distance = dx * dx + dy * dy;
+    // Beyond a truncated prefix, a nearer recorded row may hide an omitted row.
+    if (page.layout.truncated && distance > 0) continue;
     const area = Math.max(0, box.x1 - box.x0) * Math.max(0, box.y1 - box.y0);
     if (distance < bestDistance || (distance === bestDistance &&
       (area < bestArea || (area === bestArea && row.kind === "para" && best?.kind !== "para")))) {
