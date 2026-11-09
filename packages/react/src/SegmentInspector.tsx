@@ -68,6 +68,7 @@ export function SegmentInspector(): JSX.Element {
     ? { id: segment.id }
     : { at: { section: selection.section, paragraph: selection.para } };
   const disabled = !editable;
+  const formatTargets = formatAddresses(envelope!, segment);
 
   return (
     <div
@@ -235,7 +236,7 @@ export function SegmentInspector(): JSX.Element {
             type="button"
             className="hwped-btn"
             disabled={
-              disabled ||
+              disabled || formatTargets.length === 0 ||
               (!bold && fontSize === "" && color === "")
             }
             onClick={() => {
@@ -243,7 +244,7 @@ export function SegmentInspector(): JSX.Element {
               if (bold) props["bold"] = "on";
               if (fontSize !== "") props["size"] = fontSize;
               if (color !== "") props["color"] = color;
-              for (const target of formatAddresses(envelope!, segment)) {
+              for (const target of formatTargets) {
                 store.dispatch({ type: "queueOp", op: { kind: "set-format", address: target, props } });
               }
             }}
@@ -269,5 +270,5 @@ function formatAddresses(envelope: CatEnvelope, segment: Segment): EditAddress[]
   const at = { section: segment.section, paragraph: segment.para };
   return runs.length > 0
     ? runs.map((run, index) => run.id !== undefined ? { id: run.id } : { at: { ...at, run: index } })
-    : [{ at: { ...at, run: 0 } }];
+    : segment.indices === undefined ? [{ at: { ...at, run: 0 } }] : [];
 }

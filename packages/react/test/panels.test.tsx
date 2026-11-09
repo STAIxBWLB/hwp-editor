@@ -20,6 +20,9 @@
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { CatEnvelope, DocumentHandle, EditOp } from "@hwp-editor/core";
+import { readFileSync } from "node:fs";
+import { parseCatEnvelope } from "@hwp-editor/core";
+import { targetsSegment } from "../src/PageCanvas.js";
 import { HwpEditor } from "../src/HwpEditor.js";
 import { en } from "../src/messages.js";
 import { clientYForPara, createMockEngine, makeEnvelope } from "./mock-engine.js";
@@ -123,7 +126,33 @@ function clickBtn(key: keyof typeof en): void {
   fireEvent.click(screen.getByRole("button", { name: label }));
 }
 
+const tableEnvelope = parseCatEnvelope(readFileSync(
+  new URL("../../core/test/fixtures/cat-segments-table.json", import.meta.url), "utf8",
+));
+
 describe("SegmentInspector op emission (TEST-03)", () => {
+  it("disables character formatting for a v2 paragraph without immediate runs", async () => {
+    const engine = createMockEngine({ envelope: tableEnvelope });
+    await selectPara(engine, 2, tableEnvelope);
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.para"] }));
+    fireEvent.click(screen.getByLabelText(en["segment.bold"]));
+    const submit = screen.getByRole("button", { name: en["segment.formatSubmit"] });
+    expect((submit as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(submit);
+    expect(screen.getByLabelText(en["toolbar.pendingEdits"]({ count: 0 }), { exact: true })).toBeTruthy();
+    expect(engine.calls.edit).toHaveLength(0);
+  });
+
+  it.each([
+    [{ section: 0, paragraph: 2 }, [2]],
+    [{ section: 0, paragraph: 0, run: 0 }, [0, 0]],
+    [{ section: 0, paragraph: 2, run: 0 }, null],
+  ])("matches at-address %j without highlighting nested segments", (at, indices) => {
+    const op: EditOp = { kind: "set-align", address: { at }, alignment: "left" };
+    const matches = tableEnvelope.segments.filter(segment => targetsSegment(op, tableEnvelope, segment));
+    expect(matches.map(segment => segment.indices)).toEqual(indices === null ? [] : [indices]);
+  });
+
   it("queues insert-para-before with the selection anchor and typed text", async () => {
     const engine = await openInspector();
     fireEvent.change(screen.getByLabelText(en["segment.insertLabel"]), {

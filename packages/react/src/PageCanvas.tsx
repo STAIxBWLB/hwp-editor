@@ -195,11 +195,14 @@ function pendingSegmentKeys(envelope: CatEnvelope | null, ops: EditOp[]): Set<st
   return keys;
 }
 
-function targetsSegment(op: EditOp, envelope: CatEnvelope, segment: Segment): boolean {
+export function targetsSegment(op: EditOp, envelope: CatEnvelope, segment: Segment): boolean {
   if ("address" in op) {
-    return op.address.id !== undefined
-      ? segment.id === op.address.id
-      : segment.section === op.address.at.section && segment.para === op.address.at.paragraph;
+    if (op.address.id !== undefined) return segment.id === op.address.id;
+    const at = op.address.at;
+    if (segment.section !== at.section || segment.para !== at.paragraph) return false;
+    return at.run !== undefined
+      ? segment.kind === "run" && segment.indices?.length === 2 && segment.indices[1] === at.run
+      : segment.kind === "para" && (segment.indices === undefined || segment.indices.length === 1);
   }
   const target = opSearchText(op);
   return target !== null && target !== "" &&
