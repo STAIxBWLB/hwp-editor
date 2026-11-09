@@ -20,7 +20,7 @@
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { CatEnvelope, DocumentHandle, EditOp } from "@hwp-editor/core";
-import { readFileSync } from "node:fs";
+import tableFixture from "../../core/test/fixtures/cat-segments-table.json";
 import { parseCatEnvelope } from "@hwp-editor/core";
 import { targetsSegment } from "../src/PageCanvas.js";
 import { HwpEditor } from "../src/HwpEditor.js";
@@ -126,9 +126,7 @@ function clickBtn(key: keyof typeof en): void {
   fireEvent.click(screen.getByRole("button", { name: label }));
 }
 
-const tableEnvelope = parseCatEnvelope(readFileSync(
-  new URL("../../core/test/fixtures/cat-segments-table.json", import.meta.url), "utf8",
-));
+const tableEnvelope = parseCatEnvelope(JSON.stringify(tableFixture));
 
 describe("SegmentInspector op emission (TEST-03)", () => {
   it("disables character formatting for a v2 paragraph without immediate runs", async () => {
