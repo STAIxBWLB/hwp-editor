@@ -1,0 +1,96 @@
+{
+  "name": "요약표",
+  "description": "요약표: 항목·내용 2열 표",
+  "params": {
+    "표제": "요약",
+    "열1": "항목",
+    "열2": "내용",
+    "항목1": "사업명",
+    "내용1": "AI 교육 과정",
+    "항목2": "기간",
+    "내용2": "2026. 3. ~ 2026. 12.",
+    "항목3": "예산",
+    "내용3": "별도 협의"
+  },
+  "styles": {
+    "요약표 머리": { "based_on": "바탕글", "align": "center", "bold": true }
+  },
+  "blocks": [
+    {
+      "type": "paragraph",
+      "style": "개요 2",
+      "runs": [{ "type": "text", "text": "{{표제}}" }]
+    },
+    {
+      "type": "table",
+      "width_mm": 170,
+      "columns": [{ "width_mm": 45 }, { "width_mm": 125 }],
+      "rows": [
+        {
+          "cells": [
+            {
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "style": "요약표 머리",
+                  "runs": [{ "type": "text", "text": "{{열1}}" }]
+                }
+              ]
+            },
+            {
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "style": "요약표 머리",
+                  "runs": [{ "type": "text", "text": "{{열2}}" }]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "blocks": [
+                { "type": "paragraph", "runs": [{ "type": "text", "text": "{{항목1}}" }] }
+              ]
+            },
+            {
+              "blocks": [
+                { "type": "paragraph", "runs": [{ "type": "text", "text": "{{내용1}}" }] }
+              ]
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "blocks": [
+                { "type": "paragraph", "runs": [{ "type": "text", "text": "{{항목2}}" }] }
+              ]
+            },
+            {
+              "blocks": [
+                { "type": "paragraph", "runs": [{ "type": "text", "text": "{{내용2}}" }] }
+              ]
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "blocks": [
+                { "type": "paragraph", "runs": [{ "type": "text", "text": "{{항목3}}" }] }
+              ]
+            },
+            {
+              "blocks": [
+                { "type": "paragraph", "runs": [{ "type": "text", "text": "{{내용3}}" }] }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

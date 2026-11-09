@@ -102,3 +102,21 @@ export type {
 export { parsePageLayout, parseRenderLayouts, RENDER_LAYOUT_NEXT_STEP } from "./layout.js";
 export { TEMPLATE_MIN_VERSION, TEMPLATE_METHODS, templateVersionSupported, parseTemplateInputs, parseTemplateReport, parseFillReport, parseLintReport, parseEmbeddedTemplates, parseTemplateMethods, reportObject, reportString, reportSchemaVersion, reportCount, reportArray } from "./templates.js";
 export type { TemplateReport, EmbeddedTemplate, FillReport, FillResult, LintFinding, LintProfile, LintReport, TemplateInput, TemplateInputs, TemplateMethod } from "./templates.js";
+export {
+  documentSpecFromComponents,
+  loadComponents,
+  OFFICIAL_BODY_PROFILE,
+  OFFICIAL_PROFILE,
+  STARTER_COMPONENTS,
+  substituteParams,
+  validateComponent,
+} from "./components.js";
+export type {
+  Component,
+  ComponentFetch,
+  ComponentFetchResponse,
+  ComponentIndex,
+  ComponentsSource,
+  ComposeComponentsOptions,
+  LoadComponentsOptions,
+} from "./components.js";

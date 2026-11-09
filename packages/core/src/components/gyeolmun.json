@@ -1,0 +1,133 @@
+{
+  "name": "결문",
+  "description": "공문서 결문: 발신명의와 시행·접수·연락처·공개구분 표",
+  "params": {
+    "발신명의": "○○대학교총장",
+    "시행번호": "제2026-0001호 (2026. 11. 9.)",
+    "접수번호": "접수번호 기재",
+    "주소": "주소 기재",
+    "전화": "전화번호 기재",
+    "이메일": "이메일 기재",
+    "공개구분": "공개"
+  },
+  "styles": {
+    "결문 발신명의": { "based_on": "바탕글", "align": "right", "bold": true },
+    "결문 항목명": { "based_on": "바탕글", "bold": true }
+  },
+  "blocks": [
+    {
+      "type": "table",
+      "width_mm": 170,
+      "columns": [{ "width_mm": 35 }, { "width_mm": 135 }],
+      "rows": [
+        {
+          "cells": [
+            {
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "style": "결문 항목명",
+                  "runs": [{ "type": "text", "text": "시행" }]
+                }
+              ]
+            },
+            {
+              "blocks": [
+                { "type": "paragraph", "runs": [{ "type": "text", "text": "{{시행번호}}" }] }
+              ]
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "style": "결문 항목명",
+                  "runs": [{ "type": "text", "text": "접수" }]
+                }
+              ]
+            },
+            {
+              "blocks": [
+                { "type": "paragraph", "runs": [{ "type": "text", "text": "{{접수번호}}" }] }
+              ]
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "style": "결문 항목명",
+                  "runs": [{ "type": "text", "text": "주소" }]
+                }
+              ]
+            },
+            {
+              "blocks": [{ "type": "paragraph", "runs": [{ "type": "text", "text": "{{주소}}" }] }]
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "style": "결문 항목명",
+                  "runs": [{ "type": "text", "text": "전화" }]
+                }
+              ]
+            },
+            {
+              "blocks": [{ "type": "paragraph", "runs": [{ "type": "text", "text": "{{전화}}" }] }]
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "style": "결문 항목명",
+                  "runs": [{ "type": "text", "text": "이메일" }]
+                }
+              ]
+            },
+            {
+              "blocks": [{ "type": "paragraph", "runs": [{ "type": "text", "text": "{{이메일}}" }] }]
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "style": "결문 항목명",
+                  "runs": [{ "type": "text", "text": "공개구분" }]
+                }
+              ]
+            },
+            {
+              "blocks": [
+                { "type": "paragraph", "runs": [{ "type": "text", "text": "{{공개구분}}" }] }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "style": "결문 발신명의",
+      "runs": [{ "type": "text", "text": "{{발신명의}}" }]
+    }
+  ]
+}
