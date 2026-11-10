@@ -104,7 +104,7 @@ it("refuses a malformed list default before rendering list fields", async () => 
   const file=new File(["{}"],"bad.json",{type:"application/json"});
   Object.defineProperty(file,"text",{value:async()=>JSON.stringify({version:"1.0",variables:{rows:{type:"list",fields:{name:{type:"string"}},default:[null]}},source:{mode:"compose",document:{}}})});
   fireEvent.change(screen.getByLabelText(en["templates.specLabel"]),{target:{files:[file]}});
-  expect(await screen.findByText(en["templates.invalidList"]({variable:"rows"}))).toBeTruthy();
+  expect((await screen.findByRole("alert")).textContent).toContain(en["templates.invalidList"]({variable:"rows"}));
   expect(screen.queryByRole("button",{name:en["templates.listAdd"]})).toBeNull();
 });
 
@@ -115,4 +115,25 @@ it("explains missing host methods even on a recent engine version", async () => 
   fireEvent.click(await screen.findByRole("tab",{name:en["tabs.templates"]}));
   const message=en["templates.methodMissing"]({method:en["templates.methodSlots"]});
   expect(await screen.findByText((text)=>text.includes(message))).toBeTruthy();
+});
+
+it("builds typed scalar and list inputs without asking for data JSON", async () => {
+  const engine=templateEngine() as HwpEngine;
+  const template=vi.fn(async()=>({document:filled,report:{schema_version:"1.0",mode:"compose",deterministic:true}}));
+  engine.template=template;
+  render(<HwpEditor engine={engine} file={original} />);
+  fireEvent.click(await screen.findByRole("tab",{name:en["tabs.templates"]}));
+  await screen.findByLabelText("문서번호");
+  const variables={title:{type:"string",default:"Hello"},budget:{type:"number",default:1},date:{type:"date",default:"2026-11-11"},enabled:{type:"bool",default:true},mode:{type:"enum",values:["A","B"],default:"A"},rows:{type:"list",fields:{name:{type:"string"},count:{type:"number"}},default:[{name:"sample",count:2}]}};
+  const spec={version:"1.0",variables,source:{mode:"compose",document:{}}};
+  const file=new File(["{}"],"typed.json",{type:"application/json"});
+  Object.defineProperty(file,"text",{value:async()=>JSON.stringify(spec)});
+  fireEvent.change(screen.getByLabelText(en["templates.specLabel"]),{target:{files:[file]}});
+  expect((await screen.findByLabelText("budget") as HTMLInputElement).type).toBe("number");
+  expect((screen.getByLabelText("date") as HTMLInputElement).type).toBe("date");
+  expect((screen.getByLabelText("enabled") as HTMLInputElement).checked).toBe(true);
+  expect((screen.getByLabelText("mode") as HTMLSelectElement).value).toBe("A");
+  fireEvent.change(screen.getByLabelText(en["templates.listFieldAria"]({row:1,field:"count"})),{target:{value:"3"}});
+  fireEvent.click(screen.getByRole("button",{name:en["templates.previewSpec"]}));
+  await waitFor(()=>expect(template).toHaveBeenCalledWith(spec,{version:"1.0",values:{title:"Hello",budget:1,date:"2026-11-11",enabled:true,mode:"A",rows:[{name:"sample",count:3}]}},original.name));
 });

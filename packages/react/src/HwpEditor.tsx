@@ -648,6 +648,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
               canCreate={editable}
               onClose={() => setComposing(false)}
               onComposed={(document) => {
+                if (!editableRef.current) return;
                 setComposing(false);
                 emitChange(document);
                 // The host passes the composed document back via `file`; load

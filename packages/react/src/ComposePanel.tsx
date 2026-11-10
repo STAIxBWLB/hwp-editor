@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { JSX } from "react";
 import type { Capabilities, DocumentHandle, EditorError, EmbeddedTemplate } from "@hwp-editor/core";
 import { ErrorLine } from "./ErrorLine.js";
@@ -39,7 +39,7 @@ export interface ComposePanelProps {
  * markdown-ish sections) → DocumentSpec v2 → engine.compose().
  */
 export function ComposePanel(props: ComposePanelProps): JSX.Element {
-  const { engine, t, onError } = useHwpEditorContext();
+  const { engine, t, onError, store } = useHwpEditorContext();
   const [preset, setPreset] = useState<ComposePreset>("official");
   const [title, setTitle] = useState("");
   const [author, setAuthor] = useState("");
@@ -47,6 +47,8 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<EditorError | null>(null);
   const canCreate = props.canCreate ?? true;
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
   const [templates, setTemplates] = useState<EmbeddedTemplate[]>([]);
   const [templateId, setTemplateId] = useState("");
@@ -109,13 +111,17 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
 
   const createEmbedded = async (): Promise<void> => {
     if (!canCreate || engine.create === undefined || !createStatus.supported || templateId === "") return;
+    const source = store.getState().document;
     setBusy(true); setError(null);
     try {
       const stem = title.trim() === "" ? templateId : title.trim();
-      props.onComposed(await engine.create(templateId, `${stem}.hwpx`));
+      const next = await engine.create(templateId, `${stem}.hwpx`);
+      if (!mounted.current) return;
+      if (store.getState().document !== source) throw new Error(t("error.staleReplacement"));
+      props.onComposed(next);
     } catch (e) {
-      setError(toEditorError(e)); onError?.(e);
-    } finally { setBusy(false); }
+      if (mounted.current) { setError(toEditorError(e)); onError?.(e); }
+    } finally { if (mounted.current) setBusy(false); }
   };
 
   return (
