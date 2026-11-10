@@ -889,7 +889,7 @@ function pageLayoutFields(layouts: Map<number, PageLayout> | undefined, page: nu
   if (layouts === undefined) return {};
   const layout = layouts.get(page);
   if (layout === undefined) {
-    throw new HwpCliError("failed", "render layout is missing a rendered page");
+    throw new HwpCliError("failed", `render layout is missing rendered page ${page}; check that the hwp-cli version pinned in cli-engine.ts emits render-layout-v1 (hwp-render-layout-v1, schema 1.x)`);
   }
   return { layout };
 }

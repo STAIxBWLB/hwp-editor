@@ -141,8 +141,8 @@ export function bandsOnPage(
       ? [{ left: 0, top: band.top, width: 100, height: band.height }]
       : [];
   }
-  // Runs have no row of their own. Use the enclosing paragraph's geometry.
-  const target = segment.kind === "run" && segment.indices !== undefined
+  // Runs, images and fields fold into their enclosing paragraph's row.
+  const target = ["run", "image", "field"].includes(segment.kind) && segment.indices !== undefined
     ? envelope.segments.find((candidate) => candidate.kind === "para" &&
         candidate.section === segment.section && candidate.indices !== undefined &&
         candidate.indices.length === segment.indices!.length - 1 &&
