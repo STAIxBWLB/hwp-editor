@@ -183,10 +183,10 @@ export function TemplatePanel(): JSX.Element {
       } catch {
         throw new Error(t("templates.invalidJson"));
       }
-      if (typeof parsed !== "object" || parsed === null || !("version" in parsed) || parsed.version !== "1.0" || !("variables" in parsed) || typeof parsed.variables !== "object" || parsed.variables === null) {
+      if (typeof parsed !== "object" || parsed === null || !("version" in parsed) || parsed.version !== "1.0" || !("variables" in parsed) || typeof parsed.variables !== "object" || parsed.variables === null || Array.isArray(parsed.variables)) {
         throw new Error(t("templates.invalidSpec"));
       }
-      if (!("source" in parsed) || typeof parsed.source !== "object" || parsed.source === null) {
+      if (!("source" in parsed) || typeof parsed.source !== "object" || parsed.source === null || Array.isArray(parsed.source)) {
         throw new Error(t("templates.invalidSpecSource"));
       }
       for (const [key, rawVariable] of Object.entries(parsed.variables)) {
@@ -194,13 +194,16 @@ export function TemplatePanel(): JSX.Element {
         if (typeof rawVariable !== "object" || rawVariable === null || !("type" in rawVariable) || !["string", "number", "date", "enum", "bool", "list"].includes(String(rawVariable.type))) {
           throw new Error(t("templates.invalidVariable", { variable: key }));
         }
-        if (rawVariable.type === "enum" && (!Array.isArray(rawVariable.values) || rawVariable.values.some((item) => typeof item !== "string"))) {
+        if (rawVariable.type === "enum" && (!Array.isArray(rawVariable.values) || rawVariable.values.some((item: unknown) => typeof item !== "string"))) {
           throw new Error(t("templates.invalidEnum", { variable: key }));
         }
         if (rawVariable.type === "list" && (typeof rawVariable.fields !== "object" || rawVariable.fields === null || Array.isArray(rawVariable.fields))) {
           throw new Error(t("templates.invalidList", { variable: key }));
         }
         if (rawVariable.type === "list") {
+          if (rawVariable.default !== undefined && (!Array.isArray(rawVariable.default) || rawVariable.default.some((row: unknown) => typeof row !== "object" || row === null || Array.isArray(row)))) {
+            throw new Error(t("templates.invalidList", { variable: key }));
+          }
           const fields = rawVariable.fields as Record<string, unknown>;
           for (const [fieldKey, rawField] of Object.entries(fields)) {
             if (!safeSpecKey(fieldKey)) throw new Error(t("templates.invalidListFieldKey", { field: fieldKey }));
@@ -208,7 +211,7 @@ export function TemplatePanel(): JSX.Element {
               throw new Error(t("templates.invalidList", { variable: key }));
             }
             const field = rawField as Record<string, unknown>;
-            if (!["string", "number", "date", "enum", "bool"].includes(String(field.type)) || (field.type === "enum" && (!Array.isArray(field.values) || field.values.some((item) => typeof item !== "string")))) throw new Error(t("templates.invalidList", { variable: key }));
+            if (!["string", "number", "date", "enum", "bool"].includes(String(field.type)) || (field.type === "enum" && (!Array.isArray(field.values) || field.values.some((item: unknown) => typeof item !== "string")))) throw new Error(t("templates.invalidList", { variable: key }));
           }
         }
       }
@@ -220,7 +223,7 @@ export function TemplatePanel(): JSX.Element {
       setSpec(loaded);
       setSpecValues(initial);
     } catch (e) {
-      setError(toEditorError(e));
+      if (generation === specReadRequest.current) setError(toEditorError(e));
     }
   };
 
@@ -233,8 +236,7 @@ export function TemplatePanel(): JSX.Element {
       const pages = await engine.render(result.document, { format: "svg" });
       if (previewRequest.current === generation && store.getState().document === document) setPreview({ source: document, document: result.document, pages, kind: "fill", generation });
     } catch (e) {
-      if (previewRequest.current === generation) setError(toEditorError(e));
-      onError?.(e);
+      if (previewRequest.current === generation) { setError(toEditorError(e)); onError?.(e); }
     } finally { if (previewRequest.current === generation) setBusy(false); }
   };
 
@@ -251,8 +253,7 @@ export function TemplatePanel(): JSX.Element {
       const pages = await engine.render(result.document, { format: "svg" });
       if (previewRequest.current === generation && store.getState().document === document) setPreview({ source: document, document: result.document, pages, kind: "spec", generation });
     } catch (e) {
-      if (previewRequest.current === generation) setError(toEditorError(e));
-      onError?.(e);
+      if (previewRequest.current === generation) { setError(toEditorError(e)); onError?.(e); }
     } finally { if (previewRequest.current === generation) setBusy(false); }
   };
 

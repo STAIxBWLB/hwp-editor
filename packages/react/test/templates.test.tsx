@@ -96,3 +96,23 @@ it("ignores slot results from a document that was replaced during the request", 
   finishOld?.({ items: [{ key: "stale", label: "Stale field", kind: "slot", required: false }] });
   await waitFor(() => expect(screen.queryByLabelText("Stale field")).toBeNull());
 });
+
+it("refuses a malformed list default before rendering list fields", async () => {
+  render(<HwpEditor engine={templateEngine()} file={original} />);
+  fireEvent.click(await screen.findByRole("tab", {name:en["tabs.templates"]}));
+  await screen.findByLabelText("문서번호");
+  const file=new File(["{}"],"bad.json",{type:"application/json"});
+  Object.defineProperty(file,"text",{value:async()=>JSON.stringify({version:"1.0",variables:{rows:{type:"list",fields:{name:{type:"string"}},default:[null]}},source:{mode:"compose",document:{}}})});
+  fireEvent.change(screen.getByLabelText(en["templates.specLabel"]),{target:{files:[file]}});
+  expect(await screen.findByText(en["templates.invalidList"]({variable:"rows"}))).toBeTruthy();
+  expect(screen.queryByRole("button",{name:en["templates.listAdd"]})).toBeNull();
+});
+
+it("explains missing host methods even on a recent engine version", async () => {
+  const engine=templateEngine();
+  delete (engine as HwpEngine).slots;
+  render(<HwpEditor engine={engine} file={original} />);
+  fireEvent.click(await screen.findByRole("tab",{name:en["tabs.templates"]}));
+  const message=en["templates.methodMissing"]({method:en["templates.methodSlots"]});
+  expect(await screen.findByText((text)=>text.includes(message))).toBeTruthy();
+});
