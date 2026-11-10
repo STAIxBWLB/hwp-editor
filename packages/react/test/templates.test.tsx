@@ -4,7 +4,7 @@ import type { Capabilities, DocumentHandle, HwpEngine, TemplateInputs } from "@h
 import { TEMPLATE_METHODS } from "@hwp-editor/core";
 import { HwpEditor } from "../src/HwpEditor.js";
 import { en, ko } from "../src/messages.js";
-import { createMockEngine } from "./mock-engine.js";
+import { createMockEngine, makeEnvelope } from "./mock-engine.js";
 
 afterEach(cleanup);
 
@@ -155,4 +155,27 @@ it("treats prototype-named document slots as input data", async () => {
   fireEvent.change(input,{target:{value:"safe"}});
   fireEvent.click(screen.getByRole("button",{name:en["templates.previewFill"]}));
   await waitFor(()=>expect(engine.fill).toHaveBeenCalledWith(original,{constructor:"safe"}));
+});
+
+it("rolls back a template snapshot when another panel queues an op mid-apply", async () => {
+  const engine=templateEngine();
+  const originalRead=engine.read;
+  let finishRead: ((value: ReturnType<typeof makeEnvelope>) => void) | undefined;
+  engine.read=vi.fn(document=>document===filled ? new Promise(resolve=>{finishRead=resolve;}) : originalRead(document));
+  const onChange=vi.fn(), onError=vi.fn();
+  render(<HwpEditor engine={engine} file={original} onChange={onChange} onError={onError} />);
+  fireEvent.click(await screen.findByRole("tab",{name:en["tabs.templates"]}));
+  fireEvent.change(await screen.findByLabelText("문서번호"),{target:{value:"2026-101"}});
+  fireEvent.click(screen.getByRole("button",{name:en["templates.previewFill"]}));
+  fireEvent.click(await screen.findByRole("button",{name:en["templates.apply"]}));
+  await waitFor(()=>expect(finishRead).toBeTypeOf("function"));
+  fireEvent.click(screen.getByRole("tab",{name:en["tabs.fields"]}));
+  fireEvent.change(await screen.findByLabelText(en["fields.fieldValueAria"]({name:"date"})),{target:{value:"2026-11-11"}});
+  fireEvent.click(screen.getByRole("button",{name:en["fields.setValue"]}));
+  finishRead!(makeEnvelope());
+  await waitFor(()=>expect(onError).toHaveBeenCalledWith(expect.objectContaining({message:en["error.pendingReplacement"]})));
+  expect(onChange).not.toHaveBeenCalled();
+  const pendingOne=en["toolbar.pendingEdits"]({count:1});
+  expect(screen.getByLabelText(pendingOne).textContent).toBe(pendingOne);
+  expect((screen.getByRole("button",{name:en["toolbar.revert"]}) as HTMLButtonElement).disabled).toBe(true);
 });
