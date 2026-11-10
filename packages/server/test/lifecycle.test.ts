@@ -453,6 +453,7 @@ describe("capabilities", () => {
     await expect(engine.capabilities()).resolves.toEqual({
       version: "0.20.0",
       editable: true,
+      editOps: "v1",
       formats: ["hwp", "hwpx"],
     });
   }, 30_000);

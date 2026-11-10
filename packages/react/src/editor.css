@@ -276,6 +276,14 @@
 
 /* ---- layout ---- */
 
+.hwped-pending-list {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 120px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+
 .hwped-main {
   display: flex;
   flex: 1 1 auto;

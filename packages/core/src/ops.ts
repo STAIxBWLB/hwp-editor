@@ -47,7 +47,7 @@ export type PageSetupKey =
   | "margin-bottom"
   | "orientation";
 
-export type EditOp =
+type LegacyEditOp =
   /** `--replace "find=>replace"` — replaces every match. */
   | { kind: "replace"; find: string; replace: string }
   /** `--set-cell "table:row:col=value"` — 0-based indices. */
@@ -129,6 +129,30 @@ export type EditOp =
   /** `--delete-bookmark "name"`. */
   | { kind: "delete-bookmark"; name: string };
 
+/** edit-ops-v1 paragraph address; ids retain the engine's drift check. */
+export type ParagraphAddress =
+  | { id: string; at?: never }
+  | { at: { section: number; paragraph: number }; id?: never };
+
+/** WCHAR [start, end) offsets within the source paragraph, not markdown. */
+export type EditAddress = (
+  | { id: string; at?: never }
+  | { at: { section: number; paragraph: number; run: number }; id?: never }
+) & { chars?: [number, number] };
+
+export type AddressedEditOp =
+  | { kind: "replace"; address: ParagraphAddress; find: string; replace: string }
+  | { kind: "set-format"; address: EditAddress; props: Record<string, string> }
+  | { kind: "set-align"; address: ParagraphAddress; alignment: ParagraphAlignment }
+  | { kind: "set-para"; address: ParagraphAddress; key: ParaShapeKey; value: string }
+  | { kind: "insert-para" | "insert-para-before"; address: ParagraphAddress; text: string }
+  | { kind: "delete-para" | "indent-para" | "outdent-para"; address: ParagraphAddress }
+  | { kind: "move-para"; address: ParagraphAddress;
+      to: { address: ParagraphAddress; position: "before" | "after" } };
+
+/** Legacy text selectors remain available for explicit search operations. */
+export type EditOp = LegacyEditOp | AddressedEditOp;
+
 /**
  * `--flag` spelling for each op kind (cli.rs EditArgs long names).
  *
@@ -137,7 +161,7 @@ export type EditOp =
  * actually emits (`--ops` first), now that the server edit path crosses as
  * an edit-ops-v1 JSON file rather than as per-op argv.
  */
-export const OP_FLAGS: Record<EditOp["kind"], string> = {
+export const OP_FLAGS: Record<LegacyEditOp["kind"], string> = {
   "replace": "--replace",
   "set-cell": "--set-cell",
   "set-field": "--set-field",
@@ -169,7 +193,7 @@ export const OP_FLAGS: Record<EditOp["kind"], string> = {
 };
 
 /** Serialize one op to its CLI value string (the part after the flag). */
-function opValue(op: EditOp): string {
+function opValue(op: LegacyEditOp): string {
   switch (op.kind) {
     case "replace":
       return `${op.find}=>${op.replace}`;
@@ -269,6 +293,9 @@ function opValue(op: EditOp): string {
 export function opsToArgv(ops: EditOp[]): string[] {
   const argv: string[] = [];
   for (const op of ops) {
+    if ("address" in op) {
+      throw new Error("Addressed edits require the edit-ops-v1 JSON transport; the argv bridge cannot represent addresses. Update the host and Tauri client to use the edit-ops-v1 JSON channel (docs/integration-maru.md)");
+    }
     argv.push(OP_FLAGS[op.kind], opValue(op));
   }
   return argv;
@@ -335,8 +362,37 @@ function pageSetupEntry(key: PageSetupKey, value: string): OpsEntry {
   }
 }
 
+function addressedEntry(op: AddressedEditOp): OpsEntry {
+  const target = { address: op.address };
+  switch (op.kind) {
+    case "replace":
+      return { op: "replace", ...target, from: op.find, to: op.replace };
+    case "set-format": {
+      const props = formatPropsEntry(op.props);
+      // Never let free-form props smuggle in a text selector or change the target.
+      delete props.pattern;
+      return { ...props, op: "set_format", ...target };
+    }
+    case "set-align":
+      return { op: "set_align", ...target, align: op.alignment };
+    case "set-para":
+      return { op: "set_para", ...target, ...paraShapeEntry(op.key, op.value) };
+    case "insert-para":
+    case "insert-para-before":
+      return { op: "insert_para", ...target, text: op.text,
+        ...(op.kind === "insert-para-before" ? { before: true } : {}) };
+    case "move-para":
+      return { op: "move_para", ...target, to: op.to };
+    case "delete-para":
+    case "indent-para":
+    case "outdent-para":
+      return { op: op.kind.replaceAll("-", "_"), ...target };
+  }
+}
+
 /** Serialize one op to its edit-ops-v1 entry. */
 function opsEntry(op: EditOp): OpsEntry {
+  if ("address" in op) return addressedEntry(op);
   switch (op.kind) {
     case "replace":
       return { op: "replace", from: op.find, to: op.replace };
@@ -494,7 +550,7 @@ function need<T>(v: T | null, flag: string | undefined, value: string): T {
   return v;
 }
 
-function parseOp(flag: string | undefined, value: string): EditOp {
+function parseOp(flag: string | undefined, value: string): LegacyEditOp {
   switch (flag) {
     case "--replace": {
       const [find, replace] = need(splitFirst(value, "=>"), flag, value);

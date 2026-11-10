@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { JSX } from "react";
-import type { ParagraphAlignment } from "@hwp-editor/core";
+import type { CatEnvelope, EditAddress, ParagraphAlignment, Segment } from "@hwp-editor/core";
 import { segmentAtRef, segmentText } from "@hwp-editor/core";
 import { plainSegmentText } from "./text.js";
 import { useHwpEditorContext } from "./context.js";
@@ -24,7 +24,7 @@ const ALIGNMENTS: { value: ParagraphAlignment; key: MessageKey }[] = [
  * All controls queue EditOps; nothing touches the engine until Apply.
  */
 export function SegmentInspector(): JSX.Element {
-  const { state, store, envelope, editable, t } = useHwpEditorContext();
+  const { state, store, envelope, editable, capabilities, t } = useHwpEditorContext();
   const { selection } = state;
 
   const segment =
@@ -64,7 +64,12 @@ export function SegmentInspector(): JSX.Element {
   }
 
   const find = currentText;
-  const disabled = !editable;
+  const address = segment.id !== undefined
+    ? { id: segment.id }
+    : { at: { section: selection.section, paragraph: selection.para } };
+  const addressedUnavailable = capabilities?.editOps !== "v1";
+  const disabled = !editable || addressedUnavailable;
+  const formatTargets = formatAddresses(envelope!, segment);
 
   return (
     <div
@@ -72,6 +77,7 @@ export function SegmentInspector(): JSX.Element {
       role="region"
       aria-label={t("segment.panelAria")}
     >
+      {addressedUnavailable && <p className="hwped-hint" role="status">{t("segment.addressedUnavailable")}</p>}
       <div className="hwped-field">
         <span className="hwped-label">
           {t("segment.selectedPara", {
@@ -105,7 +111,7 @@ export function SegmentInspector(): JSX.Element {
             onClick={() =>
               store.dispatch({
                 type: "queueOp",
-                op: { kind: "replace", find, replace: replaceWith },
+                op: { kind: "replace", address, find, replace: replaceWith },
               })
             }
           >
@@ -131,11 +137,11 @@ export function SegmentInspector(): JSX.Element {
           <button
             type="button"
             className="hwped-btn"
-            disabled={disabled || insertText === "" || find === ""}
+            disabled={disabled || insertText === ""}
             onClick={() =>
               store.dispatch({
                 type: "queueOp",
-                op: { kind: "insert-para-before", anchor: find, text: insertText },
+                op: { kind: "insert-para-before", address, text: insertText },
               })
             }
           >
@@ -144,11 +150,11 @@ export function SegmentInspector(): JSX.Element {
           <button
             type="button"
             className="hwped-btn"
-            disabled={disabled || insertText === "" || find === ""}
+            disabled={disabled || insertText === ""}
             onClick={() =>
               store.dispatch({
                 type: "queueOp",
-                op: { kind: "insert-para", anchor: find, text: insertText },
+                op: { kind: "insert-para", address, text: insertText },
               })
             }
           >
@@ -157,11 +163,11 @@ export function SegmentInspector(): JSX.Element {
           <button
             type="button"
             className="hwped-btn hwped-btn-danger"
-            disabled={disabled || find === ""}
+            disabled={disabled}
             onClick={() =>
               store.dispatch({
                 type: "queueOp",
-                op: { kind: "delete-para", text: find },
+                op: { kind: "delete-para", address },
               })
             }
           >
@@ -182,11 +188,11 @@ export function SegmentInspector(): JSX.Element {
               key={align.value}
               type="button"
               className="hwped-btn"
-              disabled={disabled || find === ""}
+              disabled={disabled}
               onClick={() =>
                 store.dispatch({
                   type: "queueOp",
-                  op: { kind: "set-align", find, alignment: align.value },
+                  op: { kind: "set-align", address, alignment: align.value },
                 })
               }
             >
@@ -232,8 +238,7 @@ export function SegmentInspector(): JSX.Element {
             type="button"
             className="hwped-btn"
             disabled={
-              disabled ||
-              find === "" ||
+              disabled || formatTargets.length === 0 ||
               (!bold && fontSize === "" && color === "")
             }
             onClick={() => {
@@ -241,10 +246,9 @@ export function SegmentInspector(): JSX.Element {
               if (bold) props["bold"] = "on";
               if (fontSize !== "") props["size"] = fontSize;
               if (color !== "") props["color"] = color;
-              store.dispatch({
-                type: "queueOp",
-                op: { kind: "set-format", find, props },
-              });
+              for (const target of formatTargets) {
+                store.dispatch({ type: "queueOp", op: { kind: "set-format", address: target, props } });
+              }
             }}
           >
             {t("segment.formatSubmit")}
@@ -253,4 +257,20 @@ export function SegmentInspector(): JSX.Element {
       </div>
     </div>
   );
+}
+
+
+/** set_format addresses runs; paragraph operations keep the paragraph id. */
+function formatAddresses(envelope: CatEnvelope, segment: Segment): EditAddress[] {
+  const runs = envelope.segments.filter((run) => {
+    if (run.kind !== "run" || run.section !== segment.section || run.para !== segment.para) return false;
+    if (run.start < segment.start || run.end > segment.end) return false;
+    if (segment.indices === undefined || run.indices === undefined) return true;
+    return run.indices.length === segment.indices.length + 1 &&
+      segment.indices.every((index, at) => run.indices![at] === index);
+  });
+  const at = { section: segment.section, paragraph: segment.para };
+  return runs.length > 0
+    ? runs.map((run, index) => run.id !== undefined ? { id: run.id } : { at: { ...at, run: index } })
+    : segment.indices === undefined ? [{ at: { ...at, run: 0 } }] : [];
 }

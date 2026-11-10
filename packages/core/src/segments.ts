@@ -15,12 +15,11 @@
  * char_range: {start, end}, style, direct}` per segment, with ranges that
  * NEST (a run inside its para, a cell inside its table). What this module
  * publishes is the projection the rest of the editor already consumes: the
- * `CatEnvelope` wire shape to the browser is unchanged, with `start`/`end`
+ * `CatEnvelope` wire shape retains `id`, with `start`/`end`
  * from `char_range`, `section` from `path.section`, and `para` from
  * `path.indices[0]` (the top-level paragraph index, the coordinate
- * `SegmentRef` and `EditOp` addressing are built on). The richer v2 payload
- * (derived ids, per-level styles) is deliberately not projected yet: routing
- * it into the UI is host-side work, not engine adoption.
+ * `SegmentRef` uses as a fallback for older host projections). Checksummed ids
+ * retain the full nested path for editing; per-level styles are not projected.
  *
  * Offset caveat, unchanged from v1: `char_range` counts Unicode scalars into
  * `markdown`, while JS string indexing counts UTF-16 code units. The two
@@ -48,6 +47,10 @@ const SEGMENT_KINDS: readonly SegmentKind[] = [
 ];
 
 export interface Segment {
+  /** Checksummed v2 id; optional for older host-projected envelopes. */
+  id?: string;
+  /** Full v2 nesting path, including run index for run segments. */
+  indices?: number[];
   /** Start character offset into `markdown` (inclusive), from `char_range.start`. */
   start: number;
   /** End character offset into `markdown` (exclusive), from `char_range.end`. */
@@ -67,6 +70,8 @@ export interface CatEnvelope {
 
 /** Source coordinate of a segment in the document body. */
 export interface SegmentRef {
+  /** Disambiguates nested segments sharing a top-level paragraph. */
+  id?: string;
   section: number;
   para: number;
 }
@@ -97,6 +102,8 @@ function projectSegment(raw: unknown): Segment {
     throw new Error("segments envelope: malformed segment");
   }
   return {
+    id,
+    indices: p.indices,
     start: range.start,
     end: range.end,
     kind: kind as SegmentKind,
@@ -127,7 +134,11 @@ export function parseCatEnvelope(json: string): CatEnvelope {
 
 /** Extract the source coordinate of a segment. */
 export function segmentRef(segment: Segment): SegmentRef {
-  return { section: segment.section, para: segment.para };
+  return {
+    section: segment.section,
+    para: segment.para,
+    ...(segment.id === undefined ? {} : { id: segment.id }),
+  };
 }
 
 /** Find the outermost segment covering a character offset into `markdown`. */
@@ -144,7 +155,9 @@ export function segmentAtRef(
   ref: SegmentRef,
 ): Segment | undefined {
   return envelope.segments.find(
-    (s) => s.section === ref.section && s.para === ref.para,
+    (s) => ref.id !== undefined
+      ? s.id === ref.id
+      : s.section === ref.section && s.para === ref.para,
   );
 }
 

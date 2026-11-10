@@ -20,9 +20,12 @@
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { CatEnvelope, DocumentHandle, EditOp } from "@hwp-editor/core";
+import tableFixture from "../../core/test/fixtures/cat-segments-table.json";
+import { base64, createTauriEngine, parseCatEnvelope } from "@hwp-editor/core";
+import { targetsSegment } from "../src/PageCanvas.js";
 import { HwpEditor } from "../src/HwpEditor.js";
-import { en } from "../src/messages.js";
-import { clientYForPara, createMockEngine, makeEnvelope } from "./mock-engine.js";
+import { en, ko } from "../src/messages.js";
+import { clientYForPara, createMockEngine, makeEnvelope, makePage } from "./mock-engine.js";
 
 afterEach(cleanup);
 
@@ -123,7 +126,75 @@ function clickBtn(key: keyof typeof en): void {
   fireEvent.click(screen.getByRole("button", { name: label }));
 }
 
+const tableEnvelope = parseCatEnvelope(JSON.stringify(tableFixture));
+
 describe("SegmentInspector op emission (TEST-03)", () => {
+  it.each([["en", en], ["ko", ko]] as const)("disables addressed edits on an argv-only Tauri host (%s)", async (locale, messages) => {
+    const commands: string[] = [];
+    const pageImage = makePage();
+    const responses: Record<string, unknown> = {
+      hwped_capabilities: { version: "1.3.1", editable: true, formats: ["hwp", "hwpx"] },
+      hwped_read: makeEnvelope(),
+      hwped_render: { pages: [{ ...pageImage, dataBase64: base64.encode(pageImage.data) }] },
+      hwped_validate: { valid: true, errors: [] },
+    };
+    const engine = createTauriEngine(async (command) => {
+      commands.push(command);
+      if (!(command in responses)) throw new Error(`unexpected command ${command}`);
+      return responses[command] as never;
+    });
+    render(<HwpEditor locale={locale} engine={engine} file={file} />);
+    const page = await screen.findByRole("button", { name: messages["page.label"]({ page: 1 }) });
+    fireEvent.click(page, { clientY: clientYForPara(makeEnvelope(), 0) });
+    expect(await screen.findByText(messages["segment.addressedUnavailable"])).toBeTruthy();
+    const panel = screen.getByRole("region", { name: messages["segment.panelAria"] });
+    for (const control of Array.from(panel.querySelectorAll("input, textarea, button"))) {
+      expect((control as HTMLButtonElement).disabled).toBe(true);
+      fireEvent.click(control);
+    }
+    expect(screen.getByLabelText(messages["toolbar.pendingEdits"]({ count: 0 }), { exact: true })).toBeTruthy();
+    expect(commands).not.toContain("hwped_edit");
+  });
+
+  it("uses a paragraph address after clicking past a final formatted paragraph", async () => {
+    const envelope = envelopeOf(["첫 문단", "마지막 서식 문단"]);
+    const paragraph = envelope.segments[1]!;
+    paragraph.id = "1234567890abcdef.0.1";
+    paragraph.indices = [1];
+    envelope.segments.push({ ...paragraph, kind: "run", id: "1234567890abcdef.0.1.0", indices: [1, 0], start: paragraph.start + 2 });
+    const engine = createMockEngine({ envelope });
+    render(<HwpEditor engine={engine} file={file} />);
+    const page = await screen.findByRole("button", { name: en["page.label"]({ page: 1 }) });
+    fireEvent.click(page, { clientY: 842 });
+    clickBtn("segment.alignCenter");
+    expect(await applyOps(engine, 1)).toEqual([
+      { kind: "set-align", address: { id: paragraph.id }, alignment: "center" },
+    ]);
+  });
+
+  it("disables character formatting for a v2 paragraph without immediate runs", async () => {
+    const engine = createMockEngine({ envelope: tableEnvelope });
+    await selectPara(engine, tableEnvelope.segments.findIndex(segment =>
+      segment.kind === "para" && segment.para === 2 && segment.indices?.length === 1), tableEnvelope);
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.para"] }));
+    fireEvent.click(screen.getByLabelText(en["segment.bold"]));
+    const submit = screen.getByRole("button", { name: en["segment.formatSubmit"] });
+    expect((submit as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(submit);
+    expect(screen.getByLabelText(en["toolbar.pendingEdits"]({ count: 0 }), { exact: true })).toBeTruthy();
+    expect(engine.calls.edit).toHaveLength(0);
+  });
+
+  it.each([
+    [{ section: 0, paragraph: 2 }, [2]],
+    [{ section: 0, paragraph: 0, run: 0 }, [0, 0]],
+    [{ section: 0, paragraph: 2, run: 0 }, null],
+  ])("matches at-address %j without highlighting nested segments", (at, indices) => {
+    const op: EditOp = { kind: "set-align", address: { at }, alignment: "left" };
+    const matches = tableEnvelope.segments.filter(segment => targetsSegment(op, tableEnvelope, segment));
+    expect(matches.map(segment => segment.indices)).toEqual(indices === null ? [] : [indices]);
+  });
+
   it("queues insert-para-before with the selection anchor and typed text", async () => {
     const engine = await openInspector();
     fireEvent.change(screen.getByLabelText(en["segment.insertLabel"]), {
@@ -132,7 +203,7 @@ describe("SegmentInspector op emission (TEST-03)", () => {
     clickBtn("segment.insertBefore");
 
     expect(await applyOps(engine, 1)).toEqual([
-      { kind: "insert-para-before", anchor: HEADING, text: "머리말" },
+      { kind: "insert-para-before", address: { at: { section: 0, paragraph: 0 } }, text: "머리말" },
     ]);
   });
 
@@ -144,7 +215,7 @@ describe("SegmentInspector op emission (TEST-03)", () => {
     clickBtn("segment.insertAfter");
 
     expect(await applyOps(engine, 1)).toEqual([
-      { kind: "insert-para", anchor: HEADING, text: "꼬리말" },
+      { kind: "insert-para", address: { at: { section: 0, paragraph: 0 } }, text: "꼬리말" },
     ]);
   });
 
@@ -153,7 +224,7 @@ describe("SegmentInspector op emission (TEST-03)", () => {
     clickBtn("segment.deletePara");
 
     expect(await applyOps(engine, 1)).toEqual([
-      { kind: "delete-para", text: HEADING },
+      { kind: "delete-para", address: { at: { section: 0, paragraph: 0 } } },
     ]);
   });
 
@@ -169,10 +240,49 @@ describe("SegmentInspector op emission (TEST-03)", () => {
       clickBtn(key);
 
       expect(await applyOps(engine, 1)).toEqual([
-        { kind: "set-align", find: HEADING, alignment },
+        { kind: "set-align", address: { at: { section: 0, paragraph: 0 } }, alignment },
       ]);
     },
   );
+
+  it("addresses only the selected duplicate and lists its pending target", async () => {
+    const envelope = envelopeOf(["반복문구", "반복문구"]);
+    envelope.segments[0]!.id = "1234567890abcdef.0.0";
+    envelope.segments[1]!.id = "1234567890abcdef.0.1";
+    envelope.segments.push({ ...envelope.segments[1]!, kind: "run", id: "1234567890abcdef.0.1.0" });
+    const engine = createMockEngine({ envelope });
+    await selectPara(engine, 1, envelope);
+    fireEvent.click(screen.getByLabelText(en["segment.bold"]));
+    clickBtn("segment.formatSubmit");
+    expect(screen.getByLabelText(en["toolbar.pendingEdits"]({ count: 1 }), { exact: true }).textContent)
+      .toBe(en["toolbar.pendingEdits"]({ count: 1 }));
+    expect(screen.getByRole("list", { name: en["toolbar.pendingList"] }).className)
+      .toBe("hwped-pending-list");
+    expect(screen.getByRole("list", { name: en["toolbar.pendingList"] }).textContent).toContain("1234567890abcdef.0.1.0");
+    expect(await applyOps(engine, 1)).toEqual([
+      { kind: "set-format", address: { id: "1234567890abcdef.0.1.0" }, props: { bold: "on" } },
+    ]);
+  });
+
+  it("queues every immediate run of a styled paragraph in one edit call", async () => {
+    const envelope = envelopeOf(["서식 있는 문단", "다른 문단"]);
+    const para = envelope.segments[0]!;
+    para.id = "1234567890abcdef.0.0";
+    para.indices = [0];
+    envelope.segments.push(
+      { ...para, kind: "run", id: "1234567890abcdef.0.0.0", indices: [0, 0], end: 3 },
+      { ...para, kind: "run", id: "1234567890abcdef.0.0.1", indices: [0, 1], start: 3 },
+      { ...para, kind: "run", id: "1234567890abcdef.0.0.2.0", indices: [0, 2, 0] },
+    );
+    const engine = createMockEngine({ envelope });
+    await selectPara(engine, 0, envelope);
+    fireEvent.click(screen.getByLabelText(en["segment.bold"]));
+    clickBtn("segment.formatSubmit");
+    expect(await applyOps(engine, 2)).toEqual([
+      { kind: "set-format", address: { id: "1234567890abcdef.0.0.0" }, props: { bold: "on" } },
+      { kind: "set-format", address: { id: "1234567890abcdef.0.0.1" }, props: { bold: "on" } },
+    ]);
+  });
 
   it("queues set-format with ONLY the props that were set", async () => {
     const engine = await openInspector();
@@ -184,7 +294,7 @@ describe("SegmentInspector op emission (TEST-03)", () => {
     // bold and color were never touched: their keys must be absent, not
     // present-and-empty — the conditional spread is the contract.
     expect(await applyOps(engine, 1)).toEqual([
-      { kind: "set-format", find: HEADING, props: { size: "12" } },
+      { kind: "set-format", address: { at: { section: 0, paragraph: 0, run: 0 } }, props: { size: "12" } },
     ]);
   });
 
@@ -202,7 +312,7 @@ describe("SegmentInspector op emission (TEST-03)", () => {
     expect(await applyOps(engine, 1)).toEqual([
       {
         kind: "set-format",
-        find: HEADING,
+        address: { at: { section: 0, paragraph: 0, run: 0 } },
         props: { bold: "on", size: "14", color: "#FF0000" },
       },
     ]);
@@ -358,9 +468,9 @@ describe("panel edge cases (TEST-03)", () => {
     clickBtn("segment.insertAfter");
 
     expect(await applyOps(engine, 3)).toEqual([
-      { kind: "set-align", find: HEADING, alignment: "center" },
-      { kind: "delete-para", text: HEADING },
-      { kind: "insert-para", anchor: HEADING, text: "마지막" },
+      { kind: "set-align", address: { at: { section: 0, paragraph: 0 } }, alignment: "center" },
+      { kind: "delete-para", address: { at: { section: 0, paragraph: 0 } } },
+      { kind: "insert-para", address: { at: { section: 0, paragraph: 0 } }, text: "마지막" },
     ]);
   });
 });

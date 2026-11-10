@@ -127,7 +127,7 @@ describe("HwpEditor edit flow", () => {
     await screen.findByText(en["toolbar.pendingEdits"]({ count: 0 }));
     expect(engine.calls.edit).toHaveLength(1);
     expect(engine.calls.edit[0]?.ops).toEqual([
-      { kind: "replace", find: "1. 회의록", replace: "2. 회의록" },
+      { kind: "replace", address: { at: { section: 0, paragraph: 0 } }, find: "1. 회의록", replace: "2. 회의록" },
     ]);
     expect(onChange).toHaveBeenCalledWith(
       expect.objectContaining({ name: "edited-1.hwpx" }),

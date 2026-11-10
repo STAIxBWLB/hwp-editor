@@ -35,6 +35,8 @@ describe("parseCatEnvelope", () => {
     // v2 nests: the image and its run lie inside para 0's wider range.
     expect(env.segments).toHaveLength(5);
     expect(env.segments[0]).toEqual({
+      id: "175b9dd4192615d5.0.0",
+      indices: [0],
       start: 0,
       end: 12,
       kind: "para",
@@ -90,11 +92,11 @@ describe("segment coordinate helpers", () => {
   it("maps markdown offsets to segments and refs", () => {
     // offset 0 is inside the heading segment (para 0)
     expect(segmentAtOffset(env, 0)).toMatchObject({ section: 0, para: 0 });
-    expect(offsetToRef(env, 0)).toEqual({ section: 0, para: 0 });
+    expect(offsetToRef(env, 0)).toEqual({ section: 0, para: 0, id: env.segments[0]!.id });
     // v2 para ranges include the trailing paragraph break, so an offset v1
     // left in the gap now resolves to the paragraph that owns the break.
     expect(segmentAtOffset(env, 13)).toMatchObject({ section: 0, para: 0 });
-    expect(offsetToRef(env, 13)).toEqual({ section: 0, para: 0 });
+    expect(offsetToRef(env, 13)).toEqual({ section: 0, para: 0, id: env.segments[0]!.id });
     // past the end of the markdown maps to nothing
     expect(segmentAtOffset(env, env.markdown.length)).toBeUndefined();
   });
@@ -115,7 +117,7 @@ describe("segment coordinate helpers", () => {
       (s) => s.kind === "para" && s.para === 3,
     )!;
     const ref = segmentRef(closing);
-    expect(ref).toEqual({ section: 0, para: 3 });
+    expect(ref).toEqual({ section: 0, para: 3, id: closing.id });
     const seg = segmentAtRef(env, ref)!;
     expect(segmentText(env, seg)).toContain("다음 회의는 9월 1일입니다.");
     expect(segmentAtRef(env, { section: 0, para: 99 })).toBeUndefined();
