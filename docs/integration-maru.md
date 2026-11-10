@@ -117,3 +117,37 @@ loop, the upgrade path is a resident `hwp mcp --root <dir>` stdio server
 (16 tools) owned by the Rust side for the app's lifetime, with the same
 `hwped_*` command surface in front of it. Deliberately not implemented in
 this pass — the CLI spawner keeps exact parity with the Node engine.
+
+## Optional template commands
+
+The template API requires hwp-cli 1.4.0 or newer. Existing hosts may omit all
+new methods. Advertise only implemented commands through
+`Capabilities.templateMethods`: `slots`, `fill`, `template`, `lint`,
+`listTemplates`, `create`. Both clients treat a missing advertisement as an
+empty list, so old hosts show disabled controls with upgrade guidance.
+
+| Tauri command | Payload | Result |
+| --- | --- | --- |
+| `hwped_slots` | `{ document, workspaceRoot? }` | `TemplateInputs` |
+| `hwped_fill` | `{ document, values, workspaceRoot? }` | `FillResponse` |
+| `hwped_template` | `{ spec, data, name, workspaceRoot? }` | `ComposeResponse` |
+| `hwped_lint` | `{ document, profile?, workspaceRoot? }` | `LintReport` |
+| `hwped_list_templates` | `{ workspaceRoot? }` | `EmbeddedTemplate[]` |
+| `hwped_create` | `{ templateId, name, workspaceRoot? }` | `EditResponse` |
+
+The HTTP equivalents are POST `/slots`, `/fill`, `/lint` (multipart file,
+with `values` JSON or `profile` where applicable), POST `/template` and
+`/create` (JSON), and GET `/templates`. All routes pass through authorization;
+POST routes retain the request-size gate. New reports are validated and
+projected before use; native CLI output paths are not exposed.
+
+The CLI adapter fills HWPX placeholders/form inputs and native fields together.
+HWP placeholder fill is refused with an HWPX next step. TemplateSpec accepts
+self-contained compose mode; host-file references and local asset paths are
+refused. Template Preview changes no editor bytes; Apply replaces the document
+as one undo step. Lint findings show severity, location and context without
+segment links while column-to-segment correspondence remains unverified.
+
+Adding the client methods does not install Rust host commands. Implement and
+verify the commands before advertising them. A direct call to a missing Tauri
+command fails with an unsupported-host error naming the host upgrade needed.

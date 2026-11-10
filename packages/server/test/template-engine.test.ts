@@ -65,3 +65,18 @@ describe("template route admission", () => {
     expect((await handler(new Request("http://test/templates"))).status).toBe(403);
   });
 });
+
+describe("template producer refusal", () => {
+  it("rejects old engines before invoking a new command", async () => {
+    const { createTemplateCommands } = await import("../src/template-engine.js");
+    let called = false;
+    const commands = createTemplateCommands({version:async()=>"1.3.1",work:async fn=>fn("/unused"),stage:async()=>"/unused/input.hwpx",run:async()=>{called=true;return "{}";}});
+    await expect(commands.slots({name:"x.hwpx",data:new Uint8Array()})).rejects.toThrow(/1.4.0.*upgrade/i);
+    expect(called).toBe(false);
+  });
+  it("rejects malformed CLI slots rather than publishing guessed inputs", async () => {
+    const { createTemplateCommands } = await import("../src/template-engine.js");
+    const commands = createTemplateCommands({version:async()=>"1.4.0",work:async fn=>fn("/unused"),stage:async()=>"/unused/input.hwpx",run:async()=>JSON.stringify({placeholders:[{name:"title",occurrences:"many"}],fields:[]})});
+    await expect(commands.slots({name:"x.hwpx",data:new Uint8Array()})).rejects.toThrow(/placeholder.occurrences.*upgrade/);
+  });
+});

@@ -134,6 +134,21 @@ async function parseError(res: Response): Promise<HwpEngineError> {
   }
 }
 
+
+export function decodeTemplateDocument(raw: unknown, field: string): DocumentHandle {
+  const value = reportObject(raw, field);
+  const name = reportString(value.name, `${field}.name`);
+  if (name === "") throw new Error(`Invalid template report: ${field}.name; upgrade the host/client to the hwp-cli 1.4.0 template contract and retry.`);
+  const encoded = reportString(value.dataBase64, `${field}.dataBase64`);
+  if (encoded === "" || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) {
+    throw new Error(`Invalid template report: ${field}.dataBase64; upgrade the host/client to the hwp-cli 1.4.0 template contract and retry.`);
+  }
+  return {
+    name,
+    data: fromBase64(encoded),
+  };
+}
+
 export function createHttpEngine(
   baseUrl: string,
   opts: HttpEngineOptions = {},
@@ -157,64 +172,61 @@ export function createHttpEngine(
     return form;
   }
 
+  async function templateRequest<T>(route: string, init: RequestInit): Promise<T> {
+    try { return await request<T>(route, init); }
+    catch (error) {
+      if (error instanceof HwpEngineError && error.status === 404) throw new HwpEngineError("unavailable", `Template command ${route} is unsupported by this host; upgrade the host adapter to the template API and retry.`, { cause: error });
+      if (error instanceof SyntaxError) throw new HwpEngineError("failed", `Template command ${route} returned invalid JSON; upgrade the host adapter to the hwp-cli 1.4.0 contract and retry.`, { cause: error });
+      if (error instanceof TypeError) throw new HwpEngineError("unavailable", `Template request ${route} could not reach the host; check the engine base URL and connection, then retry.`, { cause: error });
+      throw error;
+    }
+  }
+
   function jsonRequest<T>(path: string, body: unknown): Promise<T> {
-    return request<T>(path, {
+    return templateRequest<T>(path, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     });
   }
 
-  function documentFromWire(raw: unknown, field: string): DocumentHandle {
-    const value = reportObject(raw, field);
-    const name = reportString(value.name, `${field}.name`);
-    if (name === "") throw new Error(`Invalid template report: ${field}.name; upgrade the host/client to the hwp-cli 1.4.0 template contract and retry.`);
-    const encoded = reportString(value.dataBase64, `${field}.dataBase64`);
-    if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) {
-      throw new Error(`Invalid template report: ${field}.dataBase64; upgrade the host/client to the hwp-cli 1.4.0 template contract and retry.`);
-    }
-    return {
-      name,
-      data: fromBase64(encoded),
-    };
-  }
 
   return {
     async slots(document) {
-      const raw = await request<unknown>("/slots", { method: "POST", body: fileForm(document) });
+      const raw = await templateRequest<unknown>("/slots", { method: "POST", body: fileForm(document) });
       return parseTemplateInputs(raw);
     },
 
     async fill(document, values) {
       const form = fileForm(document);
       form.append("values", JSON.stringify(values));
-      const raw = await request<unknown>("/fill", { method: "POST", body: form });
+      const raw = await templateRequest<unknown>("/fill", { method: "POST", body: form });
       const response = reportObject(raw, "fill.response");
       const report = parseFillReport(response.report);
-      return { document: documentFromWire(response, "fill.document"), report };
+      return { document: decodeTemplateDocument(response, "fill.document"), report };
     },
 
     async template(spec: TemplateSpecV1, data: TemplateDataV1, name: string) {
       const body: TemplateRequest = { spec, data, name };
       const raw = await jsonRequest<unknown>("/template", body);
       const response = reportObject(raw, "template.response");
-      const document = documentFromWire(response, "template.document");
+      const document = decodeTemplateDocument(response, "template.document");
       return { document, ...(response.report !== undefined ? { report: parseTemplateReport(response.report) } : {}) };
     },
 
     async lint(document, profile?: LintProfile) {
       const form = fileForm(document);
       if (profile !== undefined) form.append("profile", profile);
-      return parseLintReport(await request<unknown>("/lint", { method: "POST", body: form }));
+      return parseLintReport(await templateRequest<unknown>("/lint", { method: "POST", body: form }));
     },
 
     async listTemplates() {
-      return parseEmbeddedTemplates(await request<unknown>("/templates", { method: "GET" }));
+      return parseEmbeddedTemplates(await templateRequest<unknown>("/templates", { method: "GET" }));
     },
 
     async create(templateId, name) {
       const raw = await jsonRequest<unknown>("/create", { templateId, name });
-      return documentFromWire(raw, "create.document");
+      return decodeTemplateDocument(raw, "create.document");
     },
 
     read(document) {

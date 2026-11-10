@@ -114,3 +114,14 @@ describe("Tauri template transport", () => {
     await expect(engine.slots?.(doc)).rejects.toThrow("upgrade the host");
   });
 });
+
+describe("template transport diagnostics", () => {
+  it("names malformed JSON and the host upgrade step", async () => {
+    const engine=createHttpEngine("/api",{fetch:(async()=>new Response("not JSON")) as typeof fetch});
+    await expect(engine.slots!(doc)).rejects.toThrow(/invalid JSON.*upgrade/);
+  });
+  it("rejects empty document bytes before rendering", async () => {
+    const {engine}=httpEngine(()=>({name:"empty.hwpx",dataBase64:""}));
+    await expect(engine.create!("report","empty.hwpx")).rejects.toThrow(/dataBase64.*upgrade/);
+  });
+});

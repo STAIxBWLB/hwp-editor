@@ -73,6 +73,13 @@ export type {
 } from "./tauri.js";
 export type {
   CapabilitiesResponse,
+  CreateRequest,
+  FillResponse,
+  SlotsResponse,
+  LintResponse,
+  TemplatesResponse,
+  TemplateRequest,
+  TemplateResponse,
   ComposeRequest,
   ComposeResponse,
   EditResponse,

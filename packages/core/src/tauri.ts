@@ -41,7 +41,7 @@ import type {
   EditResponse,
   RenderResponse,
 } from "./protocol.js";
-import { base64 } from "./http-engine.js";
+import { base64, decodeTemplateDocument } from "./http-engine.js";
 import {
   HwpEngineError,
   protectedReasonFromDiagnostics,
@@ -239,16 +239,7 @@ export function createTauriEngine(
     return { ...rest, templateMethods: methods, ...(editOps === "v1" ? { editOps: "v1" as const } : {}) };
   }
 
-  function documentFromWire(raw: unknown, field: string): DocumentHandle {
-    const value = reportObject(raw, field);
-    const name = reportString(value.name, `${field}.name`);
-    if (name === "") throw new Error(`Invalid template report: ${field}.name; upgrade the host/client to the hwp-cli 1.4.0 template contract and retry.`);
-    const encoded = reportString(value.dataBase64, `${field}.dataBase64`);
-    if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) {
-      throw new Error(`Invalid template report: ${field}.dataBase64; upgrade the host/client to the hwp-cli 1.4.0 template contract and retry.`);
-    }
-    return { name, data: base64.decode(encoded) };
-  }
+
 
   return {
     async slots(document) {
@@ -257,12 +248,12 @@ export function createTauriEngine(
 
     async fill(document, values) {
       const raw = reportObject(await call<unknown>("hwped_fill", { document: ref(document), values, ...scope() }), "fill.response");
-      return { document: documentFromWire(raw, "fill.document"), report: parseFillReport(raw.report) };
+      return { document: decodeTemplateDocument(raw, "fill.document"), report: parseFillReport(raw.report) };
     },
 
     async template(spec: TemplateSpecV1, data: TemplateDataV1, name: string) {
       const raw = reportObject(await call<unknown>("hwped_template", { spec, data, name, ...scope() }), "template.response");
-      const document = documentFromWire(raw, "template.document");
+      const document = decodeTemplateDocument(raw, "template.document");
       return { document, ...(raw.report !== undefined ? { report: parseTemplateReport(raw.report) } : {}) };
     },
 
@@ -275,7 +266,7 @@ export function createTauriEngine(
     },
 
     async create(templateId, name) {
-      return documentFromWire(await call<unknown>("hwped_create", { templateId, name, ...scope() }), "create.document");
+      return decodeTemplateDocument(await call<unknown>("hwped_create", { templateId, name, ...scope() }), "create.document");
     },
 
     read(document) {

@@ -35,7 +35,7 @@ import type { EditOp } from "./ops.js";
 import type { CatEnvelope } from "./segments.js";
 import type { DocumentSpecV2 } from "./generated/document-spec-v2.js";
 import type { TemplateDataV1, TemplateSpecV1 } from "./spec.js";
-import type { EmbeddedTemplate, LintReport, TemplateInputs } from "./templates.js";
+import type { EmbeddedTemplate, FillReport, LintReport, TemplateInputs, TemplateReport } from "./templates.js";
 
 /** POST /read response — the `hwp cat --with-segments` envelope verbatim. */
 export type ReadResponse = CatEnvelope;
@@ -80,7 +80,10 @@ export interface ComposeResponse {
 
 /** New template command wires, introduced by hwp-cli 1.4.0. */
 export interface FillResponse extends EditResponse {
-  report: unknown;
+  report: FillReport;
+}
+export interface TemplateResponse extends EditResponse {
+  report?: TemplateReport;
 }
 export interface TemplateRequest {
   spec: TemplateSpecV1;
