@@ -1,3 +1,5 @@
+import type { TemplateDataV1, TemplateSpecV1 } from "./spec.js";
+import type { EmbeddedTemplate, FillResult, LintProfile, LintReport, TemplateInputs, TemplateMethod } from "./templates.js";
 import type { EditOp } from "./ops.js";
 import type { CatEnvelope } from "./segments.js";
 import type { DocumentSpecV2 } from "./generated/document-spec-v2.js";
@@ -57,6 +59,8 @@ export interface EditOptions {
 }
 
 export interface Capabilities {
+  /** Optional command advertisement; an empty list means this host lacks the commands. */
+  templateMethods?: TemplateMethod[];
   /** JSON edit-ops-v1 supported by both this client and its host. Absent on argv-only hosts. */
   editOps?: "v1";
   /** hwp-cli version string, e.g. "0.16.0". */
@@ -91,6 +95,14 @@ export interface ComposeResult {
  * logic lives behind this interface; the editor never parses HWP itself.
  */
 export interface HwpEngine {
+  /** Template commands require hwp-cli >= 1.4.0; optional for older hosts. */
+  slots?(document: DocumentHandle): Promise<TemplateInputs>;
+  fill?(document: DocumentHandle, values: Record<string, string>): Promise<FillResult>;
+  template?(spec: TemplateSpecV1, data: TemplateDataV1, name: string): Promise<ComposeResult>;
+  lint?(document: DocumentHandle, profile?: LintProfile): Promise<LintReport>;
+  listTemplates?(): Promise<EmbeddedTemplate[]>;
+  create?(templateId: string, name: string): Promise<DocumentHandle>;
+
   /** Extract markdown + source segments (`hwp cat --with-segments`). */
   read(document: DocumentHandle): Promise<CatEnvelope>;
   /** Rasterize pages (`hwp render`). */

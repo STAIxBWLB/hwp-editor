@@ -19,12 +19,16 @@ import type { HwpErrorCode } from "./errors.js";
 import type { EditOp } from "./ops.js";
 import type { CatEnvelope } from "./segments.js";
 import type { DocumentSpecV2 } from "./generated/document-spec-v2.js";
+import type { TemplateDataV1, TemplateSpecV1 } from "./spec.js";
+import type { LintProfile } from "./templates.js";
+import { parseEmbeddedTemplates, parseFillReport, parseLintReport, parseTemplateInputs, parseTemplateMethods, parseTemplateReport, reportObject, reportString } from "./templates.js";
 import type {
   ComposeRequest,
   ComposeResponse,
   EditResponse,
   ErrorResponse,
   RenderResponse,
+  TemplateRequest,
 } from "./protocol.js";
 
 export interface HttpEngineOptions {
@@ -153,7 +157,66 @@ export function createHttpEngine(
     return form;
   }
 
+  function jsonRequest<T>(path: string, body: unknown): Promise<T> {
+    return request<T>(path, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  function documentFromWire(raw: unknown, field: string): DocumentHandle {
+    const value = reportObject(raw, field);
+    const name = reportString(value.name, `${field}.name`);
+    if (name === "") throw new Error(`Invalid template report: ${field}.name; upgrade the host/client to the hwp-cli 1.4.0 template contract and retry.`);
+    const encoded = reportString(value.dataBase64, `${field}.dataBase64`);
+    if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) {
+      throw new Error(`Invalid template report: ${field}.dataBase64; upgrade the host/client to the hwp-cli 1.4.0 template contract and retry.`);
+    }
+    return {
+      name,
+      data: fromBase64(encoded),
+    };
+  }
+
   return {
+    async slots(document) {
+      const raw = await request<unknown>("/slots", { method: "POST", body: fileForm(document) });
+      return parseTemplateInputs(raw);
+    },
+
+    async fill(document, values) {
+      const form = fileForm(document);
+      form.append("values", JSON.stringify(values));
+      const raw = await request<unknown>("/fill", { method: "POST", body: form });
+      const response = reportObject(raw, "fill.response");
+      const report = parseFillReport(response.report);
+      return { document: documentFromWire(response, "fill.document"), report };
+    },
+
+    async template(spec: TemplateSpecV1, data: TemplateDataV1, name: string) {
+      const body: TemplateRequest = { spec, data, name };
+      const raw = await jsonRequest<unknown>("/template", body);
+      const response = reportObject(raw, "template.response");
+      const document = documentFromWire(response, "template.document");
+      return { document, ...(response.report !== undefined ? { report: parseTemplateReport(response.report) } : {}) };
+    },
+
+    async lint(document, profile?: LintProfile) {
+      const form = fileForm(document);
+      if (profile !== undefined) form.append("profile", profile);
+      return parseLintReport(await request<unknown>("/lint", { method: "POST", body: form }));
+    },
+
+    async listTemplates() {
+      return parseEmbeddedTemplates(await request<unknown>("/templates", { method: "GET" }));
+    },
+
+    async create(templateId, name) {
+      const raw = await jsonRequest<unknown>("/create", { templateId, name });
+      return documentFromWire(raw, "create.document");
+    },
+
     read(document) {
       return request<CatEnvelope>("/read", {
         method: "POST",
@@ -215,8 +278,10 @@ export function createHttpEngine(
       });
     },
 
-    capabilities(): Promise<Capabilities> {
-      return request<Capabilities>("/capabilities", { method: "GET" });
+    async capabilities(): Promise<Capabilities> {
+      const raw = reportObject(await request<unknown>("/capabilities", { method: "GET" }), "capabilities");
+      const methods = raw.templateMethods === undefined ? [] : parseTemplateMethods(raw.templateMethods);
+      return { ...(raw as unknown as Capabilities), templateMethods: methods };
     },
   };
 }

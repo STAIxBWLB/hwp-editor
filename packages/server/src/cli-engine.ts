@@ -1,3 +1,5 @@
+import { createTemplateCommands } from "./template-engine.js";
+import { TEMPLATE_METHODS, templateVersionSupported, type TemplateInputs, type FillResult, type LintReport, type LintProfile, type EmbeddedTemplate, type TemplateSpecV1, type TemplateDataV1 } from "@hwp-editor/core";
 /**
  * CliEngine — HwpEngine implementation that shells out to the hwp-cli binary.
  *
@@ -251,6 +253,13 @@ export interface CliCallOptions {
 }
 
 export interface CliEngine extends HwpEngine {
+  slots(document: DocumentHandle, call?: CliCallOptions): Promise<TemplateInputs>;
+  fill(document: DocumentHandle, values: Record<string, string>, call?: CliCallOptions): Promise<FillResult>;
+  template(spec: TemplateSpecV1, data: TemplateDataV1, name: string, call?: CliCallOptions): Promise<ComposeResult>;
+  lint(document: DocumentHandle, profile?: LintProfile, call?: CliCallOptions): Promise<LintReport>;
+  listTemplates(call?: CliCallOptions): Promise<EmbeddedTemplate[]>;
+  create(templateId: string, name: string, call?: CliCallOptions): Promise<DocumentHandle>;
+
   /**
    * Full read pipeline: cat --with-segments plus fields/bookmarks/slots/info.
    * `read()` is this with the extras dropped, per the pinned wire contract.
@@ -997,7 +1006,20 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
     return inspection;
   }
 
+  const templateCommands = createTemplateCommands({
+    version: ensureVersion, work: withWorkDir, stage,
+    async run(args, call) {
+      const result = args[0] === "lint"
+        ? await runCli(resolveBin(), args, timeoutMs, opts.locale, call?.signal)
+        : await runCliOk(resolveBin(), args, timeoutMs, opts.locale, call?.signal).catch(rethrowProtected);
+      if (result.code !== 0 && !(args[0] === "lint" && result.code === 1)) {
+        throw new HwpCliError("failed", "hwp lint could not inspect this document; check that it opens with hwp-cli 1.4.0 and retry.", result.stderr);
+      }
+      return result.stdout;
+    },
+  });
   const engine: CliEngine = {
+    ...templateCommands,
     async read(document, call) {
       return (await describe(document, call)).envelope;
     },
@@ -1230,7 +1252,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
 
     async capabilities(): Promise<Capabilities> {
       const version = await ensureVersion();
-      return { version, editable: true, editOps: "v1", formats: ["hwp", "hwpx"] };
+      return { version, editable: true, editOps: "v1", formats: ["hwp", "hwpx"], templateMethods: templateVersionSupported(version) ? [...TEMPLATE_METHODS] : [] };
     },
 
     async binaryInfo() {

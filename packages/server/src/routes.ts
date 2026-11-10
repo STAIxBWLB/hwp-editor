@@ -1,3 +1,4 @@
+import { TEMPLATE_METHODS, templateVersionSupported, parseTemplateInputs, parseFillReport, parseLintReport, parseEmbeddedTemplates, parseTemplateReport, type TemplateMethod, type LintProfile, type TemplateSpecV1, type TemplateDataV1 } from "@hwp-editor/core";
 /**
  * Framework-agnostic HTTP handler implementing the wire contract of
  * packages/core/src/protocol.ts as Web Standards `(Request) => Response`.
@@ -48,7 +49,7 @@ import { createCliEngine, HwpCliError, type CliEngine } from "./cli-engine.js";
 import { createSessionStore, SessionNotFoundError, type SessionStore } from "./session.js";
 
 /** The six actions this handler serves; the runtime guard and `HwpAction` share it. */
-const ACTION_LIST = ["read", "render", "edit", "compose", "validate", "capabilities"] as const;
+const ACTION_LIST = ["read", "render", "edit", "compose", "validate", "capabilities", "slots", "fill", "lint", "template", "templates", "create"] as const;
 
 /** One of the six action names the handler dispatches on. */
 export type HwpAction = (typeof ACTION_LIST)[number];
@@ -452,7 +453,65 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
   }
 
   async function handleCapabilities(): Promise<Response> {
-    return json(await engine.capabilities());
+    const caps = await engine.capabilities();
+    return json({ ...caps, templateMethods: templateVersionSupported(caps.version)
+      ? (caps.templateMethods ?? TEMPLATE_METHODS.filter(method => typeof engine[method] === "function")) : [] });
+  }
+
+  async function requireTemplateMethod(method: TemplateMethod): Promise<void> {
+    if (typeof engine[method] !== "function") throw new HwpCliError("unavailable", `${method} is unsupported by this host; upgrade the host adapter to the hwp-cli 1.4.0 template API.`);
+    const caps = await engine.capabilities();
+    if (!templateVersionSupported(caps.version) || (caps.templateMethods !== undefined && !caps.templateMethods.includes(method))) throw new HwpCliError("unavailable", `${method} requires hwp-cli 1.4.0 and host command support; upgrade the binary and host adapter.`);
+  }
+  function validated<T>(value: unknown, parser: (raw: unknown) => T): T {
+    try { return parser(value); }
+    catch (err) { throw new HwpCliError("failed", err instanceof Error ? err.message : "Invalid template report; upgrade the host adapter and retry."); }
+  }
+  async function requestObject(req: Request): Promise<Record<string, unknown>> {
+    let body: unknown;
+    try { body = await req.json(); } catch { throw new HwpCliError("bad_request", "Invalid JSON body; send a template request object and retry."); }
+    if (typeof body !== "object" || body === null || Array.isArray(body)) throw new HwpCliError("bad_request", "Expected a template request object; send a JSON object and retry.");
+    return body as Record<string, unknown>;
+  }
+  function stringField(body: Record<string, unknown>, field: string): string {
+    if (typeof body[field] !== "string" || body[field] === "") throw new HwpCliError("bad_request", `Missing or invalid ${field}; supply a non-empty string and retry.`);
+    return body[field] as string;
+  }
+  async function handleTemplateAction(req: Request, action: string, scope: string): Promise<Response> {
+    const call = { signal: req.signal, scope };
+    if (action === "templates") {
+      await requireTemplateMethod("listTemplates");
+      return json(validated(cli !== null ? await cli.listTemplates(call) : await engine.listTemplates!(), parseEmbeddedTemplates));
+    }
+    if (action === "template" || action === "create") {
+      await requireTemplateMethod(action);
+      const body = await requestObject(req);
+      const name = stringField(body, "name");
+      if (action === "create") {
+        const id = stringField(body, "templateId");
+        const document = cli !== null ? await cli.create(id, name, call) : await engine.create!(id, name);
+        return json({ name: document.name, dataBase64: toBase64(document.data) });
+      }
+      if (typeof body.spec !== "object" || body.spec === null || typeof body.data !== "object" || body.data === null) throw new HwpCliError("bad_request", "Template request needs spec and data objects; supply TemplateSpec/Data v1 and retry.");
+      const result = cli !== null
+        ? await cli.template(body.spec as TemplateSpecV1, body.data as TemplateDataV1, name, call)
+        : await engine.template!(body.spec as TemplateSpecV1, body.data as TemplateDataV1, name);
+      return json({ name: result.document.name, dataBase64: toBase64(result.document.data), ...(result.report === undefined ? {} : { report: validated(result.report, parseTemplateReport) }) });
+    }
+    if (action !== "slots" && action !== "fill" && action !== "lint") throw new HwpCliError("bad_request", "Unknown template action; choose slots, fill, lint, template, templates or create.");
+    await requireTemplateMethod(action);
+    const { document, form } = await formDocument(req);
+    if (action === "slots") return json(validated(cli !== null ? await cli.slots(document, call) : await engine.slots!(document), parseTemplateInputs));
+    if (action === "lint") {
+      const profile = formString(form, "profile");
+      if (profile !== undefined && profile !== "gongmun" && profile !== "report") throw new HwpCliError("bad_request", "Invalid lint profile; select gongmun or report and retry.");
+      return json(validated(cli !== null ? await cli.lint(document, profile as LintProfile | undefined, call) : await engine.lint!(document, profile as LintProfile | undefined), parseLintReport));
+    }
+    let values: unknown;
+    try { values = JSON.parse(formString(form, "values") ?? ""); } catch { throw new HwpCliError("bad_request", "Fill values must be valid JSON; send an object of strings and retry."); }
+    if (typeof values !== "object" || values === null || Array.isArray(values) || Object.values(values).some(value => typeof value !== "string")) throw new HwpCliError("bad_request", "Fill values must be an object of strings; correct the template form and retry.");
+    const result = cli !== null ? await cli.fill(document, values as Record<string, string>, call) : await engine.fill!(document, values as Record<string, string>);
+    return json({ name: result.document.name, dataBase64: toBase64(result.document.data), report: validated(result.report, parseFillReport) });
   }
 
   return async function handler(req: Request): Promise<Response> {
@@ -463,7 +522,7 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
       if (!ACTIONS.has(action)) {
         return error(404, "not_found", `unknown action: ${action || "(empty)"}`);
       }
-      if (action === "capabilities") {
+      if (action === "capabilities" || action === "templates") {
         if (req.method !== "GET") return error(405, "method_not_allowed", "capabilities requires GET");
       } else if (req.method !== "POST") {
         return error(405, "method_not_allowed", `${action} requires POST`);
@@ -475,9 +534,8 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
       const scope =
         opts.authorize === undefined ? DEFAULT_SCOPE : await opts.authorize(req, action as HwpAction);
       if (scope === null) return error(403, "forbidden", "forbidden");
-      if (action === "capabilities") {
-        return await handleCapabilities();
-      }
+      if (action === "capabilities") return await handleCapabilities();
+      if (action === "templates") return await handleTemplateAction(req, action, scope);
       // Size gate: POST actions only, so /capabilities never needs a body
       // header. Refusing an absent Content-Length rather than falling through
       // to a post-buffer check is what keeps D-04's promise provable — a
@@ -499,6 +557,8 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
         return error(413, "bad_request", `request exceeds the ${maxRequestBytes} byte limit`);
       }
       switch (action) {
+        case "slots": case "fill": case "lint": case "template": case "create":
+          return await handleTemplateAction(req, action, scope);
         case "read":
           return await handleRead(req, scope);
         case "render":

@@ -33,6 +33,9 @@ import type { EditOp } from "./ops.js";
 import { opsToArgv, opsToJson } from "./ops.js";
 import type { CatEnvelope } from "./segments.js";
 import type { DocumentSpecV2 } from "./generated/document-spec-v2.js";
+import type { TemplateDataV1, TemplateSpecV1 } from "./spec.js";
+import type { LintProfile } from "./templates.js";
+import { parseEmbeddedTemplates, parseFillReport, parseLintReport, parseTemplateInputs, parseTemplateMethods, parseTemplateReport, reportObject, reportString } from "./templates.js";
 import type {
   ComposeResponse,
   EditResponse,
@@ -101,6 +104,16 @@ const PREFIX_CODES: readonly (readonly [string, HwpErrorCode])[] = [
   ["hwp_stage_failed:", "internal"],
   ["hwp_parse_failed:", "failed"],
 ];
+
+const TEMPLATE_COMMANDS = new Set([
+  "hwped_slots", "hwped_fill", "hwped_template", "hwped_lint",
+  "hwped_list_templates", "hwped_create",
+]);
+
+function isUnknownCommand(error: unknown): boolean {
+  const detail = error instanceof Error ? error.message : String(error);
+  return /(?:unknown|unregistered|not found|no such)\s+(?:tauri\s+)?command|command\s+[^\s]+\s+(?:not found|does not exist)/i.test(detail);
+}
 
 function prefixToCode(detail: string): HwpErrorCode {
   for (const [prefix, code] of PREFIX_CODES) {
@@ -208,20 +221,63 @@ export function createTauriEngine(
     try {
       return await invoke<T>(cmd, args);
     } catch (error) {
+      if (TEMPLATE_COMMANDS.has(cmd) && isUnknownCommand(error)) {
+        throw new HwpEngineError(
+          "unavailable",
+          `${cmd} is unsupported by this host; upgrade the host to the hwp-cli 1.4.0 template contract and retry.`,
+          { cause: error },
+        );
+      }
       throw toEngineError(cmd, error);
     }
   }
 
   async function capabilities(): Promise<Capabilities> {
-    const raw = await call<Capabilities>("hwped_capabilities", {});
-    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-      throw new HwpEngineError("failed", "hwped_capabilities returned invalid capability metadata; update the host adapter and retry.");
+    const raw = reportObject(await call<unknown>("hwped_capabilities", {}), "capabilities");
+    const methods = raw.templateMethods === undefined ? [] : parseTemplateMethods(raw.templateMethods);
+    const { editOps, ...rest } = raw as unknown as Capabilities;
+    return { ...rest, templateMethods: methods, ...(editOps === "v1" ? { editOps: "v1" as const } : {}) };
+  }
+
+  function documentFromWire(raw: unknown, field: string): DocumentHandle {
+    const value = reportObject(raw, field);
+    const name = reportString(value.name, `${field}.name`);
+    if (name === "") throw new Error(`Invalid template report: ${field}.name; upgrade the host/client to the hwp-cli 1.4.0 template contract and retry.`);
+    const encoded = reportString(value.dataBase64, `${field}.dataBase64`);
+    if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) {
+      throw new Error(`Invalid template report: ${field}.dataBase64; upgrade the host/client to the hwp-cli 1.4.0 template contract and retry.`);
     }
-    const { editOps, ...rest } = raw;
-    return { ...rest, ...(editOps === "v1" ? { editOps: "v1" as const } : {}) };
+    return { name, data: base64.decode(encoded) };
   }
 
   return {
+    async slots(document) {
+      return parseTemplateInputs(await call<unknown>("hwped_slots", { document: ref(document), ...scope() }));
+    },
+
+    async fill(document, values) {
+      const raw = reportObject(await call<unknown>("hwped_fill", { document: ref(document), values, ...scope() }), "fill.response");
+      return { document: documentFromWire(raw, "fill.document"), report: parseFillReport(raw.report) };
+    },
+
+    async template(spec: TemplateSpecV1, data: TemplateDataV1, name: string) {
+      const raw = reportObject(await call<unknown>("hwped_template", { spec, data, name, ...scope() }), "template.response");
+      const document = documentFromWire(raw, "template.document");
+      return { document, ...(raw.report !== undefined ? { report: parseTemplateReport(raw.report) } : {}) };
+    },
+
+    async lint(document, profile?: LintProfile) {
+      return parseLintReport(await call<unknown>("hwped_lint", { document: ref(document), ...(profile !== undefined ? { profile } : {}), ...scope() }));
+    },
+
+    async listTemplates() {
+      return parseEmbeddedTemplates(await call<unknown>("hwped_list_templates", { ...scope() }));
+    },
+
+    async create(templateId, name) {
+      return documentFromWire(await call<unknown>("hwped_create", { templateId, name, ...scope() }), "create.document");
+    },
+
     read(document) {
       return call<CatEnvelope>("hwped_read", {
         document: ref(document),
