@@ -38,7 +38,11 @@ if (args[0] !== "render") process.exit(1);
 const field = flag => args[args.indexOf(flag) + 1];
 const selected = ${JSON.stringify(selected)};
 const out = field("-o");
-for (const page of selected) fs.writeFileSync(selected.length === 1 ? out : out.replace(/\\.svg$/, "-" + page + ".svg"), '<svg width="200pt" height="300pt"></svg>');
+const png = Buffer.alloc(24);
+Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(png);
+png.write("IHDR", 12); png.writeUInt32BE(200, 16); png.writeUInt32BE(300, 20);
+const image = field("--format") === "png" ? png : '<svg width="200pt" height="300pt"></svg>';
+for (const page of selected) fs.writeFileSync(selected.length === 1 ? out : out.replace(/\\.svg$/, "-" + page + ".svg"), image);
 fs.writeFileSync(field("--report"), JSON.stringify({selected_pages: selected}));
 const layout = ${JSON.stringify(layout ?? null)};
 if (layout !== null) fs.writeFileSync(field("--layout-json"), typeof layout === "string" ? layout : JSON.stringify(layout));
@@ -77,6 +81,12 @@ describe("render-layout-v1 retention", () => {
     const [page] = await createCliEngine({ bin: renderBin(layout, [3]) }).render(document, { pages: "3" });
     expect(page!.page).toBe(3);
     expect(page!.layout!.width_pt).toBe(400);
+  });
+
+  it("names a rendered page absent from a present artifact and the engine remedy", async () => {
+    const layout = { ...artifact, selected_pages: [2], pages: [artifact.pages[0]] };
+    await expect(createCliEngine({ bin: renderBin(layout, [3]) }).render(document, { format: "png", pages: "3" }))
+      .rejects.toMatchObject({ reason: "failed", message: expect.stringMatching(/missing rendered page 3; check that the hwp-cli version pinned in cli-engine[.]ts emits render-layout-v1/) });
   });
 
   it("keeps geometry absent for older producers that omit the artifact", async () => {

@@ -36,6 +36,23 @@ describe("layout geometry", () => {
     expect(bandsOnPage(envelope, right, fragments, 0, 1)[0]).toEqual({ left: 50, top: 12.5, width: 200 / 600 * 100, height: 2.5 });
   });
 
+  it.each(["image", "field"] as const)("uses the enclosing paragraph rows for %s display items", (kind) => {
+    const child = segment(`right-${kind}`, kind, 0, [0, 0, 1, 0, 1]);
+    const otherSection = { ...right, id: "other-section", section: 1 };
+    const nested = { ...envelope, segments: [otherSection, ...envelope.segments, child] };
+    const fragments = { ...page, layout: { ...page.layout!, rows: [row("right", 300, 500), row("right", 60, 200, 400, 420)] } };
+    const bands = bandsOnPage(nested, child, fragments, 0, 1);
+    expect(bands).toHaveLength(2);
+    expect(bands).toEqual(bandsOnPage(nested, right, fragments, 0, 1));
+
+    const parent = segment("top-level", "para", 2);
+    const topChild = segment(`top-${kind}`, kind, 2, [2, 0]);
+    const topEnvelope = { ...envelope, segments: [parent, topChild] };
+    const topPage = { ...page, layout: { ...page.layout!, rows: [row(parent.id!, 60, 250)] } };
+    expect(bandsOnPage(topEnvelope, topChild, topPage, 0, 1)).toHaveLength(1);
+    expect(bandsOnPage(topEnvelope, topChild, topPage, 0, 1)).toEqual(bandsOnPage(topEnvelope, parent, topPage, 0, 1));
+  });
+
   it("does not fabricate geometry for null, missing, unknown or truncated rows", () => {
     for (const rows of [[], [{ ...row("right", 0, 0), box: null }], [row("unknown", 50, 100)]]) {
       const empty = { ...page, layout: { ...page.layout!, rows, truncated: true } };
