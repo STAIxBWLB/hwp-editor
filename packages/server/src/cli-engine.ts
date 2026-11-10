@@ -1011,7 +1011,15 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
     async run(args, call) {
       const result = args[0] === "lint"
         ? await runCli(resolveBin(), args, timeoutMs, opts.locale, call?.signal)
-        : await runCliOk(resolveBin(), args, timeoutMs, opts.locale, call?.signal).catch(rethrowProtected);
+         : await runCliOk(resolveBin(), args, timeoutMs, opts.locale, call?.signal).catch(error => {
+          try { return rethrowProtected(error); }
+          catch (failure) {
+            if (failure instanceof HwpCliError && failure.reason === "failed") {
+              throw new HwpCliError("failed", `hwp ${args[0]} could not process the template inputs; check the form values or self-contained TemplateSpec against hwp-cli 1.4.0, then retry.`, failure.stderr, failure.detail);
+            }
+            throw failure;
+          }
+        });
       if (result.code !== 0 && !(args[0] === "lint" && result.code === 1)) {
         throw new HwpCliError("failed", "hwp lint could not inspect this document; check that it opens with hwp-cli 1.4.0 and retry.", result.stderr);
       }

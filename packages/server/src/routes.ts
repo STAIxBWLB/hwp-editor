@@ -48,10 +48,10 @@ import type {
 import { createCliEngine, HwpCliError, type CliEngine } from "./cli-engine.js";
 import { createSessionStore, SessionNotFoundError, type SessionStore } from "./session.js";
 
-/** The six actions this handler serves; the runtime guard and `HwpAction` share it. */
+/** Supported actions; the runtime guard and `HwpAction` share this list. */
 const ACTION_LIST = ["read", "render", "edit", "compose", "validate", "capabilities", "slots", "fill", "lint", "template", "templates", "create"] as const;
 
-/** One of the six action names the handler dispatches on. */
+/** One supported action name the handler dispatches on. */
 export type HwpAction = (typeof ACTION_LIST)[number];
 
 /**
@@ -523,7 +523,7 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
         return error(404, "not_found", `unknown action: ${action || "(empty)"}`);
       }
       if (action === "capabilities" || action === "templates") {
-        if (req.method !== "GET") return error(405, "method_not_allowed", "capabilities requires GET");
+        if (req.method !== "GET") return error(405, "method_not_allowed", `${action} requires GET`);
       } else if (req.method !== "POST") {
         return error(405, "method_not_allowed", `${action} requires POST`);
       }

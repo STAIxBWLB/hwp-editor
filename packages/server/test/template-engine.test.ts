@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
+import { templateVersionSupported } from "@hwp-editor/core";
 import type { DocumentSpecV2, TemplateSpecV1 } from "@hwp-editor/core";
 import { createCliEngine } from "../src/cli-engine.js";
 import { createHwpEditorHandler } from "../src/routes.js";
-import { BIN, describeBin, jsonRequest, multipartRequest } from "./helpers.js";
+import { BIN, jsonRequest, multipartRequest } from "./helpers.js";
 
 const spec = {version:"2.0",document:{version:"1.0",sections:[{blocks:[
   {type:"paragraph",runs:[{type:"text",text:"제목 {{title}}"}]},
@@ -10,7 +12,13 @@ const spec = {version:"2.0",document:{version:"1.0",sections:[{blocks:[
 ]}]}} as unknown as DocumentSpecV2;
 const templateSpec = {version:"1.0",variables:{title:{type:"string",required:true}},source:{mode:"compose",document:{version:"1.0",sections:[{blocks:[{type:"paragraph",runs:[{type:"text",text:{node:"value",pointer:"/values/title"}}]}]}]}}} as TemplateSpecV1;
 
-describeBin("template commands (real hwp-cli 1.4.0)", () => {
+let templateBinaryAvailable = false;
+try {
+  const version = execFileSync(BIN,["--version"],{encoding:"utf8"}).match(/\d+\.\d+\.\d+/)?.[0] ?? "";
+  templateBinaryAvailable = templateVersionSupported(version);
+} catch { /* The base integration suite reports a missing binary. */ }
+const describeTemplates = templateBinaryAvailable ? describe : describe.skip;
+describeTemplates("template commands (requires real hwp-cli >= 1.4.0)", () => {
   it("lists slots and native fields, fills both, and retains the original bytes", async () => {
     const engine = createCliEngine({bin:BIN});
     const original = (await engine.compose(spec,"inputs.hwpx")).document;
