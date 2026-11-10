@@ -58,4 +58,7 @@ test("embedded template picker works from an empty editor", async ({ page }) => 
   await page.getByRole("button", { name: en["templates.createEmbedded"], exact: true }).click();
   expect((await created).ok()).toBe(true);
   await expect(page.getByRole("button", { name: en["page.label"]({ page: 1 }), exact: true })).toBeVisible();
+  await page.getByRole("tab", { name: en["tabs.templates"], exact: true }).click();
+  const panel = page.getByRole("region", { name: en["templates.panelAria"], exact: true });
+  await expect(panel.locator('input[type="text"]').first()).toBeVisible();
 });

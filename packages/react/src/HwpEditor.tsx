@@ -650,20 +650,28 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
               onComposed={(document) => {
                 if (!editableRef.current) return;
                 setComposing(false);
+                const generation = ++loadGeneration.current;
                 emitChange(document);
                 // The host passes the composed document back via `file`; load
                 // it directly so the flow also works when the host doesn't.
                 void (async () => {
                   try {
-                    const [nextEnvelope, pages] = await Promise.all([
+                    const [nextEnvelope, pages, caps, report] = await Promise.all([
                       engine.read(document),
                       engine.render(document, RENDER_SVG),
+                      engine.capabilities(),
+                      engine.validate(document).catch(() => null),
                     ]);
+                    if (generation !== loadGeneration.current || !editableRef.current) return;
+                    setCapabilities(caps);
+                    setValidation(report);
+                    setLoadError(null);
                     setEnvelope(nextEnvelope);
                     store.dispatch({ type: "load", document, pages });
                   } catch (e) {
                     // Covers the render AFTER a successful compose; the
                     // compose call itself fails inside ComposePanel.
+                    if (generation !== loadGeneration.current) return;
                     setLoadError(toEditorError(e));
                     emitError(e);
                   }

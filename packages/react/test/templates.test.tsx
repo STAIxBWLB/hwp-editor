@@ -137,3 +137,22 @@ it("builds typed scalar and list inputs without asking for data JSON", async () 
   fireEvent.click(screen.getByRole("button",{name:en["templates.previewSpec"]}));
   await waitFor(()=>expect(template).toHaveBeenCalledWith(spec,{version:"1.0",values:{title:"Hello",budget:1,date:"2026-11-11",enabled:true,mode:"A",rows:[{name:"sample",count:3}]}},original.name));
 });
+
+it("allows typed TemplateSpec on a host that omits document fill", async () => {
+  const engine=templateEngine();
+  delete (engine as HwpEngine).fill;
+  render(<HwpEditor engine={engine} file={original} />);
+  fireEvent.click(await screen.findByRole("tab",{name:en["tabs.templates"]}));
+  expect((await screen.findByLabelText(en["templates.specLabel"]) as HTMLInputElement).disabled).toBe(false);
+});
+
+it("treats prototype-named document slots as input data", async () => {
+  const engine=templateEngine("1.4.0",async()=>({items:[{key:"constructor",label:"Constructor slot",kind:"slot",required:true}]}));
+  render(<HwpEditor engine={engine} file={original} />);
+  fireEvent.click(await screen.findByRole("tab",{name:en["tabs.templates"]}));
+  const input=await screen.findByLabelText("Constructor slot");
+  expect((input as HTMLInputElement).value).toBe("");
+  fireEvent.change(input,{target:{value:"safe"}});
+  fireEvent.click(screen.getByRole("button",{name:en["templates.previewFill"]}));
+  await waitFor(()=>expect(engine.fill).toHaveBeenCalledWith(original,{constructor:"safe"}));
+});

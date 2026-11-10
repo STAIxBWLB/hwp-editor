@@ -246,9 +246,6 @@ export function TemplatePanel(): JSX.Element {
     setBusy(true); setError(null); setPreview(null);
     try {
       const data: TemplateDataV1 = { version: "1.0", values: { ...specValues } };
-      for (const [key, variable] of variableEntries) {
-        if (variable.type === "list" && typeof data.values[key] === "string") data.values[key] = JSON.parse(data.values[key] as string) as unknown;
-      }
       const result = await engine.template(spec, data, document.name);
       const pages = await engine.render(result.document, { format: "svg" });
       if (previewRequest.current === generation && store.getState().document === document) setPreview({ source: document, document: result.document, pages, kind: "spec", generation });
@@ -296,17 +293,21 @@ export function TemplatePanel(): JSX.Element {
                     type="text"
                     required={input.required}
                     disabled={!editable || busy}
-                    value={values[input.key] ?? ""}
+                    value={Object.hasOwn(values, input.key) ? values[input.key] : ""}
                     onChange={(e) => setValues((previous) => ({ ...previous, [input.key]: e.target.value }))}
                   />
                   <small>{kindLabel(input, t)}</small>
                 </div>
               ))}
-              <button type="button" className="hwped-btn hwped-btn-primary" disabled={!editable || busy || !fillFileSupported || !fillStatus.supported || fillInputs.some((item) => item.required && !values[item.key]?.trim())} onClick={() => void previewFill()}>
+              <button type="button" className="hwped-btn hwped-btn-primary" disabled={!editable || busy || !fillFileSupported || !fillStatus.supported || fillInputs.some((item) => item.required && (!Object.hasOwn(values, item.key) || !values[item.key]!.trim()))} onClick={() => void previewFill()}>
                 {busy ? t("templates.rendering") : t("templates.previewFill")}
               </button>
             </>
           ) : <p className="hwped-hint">{t("templates.noInputs")}</p>}
+        </>
+      )}
+      {open && (
+        <>
           <hr />
           <div className="hwped-field">
             <label className="hwped-label" htmlFor="hwped-template-spec">{t("templates.specLabel")}</label>
