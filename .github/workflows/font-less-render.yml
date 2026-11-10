@@ -20,7 +20,7 @@ concurrency:
 
 env:
   # Same pin as e2e.yml; move them together.
-  HWP_CLI_TAG: v1.3.1
+  HWP_CLI_TAG: v1.4.0
 
 jobs:
   font-less-render:
@@ -37,13 +37,13 @@ jobs:
           base="https://github.com/STAIxBWLB/hwp-cli/releases/download/$HWP_CLI_TAG"
           asset="hwp-$HWP_CLI_TAG-x86_64-unknown-linux-gnu.tar.gz"
           sums="hwp-$HWP_CLI_TAG-x86_64-unknown-linux-gnu.sha256"
-          curl -fsSL -O "$base/$asset" -O "$base/$sums"
+          curl --retry 3 --retry-all-errors -fsSL -O "$base/$asset" -O "$base/$sums"
           sha256sum -c "$sums"
           tar xzf "$asset"
           mkdir cjk-fonts
-          curl -fsSL -o cjk-fonts/NotoSansCJKkr-Regular.otf \
+          curl --retry 3 --retry-all-errors -fsSL -o cjk-fonts/NotoSansCJKkr-Regular.otf \
             https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/Sans/OTF/Korean/NotoSansCJKkr-Regular.otf
-          curl -fsSL -o cjk-fonts/NotoSerifCJKkr-Regular.otf \
+          curl --retry 3 --retry-all-errors -fsSL -o cjk-fonts/NotoSerifCJKkr-Regular.otf \
             https://raw.githubusercontent.com/notofonts/noto-cjk/Serif2.003/Serif/OTF/Korean/NotoSerifCJKkr-Regular.otf
           sha256sum -c <<'SUMS'
           6bcb2a0703aa137e874fc2dffa85f6c21ba9a67fa329e81b8c801663af7e992a  cjk-fonts/NotoSansCJKkr-Regular.otf
