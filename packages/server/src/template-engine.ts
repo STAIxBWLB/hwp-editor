@@ -2,7 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   TEMPLATE_MIN_VERSION, templateVersionSupported,
-  parseFillReport, parseLintReport, parseTemplateReport, reportArray, reportCount, reportObject, reportString,
+  parseFillReport, parseLintReport, parseTemplateReport, parseTemplateInputs, reportArray, reportCount, reportObject, reportString,
   opsToJson,
   type ComposeResult, type DocumentHandle, type EmbeddedTemplate, type FillResult,
   type LintProfile, type LintReport, type TemplateInputs, type TemplateSpecV1, type TemplateDataV1,
@@ -87,14 +87,17 @@ export function createTemplateCommands(deps: Dependencies) {
       return { key, label: key, kind: "field" as const, required: false };
     }));
     const fieldCounts = new Map<string, number>();
-    for (const field of fields) fieldCounts.set(field.key, (fieldCounts.get(field.key) ?? 0) + 1);
-    const uniqueFields = [...new Map(fields.map(field => [field.key, field])).values()];
+    // Unnamed native fields cannot be targeted by set_field; never offer an
+    // ambiguous empty name as a fill input.
+    const namedFields = fields.filter(field => field.key !== "");
+    for (const field of namedFields) fieldCounts.set(field.key, (fieldCounts.get(field.key) ?? 0) + 1);
+    const uniqueFields = [...new Map(namedFields.map(field => [field.key, field])).values()];
     return { items: [...slots.items, ...uniqueFields.filter(field => !slots.items.some(item => item.key === field.key))], fieldCounts };
   }
   return {
     async slots(document: DocumentHandle, call?: CliCallOptions): Promise<TemplateInputs> {
       await requireVersion();
-      return deps.work(async dir => ({ items: (await rawInputs(await deps.stage(dir, document), call)).items }));
+      return deps.work(async dir => parseTemplateInputs({ items: (await rawInputs(await deps.stage(dir, document), call)).items }));
     },
     async fill(document: DocumentHandle, values: Record<string, string>, call?: CliCallOptions): Promise<FillResult> {
       await requireVersion();

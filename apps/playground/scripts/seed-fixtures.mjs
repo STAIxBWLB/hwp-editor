@@ -85,6 +85,32 @@ const layoutSpecPath = join(fixturesDir, "_layout-demo.spec.json");
 writeFileSync(layoutSpecPath, JSON.stringify(layoutSpec));
 specs.push({ spec: layoutSpecPath, out: "z-layout-demo.hwpx" });
 
+// T4 autofill fixture: one named slot plus label/value rows. `hwp slots
+// --forms` discovers the table label cells as native form inputs.
+const templateSpec = {
+  version: "2.0",
+  document: {
+    version: "1.0",
+    sections: [{
+      blocks: [
+        { type: "paragraph", runs: [{ type: "text", text: "공문서 입력 양식" }] },
+        { type: "paragraph", runs: [{ type: "text", text: "문서번호: {{document_no}}" }] },
+        { type: "paragraph", runs: [{ type: "text", text: "결재 상태: " }, { type: "field", name: "approval", value: "대기" }] },
+        {
+          type: "table",
+          columns: [{ width_mm: 45 }, { width_mm: 100 }],
+          rows: [["부서", ""], ["담당자", ""], ["시행일", ""]].map((row) => ({
+            cells: row.map((text) => ({ blocks: [{ type: "paragraph", runs: [{ type: "text", text }] }] })),
+          })),
+        },
+      ],
+    }],
+  },
+};
+const templateSpecPath = join(fixturesDir, "_template-demo.spec.json");
+writeFileSync(templateSpecPath, JSON.stringify(templateSpec));
+specs.push({ spec: templateSpecPath, out: "template-demo.hwpx" });
+
 for (const { spec, out } of specs) {
   const target = join(fixturesDir, out);
   execFileSync(BIN, ["compose", spec, "-o", target], {
@@ -95,6 +121,13 @@ for (const { spec, out } of specs) {
 }
 rmSync(tableSpecPath, { force: true });
 rmSync(layoutSpecPath, { force: true });
+rmSync(templateSpecPath, { force: true });
+
+// Use the CLI's canonical official template for a stable no-error lint case.
+execFileSync(BIN, ["new", "--template", "gongmun-basic", "-o", join(fixturesDir, "official-demo.hwpx")], {
+  cwd: fixturesDir,
+  stdio: "inherit",
+});
 
 const fixtures = readdirSync(fixturesDir).filter((f) => /\.hwpx?$/.test(f)).sort();
 for (const f of fixtures) cpSync(join(fixturesDir, f), join(publicDir, f));

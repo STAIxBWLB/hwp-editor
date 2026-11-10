@@ -24,6 +24,8 @@ import { PageCanvas } from "./PageCanvas.js";
 import { SegmentInspector } from "./SegmentInspector.js";
 import { TableGrid } from "./TableGrid.js";
 import { FieldsPanel } from "./FieldsPanel.js";
+import { TemplatePanel } from "./TemplatePanel.js";
+import { LintPanel } from "./LintPanel.js";
 import { ComposePanel } from "./ComposePanel.js";
 import { isTableSlice } from "./tables.js";
 import { ErrorLine } from "./ErrorLine.js";
@@ -105,7 +107,7 @@ export interface HwpEditorHandle {
   openCompose(): void;
 }
 
-type SideTab = "para" | "table" | "fields";
+type SideTab = "para" | "table" | "fields" | "templates" | "lint";
 
 /**
  * Every render goes straight to the engine. The former client-side
@@ -187,14 +189,17 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     // React-internal throw legitimately has none, and synthesizing `internal`
     // would be indistinguishable from a real `internal`.
     const [loadError, setLoadError] = useState<EditorError | null>(null);
+    const loadGeneration = useRef(0);
     const [tab, setTab] = useState<SideTab>("para");
     const [composing, setComposing] = useState(false);
 
     // Load the document whenever the engine/file pair changes.
     useEffect(() => {
+      const generation = ++loadGeneration.current;
       let cancelled = false;
       if (file === null) {
         setEnvelope(null);
+        setCapabilities(null);
         setValidation(null);
         setLoadError(null);
         return;
@@ -207,7 +212,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
             engine.render(file, RENDER_SVG),
             engine.validate(file).catch(() => null),
           ]);
-          if (cancelled) return;
+          if (cancelled || generation !== loadGeneration.current) return;
           setCapabilities(caps);
           setEnvelope(nextEnvelope);
           setValidation(report);
@@ -217,7 +222,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           // keyed on envelope/pages would re-fire after every apply and undo.
           emitReady(file);
         } catch (e) {
-          if (cancelled) return;
+          if (cancelled || generation !== loadGeneration.current) return;
           setLoadError(toEditorError(e));
           emitError(e);
         }
@@ -231,6 +236,8 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     // applyPendingOps guard read `editable`, so `readOnly` works everywhere
     // because it is applied here and nowhere else.
     const editable = !readOnly && (capabilities?.editable ?? true);
+    const editableRef = useRef(editable);
+    editableRef.current = editable;
 
     // Follow selection to the relevant tab.
     useEffect(() => {
@@ -279,6 +286,81 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         }
       })();
     }, [editable, engine, store]);
+
+    const replaceDocument = useCallback(
+      (
+        produce: (current: DocumentHandle) => Promise<DocumentHandle>,
+      ): Promise<void> => {
+        const snapshot = store.getState();
+        const current = snapshot.document;
+        const generation = loadGeneration.current;
+        if (
+          current === null ||
+          !editableRef.current ||
+          snapshot.status === "applying"
+        ) return Promise.resolve();
+        if (snapshot.pendingOps.length > 0) {
+          const refusal = new Error(t("error.pendingReplacement"));
+          emitError(refusal);
+          return Promise.reject(refusal);
+        }
+        store.dispatch({ type: "applyStarted" });
+        return (async () => {
+          try {
+            const next = await produce(current);
+            const [nextEnvelope, pages, report] = await Promise.all([
+              engine.read(next),
+              engine.render(next, RENDER_SVG),
+              engine.validate(next).catch(() => null),
+            ]);
+            const latest = store.getState();
+            if (
+              generation !== loadGeneration.current ||
+              latest.document !== current ||
+              latest.status !== "applying" ||
+              !editableRef.current ||
+              latest.pendingOps.length > 0
+            ) {
+              // A load failure may leave the old document in place after its
+              // generation was invalidated. Roll back the staged snapshot in
+              // that case; a successful replacement load already reset it.
+              if (latest.document === current && latest.status === "applying") {
+                const refusal = !editableRef.current
+                  ? t("error.readOnlyReplacement")
+                  : latest.pendingOps.length > 0
+                    ? t("error.pendingReplacement")
+                    : t("error.staleReplacement");
+                store.dispatch({
+                  type: "applyFailed",
+                  error: { message: refusal },
+                });
+                const error = new Error(refusal);
+                emitError(error);
+                throw error;
+              }
+              return;
+            }
+            setEnvelope(nextEnvelope);
+            setValidation(report);
+            store.dispatch({ type: "applySucceeded", document: next, pages });
+            emitChange(next);
+          } catch (e) {
+            const latest = store.getState();
+            if (
+              generation === loadGeneration.current &&
+              latest.document === current &&
+              latest.status === "applying"
+            ) {
+              store.dispatch({ type: "applyFailed", error: toEditorError(e) });
+              emitError(e);
+              throw e;
+            }
+            return;
+          }
+        })();
+      },
+      [emitChange, emitError, engine, store, t],
+    );
 
     const revert = useCallback((): Promise<void> => {
       const snapshot = store.getState();
@@ -354,6 +436,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         editable,
         validation,
         applyPendingOps,
+        replaceDocument,
         refresh,
         openCompose,
         t,
@@ -371,6 +454,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         editable,
         validation,
         applyPendingOps,
+        replaceDocument,
         refresh,
         openCompose,
         t,
@@ -479,6 +563,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
               type="button"
               className="hwped-btn"
               onClick={() => setComposing(true)}
+              disabled={!editable}
             >
               {t("toolbar.newDocument")}
             </button>
@@ -516,6 +601,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
                     type="button"
                     className="hwped-btn hwped-btn-primary"
                     onClick={() => setComposing(true)}
+                    disabled={!editable}
                   >
                     {t("canvas.createCta")}
                   </button>
@@ -531,6 +617,8 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
                     ["para", t("tabs.para")],
                     ["table", t("tabs.table")],
                     ["fields", t("tabs.fields")],
+                    ["templates", t("tabs.templates")],
+                    ["lint", t("tabs.lint")],
                   ] as [SideTab, string][]
                 ).map(([value, label]) => (
                   <button
@@ -550,11 +638,14 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
               {tab === "para" && <SegmentInspector />}
               {tab === "table" && <TableGrid />}
               {tab === "fields" && <FieldsPanel />}
+              {tab === "templates" && <TemplatePanel />}
+              {tab === "lint" && <LintPanel />}
             </aside>
           </div>
 
           {composing && (
             <ComposePanel
+              canCreate={editable}
               onClose={() => setComposing(false)}
               onComposed={(document) => {
                 setComposing(false);
