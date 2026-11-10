@@ -31,6 +31,7 @@ describe("template report boundaries", () => {
   it("gates the verified version, failing closed on malformed version text", () => {
     expect(templateVersionSupported("1.3.1")).toBe(false);
     expect(templateVersionSupported("1.4.0")).toBe(true);
+    expect(templateVersionSupported("1.4.0-beta.1")).toBe(false);
     expect(templateVersionSupported("unknown")).toBe(false);
   });
 });

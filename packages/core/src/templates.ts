@@ -31,7 +31,7 @@ export function templateVersionSupported(version: string): boolean {
   const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(version);
   if (match === null) return false;
   const major = Number(match[1]);
-  return major > 1 || (major === 1 && Number(match[2]) >= 4);
+  return major > 1 || (major === 1 && (Number(match[2]) > 4 || (Number(match[2]) === 4 && (Number(match[3]) > 0 || !version.includes("-")))));
 }
 
 /** Validator errors name only contract fields, never supplied file paths or payloads. */
@@ -63,6 +63,7 @@ export function parseTemplateInputs(raw: unknown): TemplateInputs {
     if (key === "" || !["slot", "field", "form"].includes(String(item.kind)) || typeof item.required !== "boolean") invalid("input key/kind/required");
     return { key, label, kind: item.kind as TemplateInput["kind"], required: item.required };
   });
+  if (new Set(items.map(item => item.key)).size !== items.length) invalid("inputs.items duplicate key");
   return { items };
 }
 export function parseFillReport(raw: unknown): FillReport {
