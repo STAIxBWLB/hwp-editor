@@ -88,3 +88,19 @@ describe("template producer refusal", () => {
     await expect(commands.slots({name:"x.hwpx",data:new Uint8Array()})).rejects.toThrow(/placeholder.occurrences.*upgrade/);
   });
 });
+
+describe("lint report schema compatibility", () => {
+  it.each(["1.1", "1.12"])("accepts additive lint schema %s", async schema_version => {
+    const { createTemplateCommands } = await import("../src/template-engine.js");
+    const commands=createTemplateCommands({version:async()=>"1.4.0",work:async fn=>fn("/unused"),stage:async()=>"/unused/input.hwpx",run:async()=>JSON.stringify({contract:"hwp-lint-report-v1",schema_version,findings:[]})});
+    await expect(commands.lint({name:"x.hwpx",data:new Uint8Array()})).resolves.toEqual({findings:[]});
+  });
+  it.each([
+    {schema_version:"2.0",findings:[]},
+    {schema_version:"1.1",findings:[{rule_id:"rule",severity:"unknown",line:1,col:1,message:"x"}]},
+  ])("still rejects incompatible schemas and malformed consumed fields", async report => {
+    const { createTemplateCommands } = await import("../src/template-engine.js");
+    const commands=createTemplateCommands({version:async()=>"1.4.0",work:async fn=>fn("/unused"),stage:async()=>"/unused/input.hwpx",run:async()=>JSON.stringify({contract:"hwp-lint-report-v1",...report})});
+    await expect(commands.lint({name:"x.hwpx",data:new Uint8Array()})).rejects.toThrow(/Invalid template report: (lint.schema_version|finding.severity).*upgrade/);
+  });
+});

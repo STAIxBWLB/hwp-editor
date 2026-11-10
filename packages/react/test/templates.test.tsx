@@ -161,7 +161,7 @@ it("rolls back a template snapshot when another panel queues an op mid-apply", a
   const engine=templateEngine();
   const originalRead=engine.read;
   let finishRead: ((value: ReturnType<typeof makeEnvelope>) => void) | undefined;
-  engine.read=vi.fn(document=>document===filled ? new Promise(resolve=>{finishRead=resolve;}) : originalRead(document));
+  engine.read=vi.fn(document=>document===filled ? new Promise<ReturnType<typeof makeEnvelope>>(resolve=>{finishRead=resolve;}) : originalRead(document));
   const onChange=vi.fn(), onError=vi.fn();
   render(<HwpEditor engine={engine} file={original} onChange={onChange} onError={onError} />);
   fireEvent.click(await screen.findByRole("tab",{name:en["tabs.templates"]}));

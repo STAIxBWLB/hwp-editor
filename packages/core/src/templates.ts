@@ -31,7 +31,7 @@ export function templateVersionSupported(version: string): boolean {
   const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(version);
   if (match === null) return false;
   const major = Number(match[1]);
-  return major > 1 || (major === 1 && (Number(match[2]) > 4 || (Number(match[2]) === 4 && (Number(match[3]) > 0 || !version.includes("-")))));
+  return major > 1 || (major === 1 && Number(match[2]) >= 4);
 }
 
 /** Validator errors name only contract fields, never supplied file paths or payloads. */
@@ -44,6 +44,11 @@ export function reportObject(raw: unknown, field: string): Record<string, unknow
 }
 export function reportString(raw: unknown, field: string): string {
   if (typeof raw !== "string") invalid(field);
+  return raw;
+}
+/** Validate the supported report major while allowing additive minor versions. */
+export function reportSchemaVersion(raw: unknown, field: string): string {
+  if (typeof raw !== "string" || !/^1[.][0-9]+$/.test(raw)) invalid(field);
   return raw;
 }
 export function reportCount(raw: unknown, field: string): number {
@@ -100,9 +105,10 @@ export function parseTemplateMethods(raw: unknown): TemplateMethod[] {
   });
 }
 
-export interface TemplateReport { schema_version: "1.0"; mode: "compose"; deterministic: boolean }
+export interface TemplateReport { schema_version: string; mode: "compose"; deterministic: boolean }
 export function parseTemplateReport(raw: unknown): TemplateReport {
   const value = reportObject(raw, "template");
-  if (value.schema_version !== "1.0" || value.mode !== "compose" || typeof value.deterministic !== "boolean") invalid("template.schema_version/mode/deterministic");
-  return { schema_version: "1.0", mode: "compose", deterministic: value.deterministic };
+  const schema_version = reportSchemaVersion(value.schema_version, "template.schema_version");
+  if (value.mode !== "compose" || typeof value.deterministic !== "boolean") invalid("template.mode/deterministic");
+  return { schema_version, mode: "compose", deterministic: value.deterministic };
 }

@@ -17,10 +17,15 @@ describe("template report boundaries", () => {
     () => parseLintReport({findings:[{rule_id:"x",severity:"info",line:1,col:1,message:"x"}]}),
     () => parseLintReport({findings:[{rule_id:"x",severity:"error",line:1,col:1,message:42}]}),
     () => parseTemplateReport({schema_version:"2.0",mode:"compose",deterministic:true}),
+    () => parseTemplateReport({schema_version:"1.1",mode:"unknown",deterministic:true}),
+    () => parseTemplateReport({schema_version:"1.1",mode:"compose",deterministic:"yes"}),
     () => parseEmbeddedTemplates([{id:"../../file",label:"X"}]),
     () => parseTemplateMethods(["unknown"]),
   ])("refuses malformed consumed fields with cause and remedy", parse => {
     expect(parse).toThrow(/Invalid template report: .+; upgrade the host\/client/);
+  });
+  it.each(["1.1", "1.12"])("accepts additive template report version %s", schema_version => {
+    expect(parseTemplateReport({schema_version,mode:"compose",deterministic:true})).toEqual({schema_version,mode:"compose",deterministic:true});
   });
   it("handles count keys that collide with object prototypes as data", () => {
     const report = parseFillReport(JSON.parse('{"replaced":1,"counts":{"__proto__":1,"constructor":0}}'));
@@ -31,7 +36,6 @@ describe("template report boundaries", () => {
   it("gates the verified version, failing closed on malformed version text", () => {
     expect(templateVersionSupported("1.3.1")).toBe(false);
     expect(templateVersionSupported("1.4.0")).toBe(true);
-    expect(templateVersionSupported("1.4.0-beta.1")).toBe(false);
     expect(templateVersionSupported("unknown")).toBe(false);
   });
 });

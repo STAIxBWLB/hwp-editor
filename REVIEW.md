@@ -28,6 +28,10 @@ Run these passes and tag every finding with its pass:
   a field the engine does not publish is a finding, not a client-side guess.
 - **Envelope projection is validated.** `packages/core/src/segments.ts:89` refuses unknown segment kinds.
   New engine artifacts the client relies on are validated the same way before they drive behavior.
+- **Engine report schema versions.** When reviewing report parsers, require supported-major
+  matching (`1.x`), never exact minor equality, and reject malformed consumed fields
+  (`packages/core/src/templates.ts:reportSchemaVersion`,
+  `packages/server/src/template-engine.ts:lint`).
 - **Both locales ship together.** `ko` is typed as `MessageTable = typeof en`
   (`packages/react/src/messages.ts:153`, `:166`), so a missing Korean key fails typecheck. A new control
   without strings in both tables is a finding.

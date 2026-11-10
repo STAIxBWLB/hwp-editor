@@ -2,7 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   TEMPLATE_MIN_VERSION, templateVersionSupported,
-  parseFillReport, parseLintReport, parseTemplateReport, parseTemplateInputs, reportArray, reportCount, reportObject, reportString,
+  parseFillReport, parseLintReport, parseTemplateReport, parseTemplateInputs, reportSchemaVersion, reportArray, reportCount, reportObject, reportString,
   opsToJson,
   type ComposeResult, type DocumentHandle, type EmbeddedTemplate, type FillResult,
   type LintProfile, type LintReport, type TemplateInputs, type TemplateSpecV1, type TemplateDataV1,
@@ -161,7 +161,8 @@ export function createTemplateCommands(deps: Dependencies) {
         const input = await deps.stage(dir, document);
         return parse(await deps.run(["lint", input, "--json", "--profile", profile], call), raw => {
           const value = reportObject(raw, "lint");
-          if (value.contract !== "hwp-lint-report-v1" || value.schema_version !== "1.0") throw new Error("Invalid lint contract/schema_version; use hwp-cli 1.4.0 and retry.");
+          if (value.contract !== "hwp-lint-report-v1") throw new Error("Invalid lint contract; use hwp-cli 1.4.0 and retry.");
+          reportSchemaVersion(value.schema_version, "lint.schema_version");
           return parseLintReport(value);
         });
       });

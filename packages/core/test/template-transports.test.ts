@@ -56,7 +56,7 @@ describe("HTTP template transport", () => {
 
   it("refuses malformed template reports", async () => {
     const { engine } = httpEngine(() => ({ name: "out.hwpx", dataBase64: b64, report: { warnings: [] } }));
-    await expect(engine.template?.({} as never, {} as never, "out.hwpx")).rejects.toThrow("template.schema_version/mode/deterministic");
+    await expect(engine.template?.({} as never, {} as never, "out.hwpx")).rejects.toThrow("template.schema_version");
   });
 
   it("defaults missing templateMethods to an empty list for older hosts", async () => {
@@ -104,7 +104,7 @@ describe("Tauri template transport", () => {
       ? { name: "x.hwpx", dataBase64: b64, report: { warnings: [] } }
       : {}) as T);
     const engine = createTauriEngine(invoke);
-    await expect(engine.template?.({} as never, {} as never, "x.hwpx")).rejects.toThrow("template.schema_version/mode/deterministic");
+    await expect(engine.template?.({} as never, {} as never, "x.hwpx")).rejects.toThrow("template.schema_version");
   });
 
   it("names an unimplemented template command as unsupported by the host", async () => {

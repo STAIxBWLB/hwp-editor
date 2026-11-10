@@ -14,17 +14,11 @@
  *   POST {base}/slots        multipart: file=<document>            -> SlotsResponse
  *   POST {base}/fill         multipart: file=<document>, values=<JSON> -> FillResponse
  *   POST {base}/lint         multipart: file=<document>, profile?  -> LintResponse
- *   POST {base}/template     JSON: TemplateRequest                 -> ComposeResponse
+ *   POST {base}/template     JSON: TemplateRequest                 -> TemplateResponse
  *   POST {base}/create       JSON: CreateRequest                   -> EditResponse
  *   GET  {base}/templates                                       -> TemplatesResponse
  *   POST {base}/validate     multipart: file=<document>            -> ValidateResponse
  *   GET  {base}/capabilities                                       -> CapabilitiesResponse
- *   POST {base}/slots        multipart: file                       -> SlotsResponse
- *   POST {base}/fill         multipart: file, values JSON          -> FillResponse
- *   POST {base}/lint         multipart: file, profile?             -> LintResponse
- *   POST {base}/template     JSON: TemplateRequest                 -> TemplateResponse
- *   GET  {base}/templates                                          -> TemplatesResponse
- *   POST {base}/create       JSON: CreateRequest                   -> EditResponse
  *
  * Binary payloads cross the wire as base64 inside JSON responses; uploads
  * use multipart/form-data. Every error is an ErrorResponse with a non-2xx

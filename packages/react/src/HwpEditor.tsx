@@ -305,6 +305,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           return Promise.reject(refusal);
         }
         store.dispatch({ type: "applyStarted" });
+        const replacementSnapshots = store.getState().snapshots;
         return (async () => {
           try {
             const next = await produce(current);
@@ -318,25 +319,20 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
               generation !== loadGeneration.current ||
               latest.document !== current ||
               latest.status !== "applying" ||
+              latest.snapshots !== replacementSnapshots ||
               !editableRef.current ||
               latest.pendingOps.length > 0
             ) {
-              // A load failure may leave the old document in place after its
-              // generation was invalidated. Roll back the staged snapshot in
-              // that case; a successful replacement load already reset it.
-              if (latest.document === current && latest.status === "applying") {
+              // Queueing an op changes the status to dirty but still leaves
+              // this replacement's snapshot staged. A load/undo replaces the
+              // stack, so it owns its own transition instead.
+              if (latest.document === current && latest.snapshots === replacementSnapshots) {
                 const refusal = !editableRef.current
                   ? t("error.readOnlyReplacement")
                   : latest.pendingOps.length > 0
                     ? t("error.pendingReplacement")
                     : t("error.staleReplacement");
-                store.dispatch({
-                  type: "applyFailed",
-                  error: { message: refusal },
-                });
-                const error = new Error(refusal);
-                emitError(error);
-                throw error;
+                throw new Error(refusal);
               }
               return;
             }
@@ -347,9 +343,8 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           } catch (e) {
             const latest = store.getState();
             if (
-              generation === loadGeneration.current &&
               latest.document === current &&
-              latest.status === "applying"
+              latest.snapshots === replacementSnapshots
             ) {
               store.dispatch({ type: "applyFailed", error: toEditorError(e) });
               emitError(e);
