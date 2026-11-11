@@ -79,7 +79,7 @@ pnpm -r typecheck
 Requires Node >= 22 and pnpm 10.
 
 Run the playground from a clean checkout (Node >= 22, the pinned pnpm version,
-and hwp-cli >= 0.20.0 installed, tested with 1.4.0):
+and hwp-cli >= 0.20.0 installed, tested with 1.6.1):
 
 ```sh
 pnpm playground
