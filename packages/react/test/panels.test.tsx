@@ -618,6 +618,77 @@ describe("TableGrid op emission (TEST-03)", () => {
   });
 });
 
+describe("table index against the engine's count (#95)", () => {
+  // A merged cell makes the engine project the table as HTML. On a document of
+  // this shape the plain table after it is the engine's table 1 - measured with
+  // ahwp 1.6.1, where `hwp edit --set-cell 1:...` reaches the second table.
+  const htmlTable =
+    '<table>\n<tr><td colspan="2">병합 셀</td></tr>\n<tr><td>가</td><td>나</td></tr>\n</table>';
+  const gfmTable = "| 이름 | 수량 |\n| --- | --- |\n| 연필 | 3 |";
+
+  /** A body whose paragraph 1 is the HTML table and paragraph 2 the plain one. */
+  function twoTables(): CatEnvelope {
+    const blocks = ["머리말 문단", htmlTable, gfmTable];
+    let markdown = "";
+    const segments: CatEnvelope["segments"] = [];
+    blocks.forEach((text, para) => {
+      const start = markdown.length;
+      markdown += `${text}\n\n`;
+      // The engine publishes the table's host paragraph and, under it, one
+      // `table` segment - which is the segment the panel counts.
+      segments.push({ start, end: start + text.length, kind: "para", section: 0, para });
+      if (para > 0) {
+        segments.push({ start, end: start + text.length, kind: "table", section: 0, para, indices: [para, 0] });
+      }
+    });
+    return { markdown, segments };
+  }
+
+  /** The y a click needs to land on paragraph `para`, table segments interleaved. */
+  function yForPara(envelope: CatEnvelope, para: number): number {
+    const segment = envelope.segments.find((s) => s.kind === "para" && s.para === para);
+    if (segment === undefined) throw new Error(`no paragraph segment ${para}`);
+    return (((segment.start + segment.end) / 2) / envelope.markdown.length) * 842;
+  }
+
+  it("numbers the table after an HTML table 2 and queues the engine's index 1", async () => {
+    const envelope = twoTables();
+    const engine = createMockEngine({ envelope });
+    render(<HwpEditor engine={engine} file={file} />);
+    const page = await screen.findByRole("button", { name: en["page.label"]({ page: 1 }) });
+    fireEvent.click(page, { clientY: yForPara(envelope, 2) });
+    expect(await screen.findByText(en["table.tableLabel"]({ index: 2 }))).toBeTruthy();
+    clickCell("연필");
+    fireEvent.change(screen.getByLabelText(en["table.cellLabel"]({ row: 1, col: 0 })), {
+      target: { value: "볼펜" },
+    });
+    clickBtn("table.setCell");
+
+    // Table 1, not 0: the HTML table kept the engine's slot 0.
+    expect(await applyOps(engine, 1)).toEqual([
+      { kind: "set-cell", table: 1, row: 1, col: 0, value: "볼펜" },
+    ]);
+  });
+
+  it.each([["en", en], ["ko", ko]] as const)(
+    "refuses an HTML table's grid under its own number (%s)",
+    async (locale, messages) => {
+      const envelope = twoTables();
+      const engine = createMockEngine({ envelope });
+      render(<HwpEditor locale={locale} engine={engine} file={file} />);
+      const page = await screen.findByRole("button", {
+        name: messages["page.label"]({ page: 1 }),
+      });
+      fireEvent.click(page, { clientY: yForPara(envelope, 1) });
+
+      expect(await screen.findByText(messages["table.htmlTable"]({ index: 1 }))).toBeTruthy();
+      expect(screen.getByText(messages["table.tableLabel"]({ index: 1 }))).toBeTruthy();
+      // With no grid there is no cell to address, so its ops are not offered.
+      expect(screen.queryByRole("button", { name: messages["table.setCell"] })).toBeNull();
+    },
+  );
+});
+
 describe("panel edge cases (TEST-03)", () => {
   it("emits the exact distinct 0-based coordinates for adjacent cells", async () => {
     const engine = await openTable();

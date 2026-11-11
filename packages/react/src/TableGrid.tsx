@@ -71,6 +71,26 @@ export function TableGrid(): JSX.Element {
   // against.
   const tableNumber = tableIndex + 1;
 
+  if (table.rows === null) {
+    // The engine wrote this table as HTML, which happens as soon as one cell is
+    // merged or holds block content. There are no cell coordinates to offer,
+    // but the table keeps the number it has in the engine's own count, so
+    // refusing the grid must not renumber the tables after it (#95).
+    return (
+      <div className="hwped-panel" role="region" aria-label={t("table.panelAria")}>
+        <div className="hwped-field">
+          <span className="hwped-label">
+            {t("table.tableLabel", { index: tableNumber })}
+          </span>
+          <p className="hwped-hint">
+            {t("table.htmlTable", { index: tableNumber })}
+          </p>
+        </div>
+        {addTablePanel}
+      </div>
+    );
+  }
+
   return (
     <div className="hwped-panel" role="region" aria-label={t("table.panelAria")}>
       <div className="hwped-field">

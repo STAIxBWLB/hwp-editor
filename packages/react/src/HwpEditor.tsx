@@ -42,7 +42,7 @@ import { ComponentsPanel } from "./ComponentsPanel.js";
 import { componentsSupportReason } from "./ComponentsPanel.js";
 import type { InsertPosition } from "./ComponentsPanel.js";
 import { componentFailure, insertionFailure, insertionPreflight } from "./components-support.js";
-import { isTableSlice } from "./tables.js";
+import { isHtmlTableSlice, isTableSlice } from "./tables.js";
 import { pendingKindKey, pendingTargetLabel } from "./pending-ops.js";
 import { ErrorLine } from "./ErrorLine.js";
 import { engineRefusalKind, toEditorError } from "./errors.js";
@@ -598,7 +598,11 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       if (envelope === null || state.selection === null) return;
       const segment = segmentAtRef(envelope, state.selection);
       if (segment === undefined) return;
-      const next: SideTab = isTableSlice(segmentText(envelope, segment)) ? "table" : "para";
+      // A table keeps its tab even when the engine wrote it as HTML: a merged
+      // cell takes the grid away, not the table, and its number still counts
+      // (#95).
+      const text = segmentText(envelope, segment);
+      const next: SideTab = isTableSlice(text) || isHtmlTableSlice(text) ? "table" : "para";
       // The palette keeps its tab: the selection an insertion produces is its
       // own result, and leaving its rows behind for the tab it created is not
       // the jump the user asked for. Every other tab still follows.

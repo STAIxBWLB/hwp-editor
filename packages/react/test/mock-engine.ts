@@ -7,23 +7,33 @@ import type {
   EditOp,
   HwpEngine,
   PageImage,
+  Segment,
   ValidationReport,
 } from "@hwp-editor/core";
 
 /** Envelope with a heading, a paragraph, a 2-col table, and a {{date}} slot. */
 export function makeEnvelope(): CatEnvelope {
-  const blocks = [
-    "# **1. 회의록**",
-    "2026년 8월 정기 회의",
-    "| **항목** | **담당** |\n| --- | --- |\n| 예산 | 김철수 |",
-    "다음 회의는 {{date}}입니다.",
+  // The kind matters: the CLI publishes one `table` segment per table control,
+  // under the paragraph that hosts it, and the table panel finds its tables by
+  // that kind rather than by the text (#95).
+  const blocks: { kind: Segment["kind"]; text: string }[] = [
+    { kind: "para", text: "# **1. 회의록**" },
+    { kind: "para", text: "2026년 8월 정기 회의" },
+    { kind: "table", text: "| **항목** | **담당** |\n| --- | --- |\n| 예산 | 김철수 |" },
+    { kind: "para", text: "다음 회의는 {{date}}입니다." },
   ];
   let markdown = "";
   const segments: CatEnvelope["segments"] = [];
   blocks.forEach((block, para) => {
     const start = markdown.length;
-    markdown += `${block}\n\n`;
-    segments.push({ start, end: start + block.length, kind: "para", section: 0, para });
+    markdown += `${block.text}\n\n`;
+    const end = start + block.text.length;
+    // A table arrives as its host paragraph plus the table segment under it,
+    // which is the pair the engine emits and the pair the panel consumes.
+    segments.push({ start, end, kind: block.kind === "table" ? "para" : block.kind, section: 0, para });
+    if (block.kind === "table") {
+      segments.push({ start, end, kind: "table", section: 0, para, indices: [para, 0] });
+    }
   });
   return { markdown, segments };
 }
