@@ -1,3 +1,5 @@
+import { malformedLayouts } from "./fixtures/layout.js";
+import { RENDER_LAYOUT_NEXT_STEP } from "../src/layout.js";
 /**
  * createHttpEngine error-path tests with a stub fetch. Pin the published
  * error carrier: a wire `error.code` survives to `HwpEngineError.code`, the
@@ -312,5 +314,31 @@ describe("FormData construction", () => {
     await partial.engine.edit(doc, [], { allowPartial: true });
     expect(partial.body().get("allowPartial")).toBe("true");
     expect(partial.body().get("verify")).toBeNull();
+  });
+});
+
+
+describe("render layout transport", () => {
+  it.each([undefined, { width_pt: 600, height_pt: 800, truncated: true, rows: [
+    { id: "para-1", kind: "para", box: { x0: 10, y0: 20, x1: 200, y1: 40 }, source_chars: { start: 0, end: 5 } },
+    { id: "para-1", kind: "para", box: null, source_chars: null },
+  ] }])("preserves optional layout while decoding image bytes", async (layout) => {
+    const engine = createHttpEngine("/api", { fetch: stubFetch(JSON.stringify({ pages: [{
+      page: 3, width: 1200, height: 1600, dpi: 144, format: "png",
+      dataBase64: base64.encode(new Uint8Array([1, 2])), ...(layout === undefined ? {} : { layout }),
+    }] }), { status: 200 }) });
+    const [page] = await engine.render(doc);
+    expect(page?.page).toBe(3);
+    expect(page?.data).toEqual(new Uint8Array([1, 2]));
+    expect(page?.layout).toEqual(layout);
+  });
+});
+
+describe("HTTP present layout validation", () => {
+  it.each(malformedLayouts)("rejects malformed $field before exposing page geometry", async ({value,field}) => {
+    const engine=createHttpEngine("/api",{fetch:stubFetch(JSON.stringify({pages:[{page:1,width:600,height:800,dpi:96,format:"png",dataBase64:base64.encode(new Uint8Array([1])),layout:value}]}),{status:200})});
+    const failure=await engine.render(doc).catch((error:unknown)=>error);
+    expect(failure).toMatchObject({code:"failed",message:expect.stringContaining(field)});
+    expect((failure as Error).message).toContain(RENDER_LAYOUT_NEXT_STEP);
   });
 });

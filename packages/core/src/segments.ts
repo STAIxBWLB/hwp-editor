@@ -15,11 +15,13 @@
  * char_range: {start, end}, style, direct}` per segment, with ranges that
  * NEST (a run inside its para, a cell inside its table). What this module
  * publishes is the projection the rest of the editor already consumes: the
- * `CatEnvelope` wire shape retains `id`, with `start`/`end`
+ * `CatEnvelope` projection retains `id`, with `start`/`end`
+
  * from `char_range`, `section` from `path.section`, and `para` from
  * `path.indices[0]` (the top-level paragraph index, the coordinate
- * `SegmentRef` uses as a fallback for older host projections). Checksummed ids
- * retain the full nested path for editing; per-level styles are not projected.
+ * `SegmentRef` uses as a fallback for older host projections). Checksummed IDs
+ * and nesting indices are retained for exact layout joins and editing; per-level
+ * styles are not projected.
  *
  * Offset caveat, unchanged from v1: `char_range` counts Unicode scalars into
  * `markdown`, while JS string indexing counts UTF-16 code units. The two

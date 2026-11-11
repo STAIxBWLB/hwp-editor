@@ -357,6 +357,7 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
           dpi: p.dpi,
           format: p.format,
           dataBase64: toBase64(p.data),
+          ...(p.layout === undefined ? {} : { layout: p.layout }),
         }),
       ),
     };

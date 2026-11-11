@@ -1,3 +1,5 @@
+import { malformedLayouts } from "./fixtures/layout.js";
+import { RENDER_LAYOUT_NEXT_STEP } from "../src/layout.js";
 /**
  * createTauriEngine tests with a mock invoke. Pin the bridge contract:
  * command names, payload shapes (protocol.ts mirroring + opsArgv fragments),
@@ -94,6 +96,19 @@ describe("createTauriEngine commands", () => {
     expect(pages).toEqual([
       { page: 1, width: 595, height: 842, dpi: 96, format: "svg", data: png },
     ]);
+  });
+
+  it("preserves layout from a capable Tauri host", async () => {
+    const layout = { width_pt: 600, height_pt: 800, truncated: false, rows: [
+      { id: "para-1", kind: "para", box: null, source_chars: null },
+      { id: "para-1", kind: "para", box: { x0: 10, y0: 20, x1: 200, y1: 40 }, source_chars: { start: 2, end: 6 } },
+    ] };
+    const { invoke } = mockInvoke({ hwped_render: { pages: [{
+      page: 3, width: 1200, height: 1600, dpi: 144, format: "png", dataBase64: "AQI=", layout,
+    }] } });
+    const [page] = await createTauriEngine(invoke).render(doc);
+    expect(page?.layout).toEqual(layout);
+    expect(page?.data).toEqual(new Uint8Array([1, 2]));
   });
 
   it("edit serializes ops via opsToArgv and forwards flags", async () => {
@@ -307,4 +322,13 @@ it("rejects addressed edits before invoking the legacy Tauri host", async () => 
     { kind: "set-format", address: { at: { section: 0, paragraph: 1, run: 0 }, chars: [0, 3] }, props: { bold: "on" } },
   ])).rejects.toThrow(/JSON transport/);
   expect(calls).toEqual([]);
+});
+
+describe("Tauri present layout validation", () => {
+  it.each(malformedLayouts)("rejects malformed $field before exposing page geometry", async ({value,field}) => {
+    const {invoke}=mockInvoke({hwped_render:{pages:[{page:1,width:600,height:800,dpi:96,format:"png",dataBase64:base64.encode(new Uint8Array([1])),layout:value}]}});
+    const failure=await createTauriEngine(invoke).render(doc).catch((error:unknown)=>error);
+    expect(failure).toMatchObject({code:"failed",message:expect.stringContaining(field)});
+    expect((failure as Error).message).toContain(RENDER_LAYOUT_NEXT_STEP);
+  });
 });

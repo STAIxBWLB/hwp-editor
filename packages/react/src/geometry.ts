@@ -1,17 +1,7 @@
-/**
- * Click hit-testing and highlight placement for PageCanvas.
- *
- * Neither the core segment envelope nor the hwp-cli SVG renderer carries
- * per-paragraph page geometry, so positions are estimated with a linear
- * text-flow model: paragraphs flow in document order across pages
- * proportionally to their markdown length. Clicks map to a global flow
- * fraction, then to the nearest segment via the core coordinate helpers;
- * highlight bands use the exact inverse mapping, so the visual highlight
- * always agrees with what a click would select.
- */
+/** Exact layout rows take precedence; older hosts keep the linear flow model. */
 
-import type { CatEnvelope, Segment } from "@hwp-editor/core";
-import { segmentAtOffset } from "@hwp-editor/core";
+import type { CatEnvelope, PageImage, Segment } from "@hwp-editor/core";
+import { segmentAtOffset, segmentAtRef } from "@hwp-editor/core";
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -85,4 +75,87 @@ export function segmentBand(
   const height = clamp(((segment.end - segment.start) / length) * total * 100, 2, 100);
   const top = clamp((position - pageIndex) * 100 - height / 2, 0, 100 - height);
   return { pageIndex, top, height };
+}
+
+
+/** Resolve both axes in page coordinates, favoring inner text over its table. */
+export function segmentOnPage(
+  envelope: CatEnvelope,
+  page: PageImage,
+  xFraction: number,
+  yFraction: number,
+  pageIndex: number,
+  pageCount: number,
+): Segment | undefined {
+  if (page.layout === undefined || !envelope.segments.some((segment) => segment.id !== undefined)) {
+    return nearestSegment(envelope, pageIndex, yFraction, pageCount);
+  }
+  const { width_pt, height_pt, rows } = page.layout;
+  const x = clamp(xFraction, 0, 1) * width_pt;
+  const y = clamp(yFraction, 0, 1) * height_pt;
+  let best: Segment | undefined;
+  let bestVertical = Infinity;
+  let bestHorizontal = Infinity;
+  let bestArea = Infinity;
+  for (const row of rows) {
+    const box = row.box;
+    const segment = segmentAtRef(envelope, { id: row.id, section: 0, para: 0 });
+    if (box === null || segment === undefined) continue;
+    const dx = Math.max(box.x0 - x, 0, x - box.x1);
+    const dy = Math.max(box.y0 - y, 0, y - box.y1);
+    const distance = dx * dx + dy * dy;
+    // Beyond a truncated prefix, a nearer recorded row may hide an omitted row.
+    if (page.layout.truncated && distance > 0) continue;
+    const area = Math.max(0, box.x1 - box.x0) * Math.max(0, box.y1 - box.y0);
+    // In page margins, prefer vertical proximity, then horizontal proximity.
+    if (dy < bestVertical || (dy === bestVertical && (dx < bestHorizontal ||
+      (dx === bestHorizontal && (area < bestArea ||
+        (area === bestArea && row.kind === "para" && best?.kind !== "para")))))) {
+      best = segment;
+      bestVertical = dy;
+      bestHorizontal = dx;
+      bestArea = area;
+    }
+  }
+  return best;
+}
+
+export interface RowBand {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+/** Every fragment gets its own rectangle, including repeated IDs on one page. */
+export function bandsOnPage(
+  envelope: CatEnvelope,
+  segment: Segment,
+  page: PageImage,
+  pageIndex: number,
+  pageCount: number,
+): RowBand[] {
+  if (page.layout === undefined || segment.id === undefined) {
+    const band = segmentBand(envelope, segment, pageCount);
+    return band?.pageIndex === pageIndex
+      ? [{ left: 0, top: band.top, width: 100, height: band.height }]
+      : [];
+  }
+  // Runs, images and fields fold into their enclosing paragraph's row.
+  const target = ["run", "image", "field"].includes(segment.kind) && segment.indices !== undefined
+    ? envelope.segments.find((candidate) => candidate.kind === "para" &&
+        candidate.section === segment.section && candidate.indices !== undefined &&
+        candidate.indices.length === segment.indices!.length - 1 &&
+        candidate.indices.every((value, index) => value === segment.indices![index])) ?? segment
+    : segment;
+  const { width_pt, height_pt, rows } = page.layout;
+  return rows.filter((row) => row.id === target.id && row.box !== null).map((row) => {
+    const box = row.box!;
+    return {
+      left: box.x0 / width_pt * 100,
+      top: box.y0 / height_pt * 100,
+      width: Math.max(0, box.x1 - box.x0) / width_pt * 100,
+      height: Math.max(0, box.y1 - box.y0) / height_pt * 100,
+    };
+  });
 }

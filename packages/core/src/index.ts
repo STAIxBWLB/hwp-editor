@@ -5,6 +5,8 @@ export type {
   EditOptions,
   HwpEngine,
   PageImage,
+  LayoutRow,
+  PageLayout,
   PageImageFormat,
   RenderOptions,
   ValidationError,
@@ -80,3 +82,5 @@ export type {
   RenderResponse,
   ValidateResponse,
 } from "./protocol.js";
+
+export { parsePageLayout, parseRenderLayouts, RENDER_LAYOUT_NEXT_STEP } from "./layout.js";

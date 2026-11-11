@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import type { JSX, MouseEvent } from "react";
 import type { CatEnvelope, EditOp, PageImage, Segment } from "@hwp-editor/core";
 import { base64, segmentAtRef, segmentRef, segmentText } from "@hwp-editor/core";
-import { nearestSegment, segmentBand } from "./geometry.js";
+import { segmentOnPage, bandsOnPage } from "./geometry.js";
 import { sanitizeSvg } from "./sanitize.js";
 import { plainSegmentText } from "./text.js";
 import { useHwpEditorContext } from "./context.js";
@@ -10,7 +10,7 @@ import { useHwpEditorContext } from "./context.js";
 /**
  * Multi-page scroll of rendered pages. SVG pages render inline (sanitized);
  * raster formats fall back to <img>. Clicks resolve to the nearest segment
- * (see geometry.ts for the flow-model approximation), and selected/pending
+ * (using layout rows, with a flow-model fallback for older hosts), and selected/pending
  * segments are highlighted with overlay bands.
  */
 export function PageCanvas(): JSX.Element {
@@ -35,9 +35,9 @@ export function PageCanvas(): JSX.Element {
     );
   }
 
-  const selectAt = (pageIndex: number, yFraction: number): void => {
+  const selectAt = (pageIndex: number, xFraction: number, yFraction: number): void => {
     if (envelope === null) return;
-    const segment = nearestSegment(envelope, pageIndex, yFraction, pages.length);
+    const segment = segmentOnPage(envelope, pages[pageIndex]!, xFraction, yFraction, pageIndex, pages.length);
     if (segment !== undefined) {
       store.dispatch({ type: "select", selection: segmentRef(segment) });
     }
@@ -53,12 +53,14 @@ export function PageCanvas(): JSX.Element {
             const rect = e.currentTarget.getBoundingClientRect();
             selectAt(
               pageIndex,
+              rect.width > 0 ? (e.clientX - rect.left) / rect.width : 0.5,
               rect.height > 0 ? (e.clientY - rect.top) / rect.height : 0.5,
             );
           }}
-          onActivate={() => selectAt(pageIndex, 0.5)}
+          onActivate={() => selectAt(pageIndex, 0.5, 0.5)}
           bands={bandsForPage(
             envelope,
+            page,
             pageIndex,
             pages.length,
             selectedSegment,
@@ -75,10 +77,13 @@ interface Band {
   className: string;
   top: number;
   height: number;
+  left: number;
+  width: number;
 }
 
 function bandsForPage(
   envelope: ReturnType<typeof useHwpEditorContext>["envelope"],
+  page: PageImage,
   pageIndex: number,
   pageCount: number,
   selected: Segment | undefined,
@@ -91,16 +96,15 @@ function bandsForPage(
     const isSelected = selected === segment;
     const isPending = !isSelected && pendingKeys.has(key);
     if (!isSelected && !isPending) continue;
-    const band = segmentBand(envelope, segment, pageCount);
-    if (band === null || band.pageIndex !== pageIndex) continue;
-    bands.push({
-      key: `${isSelected ? "sel" : "pend"}-${key}`,
-      className: isSelected
-        ? "hwped-band hwped-band-selected"
-        : "hwped-band hwped-band-pending",
-      top: band.top,
-      height: band.height,
-    });
+    for (const [index, band] of bandsOnPage(envelope, segment, page, pageIndex, pageCount).entries()) {
+      bands.push({
+        ...band,
+        key: `${isSelected ? "sel" : "pend"}-${key}-${index}`,
+        className: isSelected
+          ? "hwped-band hwped-band-selected"
+          : "hwped-band hwped-band-pending",
+      });
+    }
   }
   return bands;
 }
@@ -163,7 +167,7 @@ function PageView(props: {
         <div
           key={band.key}
           className={band.className}
-          style={{ top: `${band.top}%`, height: `${band.height}%` }}
+          style={{ top: `${band.top}%`, height: `${band.height}%`, left: `${band.left}%`, width: `${band.width}%` }}
         />
       ))}
     </div>

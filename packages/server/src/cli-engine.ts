@@ -24,6 +24,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import {
+  HwpEngineError,
+  parseRenderLayouts,
+  RENDER_LAYOUT_NEXT_STEP,
   opsToJson,
   parseCatEnvelope,
   protectedReasonFromDiagnostics,
@@ -38,6 +41,7 @@ import {
   type HwpErrorCode,
   type PageImage,
   type PageImageFormat,
+  type PageLayout,
   type RenderOptions,
   type ValidationError,
   type ValidationReport,
@@ -794,6 +798,34 @@ export function svgSize(source: string): { width: number; height: number } | nul
   return positiveSize(Number(viewBox[1]), Number(viewBox[2]));
 }
 
+async function readRenderLayouts(file: string): Promise<Map<number, PageLayout> | undefined> {
+  let source: string;
+  try {
+    source = await readFile(file, "utf8");
+  } catch (error) {
+    // Older hosts/fakes may not emit the optional artifact. A present but
+    // invalid artifact is a producer error, never a measured empty page.
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  try {
+    return parseRenderLayouts(source);
+  } catch (error) {
+    if (error instanceof HwpEngineError) throw new HwpCliError("failed", error.message);
+    throw error;
+  }
+}
+
+/** A present artifact must account for every image we return. */
+function pageLayoutFields(layouts: Map<number, PageLayout> | undefined, page: number): Pick<PageImage, "layout"> {
+  if (layouts === undefined) return {};
+  const layout = layouts.get(page);
+  if (layout === undefined) {
+    throw new HwpCliError("failed", `render layout is missing rendered page ${page}; ${RENDER_LAYOUT_NEXT_STEP}`);
+  }
+  return { layout };
+}
+
 function parseSinglePage(pages: string | undefined): number | null {
   if (pages !== undefined && /^\d+$/.test(pages)) return Number(pages);
   return null;
@@ -990,6 +1022,8 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
           const outBase = path.join(dir, `page.${format}`);
           const reportPath = path.join(dir, "render-report.json");
           const layoutPath = path.join(dir, "render-layout.json");
+          // A PNG retry must not reuse a partial SVG attempt's geometry.
+          await rm(layoutPath, { force: true });
           await runCliOk(bin, [
             "render", input, "-o", outBase,
             "--format", format, "--pages", pages, "--dpi", String(dpi),
@@ -1016,6 +1050,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
           } catch {
             selected = null;
           }
+          const layouts = await readRenderLayouts(layoutPath);
           const images: PageImage[] = [];
           for (let i = 0; i < files.length; i++) {
             const file = files[i]!;
@@ -1059,6 +1094,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
               dpi,
               format,
               data,
+              ...pageLayoutFields(layouts, page),
             });
           }
           return images;
