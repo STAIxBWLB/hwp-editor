@@ -1,5 +1,5 @@
 import { createTemplateCommands } from "./template-engine.js";
-import { TEMPLATE_METHODS, templateVersionSupported, parseEditReport, withCallerName, type EditReport, type TemplateInputs, type FillResult, type LintReport, type LintProfile, type EmbeddedTemplate, type TemplateSpecV1, type TemplateDataV1 } from "@hwp-editor/core";
+import { TEMPLATE_METHODS, templateVersionSupported, parseEditReport, withCallerName, presetBatchOptions, readPresetBatch, type EditReport, type TemplateInputs, type FillResult, type LintReport, type LintProfile, type EmbeddedTemplate, type TemplateSpecV1, type TemplateDataV1 } from "@hwp-editor/core";
 /**
  * CliEngine — HwpEngine implementation that shells out to the hwp-cli binary.
  *
@@ -863,12 +863,12 @@ function rethrowUnmatchedEditRefusal(error: unknown): never {
 /**
  * Refuse a batch a preset dragged through with `--allow-partial` intact.
  *
- * A `style_tables` op makes this engine pass `--allow-partial`, because the
- * preset must not abort the batch when the document has no multi-column table:
- * the engine pushes that one op to "unapplied", publishes everything else and
- * exits 0. So the process status no longer answers "did the whole batch land",
- * and the report does. Two cases are NOT acceptable and are refused here, with
- * the published bytes discarded by the caller's own error path:
+ * The rule itself lives in core (`readPresetBatch`), because every transport
+ * owes it and the HTTP client and the Tauri client call the same function:
+ * a preset batch is published under `--allow-partial`, so the process status
+ * no longer answers "did the whole batch land" and the report does. Two cases
+ * are NOT acceptable, and the published bytes are discarded by this engine's
+ * own error path:
  *
  * - any op other than `style_tables` unapplied — a queued edit silently
  *   dropped is the failure the whole batch is one call to prevent;
@@ -882,20 +882,8 @@ function rethrowUnmatchedEditRefusal(error: unknown): never {
  * holds says so.
  */
 function rethrowPartialPresetBatch(report: EditReport | undefined): void {
-  if (report === undefined) {
-    throw new HwpCliError(
-      "unavailable",
-      "the engine published this edit without a readable report, so the preset's outcome is unknown; upgrade the host's hwp-cli to a release that writes edit-report-v1",
-    );
-  }
-  const refused = report.ops.filter((outcome) => outcome.status === "failed" && outcome.op !== "style_tables");
-  if (refused.length > 0) {
-    const reasons = refused.map((outcome) => outcome.reason ?? outcome.op).join("; ");
-    throw new HwpCliError(
-      "bad_request",
-      `the engine left ${refused.length} edit request(s) unapplied (${reasons}); nothing was published`,
-    );
-  }
+  const { refusal } = readPresetBatch(report);
+  if (refusal !== null) throw new HwpCliError(refusal.code, refusal.message);
 }
 
 
@@ -1474,8 +1462,12 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       if (presets > 0 && !stylesVersionSupported(version)) {
         throw new HwpCliError("version", `hwp ${version} has no style_tables op; >= 1.4.0 required for preset style tables`);
       }
-      const wantsReport = options.report === true || presets > 0;
-      const allowPartial = options.allowPartial === true || presets > 0;
+      // The two flags a preset batch owes are decided by the shared rule, not
+      // here: core's `presetBatchOptions` is what the HTTP and Tauri clients
+      // obey, so this engine cannot drift out of step with them.
+      const effective = presetBatchOptions(ops, options);
+      const wantsReport = effective.report === true;
+      const allowPartial = effective.allowPartial === true;
       const edited = await withWorkDir(async (dir) => {
         const input = await stage(dir, document);
         if (options.assets !== undefined) {

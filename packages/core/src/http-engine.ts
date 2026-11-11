@@ -23,6 +23,7 @@ import type { EditOp } from "./ops.js";
 import type { CatEnvelope } from "./segments.js";
 import { validateProjectedMetadata } from "./segments.js";
 import { parseStyleTableResponse } from "./styles.js";
+import { carriesPresetSwitch, presetBatchOptions, readPresetBatch } from "./style-batch.js";
 import type { DocumentSpecV2 } from "./generated/document-spec-v2.js";
 import type { TemplateDataV1, TemplateSpecV1 } from "./spec.js";
 import type { LintProfile } from "./templates.js";
@@ -293,12 +294,16 @@ export function createHttpEngine(
       // a desktop host silently stops working here.
       form.append("ops", JSON.stringify(ops));
       if (options.verify) form.append("verify", "true");
-      if (options.allowPartial) form.append("allowPartial", "true");
+      // A preset batch needs both fields, and neither is the caller's to
+      // forget: without `allowPartial` the engine aborts the whole edit on a
+      // table-less document, and without `report` its outcome is unknowable.
+      const effective = presetBatchOptions(ops, options);
+      if (effective.allowPartial) form.append("allowPartial", "true");
       // A `style-tables` op's outcome is only visible in the report: whether
       // the document had an eligible table, and whether anything else in the
       // batch failed. That makes the report part of this request, not an extra
       // the caller can forget to ask for.
-      const wantsReport = options.report === true || ops.some((op) => op?.kind === "style-tables");
+      const wantsReport = effective.report === true;
       if (wantsReport) form.append("report", "true");
       if (assets !== undefined) {
         for (const asset of assets) form.append("asset", new Blob([asset.data as BlobPart], { type: imageAssetMediaType(asset.data)! }), asset.name);
@@ -310,13 +315,20 @@ export function createHttpEngine(
       // Parsed only when this call needs it, and an unreadable answer is
       // dropped rather than failing an edit whose document was published: the
       // same rule the Tauri engine applies, so both transports answer one
-      // shape for one request.
+      // shape for one request. A preset batch is different - its report IS the
+      // outcome - so `readPresetBatch` refuses an unreadable one below.
       let report: EditReport | undefined;
       if (wantsReport && res.report !== undefined) {
         try {
           report = parseEditReport(res.report);
         } catch {
           report = undefined;
+        }
+      }
+      if (carriesPresetSwitch(ops)) {
+        const reading = readPresetBatch(report);
+        if (reading.refusal !== null) {
+          throw new HwpEngineError(reading.refusal.code, reading.refusal.message);
         }
       }
       return {

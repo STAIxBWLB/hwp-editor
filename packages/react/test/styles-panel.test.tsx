@@ -42,6 +42,9 @@ const ATTRS = {
   para_shape_id: 0,
 };
 
+/** The row the definition form queues against: 바탕글, header id 0. */
+const BODY_ID = 0;
+
 const TABLE: StyleTable = {
   version: "1.0",
   styles: [
@@ -51,8 +54,12 @@ const TABLE: StyleTable = {
   ],
 };
 
-/** A `style_tables` outcome the engine could not apply, as the report carries it. */
-function presetReport(status: "applied" | "failed"): EditReport {
+/**
+ * A preset batch's report, as the engine writes it. `pieces` is what the engine
+ * measured: 0 means the switch was already in place (byte-identical output),
+ * which is how the panel knows not to stage an undo entry for it.
+ */
+function presetReport(status: "applied" | "failed", pieces = 1): EditReport {
   return {
     schema_version: "1.0",
     contract: "hwp-edit-report-v1",
@@ -62,7 +69,7 @@ function presetReport(status: "applied" | "failed"): EditReport {
       index: 0,
       op: "style_tables",
       status,
-      pieces_touched: 0,
+      pieces_touched: status === "failed" ? 0 : pieces,
       changed: [],
       reason: status === "failed" ? "style_tables: no styleable table" : null,
     }],
@@ -147,9 +154,14 @@ function styleEngine(
   return { engine, edits, styleReads, documentReads };
 }
 
-function renderEditor(engine: HwpEngine, locale: "en" | "ko" = "en") {
+function renderEditor(engine: HwpEngine, locale: "en" | "ko" = "en", onError?: (error: unknown) => void) {
   return render(
-    <HwpEditor engine={engine} file={{ name: "x.hwpx", data: new Uint8Array([1]) }} locale={locale} />,
+    <HwpEditor
+      engine={engine}
+      file={{ name: "x.hwpx", data: new Uint8Array([1]) }}
+      locale={locale}
+      {...(onError === undefined ? {} : { onError })}
+    />,
   );
 }
 
@@ -231,7 +243,8 @@ describe("styles tab operations (en)", () => {
     fireEvent.change(screen.getByLabelText(en["styles.size"]), { target: { value: "15" } });
     fireEvent.click(screen.getByRole("button", { name: en["styles.updateSubmit"] }));
     const ops = await applyQueued(harness, 1);
-    expect(ops).toEqual([{ kind: "update-style", style: "바탕글", size: "15" }]);
+    // The row's id, not its name: a styles-v1 name can be empty or shared.
+    expect(ops).toEqual([{ kind: "update-style", style: BODY_ID, size: "15" }]);
   });
 
   it("offers nothing to queue until a field differs from the style", async () => {
@@ -254,7 +267,7 @@ describe("styles tab operations (en)", () => {
     fireEvent.change(screen.getByLabelText(en["styles.lineSpacing"]), { target: { value: "180" } });
     fireEvent.click(screen.getByRole("button", { name: en["styles.updateSubmit"] }));
     const ops = await applyQueued(harness, 1);
-    expect(ops).toEqual([{ kind: "update-style", style: "바탕글", lineSpacingPct: "180" }]);
+    expect(ops).toEqual([{ kind: "update-style", style: BODY_ID, lineSpacingPct: "180" }]);
   });
 
   it("queues one apply-style per selected paragraph", async () => {
@@ -321,7 +334,7 @@ describe("styles tab operations (en)", () => {
   });
 
   it("switches preset as ONE engine call inside ONE undo entry", async () => {
-    const harness = await openPanel(styleEngine());
+    const harness = await openPanel(styleEngine({ report: presetReport("applied", 2) }));
     fireEvent.click(screen.getByRole("button", { name: en["styles.presetSubmit"] }));
     await waitFor(() => expect(harness.edits).toHaveLength(1));
     // One batch: the body-style update and the preset op together. The flag
@@ -332,7 +345,7 @@ describe("styles tab operations (en)", () => {
     expect(harness.edits[0]!.ops).toEqual([
       {
         kind: "update-style",
-        style: "바탕글",
+        style: BODY_ID,
         font: DOCUMENT_PROFILES.official.fontFamily,
         size: String(DOCUMENT_PROFILES.official.bodySizePt),
         lineSpacingPct: String(DOCUMENT_PROFILES.official.lineHeightPercent),
@@ -374,6 +387,111 @@ describe("styles tab operations (en)", () => {
    * are content checksums, so handing the old rows out would list paragraphs
    * this document does not have and select nothing when a row is pressed.
    */
+  /**
+   * t12-a10: `create_style` clones its base's shapes, so a base taken from the
+   * highlighted list row brings that row's line spacing, indent and everything
+   * else this form has no control for onto every paragraph the promote then
+   * applies the new style to. The base is the paragraph's OWN style, and the
+   * highlight here is a character row, which is neither.
+   */
+  it("bases a promoted style on the paragraph's own style, not the highlighted row", async () => {
+    const harness = await openPanel(styleEngine());
+    // 강조 is a character row that lists p2 in `used_by`, so choosing it selects
+    // p2 — whose own paragraph style is 바탕글 (id 0).
+    fireEvent.click(await screen.findByRole("button", { name: /강조/ }));
+    fireEvent.change(screen.getByLabelText(en["styles.promoteName"]), { target: { value: "인용" } });
+    fireEvent.click(screen.getByRole("button", { name: en["styles.promoteSubmit"] }));
+
+    const items = screen.getByRole("list", { name: en["toolbar.pendingList"] }).querySelectorAll("li").length;
+    fireEvent.click(screen.getByRole("button", { name: en["toolbar.applyWithCount"]({ count: items }) }));
+    await waitFor(() => expect(harness.edits).toHaveLength(1));
+    const ops = harness.edits[0]!.ops;
+
+    const create = ops.find((op) => op.kind === "create-style");
+    expect(create).toMatchObject({ kind: "create-style", name: "인용", basedOn: BODY_ID });
+    // Not the highlighted character row, which is the base the clone would
+    // otherwise inherit line spacing and indent from.
+    expect(create).not.toMatchObject({ basedOn: 2 });
+    // The style this batch creates has no id yet, so the applies name it.
+    for (const op of ops.filter((candidate) => candidate.kind === "apply-style")) {
+      expect(op).toMatchObject({ style: "인용" });
+    }
+  });
+
+  /**
+   * n4: two rows can share a name in styles-v1, and a name can be empty, while
+   * `edit-ops-v1` reads a style reference by name as ambiguous. The row id is
+   * the row, so an edit addresses that.
+   */
+  it("addresses a style by id, so two rows sharing a name stay two styles", async () => {
+    const table: StyleTable = {
+      version: "1.0",
+      styles: [
+        { id: 0, name: "본문", english_name: "", kind: "paragraph", next_style: 0, attrs: ATTRS, used_by: ["p2"] },
+        { id: 1, name: "본문", english_name: "", kind: "paragraph", next_style: 0, attrs: ATTRS, used_by: ["p3"] },
+      ],
+    };
+    const harness = await openPanel(styleEngine({ table }));
+    const rows = screen.getAllByRole("button", { name: /본문/ });
+    expect(rows).toHaveLength(2);
+    fireEvent.click(rows[1]!);
+    fireEvent.change(screen.getByLabelText(en["styles.size"]), { target: { value: "15" } });
+    fireEvent.click(screen.getByRole("button", { name: en["styles.updateSubmit"] }));
+    const ops = await applyQueued(harness, 1);
+    expect(ops).toEqual([{ kind: "update-style", style: 1, size: "15" }]);
+  });
+
+  /**
+   * n3: a switch that succeeded and styled nothing is a notice, not a failure.
+   * `noteNotice` used to emit an `Error` for every sentence it showed, so a
+   * host's `onError` heard about a successful edit.
+   */
+  it("keeps a successful switch out of onError", async () => {
+    const errors: unknown[] = [];
+    const engine = styleEngine({ report: presetReport("failed") });
+    renderEditor(engine.engine, "en", (error) => errors.push(error));
+    fireEvent.click(await screen.findByRole("tab", { name: en["tabs.styles"] }));
+    fireEvent.click(screen.getByRole("button", { name: en["styles.presetSubmit"] }));
+    expect(await screen.findByText(en["styles.noTableToStyle"])).toBeTruthy();
+    expect(errors).toHaveLength(0);
+  });
+
+  /**
+   * The same preset pressed again reports every op applied with
+   * `pieces_touched: 0` and writes byte-identical output (measured on ahwp
+   * 1.6.1), so replacing the document would stage an undo entry that restores
+   * it to itself.
+   */
+  it("stages no undo entry when the preset changed nothing", async () => {
+    const harness = await openPanel(styleEngine({ report: presetReport("applied", 0) }));
+    const readsBefore = harness.documentReads.length;
+    const root = document.querySelector("[data-status]")!;
+    fireEvent.click(screen.getByRole("button", { name: en["styles.presetSubmit"] }));
+
+    await waitFor(() => expect(harness.edits).toHaveLength(1));
+    // applyStarted ran, so the status left "clean" and has to come back: the
+    // producer's answer settles it.
+    await waitFor(() => expect(root.getAttribute("data-status")).toBe("clean"));
+    expect(harness.documentReads).toHaveLength(readsBefore);
+    expect((screen.getByRole("button", { name: en["toolbar.revert"] }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  /**
+   * n7: a host that advertises the capability and hands over an engine object
+   * with no `styles` to call used to sit on "Reading styles..." forever.
+   */
+  it("names a host with no styles command instead of reading forever", async () => {
+    const base = createMockEngine({ envelope: envelopeWithIds() });
+    const engine: HwpEngine = {
+      ...base,
+      capabilities: async () => ({ ...(await base.capabilities()), styles: "v1" as const }),
+    };
+    renderEditor(engine);
+    fireEvent.click(await screen.findByRole("tab", { name: en["tabs.styles"] }));
+    expect(await screen.findByText(en["styles.unavailableHost"])).toBeTruthy();
+    expect(screen.queryByText(en["styles.loading"])).toBeNull();
+  });
+
   it("does not carry the previous document's table across a file switch", async () => {
     let release = (_table: StyleTable): void => undefined;
     const held = new Promise<StyleTable>((resolve) => { release = resolve; });

@@ -21,8 +21,10 @@
 import { useState } from "react";
 import type { JSX } from "react";
 import {
+  HwpEngineError,
   paragraphAddress,
   presetStyleOps,
+  readPresetBatch,
   resolveSelection,
   segmentAtRef,
   selectedParagraphs,
@@ -122,6 +124,16 @@ export function StylesPanel(): JSX.Element {
       </div>
     );
   }
+  // The capability is advertised and the engine object has nothing to call for
+  // it: the same sentence as an adapter that never learned the command, and
+  // not a read that is still running.
+  if (engine.styles === undefined) {
+    return (
+      <div className="hwped-panel" role="region" aria-label={t("tabs.styles")}>
+        <p className="hwped-hint" role="status">{t("styles.unavailableHost")}</p>
+      </div>
+    );
+  }
 
   const paragraphs = envelope === null ? [] : selectedParagraphs(envelope, state);
   const rows = styles?.styles ?? [];
@@ -189,7 +201,9 @@ export function StylesPanel(): JSX.Element {
     if (paragraphRow === null || definitionEmpty || !sizeValid || !spacingValid) return;
     store.dispatch({
       type: "queueOp",
-      op: { kind: "update-style", style: paragraphRow.name, ...definition },
+      // The row's own id, not its name: a styles-v1 name can be empty and
+      // two rows can share one, while the id is the row.
+      op: { kind: "update-style", style: paragraphRow.id, ...definition },
     });
   };
 
@@ -200,7 +214,7 @@ export function StylesPanel(): JSX.Element {
       ops: paragraphs.map((paragraph): EditOp => ({
         kind: "apply-style",
         address: paragraphAddress(paragraph),
-        style: paragraphRow.name,
+        style: paragraphRow.id,
       })),
     });
   };
@@ -210,6 +224,14 @@ export function StylesPanel(): JSX.Element {
    * renders, then an `apply_style` for every paragraph T3's select-similar
    * finds at the paragraph level. Both go into one queue action, so the pair
    * is one engine call and one undo step.
+   *
+   * The new style is based on the SELECTED PARAGRAPH's own style, found by the
+   * table's `used_by` join — not on the highlighted list row. The highlight
+   * can be a character row, a row whose kind the document does not answer, or
+   * simply a row this paragraph does not use, and `create_style` clones its
+   * base's shapes: everything the promote op does not set (line spacing,
+   * indent, the fields this form has no control for) would then come from that
+   * unrelated row.
    */
   const queuePromote = (): void => {
     const name = promoteName.trim();
@@ -218,6 +240,10 @@ export function StylesPanel(): JSX.Element {
     if (name === "" || base === undefined || shape === undefined || envelope === null) return;
     const face = firstFace(shape);
     const paragraph = resolveSelection(envelope, base).paragraph ?? base;
+    const id = paragraph.id;
+    const own = id === undefined
+      ? undefined
+      : rows.find((item) => item.kind === "paragraph" && item.used_by.includes(id));
     const targets = selectSimilar(envelope, paragraph, "para")
       .flatMap((ref) => {
         const segment = segmentAtRef(envelope, ref);
@@ -235,9 +261,10 @@ export function StylesPanel(): JSX.Element {
             color: shape.char.color,
           }),
           ...(shape.para === undefined ? {} : { align: alignmentOf(shape.para.alignment) }),
-          ...(row === null ? {} : { basedOn: row.name }),
+          ...(own === undefined ? {} : { basedOn: own.id }),
           ...(face === undefined ? {} : { font: face }),
         },
+        // The style this batch creates has no id yet, so the applies name it.
         ...targets.map((address): EditOp => ({ kind: "apply-style", address, style: name })),
       ],
     });
@@ -251,10 +278,13 @@ export function StylesPanel(): JSX.Element {
    * (queued edits, a load in flight) is already reported by the editor, so
    * this awaits rather than repeating it.
    *
-   * The preset's outcome is read from the report the engine returns for a
-   * batch like this one. "No styleable table" is not a failed switch: the
-   * style update landed, the document simply has no multi-column table, and
-   * the user hears it once the replacement has actually been applied.
+   * The preset's outcome is read from the report the engine returns, through
+   * the same core rule every transport obeys. "No styleable table" is not a
+   * failed switch: the style update landed, the document simply has no
+   * multi-column table, and the user hears it once the replacement has
+   * actually been applied. A batch the engine reports as changing nothing
+   * hands back the document it was given, so an already-applied preset does
+   * not become an undo entry that restores the document to itself.
    */
   const switchPreset = (): void => {
     if (styles === null || envelope === null) return;
@@ -267,8 +297,15 @@ export function StylesPanel(): JSX.Element {
     let unstyled = false;
     void replaceDocument(async (current) => {
       const styled = await engine.edit(current, batch, { verify: true });
-      unstyled = styled.report?.ops.some((op) => op.op === "style_tables" && op.status === "failed") ?? false;
-      return styled;
+      const reading = readPresetBatch(styled.report);
+      // The transports refuse this themselves; a host that supplies its own
+      // engine may not, and the caller here is the one that knows the batch is
+      // a preset batch.
+      if (reading.refusal !== null) {
+        throw new HwpEngineError(reading.refusal.code, reading.refusal.message);
+      }
+      unstyled = reading.unstyledTable;
+      return reading.unchanged ? current : styled;
     })
       .then((applied) => { if (applied && unstyled) noteNotice(t("styles.noTableToStyle")); })
       .catch(() => undefined);

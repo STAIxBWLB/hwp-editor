@@ -80,6 +80,12 @@ export {
   STYLE_TABLE_PRESETS,
 } from "./styles.js";
 export type { StyleInfo, StyleTable, StyleTablePreset } from "./styles.js";
+export {
+  carriesPresetSwitch,
+  presetBatchOptions,
+  readPresetBatch,
+} from "./style-batch.js";
+export type { PresetBatchReading, PresetBatchRefusal } from "./style-batch.js";
 export { compareSegments, formatAddresses, hasOwnRef, isSectionDefinitionParagraph, paragraphAddress, paragraphRuns, resolveSelection, segmentPath, selectedParagraphs, selectSimilar, selectionAction } from "./selection.js";
 export type { SelectionRefusal, SelectionTargets } from "./selection.js";
 export type {

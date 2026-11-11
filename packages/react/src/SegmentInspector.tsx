@@ -62,26 +62,30 @@ export function SegmentInspector(): JSX.Element {
   const paragraphTargets = targets?.paragraphs ?? [];
   const singleParagraph = targets?.paragraph;
   /**
-   * The style this paragraph inherits, named. `styles-v1` publishes the name
-   * per style and the segment ids that use it (`used_by`), which is the only
-   * join this host offers: the segment's `style` level carries the resolved
-   * attributes and shape ids, never the style's own name.
+   * The row describing the style this paragraph inherits. `styles-v1` publishes
+   * each row's name and the segment ids that use it (`used_by`), which is the
+   * only join this host offers: the segment's `style` level carries the
+   * resolved attributes and shape ids, never the style's own name. The row is
+   * kept whole because the op addresses it by id — a styles-v1 name can be
+   * empty or shared between two rows, while the id is the row.
    */
-  const directStyleName = (() => {
+  const directStyleRow = (() => {
     const id = singleParagraph?.id;
     if (id === undefined || styles === null) return undefined;
-    return styles.styles.find((item) => item.kind === "paragraph" && item.used_by.includes(id))?.name;
+    return styles.styles.find((item) => item.kind === "paragraph" && item.used_by.includes(id));
   })();
   /**
    * Why there is no name to clear with, when there is none. A table still on
-   * its way, one that failed to read, and a table that simply does not list
-   * this paragraph are three different situations with three different
-   * remedies, and telling the user the engine "does not publish" the name is
-   * wrong for all of them.
+   * its way, one that failed to read, a host that advertises the command and
+   * has no engine method for it, and a table that simply does not list this
+   * paragraph are four different situations with four different remedies, and
+   * telling the user the engine "does not publish" the name is wrong for all
+   * of them.
    */
-  const directStyleWhy: MessageKey | null = directStyleName !== undefined ? null
+  const directStyleWhy: MessageKey | null = directStyleRow !== undefined ? null
     : stylesStatus === "loading" ? "segment.directStyleLoading"
     : stylesStatus === "failed" ? "segment.directStyleFailed"
+    : stylesStatus === "unsupported" ? "styles.unavailableHost"
     : "segment.directStyleUnknown";
   // One table of reasons serves both the current selection and a refused
   // click, so a segment kind names its own obstacle either way.
@@ -648,14 +652,14 @@ export function SegmentInspector(): JSX.Element {
       {singleParagraph !== undefined && hasDirectFormatting(singleParagraph) && <div className="hwped-field">
         <span className="hwped-label">{t("segment.directFormatting")}</span>
         <p className="hwped-hint">{t("segment.directFormattingHint")}</p>
-        {directStyleName === undefined
-          // The style name comes from `styles-v1`'s `used_by` join, which is
-          // the only place this host publishes it: without it there is no name
-          // to pass to `apply_style`, and inventing one would rewrite the
+        {directStyleRow === undefined
+          // The style comes from `styles-v1`'s `used_by` join, which is the
+          // only place this host publishes it: without it there is no row to
+          // pass to `apply_style`, and inventing one would rewrite the
           // paragraph into some other style instead of clearing its overrides.
           ? <p className="hwped-hint">{t(directStyleWhy ?? "segment.directStyleUnknown")}</p>
           : <button type="button" className="hwped-btn" disabled={disabled}
-              onClick={() => store.dispatch({ type: "queueOp", op: { kind: "apply-style", address: paragraphAddress(singleParagraph), style: directStyleName, clearDirect: true } })}>
+              onClick={() => store.dispatch({ type: "queueOp", op: { kind: "apply-style", address: paragraphAddress(singleParagraph), style: directStyleRow.id, clearDirect: true } })}>
               {t("segment.clearDirect")}
             </button>}
       </div>}

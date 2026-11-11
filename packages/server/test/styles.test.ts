@@ -7,10 +7,10 @@
  *   that use them, which is the join the Styles panel highlights from;
  * - one `update_style` on the body style moves every paragraph that inherits
  *   it, and leaves a run whose size was set directly alone;
- * - the same `--style-tables` preset applied twice is byte-identical, which is
- *   what makes the preset switch idempotent for a user who presses it again.
+ * - the same preset batch applied twice is byte-identical, which is what makes
+ *   the preset switch idempotent for a user who presses it again.
  *
- * The undo half of AC6 — two engine calls, ONE history entry — lives in
+ * The undo half of AC6 — ONE engine call, ONE history entry — lives in
  * `packages/react/test/styles-panel.test.tsx`, because the history is the
  * client store's, not the engine's.
  *
@@ -127,6 +127,50 @@ describeBin("named styles (real hwp)", () => {
     expect(bodyStyle(table)?.name).toBe("바탕글");
     expect(bodyStyle(table, envelope)?.name).toBe("body");
     expect(bodyStyle(table, envelope)?.used_by).toHaveLength(2);
+  });
+
+  /**
+   * t12-a10: `create_style` clones its base's shapes (hwp-cli 1.4.0
+   * styles/edit.rs:280-300), so whatever the base carries and the create op
+   * does not set — line spacing, first-line indent — lands on the new style and
+   * then on every paragraph the promote applies it to. This is the binary's
+   * half of that: a base carrying both hands both over, and a create based on
+   * another row does not.
+   */
+  it("t12-a10: a style created on the paragraph's own style keeps its spacing and indent", async () => {
+    const document = await base();
+    const table = await engine.styles(document);
+    const body = table.styles.find((row) => row.name === "body")!;
+    const fallback = table.styles.find((row) => row.name === "바탕글")!;
+    // Give the body row the two properties the promote form has no control
+    // for, so the clone has something to carry and the other base has
+    // something to differ with.
+    const indented = await engine.edit(document, [
+      { kind: "update-style", style: body.id, lineSpacingPct: "175", indentMm: "8mm" },
+    ], { verify: true });
+    const before = await engine.styles(indented);
+    const own = before.styles.find((row) => row.name === "body")!;
+    expect(own.attrs.para?.line_spacing).toBe(175);
+    // Control: the indent the promote does not send is really on this row.
+    expect(own.attrs.para?.indent ?? 0).toBeGreaterThan(0);
+
+    const created = await engine.edit(indented, [
+      { kind: "create-style", name: "인용", basedOn: own.id, styleKind: "paragraph" },
+    ], { verify: true });
+    const afterOwn = await engine.styles(created);
+
+    const promoted = afterOwn.styles.find((row) => row.name === "인용")!;
+    expect(promoted.attrs.para?.line_spacing).toBe(own.attrs.para?.line_spacing);
+    expect(promoted.attrs.para?.indent).toBe(own.attrs.para?.indent);
+    expect(promoted.attrs.char?.size_pt).toBe(own.attrs.char?.size_pt);
+
+    // The same create on a different base does not inherit it: the assertion
+    // above measures the base, not something every row of this document has.
+    const other = await engine.edit(indented, [
+      { kind: "create-style", name: "기본", basedOn: fallback.id, styleKind: "paragraph" },
+    ], { verify: true });
+    const defaulted = (await engine.styles(other)).styles.find((row) => row.name === "기본")!;
+    expect(defaulted.attrs.para?.indent).not.toBe(own.attrs.para?.indent);
   });
 
   it("AC6: one update_style moves every inheriting paragraph and leaves direct formatting alone", async () => {

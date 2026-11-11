@@ -164,6 +164,34 @@ const stylesSpecPath = join(fixturesDir, "_styles-demo.spec.json");
 writeFileSync(stylesSpecPath, JSON.stringify(stylesSpec));
 specs.push({ spec: stylesSpecPath, out: "styles-demo.hwpx" });
 
+// The other half of the preset switch: a document with NO table at all. This
+// is the document `hwp edit --style-tables` aborts the whole edit on, and the
+// reason the preset travels as an op with `--allow-partial` beside it. Its body
+// style is deliberately not the official profile's (11pt, 140%) so the style
+// update is visible in the answer while `style_tables` reports nothing to
+// style; the CI run reads both.
+const stylesPlainSpec = {
+  version: "2.0",
+  document: {
+    version: "1.0",
+    metadata: { title: "표 없는 스타일 데모" },
+    styles: {
+      body: { font_family: "함초롬바탕", font_size_pt: 11, line_height_percent: 140, align: "justify" },
+      heading: { font_family: "함초롬바탕", font_size_pt: 15, bold: true, align: "left" },
+    },
+    sections: [{
+      blocks: [
+        { type: "paragraph", style: "heading", runs: [{ type: "text", text: "표가 없는 문서" }] },
+        { type: "paragraph", style: "body", runs: [{ type: "text", text: "첫 번째 본문 문단입니다." }] },
+        { type: "paragraph", style: "body", runs: [{ type: "text", text: "두 번째 본문 문단입니다." }] },
+      ],
+    }],
+  },
+};
+const stylesPlainSpecPath = join(fixturesDir, "_styles-plain-demo.spec.json");
+writeFileSync(stylesPlainSpecPath, JSON.stringify(stylesPlainSpec));
+specs.push({ spec: stylesPlainSpecPath, out: "styles-plain-demo.hwpx" });
+
 for (const { spec, out } of specs) {
   const target = join(fixturesDir, out);
   execFileSync(BIN, ["compose", spec, "-o", target], {
@@ -177,6 +205,7 @@ rmSync(layoutSpecPath, { force: true });
 rmSync(templateSpecPath, { force: true });
 rmSync(selectionSpecPath, { force: true });
 rmSync(stylesSpecPath, { force: true });
+rmSync(stylesPlainSpecPath, { force: true });
 
 // Use the CLI's canonical official template for a stable no-error lint case.
 execFileSync(BIN, ["new", "--template", "gongmun-basic", "-o", join(fixturesDir, "official-demo.hwpx")], {

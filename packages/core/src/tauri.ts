@@ -34,6 +34,7 @@ import { opsToArgv, opsToJson } from "./ops.js";
 import type { CatEnvelope } from "./segments.js";
 import { validateProjectedMetadata } from "./segments.js";
 import { parseStyleTableResponse } from "./styles.js";
+import { carriesPresetSwitch, presetBatchOptions, readPresetBatch } from "./style-batch.js";
 import type { DocumentSpecV2 } from "./generated/document-spec-v2.js";
 import type { TemplateDataV1, TemplateSpecV1 } from "./spec.js";
 import type { LintProfile } from "./templates.js";
@@ -333,17 +334,19 @@ export function createTauriEngine(
         : { opsArgv: opsToArgv(ops) };
       // A `style-tables` op travels inside the ops array like every other op,
       // so nothing here needs a field of its own; its outcome arrives in the
-      // report, which this call therefore asks for whenever the batch carries
-      // one. The report names the segment ids an op created, and a host that
-      // ignores the flag answers without the field rather than with guessed
-      // ids.
-      const wantsReport = options.report === true || ops.some((op) => op?.kind === "style-tables");
+      // report. A preset batch needs `allowPartial` and `report` both, and
+      // the rule that says so is the same one the HTTP client obeys
+      // (style-batch.ts): a desktop host that asked for the report alone
+      // aborted the whole edit on a table-less document, which is t12-a2 on
+      // this transport.
+      const effective = presetBatchOptions(ops, options);
+      const wantsReport = effective.report === true;
       const res = await call<EditResponse>("hwped_edit", {
         document: ref(document),
         ...channel,
         ...(options.verify !== undefined ? { verify: options.verify } : {}),
-        ...(options.allowPartial !== undefined
-          ? { allowPartial: options.allowPartial }
+        ...(effective.allowPartial !== undefined
+          ? { allowPartial: effective.allowPartial }
           : {}),
         ...(wantsReport ? { report: true } : {}),
         ...scope(),
@@ -355,7 +358,15 @@ export function createTauriEngine(
         } catch {
           // A host that answers with an unreadable report is a host whose ids
           // are unknown, not a failed edit: the document itself was published.
+          // A preset batch below reads that absence as a refusal, because for
+          // it the report IS the outcome.
           report = undefined;
+        }
+      }
+      if (carriesPresetSwitch(ops)) {
+        const reading = readPresetBatch(report);
+        if (reading.refusal !== null) {
+          throw new HwpEngineError(reading.refusal.code, reading.refusal.message);
         }
       }
       // The host's report names the `-o` path it staged the document at, and a

@@ -212,14 +212,15 @@ function topLevelParagraphIds(envelope: CatEnvelope): Set<string> | null {
 }
 
 /**
- * The `update_style` half of a preset switch — the first of its two engine
- * calls, before `--style-tables <preset>` styles the tables.
+ * The `update_style` half of a preset switch, in the SAME `--ops` batch as the
+ * `style_tables` op — style-batch.ts holds what that costs the caller, and the
+ * flag form is gone for the reasons stated there.
  *
  * Only the body row is written: `DOCUMENT_PROFILES` carries exactly that row
  * per preset (profiles.ts documents it), and the outline rows belong to the
- * document, whose own heading sizes this table has no value for. An empty
- * batch is honest when the document has no paragraph style at all — the
- * switch then restyles the tables alone.
+ * document, whose own heading sizes this table has no value for. An empty list
+ * is honest when the document has no paragraph style at all — the switch then
+ * restyles the tables alone.
  */
 export function presetStyleOps(
   table: StyleTable,
@@ -232,7 +233,10 @@ export function presetStyleOps(
   return [
     {
       kind: "update-style",
-      style: body.name,
+      // The row's id: this style exists in the document, an edit-ops-v1
+      // styleRef is a name or an id, and a styles-v1 name can be empty or
+      // shared between two rows.
+      style: body.id,
       font: profile.fontFamily,
       size: String(profile.bodySizePt),
       lineSpacingPct: String(profile.lineHeightPercent),

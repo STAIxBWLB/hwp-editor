@@ -7,8 +7,8 @@
  * - `hwp styles <file> --format json` on `ahwp 1.6.1`, whose wire object is
  *   `{contract, schema_version, styles: [{id, name, english_name, kind,
  *   next_style, attrs, used_by}]}`;
- * - `~/workspace/work/dev/hwp-cli/schemas/edit-ops-v1.schema.json`, which
- *   makes `apply_style` carry `address`+`style` (+`clear_direct`),
+ * - hwp-cli's published `schemas/edit-ops-v1.schema.json`, which makes
+ *   `apply_style` carry `address`+`style` (+`clear_direct`),
  *   `create_style` carry `name`+`kind` (+`based_on`), and `update_style`
  *   carry `style`, with every property a flat string such as "14pt" or a
  *   switch spelled "on"/"off".
@@ -168,12 +168,15 @@ describe("bodyStyle / presetStyleOps", () => {
     expect(bodyStyle(parseStyleTable(table([CHAR_ROW])))).toBeUndefined();
   });
 
-  it("writes the preset's body row as one update_style", () => {
+  it("writes the preset's body row as one update_style, addressed by its id", () => {
+    // By id: a styles-v1 name can be empty or shared between two rows, while
+    // the id is the row the preset is meant to rewrite.
+    const id = BODY_ROW.id;
     expect(presetStyleOps(parsed, "official")).toEqual([
-      { kind: "update-style", style: "바탕글", font: "맑은 고딕", size: "12", lineSpacingPct: "160" },
+      { kind: "update-style", style: id, font: "맑은 고딕", size: "12", lineSpacingPct: "160" },
     ]);
     expect(presetStyleOps(parsed, "report")).toEqual([
-      { kind: "update-style", style: "바탕글", font: "함초롬바탕", size: "15", lineSpacingPct: "160" },
+      { kind: "update-style", style: id, font: "함초롬바탕", size: "15", lineSpacingPct: "160" },
     ]);
   });
 

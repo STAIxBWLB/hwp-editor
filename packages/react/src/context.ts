@@ -19,10 +19,11 @@ import type { TFunction } from "./messages.js";
 
 /**
  * The state of the document's styles read, so a consumer telling the user why
- * there are no rows can name the right cause: still loading, failed, or a host
- * with no styles command at all are three different next steps.
+ * there are no rows can name the right cause: still loading, failed, a host
+ * that advertises the command and does not implement it, or no styles command
+ * at all are four different next steps.
  */
-export type StylesStatus = "idle" | "loading" | "ready" | "failed";
+export type StylesStatus = "idle" | "loading" | "ready" | "failed" | "unsupported";
 
 export interface HwpEditorContextValue {
   engine: HwpEngine;
@@ -63,9 +64,11 @@ export interface HwpEditorContextValue {
   styles: StyleTable | null;
   /**
    * Why `styles` is what it is: `ready` with a table, `loading` while the read
-   * runs, `failed` when it threw, `idle` when this host serves no styles
-   * command. Three empty states need three sentences, so a consumer that
-   * reports one reads this rather than guessing from `styles === null`.
+   * runs, `failed` when it threw, `unsupported` when the host advertises the
+   * command and the engine object has no `styles` to call, and `idle` when
+   * this host serves no styles command at all. Four empty states need four
+   * sentences, so a consumer that reports one reads this rather than guessing
+   * from `styles === null`.
    */
   stylesStatus: StylesStatus;
   /**

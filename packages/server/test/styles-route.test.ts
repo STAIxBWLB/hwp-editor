@@ -1,8 +1,10 @@
 /**
- * The `/styles` route and the preset edit field (issue #53, WP3/T5).
+ * The `/styles` route and the preset's place in the edit body (issue #53,
+ * WP3/T5).
  *
  * Stub-engine shape tests: they pin what crosses the wire — the projected
- * table, the capability advertisement and the `styleTables` form field — and
+ * table, the capability advertisement, and a preset travelling as an op
+ * inside the one `ops` field with `report` and `allowPartial` beside it — and
  * leave the engine behaviour to `styles.test.ts`, which needs the binary.
  */
 import { describe, expect, it } from "vitest";
@@ -123,13 +125,32 @@ describe("edit with a preset", () => {
    * while the desktop path worked. A hand-built multipart body cannot see
    * that — only the client's own request can.
    */
-  it("carries a client's preset op to the engine in the same batch, asking for the report", async () => {
+  it("carries a client's preset op in one batch, asking for the report and a partial apply", async () => {
     let seen: EditOp[] | undefined;
     let reportFlag: string | null = null;
+    let partialFlag: string | null = null;
     const engine = stubEngine({
       async edit(document, ops) {
         seen = ops;
-        return { name: document.name, data: new Uint8Array([9]) };
+        // The engine answers the report the client asked for: for a preset
+        // batch its verdict IS the outcome (core style-batch.ts), and one
+        // op applied with a piece touched is a batch that really landed.
+        return {
+          name: document.name,
+          data: new Uint8Array([9]),
+          report: {
+            schema_version: "1.0",
+            contract: "hwp-edit-report-v1",
+            output: "x.hwpx",
+            dry_run: false,
+            ops: [
+              { index: 0, op: "update_style", status: "applied", pieces_touched: 1, changed: [], reason: null },
+              { index: 1, op: "style_tables", status: "applied", pieces_touched: 1, changed: [], reason: null },
+            ],
+            applied_count: 2,
+            failed_count: 0,
+          },
+        };
       },
     });
     const handler = createHwpEditorHandler({ engine, sessions: false });
@@ -142,7 +163,10 @@ describe("edit with a preset", () => {
         const url = typeof input === "string" ? input : input.toString();
         const form = init?.body;
         if (!(form instanceof FormData)) return handler(new Request(url, init));
-        if (form.has("ops")) reportFlag = form.get("report") as string | null;
+        if (form.has("ops")) {
+          reportFlag = form.get("report") as string | null;
+          partialFlag = form.get("allowPartial") as string | null;
+        }
         const encoded = new Response(form);
         const body = await encoded.arrayBuffer();
         const headers = new Headers();
@@ -162,8 +186,10 @@ describe("edit with a preset", () => {
       { kind: "style-tables", preset: "official" },
     ]);
     // The preset's outcome is only visible in the report, so the request has
-    // to ask for one even though this caller did not.
+    // to ask for one even though this caller did not; and without a partial
+    // apply the engine aborts the whole batch on a document with no table.
     expect(reportFlag).toBe("true");
+    expect(partialFlag).toBe("true");
   });
 
   it("refuses an unknown preset", async () => {
