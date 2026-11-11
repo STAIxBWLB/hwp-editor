@@ -22,6 +22,9 @@ Run these passes and tag every finding with its pass:
 
 ## Repo focus
 
+- **Legacy argv separators**: inspect `packages/core/src/ops.ts:opValue` and require structural
+  separators in joined fields to be refused with a cause and next step before CLI serialization; tail
+  values preserved by hwp-cli's `split_once` parsing remain allowed.
 - **Failure wrappers keep the engine cause.** When rewriting engine `failed` errors,
   retain the original cause or name only the specific command known to have failed
   (`packages/server/src/cli-engine.ts`, `rethrowUploadedImageFailure`); a mixed edit

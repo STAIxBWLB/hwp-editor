@@ -314,6 +314,7 @@
 /* Tabs as a segmented control: a recessed track, the active segment raised. */
 .hwped-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 2px;
   margin: 10px 12px 2px;
   padding: 3px;
@@ -325,7 +326,8 @@
 .hwped-tab {
   font: inherit;
   font-weight: 500;
-  flex: 1 1 0;
+  flex: 1 1 78px;
+  min-width: 0;
   min-height: 26px;
   padding: 3px 0;
   background: none;

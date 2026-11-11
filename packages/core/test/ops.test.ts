@@ -7,6 +7,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { argvToOps, opsToArgv, opsToJson, type EditOp } from "../src/ops.js";
+import { HwpEngineError } from "../src/errors.js";
 
 describe("opsToArgv", () => {
   it("serializes one --flag value pair per op, in order", () => {
@@ -48,6 +49,102 @@ describe("opsToArgv", () => {
       "--create-bookmark", "제1장=>chapter1",
       "--create-hyperlink", "홈페이지=>한라대=>https://www.chu.ac.kr",
       "--create-hyperlink", "링크=>https://halla.ai",
+    ]);
+  });
+
+  it("rejects structural separators in argv fields while preserving JSON payloads", () => {
+    const badOps: Array<[EditOp, string, string]> = [
+      [{ kind: "replace", find: "a=>b", replace: "tail=>value" }, "replace find", "=>"],
+      [{ kind: "set-field", name: "a=b", value: "tail=value" }, "set-field name", "="],
+      [{ kind: "set-meta", key: "a=b" as never, value: "tail=value" }, "set-meta key", "="],
+      [{ kind: "create-field", anchor: "a=>b", name: "field" }, "create-field anchor", "=>"],
+      [{ kind: "create-field", anchor: "anchor", name: "a=>b" }, "create-field name", "=>"],
+      [{ kind: "create-field", anchor: "anchor", name: "a=b" }, "create-field name", "="],
+      [{ kind: "create-bookmark", anchor: "a=>b", name: "mark" }, "create-bookmark anchor", "=>"],
+      [{ kind: "create-bookmark", anchor: "anchor", name: "a=>b" }, "create-bookmark name", "=>"],
+      [{ kind: "create-hyperlink", anchor: "a=>b", text: "label", url: "https://a.b" }, "create-hyperlink anchor", "=>"],
+      [{ kind: "create-hyperlink", anchor: "anchor", text: "a=>b", url: "https://a.b" }, "create-hyperlink text", "=>"],
+      [{ kind: "create-hyperlink", anchor: "anchor", text: "label", url: "https://a.b/=>c" }, "create-hyperlink url", "=>"],
+      [{ kind: "insert-image", anchor: "a=>b", path: "image.png" }, "insert-image anchor", "=>"],
+      [{ kind: "insert-image", anchor: "anchor", path: "image.png@10x20" }, "insert-image path", "@"],
+      [{ kind: "seal", anchor: "a=>b", path: "seal.png" }, "seal anchor", "=>"],
+      [{ kind: "seal", anchor: "anchor", path: "seal@20" }, "seal path", "@"],
+      [{ kind: "set-format", find: "a:b", props: {} }, "set-format find", ":"],
+      [{ kind: "set-format", find: "x", props: { "bold=on": "yes" } }, "set-format props.bold=on.key", "="],
+      [{ kind: "set-format", find: "x", props: { "bold,on": "yes" } }, "set-format props.bold,on.key", ","],
+      [{ kind: "set-format", find: "x", props: { bold: "yes,italic=on" } }, "set-format props.bold.value", ","],
+      [{ kind: "set-align", find: "a=b", alignment: "left" }, "set-align find", "="],
+      [{ kind: "insert-para", anchor: "a=>b", text: "tail=>value" }, "insert-para anchor", "=>"],
+      [{ kind: "insert-para-before", anchor: "a=>b", text: "tail=>value" }, "insert-para-before anchor", "=>"],
+      [{ kind: "add-table", anchor: "a=>b", rows: [["tail=>value"]] }, "add-table anchor", "=>"],
+      [{ kind: "clone-table", sourceTable: 0, anchor: "a=>b" }, "clone-table anchor", "=>"],
+      [{ kind: "set-para", find: "a=>b", key: "indent", value: "tail,value" }, "set-para find", "=>"],
+      [{ kind: "set-para", find: "x", key: "indent", value: "1,top:2" }, "set-para value", ","],
+    ];
+    for (const [op, field, separator] of badOps) {
+      let failure: unknown;
+      try {
+        opsToArgv([op]);
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(HwpEngineError);
+      expect((failure as HwpEngineError).code).toBe("bad_request");
+      expect((failure as HwpEngineError).message).toContain(field);
+      expect((failure as HwpEngineError).message).toContain(JSON.stringify(separator));
+      expect((failure as HwpEngineError).message).toContain("upgrade the host");
+      expect((failure as HwpEngineError).cause).toBeInstanceOf(Error);
+      expect(((failure as HwpEngineError).cause as Error).message).toContain(field);
+    }
+    const jsonSafe = badOps
+      .map(([op]) => op)
+      .filter(op => op.kind !== "set-para" || !op.value.includes(","));
+    expect(() => opsToJson(jsonSafe)).not.toThrow();
+    const jsonLiteralOps: EditOp[] = [
+      { kind: "replace", find: "a=>b", replace: "c=>d" },
+      { kind: "create-field", anchor: "a=>b", name: "n=>m", value: "v=x" },
+      { kind: "create-hyperlink", anchor: "a=>b", text: "t=>u", url: "https://x/=>y" },
+      { kind: "set-field", name: "a=b", value: "c=d" },
+    ];
+    expect(JSON.parse(opsToJson(jsonLiteralOps))).toEqual([
+      { op: "replace", from: "a=>b", to: "c=>d" },
+      { op: "create_field", anchor: "a=>b", name: "n=>m", value: "v=x" },
+      { op: "create_hyperlink", anchor: "a=>b", display: "t=>u", url: "https://x/=>y" },
+      { op: "set_field", name: "a=b", value: "c=d" },
+    ]);
+  });
+
+  it("keeps split-once tail fields intact on the argv path", () => {
+    expect(opsToArgv([
+      { kind: "replace", find: "find", replace: "a=>b" },
+      { kind: "set-field", name: "field", value: "a=b" },
+      { kind: "set-meta", key: "title", value: "a=b" },
+      { kind: "create-field", anchor: "anchor", name: "field", value: "a=b" },
+      { kind: "set-cell", table: 0, row: 0, col: 0, value: "a=b" },
+      { kind: "insert-para", anchor: "anchor", text: "a=>b" },
+      { kind: "insert-image", anchor: "anchor", path: "dir=>image.png" },
+      { kind: "insert-image", anchor: "anchor", path: "image.png@10x20", width: 30, height: 40 },
+      { kind: "seal", anchor: "anchor", path: "dir=>seal.png" },
+      { kind: "seal", anchor: "anchor", path: "seal.png@20", size: 30 },
+      { kind: "add-table", anchor: "anchor", rows: [["a=>b"]] },
+      { kind: "set-format", find: "find", props: { font: "Noto=Sans:JP" } },
+      { kind: "set-align", find: "find", alignment: "left" },
+      { kind: "set-page", key: "orientation", value: "land:scape" },
+    ])).toEqual([
+      "--replace", "find=>a=>b",
+      "--set-field", "field=a=b",
+      "--set-meta", "title=a=b",
+      "--create-field", "anchor=>field=a=b",
+      "--set-cell", "0:0:0=a=b",
+      "--insert-para", "anchor=>a=>b",
+      "--insert-image", "anchor=>dir=>image.png",
+      "--insert-image", "anchor=>image.png@10x20@30x40",
+      "--seal", "anchor=>dir=>seal.png",
+      "--seal", "anchor=>seal.png@20@30",
+      "--add-table", 'anchor=>[["a=>b"]]',
+      "--set-format", "find:font=Noto=Sans:JP",
+      "--set-align", "find=left",
+      "--set-page", "orientation:land:scape",
     ]);
   });
 
@@ -331,7 +428,7 @@ describe("opsToJson", () => {
         { kind: "set-para", find: "t", key: "line-spacing", value: "160" },
         { kind: "set-para", find: "t", key: "line-spacing", value: "12pt" },
         { kind: "set-para", find: "t", key: "indent", value: "10" },
-        { kind: "set-para", find: "t", key: "indent", value: "-10" },
+        { kind: "set-para", find: "t", key: "indent", value: "10.5mm" },
         { kind: "set-para", find: "t", key: "top", value: "5" },
         { kind: "set-page", key: "width", value: "210" },
         { kind: "set-page", key: "margin-top", value: "25" },
@@ -342,12 +439,63 @@ describe("opsToJson", () => {
       { op: "set_para", pattern: "t", line_spacing_pct: "160%" },
       { op: "set_para", pattern: "t", line_spacing_pt: "12pt" },
       { op: "set_para", pattern: "t", indent_mm: "10mm" },
-      { op: "set_para", pattern: "t", indent_mm: "-10mm" },
+      { op: "set_para", pattern: "t", indent_mm: "10.5mm" },
       { op: "set_para", pattern: "t", top_mm: "5mm" },
       { op: "set_page", width_mm: "210mm" },
       { op: "set_page", margin_top_mm: "25mm" },
       { op: "set_page", orientation: "landscape" },
     ]);
+  });
+
+  it("rejects unit values outside the edit-ops-v1 grammar with a cause and next step", () => {
+    for (const [op, field] of [
+      [{ kind: "set-page", key: "width", value: "-5" }, "set_page.width_mm"],
+      [{ kind: "set-format", find: "t", props: { size: ".5" } }, "set_format.size"],
+      [{ kind: "set-para", find: "t", key: "indent", value: "1e2" }, "set_para.indent_mm"],
+      [{ kind: "set-para", find: "t", key: "indent", value: "12in" }, "set_para.indent_mm"],
+    ] as const) {
+      let failure: unknown;
+      try {
+        opsToJson([op]);
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(HwpEngineError);
+      const engineError = failure as HwpEngineError;
+      expect(engineError.code).toBe("bad_request");
+      expect(engineError.message).toContain(field);
+      expect(engineError.message).toContain("provide a nonnegative decimal");
+      expect(engineError.cause).toBeInstanceOf(Error);
+      expect((engineError.cause as Error).message).toContain(field);
+    }
+  });
+
+  it("validates numeric image and seal dimensions before serializing units", () => {
+    const json = (ops: EditOp[]): unknown => JSON.parse(opsToJson(ops));
+    expect(
+      json([
+        { kind: "insert-image", anchor: "x", path: "p.png", width: 1e-7, height: 1e2 },
+        { kind: "seal", anchor: "x", path: "s.png", size: 1e-7 },
+      ]),
+    ).toEqual([
+      { op: "insert_image", anchor: "x", path: "p.png", width_mm: "0.0000001mm", height_mm: "100mm" },
+      { op: "seal", anchor: "x", path: "s.png", size_mm: "0.0000001mm" },
+    ]);
+
+    for (const [op, field] of [
+      { kind: "insert-image", anchor: "x", path: "p.png", width: -5, height: 20 },
+      { kind: "seal", anchor: "x", path: "s.png", size: Number.POSITIVE_INFINITY },
+    ].map((op, index) => [op, index === 0 ? "insert_image.width_mm" : "seal.size_mm"] as const)) {
+      let failure: unknown;
+      try {
+        opsToJson([op as EditOp]);
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(HwpEngineError);
+      expect((failure as HwpEngineError).message).toContain(field);
+      expect((failure as HwpEngineError).cause).toBeInstanceOf(Error);
+    }
   });
 });
 

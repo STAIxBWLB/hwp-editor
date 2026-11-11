@@ -1235,7 +1235,17 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         // instead of being parsed as a CLI separator. hwp-cli validates the
         // file against the published schema before applying anything.
         const opsPath = path.join(dir, "ops.json");
-        await writeFile(opsPath, opsToJson(stagedOps), { mode: 0o600 });
+        let encodedOps: string;
+        try { encodedOps = opsToJson(stagedOps); }
+        catch (cause) {
+          if (cause instanceof HwpEngineError && cause.code === "bad_request") {
+            const error = new HwpCliError("bad_request", cause.message);
+            error.cause = cause;
+            throw error;
+          }
+          throw cause;
+        }
+        await writeFile(opsPath, encodedOps, { mode: 0o600 });
         const args = ["edit", input, "-o", output, "--ops", opsPath];
         if (options.verify !== false) args.push("--verify");
         if (options.allowPartial === true) args.push("--allow-partial");

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { JSX } from "react";
+import type { CloneTableMode } from "@hwp-editor/core";
 import { tableAtRef } from "./tables.js";
 import { plainSegmentText } from "./text.js";
 import { useHwpEditorContext } from "./context.js";
@@ -9,13 +10,27 @@ interface CellCoord {
   col: number;
 }
 
+const GFM_SEPARATOR_ROW = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/;
+
+function tableRows(text: string): string[][] {
+  return text.split("\n").filter(row => row.trim() !== "").map(row => {
+    if (row.includes("\t")) return row.split("\t");
+    if (GFM_SEPARATOR_ROW.test(row)) return [];
+    if (!row.includes("|")) return [row];
+    const cells = row.split("|").map(cell => cell.trim());
+    if (row.trim().startsWith("|")) cells.shift();
+    if (row.trim().endsWith("|")) cells.pop();
+    return cells;
+  }).filter(row => row.length > 0);
+}
+
 /**
  * Table-aware editor for a selected table segment. The cell grid comes from
  * the GFM table in the read() envelope; addressing follows the CLI's
  * 0-based "table:row:col" grammar (row 0 = header row).
  */
 export function TableGrid(): JSX.Element {
-  const { state, store, envelope, editable, t } = useHwpEditorContext();
+  const { state, store, envelope, editable, capabilities, t } = useHwpEditorContext();
   const { selection } = state;
 
   const table =
@@ -26,6 +41,10 @@ export function TableGrid(): JSX.Element {
   const [cell, setCell] = useState<CellCoord | null>(null);
   const [mergeAnchor, setMergeAnchor] = useState<CellCoord | null>(null);
   const [cellValue, setCellValue] = useState("");
+  const [tableAnchor, setTableAnchor] = useState("");
+  const [newRows, setNewRows] = useState("");
+  const [cloneAnchor, setCloneAnchor] = useState("");
+  const [cloneMode, setCloneMode] = useState<CloneTableMode>("keep");
 
   useEffect(() => {
     setCell(null);
@@ -33,21 +52,32 @@ export function TableGrid(): JSX.Element {
     setCellValue("");
   }, [selection]);
 
+  const legacy = capabilities?.editOps !== "v1";
+  const disabled = !editable || state.document === null || envelope === null || state.status === "applying";
+  const queue = store.dispatch.bind(store);
+  const rows = tableRows(newRows);
+  const addTablePanel = (
+    <div className="hwped-field">
+      {legacy && <p className="hwped-hint">{t("table.legacySeparatorHint")}</p>}
+      <label className="hwped-label" htmlFor="hwped-table-anchor">{t("table.anchorAria")}</label>
+      <input id="hwped-table-anchor" className="hwped-input" value={tableAnchor} disabled={disabled} placeholder={t("table.anchorPlaceholder")} onChange={(e) => setTableAnchor(e.target.value)} />
+      <label className="hwped-label" htmlFor="hwped-table-rows">{t("table.addTableRowsLabel")}</label>
+      <textarea id="hwped-table-rows" className="hwped-textarea" rows={3} value={newRows} disabled={disabled} placeholder={t("table.addTableRowPlaceholder")} onChange={(e) => setNewRows(e.target.value)} />
+      <button type="button" className="hwped-btn" disabled={disabled || (legacy && tableAnchor.includes("=>")) || tableAnchor.trim() === "" || rows.length === 0}
+        onClick={() => queue({ type: "queueOp", op: { kind: "add-table", anchor: tableAnchor.trim(), rows } })}>{t("table.addTable")}</button>
+    </div>
+  );
+
   if (table === undefined) {
     return (
-      <div
-        className="hwped-panel"
-        role="region"
-        aria-label={t("table.panelAria")}
-      >
+      <div className="hwped-panel" role="region" aria-label={t("table.panelAria")}>
         <p className="hwped-hint">{t("table.hint")}</p>
+        {addTablePanel}
       </div>
     );
   }
 
-  const disabled = !editable || state.status === "applying";
   const tableIndex = table.tableIndex;
-  const queue = store.dispatch.bind(store);
 
   return (
     <div className="hwped-panel" role="region" aria-label={t("table.panelAria")}>
@@ -264,6 +294,18 @@ export function TableGrid(): JSX.Element {
         >
           {t("table.deleteTable")}
         </button>
+      </div>
+      {addTablePanel}
+      <div className="hwped-field">
+        <span className="hwped-label">{t("table.sourceTable", { index: tableIndex })}</span>
+        <label className="hwped-label" htmlFor="hwped-clone-anchor">{t("table.cloneAnchorAria")}</label>
+        <input id="hwped-clone-anchor" className="hwped-input" value={cloneAnchor} disabled={disabled} placeholder={t("table.anchorPlaceholder")} onChange={(e) => setCloneAnchor(e.target.value)} />
+        <label className="hwped-label" htmlFor="hwped-clone-mode">{t("table.cloneModeAria")}</label>
+        <select id="hwped-clone-mode" className="hwped-input" value={cloneMode} disabled={disabled} onChange={(e) => setCloneMode(e.target.value as CloneTableMode)}>
+          <option value="keep">{t("table.cloneKeep")}</option><option value="blank">{t("table.cloneBlank")}</option>
+        </select>
+        <button type="button" className="hwped-btn" disabled={disabled || (legacy && cloneAnchor.includes("=>")) || cloneAnchor.trim() === ""}
+          onClick={() => queue({ type: "queueOp", op: { kind: "clone-table", sourceTable: tableIndex, anchor: cloneAnchor.trim(), mode: cloneMode } })}>{t("table.cloneTable")}</button>
       </div>
     </div>
   );

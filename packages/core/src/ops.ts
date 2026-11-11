@@ -17,6 +17,8 @@
  *   migration to the ops file is host work, not engine adoption.
  */
 
+import { HwpEngineError } from "./errors.js";
+
 export type ParagraphAlignment =
   | "left"
   | "right"
@@ -192,8 +194,118 @@ export const OP_FLAGS: Record<LegacyEditOp["kind"], string> = {
   "delete-bookmark": "--delete-bookmark",
 };
 
+type ArgvSeparatorField = {
+  field: string;
+  value: string | undefined;
+  separator: string;
+  when?: (value: string) => boolean;
+};
+
+/** Structural separators consumed by the v1.4.0 hwp-cli argv parsers. */
+function argvSeparatorFields(op: LegacyEditOp): ArgvSeparatorField[] {
+  switch (op.kind) {
+    case "replace":
+      return [{ field: "find", value: op.find, separator: "=>" }];
+    case "set-field":
+      return [{ field: "name", value: op.name, separator: "=" }];
+    case "set-meta":
+      return [{ field: "key", value: op.key, separator: "=" }];
+    case "create-field":
+      return [
+        { field: "anchor", value: op.anchor, separator: "=>" },
+        { field: "name", value: op.name, separator: "=>" },
+        { field: "name", value: op.name, separator: "=" },
+      ];
+    case "create-bookmark":
+      return [
+        { field: "anchor", value: op.anchor, separator: "=>" },
+        { field: "name", value: op.name, separator: "=>" },
+      ];
+    case "create-hyperlink":
+      return [
+        { field: "anchor", value: op.anchor, separator: "=>" },
+        { field: "text", value: op.text, separator: "=>" },
+        { field: "url", value: op.url, separator: "=>" },
+      ];
+    case "insert-image": {
+      const fields: ArgvSeparatorField[] = [{ field: "anchor", value: op.anchor, separator: "=>" }];
+      if (op.width === undefined || op.height === undefined) {
+        fields.push({
+          field: "path", value: op.path, separator: "@",
+          when: path => imagePathHasDimensionSuffix(path),
+        });
+      }
+      return fields;
+    }
+    case "seal": {
+      const fields: ArgvSeparatorField[] = [{ field: "anchor", value: op.anchor, separator: "=>" }];
+      if (op.size === undefined) {
+        fields.push({
+          field: "path", value: op.path, separator: "@",
+          when: path => sealPathHasSizeSuffix(path),
+        });
+      }
+      return fields;
+    }
+    case "set-format":
+      return [
+        { field: "find", value: op.find, separator: ":" },
+        ...Object.entries(op.props).flatMap(([key, value]) => [
+          { field: `props.${key}.key`, value: key, separator: "=" },
+          { field: `props.${key}.key`, value: key, separator: "," },
+          { field: `props.${key}.value`, value, separator: "," },
+        ]),
+      ];
+    case "set-align":
+      return [{ field: "find", value: op.find, separator: "=" }];
+    case "insert-para":
+    case "insert-para-before":
+      return [{ field: "anchor", value: op.anchor, separator: "=>" }];
+    case "add-table":
+      return [{ field: "anchor", value: op.anchor, separator: "=>" }];
+    case "clone-table":
+      return [{ field: "anchor", value: op.anchor, separator: "=>" }];
+    case "set-para":
+      return [
+        { field: "find", value: op.find, separator: "=>" },
+        { field: "value", value: op.value, separator: "," },
+      ];
+    default:
+      return [];
+  }
+}
+
+function imagePathHasDimensionSuffix(path: string): boolean {
+  const suffix = path.slice(path.lastIndexOf("@") + 1);
+  const dimensions = suffix.split(/[xX]/);
+  return dimensions.length === 2 && dimensions.every(part => isRustFloat(part.trim()));
+}
+
+function sealPathHasSizeSuffix(path: string): boolean {
+  const suffix = path.slice(path.lastIndexOf("@") + 1).trim().replace(/mm$/, "");
+  return isRustFloat(suffix);
+}
+
+function isRustFloat(value: string): boolean {
+  return /^[+-]?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|inf(?:inity)?|nan)$/i.test(value);
+}
+
+function validateArgvSeparators(op: LegacyEditOp): void {
+  for (const { field, value, separator, when } of argvSeparatorFields(op)) {
+    if (value !== undefined && value.includes(separator) && (when === undefined || when(value))) {
+      const cause = new Error(`${op.kind} ${field} contains the structural argv separator ${JSON.stringify(separator)}`);
+      throw new HwpEngineError(
+        "bad_request",
+        `${cause.message}; remove the separator or upgrade the host to the edit-ops-v1 JSON transport.`,
+        { cause },
+      );
+    }
+  }
+}
+
 /** Serialize one op to its CLI value string (the part after the flag). */
 function opValue(op: LegacyEditOp): string {
+  validateArgvSeparators(op);
   switch (op.kind) {
     case "replace":
       return `${op.find}=>${op.replace}`;
@@ -305,20 +417,45 @@ export function opsToArgv(ops: EditOp[]): string[] {
 type OpsEntry = Record<string, unknown>;
 
 /**
- * A bare number gains the unit the CLI flag on this path already implies
- * (`--set-format size=16` is points, `--set-page width=210` is millimetres);
- * an already-suffixed value passes through. edit-ops-v1's `unit` fields are
- * suffixed strings, so this is where the two spellings meet.
+ * Bare nonnegative plain decimals gain the unit the CLI flag on this path
+ * implies. Suffixed values must match the edit-ops-v1 unit grammar exactly.
  */
-function withUnit(value: string, unit: "mm" | "pt" | "%"): string {
-  return /^-?\d+(\.\d+)?$/.test(value) ? `${value}${unit}` : value;
+function withUnit(value: string, unit: "mm" | "pt" | "%", field: string): string {
+  if (/^\d+(\.\d+)?$/.test(value)) return `${value}${unit}`;
+  if (/^\d+(\.\d+)?(mm|pt|%)$/.test(value)) return value;
+  const cause = new Error(`Invalid unit value ${JSON.stringify(value)} for ${field}`);
+  throw new HwpEngineError(
+    "bad_request",
+    `${cause.message}; provide a nonnegative decimal with an optional mm, pt, or % suffix.`,
+    { cause },
+  );
+}
+
+/** Convert Number.toString() exponent notation to the equivalent plain decimal. */
+function plainDecimal(value: number): string {
+  const encoded = String(value);
+  const match = /^(\d+)(?:\.(\d+))?[eE]([+-]?\d+)$/.exec(encoded);
+  if (!match) return encoded;
+  const whole = match[1]!;
+  const fraction = match[2] ?? "";
+  const digits = whole + fraction;
+  const decimalAt = whole.length + Number(match[3]);
+  if (decimalAt <= 0) return `0.${"0".repeat(-decimalAt)}${digits}`;
+  if (decimalAt >= digits.length) return `${digits}${"0".repeat(decimalAt - digits.length)}`;
+  return `${digits.slice(0, decimalAt)}.${digits.slice(decimalAt)}`;
+}
+
+/** Numeric dimensions use a plain decimal JSON unit even for tiny/large numbers. */
+function numericUnit(value: number, unit: "mm", field: string): string {
+  if (!Number.isFinite(value) || value < 0) return withUnit(String(value), unit, field);
+  return withUnit(plainDecimal(value), unit, field);
 }
 
 /** set-format props: same keys as the CLI flag; only `size` needs a unit. */
 function formatPropsEntry(props: Record<string, string>): OpsEntry {
   const out: OpsEntry = {};
   for (const [key, value] of Object.entries(props)) {
-    out[key] = key === "size" ? withUnit(value, "pt") : value;
+    out[key] = key === "size" ? withUnit(value, "pt", "set_format.size") : value;
   }
   return out;
 }
@@ -328,35 +465,35 @@ function paraShapeEntry(key: ParaShapeKey, value: string): OpsEntry {
   switch (key) {
     case "line-spacing":
       return value.endsWith("pt")
-        ? { line_spacing_pt: value }
-        : { line_spacing_pct: withUnit(value, "%") };
+        ? { line_spacing_pt: withUnit(value, "pt", "set_para.line_spacing_pt") }
+        : { line_spacing_pct: withUnit(value, "%", "set_para.line_spacing_pct") };
     case "indent":
-      return { indent_mm: withUnit(value, "mm") };
+      return { indent_mm: withUnit(value, "mm", "set_para.indent_mm") };
     case "left":
-      return { left_mm: withUnit(value, "mm") };
+      return { left_mm: withUnit(value, "mm", "set_para.left_mm") };
     case "right":
-      return { right_mm: withUnit(value, "mm") };
+      return { right_mm: withUnit(value, "mm", "set_para.right_mm") };
     case "top":
-      return { top_mm: withUnit(value, "mm") };
+      return { top_mm: withUnit(value, "mm", "set_para.top_mm") };
     case "bottom":
-      return { bottom_mm: withUnit(value, "mm") };
+      return { bottom_mm: withUnit(value, "mm", "set_para.bottom_mm") };
   }
 }
 
 function pageSetupEntry(key: PageSetupKey, value: string): OpsEntry {
   switch (key) {
     case "width":
-      return { width_mm: withUnit(value, "mm") };
+      return { width_mm: withUnit(value, "mm", "set_page.width_mm") };
     case "height":
-      return { height_mm: withUnit(value, "mm") };
+      return { height_mm: withUnit(value, "mm", "set_page.height_mm") };
     case "margin-left":
-      return { margin_left_mm: withUnit(value, "mm") };
+      return { margin_left_mm: withUnit(value, "mm", "set_page.margin_left_mm") };
     case "margin-right":
-      return { margin_right_mm: withUnit(value, "mm") };
+      return { margin_right_mm: withUnit(value, "mm", "set_page.margin_right_mm") };
     case "margin-top":
-      return { margin_top_mm: withUnit(value, "mm") };
+      return { margin_top_mm: withUnit(value, "mm", "set_page.margin_top_mm") };
     case "margin-bottom":
-      return { margin_bottom_mm: withUnit(value, "mm") };
+      return { margin_bottom_mm: withUnit(value, "mm", "set_page.margin_bottom_mm") };
     case "orientation":
       return { orientation: value };
   }
@@ -425,14 +562,17 @@ function opsEntry(op: EditOp): OpsEntry {
         path: op.path,
         ...(op.width === undefined || op.height === undefined
           ? {}
-          : { width_mm: `${op.width}mm`, height_mm: `${op.height}mm` }),
+          : {
+              width_mm: numericUnit(op.width, "mm", "insert_image.width_mm"),
+              height_mm: numericUnit(op.height, "mm", "insert_image.height_mm"),
+            }),
       };
     case "seal":
       return {
         op: "seal",
         anchor: op.anchor,
         path: op.path,
-        ...(op.size === undefined ? {} : { size_mm: `${op.size}mm` }),
+        ...(op.size === undefined ? {} : { size_mm: numericUnit(op.size, "mm", "seal.size_mm") }),
       };
     case "set-format":
       // Reserved fields LAST: props is a free Record, so a caller-supplied

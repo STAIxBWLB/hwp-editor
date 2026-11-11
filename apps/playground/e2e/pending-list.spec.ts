@@ -29,4 +29,9 @@ test("a large pending queue scrolls without hiding the editor", async ({ page })
     .toBeGreaterThan(100);
   await list.evaluate((element) => { element.scrollTop = element.scrollHeight; });
   expect(await list.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await list.getByRole("button", { name: en["toolbar.removePending"]({ index: 30 }), exact: true }).click();
+  await expect(list.getByRole("listitem")).toHaveCount(29);
+  await page.getByRole("button", { name: en["toolbar.clearPending"], exact: true }).click();
+  await expect(list).toHaveCount(0);
+
 });
