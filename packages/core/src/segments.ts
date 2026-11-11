@@ -23,9 +23,8 @@
  * and nesting indices are retained for exact layout joins and editing; per-level
  * styles are not projected.
  *
- * Offset caveat, unchanged from v1: `char_range` counts Unicode scalars into
- * `markdown`, while JS string indexing counts UTF-16 code units. The two
- * agree on the BMP, which is all the current fixtures exercise.
+ * `char_range` counts Unicode scalars into `markdown`; projected `start` and
+ * `end` are converted to JS UTF-16 code-unit offsets for string slicing.
  */
 
 /** The seven segment kinds the v2 envelope defines. */
@@ -53,9 +52,9 @@ export interface Segment {
   id?: string;
   /** Full v2 nesting path, including run index for run segments. */
   indices?: number[];
-  /** Start character offset into `markdown` (inclusive), from `char_range.start`. */
+  /** Start UTF-16 code-unit offset into `markdown` (inclusive). */
   start: number;
-  /** End character offset into `markdown` (exclusive), from `char_range.end`. */
+  /** End UTF-16 code-unit offset into `markdown` (exclusive). */
   end: number;
   /** What the range is; the v2 envelope emits all seven kinds. */
   kind: SegmentKind;

@@ -3,16 +3,16 @@ import type { CatEnvelope, Segment, SegmentRef } from "./segments.js";
 import { segmentRef } from "./segments.js";
 import type { EditorAction, EditorState } from "./state.js";
 
-function sameRef(a: SegmentRef, b: SegmentRef): boolean {
-  return a.id !== undefined && b.id !== undefined
-    ? a.id === b.id
-    : a.section === b.section && a.para === b.para;
+function segmentKey(segment: Segment): string {
+  if (segment.id !== undefined) return `id:${segment.id}`;
+  if (segment.indices !== undefined) return `${segment.section}:${segment.indices.join("/")}`;
+  return `${segment.section}:${segment.para}`;
 }
 
 function uniqueSegments(segments: Segment[]): Segment[] {
   const seen = new Set<string>();
   return segments.filter((segment) => {
-    const key = segment.id === undefined ? `${segment.section}:${segment.para}` : `id:${segment.id}`;
+    const key = segmentKey(segment);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -21,12 +21,15 @@ function uniqueSegments(segments: Segment[]): Segment[] {
 
 export function paragraphForSegment(envelope: CatEnvelope, segment: Segment): Segment | undefined {
   if (segment.indices === undefined) {
+    if (segment.kind === "para") return segment;
     return envelope.segments.find((candidate) => candidate.kind === "para" && candidate.indices === undefined &&
-      candidate.section === segment.section && candidate.para === segment.para);
+      candidate.section === segment.section && candidate.para === segment.para &&
+      candidate.start <= segment.start && candidate.end >= segment.end);
   }
-  const topPath = segment.indices.slice(0, 1);
-  return envelope.segments.find((candidate) => candidate.kind === "para" && candidate.section === segment.section &&
-    candidate.indices !== undefined && candidate.indices.length === 1 && candidate.indices[0] === topPath[0]);
+  return envelope.segments.filter((candidate) => candidate.kind === "para" && candidate.section === segment.section &&
+    candidate.indices !== undefined && candidate.indices.length <= segment.indices!.length &&
+    candidate.indices.every((index, at) => index === segment.indices![at]))
+    .sort((a, b) => (b.indices?.length ?? 0) - (a.indices?.length ?? 0))[0];
 }
 
 export function selectedParagraphs(envelope: CatEnvelope, state: EditorState): Segment[] {
@@ -38,11 +41,10 @@ export function selectedParagraphs(envelope: CatEnvelope, state: EditorState): S
     const paragraph = segment && paragraphForSegment(envelope, segment);
     return paragraph ? [paragraph] : [];
   });
-  const orderedParagraphs = envelope.segments.filter((s) => s.kind === "para" &&
-    (s.indices === undefined || s.indices.length === 1));
-  const order = new Map(orderedParagraphs.map((s, i) => [s.id ?? `${s.section}:${s.para}`, i]));
+  const orderedParagraphs = uniqueSegments(envelope.segments.filter((s) => s.kind === "para"));
+  const order = new Map(orderedParagraphs.map((s, i) => [segmentKey(s), i]));
   return uniqueSegments(paragraphs).sort((a, b) =>
-    (order.get(a.id ?? `${a.section}:${a.para}`) ?? 0) - (order.get(b.id ?? `${b.section}:${b.para}`) ?? 0));
+    (order.get(segmentKey(a)) ?? 0) - (order.get(segmentKey(b)) ?? 0));
 }
 
 export function paragraphAddress(segment: Segment): ParagraphAddress {
@@ -53,27 +55,33 @@ export function paragraphAddress(segment: Segment): ParagraphAddress {
 
 export function formatAddresses(envelope: CatEnvelope, paragraphs: readonly Segment[]): EditAddress[] {
   const out: EditAddress[] = [];
-  const ids = new Set<string>();
+  const targets = new Set<string>();
   for (const paragraph of paragraphs) {
     const runs = envelope.segments.filter((run) => {
       if (run.kind !== "run" || run.section !== paragraph.section || run.para !== paragraph.para) return false;
-      if (paragraph.indices === undefined || run.indices === undefined) return paragraph.indices === undefined && run.indices === undefined;
+      if (paragraph.indices === undefined) return run.start >= paragraph.start && run.end <= paragraph.end;
+      if (run.indices === undefined) return false;
       return run.indices.length === paragraph.indices.length + 1 &&
         paragraph.indices.every((index, at) => run.indices![at] === index);
     });
     for (const [index, run] of runs.entries()) {
+      let address: EditAddress;
       if (run.id !== undefined) {
-        if (ids.has(run.id)) continue;
-        ids.add(run.id);
-        out.push({ id: run.id });
+        address = { id: run.id };
       } else if (run.indices !== undefined) {
-        out.push({ at: { section: run.section, paragraph: run.para, run: run.indices.at(-1)! } });
+        address = { at: { section: run.section, paragraph: run.para, run: run.indices.at(-1)! } };
       } else {
-        out.push({ at: { section: run.section, paragraph: run.para, run: index } });
+        address = { at: { section: run.section, paragraph: run.para, run: index } };
       }
+      const key = "id" in address ? `id:${address.id}` : `${address.at.section}:${address.at.paragraph}:${address.at.run}`;
+      if (targets.has(key)) continue;
+      targets.add(key);
+      out.push(address);
     }
     if (runs.length === 0 && paragraph.indices === undefined) {
-      out.push({ at: { section: paragraph.section, paragraph: paragraph.para, run: 0 } });
+      const address: EditAddress = { at: { section: paragraph.section, paragraph: paragraph.para, run: 0 } };
+      const key = `${paragraph.section}:${paragraph.para}:0`;
+      if (!targets.has(key)) { targets.add(key); out.push(address); }
     }
   }
   return out;
@@ -86,7 +94,6 @@ export function selectionAction(
   mode: "single" | "toggle" | "extend",
 ): EditorAction {
   const hit = paragraphForSegment(envelope, target);
-  // Invalid hits retain the established single-selection behavior.
   if (!hit || mode === "single") return { type: "select", selection: segmentRef(target) };
   const current = selectedParagraphs(envelope, state);
   const anchorRef = state.selectionAnchor ?? (state.selection ? state.selection : segmentRef(hit));
@@ -94,13 +101,13 @@ export function selectionAction(
   const anchor = anchorHit ? paragraphForSegment(envelope, anchorHit) : hit;
   let selected: Segment[];
   if (mode === "toggle") {
-    selected = current.some((p) => p.id === hit.id || (p.id === undefined && p.section === hit.section && p.para === hit.para))
-      ? current.filter((p) => p !== hit && !(p.section === hit.section && p.para === hit.para))
+    selected = current.some((p) => segmentKey(p) === segmentKey(hit))
+      ? current.filter((p) => segmentKey(p) !== segmentKey(hit))
       : [...current, hit];
   } else {
-    const paragraphs = uniqueSegments(envelope.segments.filter((s) => s.kind === "para" &&
-      (s.indices === undefined || s.indices.length === 1)));
-    const a = paragraphs.indexOf(anchor!), b = paragraphs.indexOf(hit);
+    const paragraphs = uniqueSegments(envelope.segments.filter((s) => s.kind === "para"));
+    const a = paragraphs.findIndex((p) => segmentKey(p) === segmentKey(anchor!));
+    const b = paragraphs.findIndex((p) => segmentKey(p) === segmentKey(hit));
     selected = a < 0 || b < 0 ? [hit] : paragraphs.slice(Math.min(a, b), Math.max(a, b) + 1);
   }
   const refs = selected.map(segmentRef);
@@ -111,7 +118,16 @@ export function selectionAction(
 export function selectSimilar(envelope: CatEnvelope, primary: Segment, level: "char" | "para"): SegmentRef[] {
   const props = level === "char" ? primary.directChar : primary.directPara;
   if (props === undefined) return [];
-  const key = JSON.stringify(props);
+  const key = stableStructure(props);
   return uniqueSegments(envelope.segments.filter((segment) => segment.kind === "para" &&
-    JSON.stringify(level === "char" ? segment.directChar : segment.directPara) === key)).map(segmentRef);
+    stableStructure(level === "char" ? segment.directChar : segment.directPara) === key)).map(segmentRef);
+}
+
+function stableStructure(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStructure).join(",")}]`;
+  if (typeof value === "object" && value !== null) {
+    const object = value as Record<string, unknown>;
+    return `{${Object.keys(object).sort().map((key) => `${JSON.stringify(key)}:${stableStructure(object[key])}`).join(",")}}`;
+  }
+  return value === undefined ? "undefined" : JSON.stringify(value);
 }
