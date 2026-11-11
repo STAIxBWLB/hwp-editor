@@ -17,7 +17,12 @@ env:
   # (packages/server/src/cli-engine.ts MIN_VERSION / MAX_VERSION_EXCLUSIVE),
   # so a future upstream 2.0.0 would fall outside the ceiling and turn this job
   # red overnight for reasons that are not this repository's fault.
-  HWP_CLI_TAG: v1.4.0
+  #
+  # 1.6.x renames the command to `ahwp` and still publishes the legacy
+  # `hwp-<tag>-<target>` archive and, inside it, the `hwp` compatibility binary
+  # through 1.x - which is why the asset names below keep that spelling. 2.0.0
+  # drops them.
+  HWP_CLI_TAG: v1.6.1
 
 jobs:
   # NON-GATING BY CONSTRUCTION.
@@ -40,8 +45,10 @@ jobs:
   # (packages/core/src/segments.ts) and the error markers
   # (packages/react/src/errors.ts) are all pinned to the 0.20.x contract and
   # enforced by cli-engine.ts's flag handshake. The pinned tag tracks the
-  # newest upstream release the contract was verified against (1.4.0 preserves the
-  # v2 segment envelope, render-layout-v1 and edit-ops-v1 contracts), so what this job
+  # newest upstream release the contract was verified against (1.6.1 keeps the
+  # v2 segment envelope, render-layout-v1 and edit-ops-v1 contracts; the envelope
+  # it emits is schema 1.1, which only adds an optional `source_chars` per run
+  # that packages/core/src/segments.ts does not project), so what this job
   # detects from here is drift BETWEEN the floor and the next upstream release,
   # the next time either the tag or the floor moves. It is the only automated
   # evidence that the pinned contract holds against a real binary; a red check
@@ -69,8 +76,11 @@ jobs:
       # hwp-<tag>-<target>.sha256, not hwp-<tag>-<target>.tar.gz.sha256 -
       # while its single line still records the .tar.gz filename, so
       # `sha256sum -c` resolves the archive from the working directory. The
-      # archive unpacks a single executable `hwp` at the top level, mode
-      # preserved, so no chmod is needed.
+      # archive unpacks `ahwp` and its `hwp` compatibility name at the top level,
+      # mode preserved plus the two licences and NOTICE, so no chmod is needed.
+      # HWP_EDITOR_BIN names the `hwp` alias on purpose: it behaves identically,
+      # and its one deprecation line goes to stderr only when stderr is a
+      # terminal, so every piped call here stays byte-identical.
       - name: Install hwp-cli
         run: |
           base="https://github.com/STAIxBWLB/hwp-cli/releases/download/$HWP_CLI_TAG"

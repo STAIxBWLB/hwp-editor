@@ -11,6 +11,16 @@
  * against v1.4.0 (same contract, schema_version, kinds, and wire keys), so
  * the strict parser below accepts the 0.20.x and 1.4.x envelopes alike.
  *
+ * Re-verified against v1.6.1, whose `--segments v2` envelope is schema `1.1`:
+ * the only delta is an optional `source_chars` on `run` segments, UTF-16 offsets
+ * into the source paragraph that this projection does not read (and a consumer
+ * that needed them would have to gate on their presence, because a schema `1.0`
+ * host omits them). The 1.6.1 capture in test/fixtures/cat-segments-runs.json
+ * is the same document 1.4.0 emits at `1.0`, minus that field, which is what
+ * `parseCatEnvelope`'s additive-schema cases hold. The version test below is a
+ * supported-major match on purpose (REVIEW.md): pinning an exact minor would
+ * refuse this envelope.
+ *
  * The wire envelope carries `{id, kind, path: {section, indices},
  * char_range: {start, end}, style, direct}` per segment, with ranges that
  * NEST (a run inside its para, a cell inside its table). What this module

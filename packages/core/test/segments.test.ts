@@ -12,6 +12,15 @@
  *     hwp cat table.hwpx --format markdown --with-segments --segments v2`
  *     (markdown table; table.md is the v1 fixture's own markdown, which
  *     round-trips byte-identically)
+ *   cat-segments-runs.json — the schema `1.1` envelope, captured from `ahwp
+ *     1.6.1` (the workflow pin) over `hwp compose runs.spec.json -o runs.hwpx &&
+ *     hwp cat runs.hwpx --format markdown --with-segments --segments v2`. The
+ *     spec is one paragraph of three runs, `{"version":"2.0","document":
+ *     {"version":"1.0","sections":[{"blocks":[{"type":"paragraph","runs":
+ *     [{"type":"text","text":"앞 "},{"type":"text","text":"굵게","bold":true},
+ *     {"type":"text","text":" 뒤"}]}]}]}}`. The same document through the same
+ *     command under `hwp 1.4.0` emits the same four segments at schema `1.0`
+ *     with no `source_chars`, so the two differ only by this bump's addition.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -35,6 +44,28 @@ describe("parseCatEnvelope", () => {
     const wire = JSON.parse(fixture("cat-segments-basic.json"));
     wire.schema_version = schema_version;
     expect(parseCatEnvelope(JSON.stringify(wire)).segments).toHaveLength(5);
+  });
+  it("parses the real schema 1.1 envelope, whose per-run source_chars it ignores", () => {
+    const wire = JSON.parse(fixture("cat-segments-runs.json"));
+    expect(wire.schema_version).toBe("1.1");
+    const env = parseCatEnvelope(fixture("cat-segments-runs.json"));
+    expect(env.markdown).toBe("앞 **굵게** 뒤\n\n");
+    expect(env.segments.map((s) => s.kind)).toEqual(["para", "run", "run", "run"]);
+    // char_range counts the emitted markdown, emphasis markers included: the
+    // bold run covers its two `**` while its source_chars span only `굵게`.
+    // The projection keeps the published scalar offsets and drops source_chars,
+    // which no consumer reads yet (a host below 1.6.1 does not send it).
+    expect(env.segments.map((s) => [s.start, s.end])).toEqual([
+      [0, 12], [0, 2], [2, 8], [8, 10],
+    ]);
+    expect(env.segments.some((s) => "source_chars" in s)).toBe(false);
+  });
+  it("projects the 1.1 envelope to what its 1.0 spelling yields", () => {
+    const wire = JSON.parse(fixture("cat-segments-runs.json"));
+    const oneOne = parseCatEnvelope(JSON.stringify(wire));
+    for (const segment of wire.segments) delete segment.source_chars;
+    const oneZero = parseCatEnvelope(JSON.stringify({ ...wire, schema_version: "1.0" }));
+    expect(oneOne).toEqual(oneZero);
   });
   it.each([-1, 0.5])("rejects malformed path indices %s before selection", index => {
     const wire = JSON.parse(fixture("cat-segments-basic.json"));

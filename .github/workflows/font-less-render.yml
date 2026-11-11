@@ -19,8 +19,11 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  # Same pin as e2e.yml; move them together.
-  HWP_CLI_TAG: v1.4.0
+  # Same pin as e2e.yml; move them together. The legacy `hwp-<tag>-<target>`
+  # asset, and the `hwp` binary inside it, are still published through 1.x
+  # beside the `ahwp` names, so this download and the `./hwp` calls below stay
+  # as they are.
+  HWP_CLI_TAG: v1.6.1
 
 jobs:
   font-less-render:
