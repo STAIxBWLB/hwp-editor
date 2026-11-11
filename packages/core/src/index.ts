@@ -46,18 +46,40 @@ export type {
   PageSetupKey,
   ParagraphAlignment,
   ParaShapeKey,
+  StyleEditOp,
+  StyleProps,
+  StyleRef,
 } from "./ops.js";
 export {
   offsetToRef,
   markdownLength,
   parseCatEnvelope,
+  hasDirectFormatting,
+  projectShapeAttrs,
   segmentAtOffset,
   segmentAtRef,
   segmentRef,
   segmentText,
   validateProjectedMetadata,
 } from "./segments.js";
-export type { CatEnvelope, DirectChar, DirectPara, Segment, SegmentKind, SegmentRef } from "./segments.js";
+export type {
+  CatEnvelope,
+  DirectChar,
+  DirectPara,
+  Segment,
+  SegmentKind,
+  SegmentRef,
+  ShapeAttrs,
+} from "./segments.js";
+export {
+  bodyStyle,
+  parseStyleTable,
+  parseStyleTableResponse,
+  presetStyleOps,
+  stylesVersionSupported,
+  STYLE_TABLE_PRESETS,
+} from "./styles.js";
+export type { StyleInfo, StyleTable, StyleTablePreset } from "./styles.js";
 export { compareSegments, formatAddresses, hasOwnRef, isSectionDefinitionParagraph, paragraphAddress, paragraphRuns, resolveSelection, segmentPath, selectedParagraphs, selectSimilar, selectionAction } from "./selection.js";
 export type { SelectionRefusal, SelectionTargets } from "./selection.js";
 export type {

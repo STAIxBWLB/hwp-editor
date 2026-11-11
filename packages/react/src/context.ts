@@ -12,6 +12,7 @@ import type {
   HwpEngine,
   EditOp,
   ImageAsset,
+  StyleTable,
   ValidationReport,
 } from "@hwp-editor/core";
 import type { TFunction } from "./messages.js";
@@ -43,6 +44,13 @@ export interface HwpEditorContextValue {
   ) => Promise<boolean>;
   /** Re-read + re-render the current document after an external change. */
   refresh: () => Promise<void>;
+  /**
+   * The current document's `styles-v1` table, or null when this host has no
+   * styles command or the read failed. Loaded once per document by the
+   * editor, so the Styles panel and the direct-format indicator read one
+   * table rather than two snapshots that can disagree.
+   */
+  styles: StyleTable | null;
   /**
    * The editor's document generation. It moves when a load starts and when
    * the compose flow hands a document back, so an async flow captures it

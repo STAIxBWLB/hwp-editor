@@ -65,6 +65,31 @@ export interface Segment {
   directChar?: DirectChar;
   /** Published direct paragraph properties used for structural similarity. */
   directPara?: DirectPara;
+  /**
+   * The inherited style level (`style` on the wire), resolved to the same
+   * shape ids and attributes the direct level carries. Present on every kind
+   * an hwp-cli 1.4.0 host publishes.
+   */
+  style?: ShapeAttrs;
+  /**
+   * The direct level (`direct` on the wire) with its shape ids, which
+   * `directChar`/`directPara` drop. `hasDirectFormatting` compares it with
+   * `style` to answer whether this segment carries formatting of its own.
+   */
+  direct?: ShapeAttrs;
+}
+
+/**
+ * A resolved character/paragraph shape pair: what `styles-v1` publishes as
+ * `attrs` and what the segment envelope publishes at its `style` and `direct`
+ * levels.
+ */
+export interface ShapeAttrs {
+  char: DirectChar;
+  para: DirectPara;
+  /** Shape ids when this host projects them; hwp-cli 1.4.0 always does. */
+  charShapeId?: number;
+  paraShapeId?: number;
 }
 
 export interface DirectChar {
@@ -133,6 +158,8 @@ function projectSegment(raw: unknown): Segment {
   }
   const directChar = char == null ? undefined : projectDirectChar(char);
   const directPara = para == null ? undefined : projectDirectPara(para);
+  const style = projectShapeLevel((raw as Record<string, unknown>).style, "segment.style");
+  const directShape = projectShapeLevel(direct, "segment.direct");
   return {
     id,
     indices: p.indices,
@@ -143,7 +170,91 @@ function projectSegment(raw: unknown): Segment {
     para: p.indices[0]!,
     ...(directChar === undefined ? {} : { directChar }),
     ...(directPara === undefined ? {} : { directPara }),
+    ...(style === undefined ? {} : { style }),
+    ...(directShape === undefined ? {} : { direct: directShape }),
   };
+}
+
+/**
+ * Project one shape level, or `undefined` when the host published none.
+ *
+ * A level whose `char` and `para` are both null is the engine's own "this
+ * level adds nothing" spelling (measured on segments that carry no direct
+ * formatting), not a malformed one, so it is dropped rather than refused: a
+ * dropped level makes `hasDirectFormatting` answer false, which is exactly
+ * what a missing level means.
+ */
+function projectShapeLevel(value: unknown, field: string): ShapeAttrs | undefined {
+  if (value === undefined || value === null) return undefined;
+  const level = value as Record<string, unknown>;
+  if (typeof value !== "object" || Array.isArray(level)) {
+    throw new Error(`${field}: malformed shape attributes; upgrade the host adapter to project valid v2 metadata.`);
+  }
+  if (level.char == null && level.para == null) return undefined;
+  return projectShapeAttrs(value, field);
+}
+
+/**
+ * Project one `{char, para, char_shape_id, para_shape_id}` object — the shape
+ * `styles-v1` calls `attrs` and the segment envelope publishes as `style` and
+ * `direct` — reusing the direct-level validators so both levels are held to
+ * one rule.
+ */
+export function projectShapeAttrs(value: unknown, field: string): ShapeAttrs {
+  const attrs = value as Record<string, unknown> | null | undefined;
+  if (typeof attrs !== "object" || attrs === null || Array.isArray(attrs)) {
+    throw new Error(`${field}: malformed shape attributes; upgrade the host adapter to project valid v2 metadata.`);
+  }
+  const char = attrs.char;
+  const para = attrs.para;
+  // Both spellings are read on purpose: the engine writes `char_shape_id`, and
+  // this function's own projection writes `charShapeId`, which a `/styles`
+  // body carries back through `parseStyleTableResponse`. One reader for one
+  // shape, so a projected table round-trips instead of losing its ids.
+  const charShapeId = attrs.char_shape_id ?? attrs.charShapeId;
+  const paraShapeId = attrs.para_shape_id ?? attrs.paraShapeId;
+  if (typeof char !== "object" || char === null || Array.isArray(char) ||
+      typeof para !== "object" || para === null || Array.isArray(para)) {
+    throw new Error(`${field}: malformed char or para shape; upgrade the host adapter to project valid v2 metadata.`);
+  }
+  // The ids are carried by hwp-cli 1.4.0 on every level, but an older
+  // projection publishes the attributes without them, and those attributes are
+  // still what `hasDirectFormatting` compares. Validated when present, dropped
+  // when absent — never invented.
+  if ((charShapeId !== undefined && (typeof charShapeId !== "number" || !Number.isInteger(charShapeId) || charShapeId < 0)) ||
+      (paraShapeId !== undefined && (typeof paraShapeId !== "number" || !Number.isInteger(paraShapeId) || paraShapeId < 0))) {
+    throw new Error(`${field}: malformed shape ids; upgrade the host adapter to project valid v2 metadata.`);
+  }
+  return {
+    char: projectDirectChar(char),
+    para: projectDirectPara(para),
+    ...(charShapeId === undefined ? {} : { charShapeId: charShapeId as number }),
+    ...(paraShapeId === undefined ? {} : { paraShapeId: paraShapeId as number }),
+  };
+}
+
+/**
+ * Whether a segment carries formatting of its own below its style: the
+ * two levels the v2 envelope publishes resolve differently. A segment without
+ * both levels is inconclusive and answers `false`, because claiming direct
+ * formatting the host did not publish would offer a "clear" that has nothing
+ * to clear.
+ */
+export function hasDirectFormatting(segment: Segment): boolean {
+  const { style, direct } = segment;
+  if (style === undefined || direct === undefined) return false;
+  return !(sameAttrs(style, direct));
+}
+
+function sameAttrs(a: ShapeAttrs, b: ShapeAttrs): boolean {
+  return a.charShapeId === b.charShapeId && a.paraShapeId === b.paraShapeId &&
+    a.char.bold === b.char.bold && a.char.italic === b.char.italic &&
+    a.char.size_pt === b.char.size_pt && a.char.color === b.char.color &&
+    a.char.faces.join("\u0000") === b.char.faces.join("\u0000") &&
+    a.char.face_ids.join(",") === b.char.face_ids.join(",") &&
+    a.para.alignment === b.para.alignment && a.para.indent === b.para.indent &&
+    a.para.line_spacing === b.para.line_spacing &&
+    a.para.line_spacing_type === b.para.line_spacing_type;
 }
 
 function projectDirectChar(value: unknown): DirectChar {
@@ -250,15 +361,37 @@ export function validateProjectedMetadata(envelope: CatEnvelope): CatEnvelope {
   boundaryInfo(envelope);
   let changed = false;
   const segments = envelope.segments.map((segment) => {
-    const nullable = segment as Segment & { directChar?: DirectChar | null; directPara?: DirectPara | null };
+    const nullable = segment as Segment & {
+      directChar?: DirectChar | null;
+      directPara?: DirectPara | null;
+      style?: ShapeAttrs | null;
+      direct?: ShapeAttrs | null;
+    };
     let normalized = segment;
-    if (nullable.directChar === null || nullable.directPara === null) {
+    // Copy on the first normalization, so the caller's object is never the
+    // one that loses a property.
+    let copied = false;
+    const detach = (): void => {
+      if (copied) return;
       normalized = { ...segment };
-      if (nullable.directChar === null) { delete normalized.directChar; changed = true; }
-      if (nullable.directPara === null) { delete normalized.directPara; changed = true; }
-    }
+      copied = true;
+      changed = true;
+    };
+    if (nullable.directChar === null) { detach(); delete normalized.directChar; }
+    if (nullable.directPara === null) { detach(); delete normalized.directPara; }
     if (normalized.directChar !== undefined) projectDirectChar(normalized.directChar);
     if (normalized.directPara !== undefined) projectDirectPara(normalized.directPara);
+    // A level that projects to nothing (null, or the engine's null-char/null-
+    // para spelling) is removed, so a consumer reads one shape for "no level"
+    // instead of two. A malformed level still throws, through the same helper.
+    if (nullable.style !== undefined && projectShapeLevel(nullable.style, "segment.style") === undefined) {
+      detach();
+      delete normalized.style;
+    }
+    if (nullable.direct !== undefined && projectShapeLevel(nullable.direct, "segment.direct") === undefined) {
+      detach();
+      delete normalized.direct;
+    }
     return normalized;
   });
   return changed ? { ...envelope, segments } : envelope;

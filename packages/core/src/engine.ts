@@ -3,6 +3,7 @@ import type { EmbeddedTemplate, FillResult, LintProfile, LintReport, TemplateInp
 import type { EditOp } from "./ops.js";
 import type { EditReport } from "./edit-report.js";
 import type { CatEnvelope } from "./segments.js";
+import type { StyleTable, StyleTablePreset } from "./styles.js";
 import type { DocumentSpecV2 } from "./generated/document-spec-v2.js";
 
 export interface ImageAsset {
@@ -70,6 +71,14 @@ export interface EditOptions {
    * caller that will reorder or remove what it inserted has to ask for it.
    */
   report?: boolean;
+  /**
+   * Style every eligible table under an official preset (`hwp edit
+   * --style-tables <preset>`, hwp-cli 1.4.0+). The engine keeps this flag and
+   * `--ops` mutually exclusive, so a call carrying `styleTables` must carry no
+   * ops: the preset switch in this editor is two calls grouped into one undo
+   * entry, not one call.
+   */
+  styleTables?: StyleTablePreset;
 }
 
 /**
@@ -88,6 +97,8 @@ export interface Capabilities {
   editOps?: "v1";
   /** Safe uploaded PNG/JPEG image asset staging is supported. */
   imageAssets?: "v1";
+  /** `hwp styles` + style ops + `--style-tables` are supported (hwp-cli 1.4.0+). */
+  styles?: "v1";
   /** hwp-cli version string, e.g. "0.16.0". */
   version: string;
   /** Whether the engine can apply edits right now. */
@@ -127,6 +138,12 @@ export interface HwpEngine {
   lint?(document: DocumentHandle, profile?: LintProfile): Promise<LintReport>;
   listTemplates?(): Promise<EmbeddedTemplate[]>;
   create?(templateId: string, name: string): Promise<DocumentHandle>;
+  /**
+   * Named styles with their resolved attributes and the segments using them
+   * (`hwp styles <file> --format json`, hwp-cli 1.4.0+). Optional for the same
+   * reason the template methods are: an older host has no such command.
+   */
+  styles?(document: DocumentHandle): Promise<StyleTable>;
 
   /** Extract markdown + source segments (`hwp cat --with-segments`). */
   read(document: DocumentHandle): Promise<CatEnvelope>;

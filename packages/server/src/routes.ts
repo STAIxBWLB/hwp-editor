@@ -1,4 +1,4 @@
-import { TEMPLATE_METHODS, templateVersionSupported, parseTemplateInputs, parseFillReport, parseLintReport, parseEmbeddedTemplates, parseTemplateReport, type TemplateMethod, type LintProfile, type TemplateSpecV1, type TemplateDataV1 } from "@hwp-editor/core";
+import { TEMPLATE_METHODS, templateVersionSupported, parseStyleTableResponse, STYLE_TABLE_PRESETS, parseTemplateInputs, parseFillReport, parseLintReport, parseEmbeddedTemplates, parseTemplateReport, stylesVersionSupported, type TemplateMethod, type LintProfile, type TemplateSpecV1, type TemplateDataV1 } from "@hwp-editor/core";
 /**
  * Framework-agnostic HTTP handler implementing the wire contract of
  * packages/core/src/protocol.ts as Web Standards `(Request) => Response`.
@@ -38,6 +38,7 @@ import {
 } from "@hwp-editor/core";
 
 import type {
+  Capabilities,
   DocumentHandle,
   EditOp,
   EditOptions,
@@ -45,6 +46,7 @@ import type {
   HwpErrorCode,
   PageImageFormat,
   RenderOptions,
+  StyleTablePreset,
 } from "@hwp-editor/core";
 import type {
   ComposeRequest,
@@ -59,7 +61,7 @@ import { createCliEngine, HwpCliError, type CliEngine } from "./cli-engine.js";
 import { createSessionStore, SessionNotFoundError, type SessionStore } from "./session.js";
 
 /** Supported actions; the runtime guard and `HwpAction` share this list. */
-const ACTION_LIST = ["read", "render", "edit", "compose", "validate", "capabilities", "slots", "fill", "lint", "template", "templates", "create"] as const;
+const ACTION_LIST = ["read", "render", "edit", "compose", "validate", "capabilities", "styles", "slots", "fill", "lint", "template", "templates", "create"] as const;
 
 /** One supported action name the handler dispatches on. */
 export type HwpAction = (typeof ACTION_LIST)[number];
@@ -379,17 +381,32 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
 
   async function handleEdit(req: Request, scope: string): Promise<Response> {
     const { form, document } = await formDocument(req);
+    // A preset switch carries no ops: the engine keeps `--style-tables` and
+    // `--ops` mutually exclusive, so this route does too and the client's
+    // preset switch arrives as two calls.
+    const presetField = formString(form, "styleTables");
+    let styleTables: StyleTablePreset | undefined;
+    if (presetField !== undefined) {
+      if (!STYLE_TABLE_PRESETS.includes(presetField as StyleTablePreset)) {
+        throw new HwpCliError("bad_request", `unknown style table preset; choose ${STYLE_TABLE_PRESETS.join(", ")}`);
+      }
+      styleTables = presetField as StyleTablePreset;
+    }
     const opsField = form.get("ops");
-    if (typeof opsField !== "string" || opsField === "") {
+    let ops: EditOp[] = [];
+    if (typeof opsField === "string" && opsField !== "") {
+      try {
+        const parsed: unknown = JSON.parse(opsField);
+        if (!Array.isArray(parsed)) throw new Error("not an array");
+        ops = parsed as EditOp[];
+      } catch {
+        throw new HwpCliError("bad_request", 'multipart field "ops" is not a JSON array');
+      }
+    } else if (styleTables === undefined) {
       throw new HwpCliError("bad_request", 'multipart field "ops" (EditOp[] JSON) is required');
     }
-    let ops: EditOp[];
-    try {
-      const parsed: unknown = JSON.parse(opsField);
-      if (!Array.isArray(parsed)) throw new Error("not an array");
-      ops = parsed as EditOp[];
-    } catch {
-      throw new HwpCliError("bad_request", 'multipart field "ops" is not a JSON array');
+    if (styleTables !== undefined && ops.length > 0) {
+      throw new HwpCliError("bad_request", 'send either "ops" or "styleTables"; a preset switch applies no operations');
     }
     if (ops.some((op) => op?.kind === "seal")) {
       return error(400, "path_traversal", 'the "seal" operation names a server-local path and is not accepted over HTTP; run it through a desktop/local host');
@@ -433,6 +450,7 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
     // answers without the field rather than with fabricated ids.
     const reportFlag = formFlag(form, "report");
     if (reportFlag !== undefined) options.report = reportFlag;
+    if (styleTables !== undefined) options.styleTables = styleTables;
     if (assets.length > 0) options.assets = assets;
 
     // No session is created or written here. The pre-edit copy this path used
@@ -492,10 +510,37 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
     );
   }
 
+  async function handleStyles(req: Request, scope: string): Promise<Response> {
+    await requireStyles();
+    const { document } = await formDocument(req);
+    // `validated` re-checks whatever engine answered, so a host engine that
+    // projects a wrong table is caught here rather than in the panel.
+    return json(validated(
+      cli !== null ? await cli.styles(document, { signal: req.signal, scope }) : await engine.styles!(document),
+      parseStyleTableResponse,
+    ));
+  }
+
   async function handleCapabilities(): Promise<Response> {
     const caps = await engine.capabilities();
-    return json({ ...caps, templateMethods: templateVersionSupported(caps.version)
-      ? (caps.templateMethods ?? TEMPLATE_METHODS.filter(method => typeof engine[method] === "function")) : [] });
+    const body: Capabilities = {
+      ...caps,
+      templateMethods: templateVersionSupported(caps.version)
+        ? (caps.templateMethods ?? TEMPLATE_METHODS.filter(method => typeof engine[method] === "function")) : [],
+    };
+    // Both halves must hold: a binary at the floor AND an engine that answers
+    // the method. A host claiming `styles` without the method would leave the
+    // Styles tab enabled and every click refused.
+    if (!stylesVersionSupported(caps.version) || typeof engine.styles !== "function") delete body.styles;
+    return json(body);
+  }
+
+  async function requireStyles(): Promise<void> {
+    if (typeof engine.styles !== "function") throw new HwpCliError("unavailable", "styles is unsupported by this host; upgrade the host adapter to the hwp-cli 1.4.0 styles command.");
+    const caps = await engine.capabilities();
+    if (!stylesVersionSupported(caps.version) || caps.styles !== "v1") {
+      throw new HwpCliError("unavailable", "styles requires hwp-cli 1.4.0 and host support; upgrade the binary and host adapter.");
+    }
   }
 
   async function requireTemplateMethod(method: TemplateMethod): Promise<void> {
@@ -601,6 +646,8 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
           return await handleTemplateAction(req, action, scope);
         case "read":
           return await handleRead(req, scope);
+        case "styles":
+          return await handleStyles(req, scope);
         case "render":
           return await handleRender(req, scope);
         case "edit":

@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import type { JSX } from "react";
 import type { ParagraphAlignment, ParaShapeKey, SelectionRefusal, Segment } from "@hwp-editor/core";
-import { compareSegments, formatAddresses, hasOwnRef, isSectionDefinitionParagraph, paragraphAddress, paragraphRuns, resolveSelection, segmentAtRef, segmentPath, segmentRef, segmentText, selectSimilar, selectedParagraphs, selectionAction } from "@hwp-editor/core";
+import { compareSegments, formatAddresses, hasDirectFormatting, hasOwnRef, isSectionDefinitionParagraph, paragraphAddress, paragraphRuns, resolveSelection, segmentAtRef, segmentPath, segmentRef, segmentText, selectSimilar, selectedParagraphs, selectionAction } from "@hwp-editor/core";
 import { plainSegmentText } from "./text.js";
 import { useHwpEditorContext } from "./context.js";
 import type { MessageKey } from "./messages.js";
@@ -34,7 +34,7 @@ const SHAPE_KEYS: { value: ParaShapeKey; key: MessageKey }[] = [
  * All controls queue EditOps; nothing touches the engine until Apply.
  */
 export function SegmentInspector(): JSX.Element {
-  const { state, store, envelope, editable, capabilities, t } = useHwpEditorContext();
+  const { state, store, envelope, editable, capabilities, styles, t } = useHwpEditorContext();
   const { selection } = state;
 
   const paragraphKeys = new Set<string>();
@@ -61,6 +61,17 @@ export function SegmentInspector(): JSX.Element {
   const targets = envelope !== null && segment !== undefined ? resolveSelection(envelope, segment) : undefined;
   const paragraphTargets = targets?.paragraphs ?? [];
   const singleParagraph = targets?.paragraph;
+  /**
+   * The style this paragraph inherits, named. `styles-v1` publishes the name
+   * per style and the segment ids that use it (`used_by`), which is the only
+   * join this host offers: the segment's `style` level carries the resolved
+   * attributes and shape ids, never the style's own name.
+   */
+  const directStyleName = (() => {
+    const id = singleParagraph?.id;
+    if (id === undefined || styles === null) return undefined;
+    return styles.styles.find((item) => item.kind === "paragraph" && item.used_by.includes(id))?.name;
+  })();
   // One table of reasons serves both the current selection and a refused
   // click, so a segment kind names its own obstacle either way.
   const refusalText = (reason: SelectionRefusal | null | undefined): string | null =>
@@ -622,6 +633,20 @@ export function SegmentInspector(): JSX.Element {
         </div>
         {charPrimary?.directChar === undefined && <p className="hwped-hint">{t("segment.similarCharUnavailable")}</p>}
         {singleParagraph.directPara === undefined && <p className="hwped-hint">{t("segment.similarParaUnavailable")}</p>}
+      </div>}
+      {singleParagraph !== undefined && hasDirectFormatting(singleParagraph) && <div className="hwped-field">
+        <span className="hwped-label">{t("segment.directFormatting")}</span>
+        <p className="hwped-hint">{t("segment.directFormattingHint")}</p>
+        {directStyleName === undefined
+          // The style name comes from `styles-v1`'s `used_by` join, which is
+          // the only place this host publishes it: without it there is no name
+          // to pass to `apply_style`, and inventing one would rewrite the
+          // paragraph into some other style instead of clearing its overrides.
+          ? <p className="hwped-hint">{t("segment.directStyleUnknown")}</p>
+          : <button type="button" className="hwped-btn" disabled={disabled}
+              onClick={() => store.dispatch({ type: "queueOp", op: { kind: "apply-style", address: paragraphAddress(singleParagraph), style: directStyleName, clearDirect: true } })}>
+              {t("segment.clearDirect")}
+            </button>}
       </div>}
       {singleParagraph !== undefined && <div className="hwped-field">
         <span className="hwped-label">{t("segment.hyperlinkLabel")}</span>

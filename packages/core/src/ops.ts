@@ -169,7 +169,53 @@ export type AddressedEditOp =
       missingStyle?: "create" | "refuse" };
 
 /** Legacy text selectors remain available for explicit search operations. */
-export type EditOp = LegacyEditOp | AddressedEditOp;
+export type EditOp = LegacyEditOp | AddressedEditOp | StyleEditOp;
+
+/** A named style as the engine addresses it: exact primary name or header id. */
+export type StyleRef = string | number;
+
+/**
+ * Character and paragraph properties a named-style op may set, spelled as the
+ * edit-ops-v1 flat vocabulary spells them. A style op writes only the fields
+ * it carries; the engine keeps the rest of the definition, so an update is a
+ * patch rather than a replacement.
+ */
+export interface StyleProps {
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strike?: boolean;
+  /** Points, e.g. "12pt"; a bare decimal is read as points. */
+  size?: string;
+  /** "#RRGGBB". */
+  color?: string;
+  /** Font face, written into every language slot. */
+  font?: string;
+  /** Line height as a percentage, e.g. "160"; exclusive with `lineSpacingPt`. */
+  lineSpacingPct?: string;
+  /** Absolute line height in points, e.g. "18pt"; exclusive with `lineSpacingPct`. */
+  lineSpacingPt?: string;
+  indentMm?: string;
+  leftMm?: string;
+  rightMm?: string;
+  topMm?: string;
+  bottomMm?: string;
+  align?: ParagraphAlignment;
+}
+
+/**
+ * Named-style operations. They exist only in the edit-ops-v1 JSON channel:
+ * `hwp edit` has no per-op flags for them, so the argv bridge refuses them.
+ *
+ * Character styles are refused by the engine (hwp-cli 1.4.0 T3 supports
+ * paragraph kinds only), which is why `styleKind` exists but is not offered by
+ * this editor's own controls: a caller that asks for one gets the engine's
+ * actionable refusal instead of a silently paragraph-only create.
+ */
+export type StyleEditOp =
+  | ({ kind: "create-style"; name: string; basedOn?: StyleRef; styleKind?: "paragraph" | "character" } & StyleProps)
+  | ({ kind: "update-style"; style: StyleRef } & StyleProps)
+  | { kind: "apply-style"; address: ParagraphAddress; style: StyleRef; clearDirect?: boolean };
 
 /**
  * `--flag` spelling for each op kind (cli.rs EditArgs long names).
@@ -421,8 +467,8 @@ function opValue(op: LegacyEditOp): string {
 export function opsToArgv(ops: EditOp[]): string[] {
   const argv: string[] = [];
   for (const op of ops) {
-    if ("address" in op) {
-      throw new Error("Addressed edits require the edit-ops-v1 JSON transport; the argv bridge cannot represent addresses. Update the host and Tauri client to use the edit-ops-v1 JSON channel (docs/integration-maru.md)");
+    if (isStyleOp(op) || "address" in op) {
+      throw new Error("Addressed and named-style edits require the edit-ops-v1 JSON transport; the argv bridge cannot represent them. Update the host and Tauri client to use the edit-ops-v1 JSON channel (docs/integration-maru.md)");
     }
     argv.push(OP_FLAGS[op.kind], opValue(op));
   }
@@ -552,8 +598,80 @@ function addressedEntry(op: AddressedEditOp): OpsEntry {
   }
 }
 
+/** Named-style ops are JSON-only, and each has its own entry shape. */
+function isStyleOp(op: EditOp): op is StyleEditOp {
+  return op.kind === "create-style" || op.kind === "update-style" || op.kind === "apply-style";
+}
+
+/** A colour the edit-ops-v1 schema accepts, or a refusal naming the field. */
+function styleColor(value: string, field: string): string {
+  if (!/^#[0-9a-fA-F]{6}$/.test(value)) {
+    const cause = new Error(`Invalid colour ${JSON.stringify(value)} for ${field}`);
+    throw new HwpEngineError("bad_request", `${cause.message}; provide #RRGGBB.`, { cause });
+  }
+  return value;
+}
+
+/** A font face name the edit-ops-v1 schema accepts. */
+function styleFont(value: string, field: string): string {
+  if (value === "" || value.length > 128 || /[\u0000-\u001f\u007f]/.test(value)) {
+    const cause = new Error(`Invalid font name for ${field}`);
+    throw new HwpEngineError("bad_request", `${cause.message}; provide a non-empty font family without control characters.`, { cause });
+  }
+  return value;
+}
+
+/**
+ * The flat property fields a create/update entry carries, in the schema's
+ * spelling. Units go through the same helper the addressed ops use, so a bare
+ * decimal and a suffixed value read alike and a malformed one is refused
+ * before the engine sees it.
+ */
+function stylePropEntry(op: StyleProps): OpsEntry {
+  const out: OpsEntry = {};
+  if (op.bold !== undefined) out.bold = op.bold ? "on" : "off";
+  if (op.italic !== undefined) out.italic = op.italic ? "on" : "off";
+  if (op.underline !== undefined) out.underline = op.underline ? "on" : "off";
+  if (op.strike !== undefined) out.strike = op.strike ? "on" : "off";
+  if (op.size !== undefined) out.size = withUnit(op.size, "pt", "style.size");
+  if (op.color !== undefined) out.color = styleColor(op.color, "style.color");
+  if (op.font !== undefined) out.font = styleFont(op.font, "style.font");
+  if (op.lineSpacingPct !== undefined) out.line_spacing_pct = withUnit(op.lineSpacingPct, "%", "style.line_spacing_pct");
+  if (op.lineSpacingPt !== undefined) out.line_spacing_pt = withUnit(op.lineSpacingPt, "pt", "style.line_spacing_pt");
+  if (op.indentMm !== undefined) out.indent_mm = withUnit(op.indentMm, "mm", "style.indent_mm");
+  if (op.leftMm !== undefined) out.left_mm = withUnit(op.leftMm, "mm", "style.left_mm");
+  if (op.rightMm !== undefined) out.right_mm = withUnit(op.rightMm, "mm", "style.right_mm");
+  if (op.topMm !== undefined) out.top_mm = withUnit(op.topMm, "mm", "style.top_mm");
+  if (op.bottomMm !== undefined) out.bottom_mm = withUnit(op.bottomMm, "mm", "style.bottom_mm");
+  if (op.align !== undefined) out.align = op.align;
+  return out;
+}
+
+function styleEntry(op: StyleEditOp): OpsEntry {
+  switch (op.kind) {
+    case "create-style":
+      return {
+        op: "create_style",
+        name: op.name,
+        kind: op.styleKind ?? "paragraph",
+        ...(op.basedOn === undefined ? {} : { based_on: op.basedOn }),
+        ...stylePropEntry(op),
+      };
+    case "update-style":
+      return { op: "update_style", style: op.style, ...stylePropEntry(op) };
+    case "apply-style":
+      return {
+        op: "apply_style",
+        address: op.address,
+        style: op.style,
+        ...(op.clearDirect === undefined ? {} : { clear_direct: op.clearDirect }),
+      };
+  }
+}
+
 /** Serialize one op to its edit-ops-v1 entry. */
 function opsEntry(op: EditOp): OpsEntry {
+  if (isStyleOp(op)) return styleEntry(op);
   if ("address" in op) return addressedEntry(op);
   switch (op.kind) {
     case "replace":

@@ -34,7 +34,9 @@ import {
   imageAssetsMatchOps,
   imageAssetMediaType,
   parseCatEnvelope,
+  parseStyleTable,
   protectedReasonFromDiagnostics,
+  stylesVersionSupported,
   type Capabilities,
   type CatEnvelope,
   type ComposeResult,
@@ -49,6 +51,7 @@ import {
   type PageImageFormat,
   type PageLayout,
   type RenderOptions,
+  type StyleTable,
   type ValidationError,
   type ValidationReport,
 } from "@hwp-editor/core";
@@ -261,6 +264,12 @@ export interface CliEngine extends HwpEngine {
   lint(document: DocumentHandle, profile?: LintProfile, call?: CliCallOptions): Promise<LintReport>;
   listTemplates(call?: CliCallOptions): Promise<EmbeddedTemplate[]>;
   create(templateId: string, name: string, call?: CliCallOptions): Promise<DocumentHandle>;
+  /**
+   * Named styles (`hwp styles <file> --format json`, hwp-cli 1.4.0+). Refuses
+   * with reason `version` below that floor rather than spawning a subcommand
+   * the binary does not have.
+   */
+  styles(document: DocumentHandle, call?: CliCallOptions): Promise<StyleTable>;
 
   /**
    * Full read pipeline: cat --with-segments plus fields/bookmarks/slots/info.
@@ -1250,6 +1259,40 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       return (await describe(document, call)).envelope;
     },
 
+    async styles(document, call) {
+      const version = await ensureVersion();
+      if (!stylesVersionSupported(version)) {
+        // The floor is checked before the spawn, not after: an older binary
+        // has no `styles` subcommand, and its exit-2 "unrecognized subcommand"
+        // is a worse answer than naming the version this engine needs.
+        throw new HwpCliError(
+          "version",
+          `hwp ${version} has no styles command; >= 1.4.0 required for named styles`,
+        );
+      }
+      const bin = resolveBin();
+      return withWorkDir(async (dir) => {
+        const file = await stage(dir, document);
+        const result = await runCliOk(bin, ["styles", file, "--format", "json"], timeoutMs, opts.locale, call?.signal);
+        try {
+          return parseStyleTable(result.stdout);
+        } catch (cause) {
+          // Same reasoning as `cat`'s envelope rewrite: this JSON came out of
+          // the hwp binary, so the remedy names hwp-cli rather than "upgrade
+          // the host adapter".
+          const problem = cause instanceof Error && cause.message.startsWith("Invalid styles-v1 table: ")
+            ? cause.message.slice("Invalid styles-v1 table: ".length).split("; ")[0]!
+            : "invalid style JSON";
+          const failure = new HwpCliError(
+            "failed",
+            `hwp styles returned a style table this client cannot read (${problem}); check hwp --version and use hwp-cli 1.4.0 or newer, then retry.`,
+          );
+          failure.cause = cause;
+          throw failure;
+        }
+      });
+    },
+
     describe,
 
     async render(document, options = {}, call) {
@@ -1378,9 +1421,20 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
           throw new HwpCliError("bad_request", "image upload and insert-image paths do not match; upload matching PNG/JPEG files for the referenced names");
         }
       }
-      await ensureVersion();
+      const version = await ensureVersion();
       const bin = resolveBin();
       const ext = sniffExtension(document);
+      // `hwp edit` keeps `--style-tables` and `--ops` mutually exclusive. The
+      // preset switch is therefore two calls on this engine (preset, then any
+      // op batch), which the client store groups into one undo entry.
+      if (options.styleTables !== undefined) {
+        if (ops.length > 0) {
+          throw new HwpCliError("bad_request", "styleTables and ops cannot be combined in one edit; apply the preset and the ops as two calls");
+        }
+        if (!stylesVersionSupported(version)) {
+          throw new HwpCliError("version", `hwp ${version} has no --style-tables; >= 1.4.0 required for preset style tables`);
+        }
+      }
       const edited = await withWorkDir(async (dir) => {
         const input = await stage(dir, document);
         if (options.assets !== undefined) {
@@ -1416,19 +1470,27 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         // so a `find`/`value` containing `=>`, `=` or `:` is kept verbatim
         // instead of being parsed as a CLI separator. hwp-cli validates the
         // file against the published schema before applying anything.
+        //
+        // A preset call carries no ops at all: the engine refuses `--ops`
+        // beside `--style-tables` even when the array is empty, so the file is
+        // not written and the flag is not passed.
         const opsPath = path.join(dir, "ops.json");
-        let encodedOps: string;
-        try { encodedOps = opsToJson(stagedOps); }
-        catch (cause) {
-          if (cause instanceof HwpEngineError && cause.code === "bad_request") {
-            const error = new HwpCliError("bad_request", cause.message);
-            error.cause = cause;
-            throw error;
+        if (options.styleTables === undefined) {
+          let encodedOps: string;
+          try { encodedOps = opsToJson(stagedOps); }
+          catch (cause) {
+            if (cause instanceof HwpEngineError && cause.code === "bad_request") {
+              const error = new HwpCliError("bad_request", cause.message);
+              error.cause = cause;
+              throw error;
+            }
+            throw cause;
           }
-          throw cause;
+          await writeFile(opsPath, encodedOps, { mode: 0o600 });
         }
-        await writeFile(opsPath, encodedOps, { mode: 0o600 });
-        const args = ["edit", input, "-o", output, "--ops", opsPath];
+        const args = options.styleTables === undefined
+          ? ["edit", input, "-o", output, "--ops", opsPath]
+          : ["edit", input, "-o", output, "--style-tables", options.styleTables];
         if (options.verify !== false) args.push("--verify");
         if (options.allowPartial === true) args.push("--allow-partial");
         // `--report` takes a path on `edit` (unlike compose's bare flag), and
@@ -1540,7 +1602,17 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
 
     async capabilities(): Promise<Capabilities> {
       const version = await ensureVersion();
-      return { version, editable: true, editOps: "v1", imageAssets: "v1", formats: ["hwp", "hwpx"], templateMethods: templateVersionSupported(version) ? [...TEMPLATE_METHODS] : [] };
+      return {
+        version,
+        editable: true,
+        editOps: "v1",
+        imageAssets: "v1",
+        // Its own gate, not `templateMethods`': the two command families share
+        // the 1.4.0 floor today, but a host can carry one and not the other.
+        ...(stylesVersionSupported(version) ? { styles: "v1" as const } : {}),
+        formats: ["hwp", "hwpx"],
+        templateMethods: templateVersionSupported(version) ? [...TEMPLATE_METHODS] : [],
+      };
     },
 
     async binaryInfo() {

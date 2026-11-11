@@ -30,6 +30,7 @@ function renderPanel(locale: "en" | "ko", panel: "document" | "fields" | "segmen
     applyPendingOps: () => undefined,
     replaceDocument: async () => true,
     refresh: async () => undefined,
+    styles: null,
     openCompose: () => undefined,
     loadEpoch: () => 0,
     t: createT(locale),

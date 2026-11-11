@@ -20,6 +20,7 @@ import type {
   ImageAsset,
   ParagraphAddress,
   Segment,
+  StyleTable,
   ValidationReport,
 } from "@hwp-editor/core";
 import type { AddressedEditOp } from "@hwp-editor/core";
@@ -29,6 +30,7 @@ import { HwpEditorContext } from "./context.js";
 import type { HwpEditorContextValue } from "./context.js";
 import { PageCanvas } from "./PageCanvas.js";
 import { SegmentInspector } from "./SegmentInspector.js";
+import { StylesPanel } from "./StylesPanel.js";
 import { TableGrid } from "./TableGrid.js";
 import { FieldsPanel } from "./FieldsPanel.js";
 import { TemplatePanel } from "./TemplatePanel.js";
@@ -126,7 +128,7 @@ export interface HwpEditorHandle {
   openCompose(): void;
 }
 
-type SideTab = "para" | "table" | "fields" | "templates" | "components" | "lint" | "document" | "images";
+type SideTab = "para" | "styles" | "table" | "fields" | "templates" | "components" | "lint" | "document" | "images";
 
 /**
  * Every paragraph the current selection covers, in document order.
@@ -287,6 +289,13 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     const [tab, setTab] = useState<SideTab>("para");
     const [composing, setComposing] = useState(false);
     /**
+     * The current document's named styles, read once per document. The Styles
+     * panel and the direct-format indicator both read this one table: two
+     * independent reads would let the indicator name a style the panel's list
+     * no longer carries.
+     */
+    const [styles, setStyles] = useState<StyleTable | null>(null);
+    /**
      * Ids one insertion reported, held until the re-read envelope carries them.
      * The paragraphs do not exist in the envelope the op was sent with, so the
      * selection is built from the envelope that reads them back, in real paths
@@ -437,7 +446,11 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       // The palette keeps its tab: the selection an insertion produces is its
       // own result, and leaving its rows behind for the tab it created is not
       // the jump the user asked for. Every other tab still follows.
-      setTab((current) => current === "components" ? current : next);
+      //
+      // The Styles tab keeps it for the same reason: selecting a style IS the
+      // gesture, and the highlight it produces would carry the user to a tab
+      // that no longer lists the style they just picked.
+      setTab((current) => current === "components" || current === "styles" ? current : next);
     }, [envelope, state.selection]);
 
     // Dirty-change callback.
@@ -873,6 +886,32 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     const openCompose = useCallback(() => setComposing(true), []);
     const loadEpoch = useCallback(() => loadGeneration.current, []);
 
+    /**
+     * Read the named styles once per document. Every applied edit, undo and
+     * new file replaces `state.document`, which is the only signal that makes
+     * the table stale; a host without `styles` (or an engine below 1.4.0,
+     * which is the same advertisement) keeps it null and the tab says why.
+     */
+    useEffect(() => {
+      const document = state.document;
+      if (document === null || capabilities?.styles !== "v1" || engine.styles === undefined) {
+        setStyles(null);
+        return;
+      }
+      let cancelled = false;
+      engine.styles(document).then(
+        (table) => { if (!cancelled) setStyles(table); },
+        (error: unknown) => {
+          if (cancelled) return;
+          // The document stays editable: what failed is the table the Styles
+          // tab lists, so the tab loses its rows and the notice says why.
+          setStyles(null);
+          noteNotice(t("styles.loadFailed"), error);
+        },
+      );
+      return () => { cancelled = true; };
+    }, [capabilities?.styles, engine, noteNotice, state.document, t]);
+
     useImperativeHandle(
       ref,
       () => ({ apply: applyPendingOps, revert, refresh, openCompose }),
@@ -892,6 +931,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         replaceDocument,
         queueImage,
         refresh,
+        styles,
         openCompose,
         loadEpoch,
         t,
@@ -912,6 +952,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         replaceDocument,
         queueImage,
         refresh,
+        styles,
         openCompose,
         loadEpoch,
         t,
@@ -1040,7 +1081,11 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
                 <li key={index}>
                   {op.kind}: {"address" in op
                     ? JSON.stringify(op.address)
-                    : "find" in op ? op.find : "anchor" in op ? op.anchor : "key" in op ? op.key : "name" in op ? op.name : op.kind}
+                    : "find" in op ? op.find : "anchor" in op ? op.anchor : "key" in op ? op.key
+                      // A named-style op names the style it rewrites; without
+                      // this branch an update would read "update-style:
+                      // update-style", which says nothing the kind already did.
+                      : "style" in op ? String(op.style) : "name" in op ? op.name : op.kind}
                   {" "}<button type="button" className="hwped-btn" disabled={state.status === "applying"}
                     onClick={() => store.dispatch({ type: "dequeueOp", index })}>{t("toolbar.removePending", { index: index + 1 })}</button>
                 </li>
@@ -1085,6 +1130,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
                 {(
                   [
                     ["para", t("tabs.para")],
+                    ["styles", t("tabs.styles")],
                     ["table", t("tabs.table")],
                     ["fields", t("tabs.fields")],
                     ["templates", t("tabs.templates")],
@@ -1110,6 +1156,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
               </div>
               {state.status === "applying" && <p className="hwped-hint" role="status">{t("toolbar.applying")}</p>}
               {tab === "para" && <SegmentInspector />}
+              {tab === "styles" && <StylesPanel />}
               {tab === "table" && <TableGrid />}
               {tab === "fields" && <FieldsPanel />}
               {tab === "templates" && <TemplatePanel />}

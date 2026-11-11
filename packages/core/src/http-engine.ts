@@ -22,6 +22,7 @@ import type { HwpErrorCode } from "./errors.js";
 import type { EditOp } from "./ops.js";
 import type { CatEnvelope } from "./segments.js";
 import { validateProjectedMetadata } from "./segments.js";
+import { parseStyleTableResponse } from "./styles.js";
 import type { DocumentSpecV2 } from "./generated/document-spec-v2.js";
 import type { TemplateDataV1, TemplateSpecV1 } from "./spec.js";
 import type { LintProfile } from "./templates.js";
@@ -240,6 +241,25 @@ export function createHttpEngine(
       }).then(validateProjectedMetadata);
     },
 
+    async styles(document) {
+      let raw: unknown;
+      try {
+        raw = await request<unknown>("/styles", {
+          method: "POST",
+          body: fileForm(document),
+        });
+      } catch (error) {
+        // The route exists only on a host that advertises `styles`, so a 404
+        // here means an older host answered — the same lesson the template
+        // routes teach, in this command family's words.
+        if (error instanceof HwpEngineError && error.status === 404) {
+          throw new HwpEngineError("unavailable", "Styles are unsupported by this host; upgrade it to the hwp-cli 1.4.0 styles command and retry.", { cause: error });
+        }
+        throw error;
+      }
+      return parseStyleTableResponse(raw);
+    },
+
     async render(document, options = {}) {
       const form = fileForm(document);
       if (options.pages !== undefined) form.append("pages", options.pages);
@@ -319,8 +339,15 @@ export function createHttpEngine(
     async capabilities(): Promise<Capabilities> {
       const raw = reportObject(await request<unknown>("/capabilities", { method: "GET" }), "capabilities");
       const methods = raw.templateMethods === undefined ? [] : parseTemplateMethods(raw.templateMethods);
-      const { imageAssets, ...rest } = raw as unknown as Capabilities;
-      return { ...rest, templateMethods: methods, ...(imageAssets === "v1" ? { imageAssets: "v1" as const } : {}) };
+      const { imageAssets, styles, ...rest } = raw as unknown as Capabilities;
+      return {
+        ...rest,
+        templateMethods: methods,
+        ...(imageAssets === "v1" ? { imageAssets: "v1" as const } : {}),
+        // Narrowed rather than passed through: a host that answers anything
+        // else has not advertised the family, and the tab reads this field.
+        ...(styles === "v1" ? { styles: "v1" as const } : {}),
+      };
     },
   };
 }
