@@ -545,6 +545,17 @@ describe("Tauri edit refusal classification (#80)", () => {
     expect(err.refusal).toBeUndefined();
   });
 
+  it("names a cause class and a next step when the engine wrote no stderr (#82)", async () => {
+    const raw = "hwp_failed: hwp edit failed (exit 101): ";
+    const err = (await createTauriEngine(reject(raw)).edit(doc, [{ kind: "replace", find: "a", replace: "b" }])
+      .then(() => null, (e: unknown) => e)) as HwpEngineError;
+    expect(err.code).toBe("failed");
+    expect(err.message).toMatch(/^hwped_edit failed: hwp edit failed \(exit 101\): the engine refused the edit without a diagnostic/u);
+    expect(err.message).toContain("remove the last pending edit and retry");
+    expect(err.refusal).toBeUndefined();
+    expect(err.cause).toBe(raw);
+  });
+
   it("sets no refusal when the user's own value ends an unclassified stderr (#82)", async () => {
     // add_table's anchor is printed with Display, last on stderr (hwp-convert edit.rs:2107).
     const raw = "hwp_failed: hwp edit failed (exit 3): Error: 앵커를 찾을 수 없습니다: x edit refused: range_tag";

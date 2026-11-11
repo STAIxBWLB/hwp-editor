@@ -907,3 +907,29 @@ describe.each([["en", en], ["ko", ko]] as const)("Classified engine refusals on 
     expect(shown).not.toContain(marker);
   });
 });
+
+describe.each([["en", en], ["ko", ko]] as const)("HTTP fallback without a refusal field (#82, %s)", (locale, messages) => {
+  // A server older than #82 sends no `error.refusal`, or a proxy sends a value
+  // this client does not know: the message text must not pick a sentence.
+  it.each([
+    ["no field", {}],
+    ["an unknown kind", { refusal: "bogus" }],
+  ] as const)("shows the generic message for %s, even with the marker text", async (_label, extra) => {
+    const message = "hwp-engine HTTP 422: hwp edit failed (exit 3): edit refused: range_tag";
+    const engine = createMockEngine({ envelope: sentenceEnvelope("hello", [[0, 5]]) });
+    engine.edit = async () => {
+      throw Object.assign(new HwpEngineError("failed", message, { status: 422 }), extra);
+    };
+    render(<HwpEditor engine={engine} file={file} locale={locale} />);
+    await selectFirstParagraph(messages);
+    fireEvent.change(screen.getByLabelText(messages["segment.replaceLabel"]), { target: { value: "x" } });
+    fireEvent.click(screen.getByRole("button", { name: messages["segment.replaceSubmit"] }));
+    fireEvent.click(await screen.findByRole("button", { name: messages["toolbar.applyWithCount"]({ count: 1 }) }));
+    await waitFor(() => {
+      const alerts = screen.queryAllByRole("alert").map(alert => alert.textContent ?? "").join(" ");
+      expect(alerts).toContain("edit refused: range_tag");
+    });
+    const shown = screen.queryAllByRole("alert").map(alert => alert.textContent ?? "").join(" ");
+    expect(shown).not.toContain(messages["error.rangeTagRefused"]);
+  });
+});

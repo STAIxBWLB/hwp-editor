@@ -177,6 +177,10 @@ function toEngineError(cmd: string, error: unknown): HwpEngineError {
     // hosts that read text, but the client reads only the field.
     return new HwpEngineError(code, `${cmd} failed: ${refusal.message}`, { cause: error, refusal: refusal.kind });
   }
+  const silent = silentEditFailure(cmd, code, detail);
+  if (silent !== null) {
+    return new HwpEngineError(code, `${cmd} failed: ${silent}`, { cause: error });
+  }
   return new HwpEngineError(code, `${cmd} failed: ${detail}`, {
     cause: error,
   });
@@ -206,6 +210,20 @@ function editRefusalFor(
   if (failure === null) return null;
   const kind = classifyEditRefusal(failure[2]!);
   return kind === undefined ? null : { kind, message: `${failure[1]!}: ${editRefusalMarker(kind)}` };
+}
+
+/**
+ * An edit failure whose stderr is empty would otherwise read as a bare exit
+ * line with nothing after the colon: no cause class, no next step (REVIEW.md
+ * "Failure wrappers keep the engine cause"). Name the class and where the
+ * details are; the raw rejection stays on `cause`.
+ */
+function silentEditFailure(cmd: string, code: HwpErrorCode, detail: string): string | null {
+  if (code !== "failed" || cmd !== "hwped_edit") return null;
+  const failure = MARU_EDIT_FAILURE.exec(detail);
+  if (failure === null || failure[2]!.trim() !== "") return null;
+  return `${failure[1]!}: the engine refused the edit without a diagnostic, so nothing was applied. ` +
+    "The exit code and any host log are on the error cause; remove the last pending edit and retry, or report the exit code.";
 }
 
 /**
