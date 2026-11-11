@@ -816,7 +816,7 @@ describe("styles tab operations (en)", () => {
     // After Apply the form is on the row's new value, and an untouched form
     // offers nothing: with a stale 12 seed this button would still say the
     // user changed something, and typing 12 back would be a no-op.
-    expect(size().value).toBe("14");
+    await waitFor(() => expect(size().value).toBe("14"));
     expect(button().disabled).toBe(true);
     fireEvent.change(size(), { target: { value: "12" } });
     expect(button().disabled).toBe(false);
@@ -825,7 +825,7 @@ describe("styles tab operations (en)", () => {
     await waitFor(() => expect(harness.edits).toHaveLength(2));
     expect(harness.edits[1]!.ops).toEqual([{ kind: "update-style", style: BODY_ID, size: "12" }]);
     await waitForLanded(harness, 2);
-    expect(size().value).toBe("12");
+    await waitFor(() => expect(size().value).toBe("12"));
     expect(button().disabled).toBe(true);
 
     // Undo restores the FIRST edited document, whose style is 14pt: the form

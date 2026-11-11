@@ -496,6 +496,43 @@ describe.each([["en", en], ["ko", ko]] as const)("Placeholder guards (%s)", (loc
     ]);
   });
 
+  it("accepts a bold or italic run whose edge space hwp-cli moved outside the markers (t28-a1)", async () => {
+    // close_span writes bold "ab " as `**ab** ` and italic " ab" as ` *ab*`:
+    // the space is the run's own engine text, outside the marker pair.
+    const bold = await openRange("x **ab** y", [[0, 2], [2, 9], [9, 10]], 2, 9, [], [{}, { bold: true }, {}]);
+    typeName("x");
+    expect(make().disabled).toBe(false);
+    fireEvent.click(make());
+    fireEvent.click(await screen.findByRole("button", { name: messages["toolbar.applyWithCount"]({ count: 1 }) }));
+    await waitFor(() => expect(bold.calls.edit).toHaveLength(1));
+    expect(bold.calls.edit[0]?.ops).toEqual([
+      { kind: "replace", address: { id: "para-one" }, find: "ab", replace: "{{x}}" },
+    ]);
+    cleanup();
+
+    const italic = await openRange("x *ab*", [[0, 1], [1, 6]], 1, 6, [], [{}, { italic: true }]);
+    typeName("x");
+    expect(make().disabled).toBe(false);
+    fireEvent.click(make());
+    fireEvent.click(await screen.findByRole("button", { name: messages["toolbar.applyWithCount"]({ count: 1 }) }));
+    await waitFor(() => expect(italic.calls.edit).toHaveLength(1));
+    expect(italic.calls.edit[0]?.ops).toEqual([
+      { kind: "replace", address: { id: "para-one" }, find: "ab", replace: "{{x}}" },
+    ]);
+  });
+
+  it("reads a same-emphasis group as one span, not up to the first closing marker (t28-a2)", async () => {
+    // Bold "ab", "c**", "**d" project as `**abc****d**`. Stopping at the
+    // first parse would read "c" for run 1 and leave a literal `**` behind;
+    // the whole span holds `*` the allow list refuses.
+    const engine = await openRange("**abc****d**", [[0, 4], [4, 7], [7, 12]], 4, 7, [],
+      [{ bold: true }, { bold: true }, { bold: true }]);
+    typeName("x");
+    expect(make().disabled).toBe(true);
+    expect(screen.getByText(messages["segment.placeholderRefused"])).toBeTruthy();
+    expect(engine.calls.edit).toHaveLength(0);
+  });
+
   it("still refuses a marker group whose runs disagree on emphasis (#72 WP2)", async () => {
     const engine = await openRange("**ab cd**", [[0, 4], [4, 9]], 0, 9, [], [{ bold: true }, {}]);
     typeName("x");

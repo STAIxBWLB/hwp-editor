@@ -871,12 +871,10 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           }
           // A replacement the editor discarded (a load or an undo landed
           // first) created nothing this state may select.
+          // The landed replacement already cleared the previous notice (in
+          // replaceDocument, as apply and revert do); a refused attempt never
+          // got there, so the earlier notice still describes this document.
           if (!applied) return;
-          // The insertion landed, so the previous attempt's notice describes a
-          // state this document has left. Cleared here, as apply, revert and
-          // replace do, rather than at the start: a refused attempt leaves the
-          // document alone, and the earlier notice is still true of it.
-          setNotice(null);
           // The report lists every op it ran, in request order, spelled with
           // the engine's own name (`insert_blocks`, not the client's kind), so
           // the entry this insertion owns is named rather than assumed first.

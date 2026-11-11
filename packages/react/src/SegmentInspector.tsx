@@ -799,45 +799,64 @@ function scalarAtUtf16(offset: number, supplementaryStarts: readonly number[]): 
 
 /**
  * The engine text of each run, or undefined when any run's projection cannot
- * be vouched for. A run is first read on its own. When that fails, it may be
- * the start of runs that share one emphasis and differ only in colour, size
- * or face: the projection writes those under a single `**...**` or `*...*`,
- * so the markers sit in the first and last run of the group. The group is
- * accepted when the joined slices read as one whole marked run and every run
- * agrees with that emphasis; its markers are then cut from the edge runs.
+ * be vouched for.
+ *
+ * hwp-cli opens a span only when the marks change, so every maximal sequence
+ * of runs with the same bold/italic pair (runs that differ only in colour,
+ * size or face) projects under ONE `**...**` or `*...*`, and close_span moves
+ * the span's edge spaces outside the markers. So each such group must read,
+ * as a whole, as optional spaces, the marker, a non-empty core, the marker,
+ * optional spaces; the four marker positions are then cut out of whichever
+ * runs hold them. A plain group carries no markers and each run is read on
+ * its own. Bold and italic together, or a missing directChar, refuse.
  */
 function runTexts(runs: Segment[], slices: string[]): string[] | undefined {
   const texts: string[] = [];
   for (let at = 0; at < runs.length;) {
-    const single = wholeRunText(runs[at]!, slices[at]!);
-    if (single !== undefined) {
-      texts.push(single);
-      at += 1;
-      continue;
-    }
     const first = runs[at]!.directChar;
-    if (first === undefined || first.bold === first.italic) return undefined;
-    const marker = first.bold ? 2 : 1;
-    let end = at + 1;
-    let found = false;
-    for (; end < runs.length; end += 1) {
-      const char = runs[end]!.directChar;
-      if (char === undefined || char.bold !== first.bold || char.italic !== first.italic) return undefined;
-      const joined = slices.slice(at, end + 1).join("");
-      if (wholeRunText(runs[at]!, joined) !== undefined) {
-        found = true;
-        break;
-      }
+    if (first === undefined) return undefined;
+    let end = at;
+    while (end + 1 < runs.length) {
+      const next = runs[end + 1]!.directChar;
+      if (next === undefined) return undefined;
+      if (next.bold !== first.bold || next.italic !== first.italic) break;
+      end += 1;
     }
-    if (!found) return undefined;
-    const head = [...slices[at]!];
-    const tail = [...slices[end]!];
-    if (head.length <= marker || tail.length <= marker) return undefined;
-    for (let inner = at; inner <= end; inner += 1) {
-      let points = [...slices[inner]!];
-      if (inner === at) points = points.slice(marker);
-      if (inner === end) points = points.slice(0, points.length - marker);
-      texts.push(points.join(""));
+    if (!first.bold && !first.italic) {
+      for (let inner = at; inner <= end; inner += 1) {
+        const plain = wholeRunText(runs[inner]!, slices[inner]!);
+        if (plain === undefined) return undefined;
+        texts.push(plain);
+      }
+    } else {
+      if (first.bold && first.italic) return undefined;
+      const marker = first.bold ? "**" : "*";
+      const points = [...slices.slice(at, end + 1).join("")];
+      const joined = points.join("");
+      const lead = joined.length - joined.trimStart().length;
+      const trail = joined.length - joined.trimEnd().length;
+      const core = joined.slice(lead, joined.length - trail);
+      const m = marker.length;
+      if (core.length <= 2 * m || !core.startsWith(marker) || !core.endsWith(marker)) return undefined;
+      // A bold core opening with a third `*` would be read as italic inside
+      // bold, and an italic core opening with `*` as bold: refuse both.
+      const inner = core.slice(m, core.length - m);
+      if (inner.startsWith("*") || inner.endsWith("*") || inner.trim() !== inner) return undefined;
+      // Spaces and markers are ASCII, so code-unit offsets equal point offsets
+      // at the edges; the cut set is in point offsets over `points`.
+      const leadPoints = [...joined.slice(0, lead)].length;
+      const trailPoints = [...joined.slice(joined.length - trail)].length;
+      const cut = new Set<number>();
+      for (let k = 0; k < m; k += 1) {
+        cut.add(leadPoints + k);
+        cut.add(points.length - trailPoints - 1 - k);
+      }
+      let offset = 0;
+      for (let inner = at; inner <= end; inner += 1) {
+        const own = [...slices[inner]!];
+        texts.push(own.filter((_, k) => !cut.has(offset + k)).join(""));
+        offset += own.length;
+      }
     }
     at = end + 1;
   }
