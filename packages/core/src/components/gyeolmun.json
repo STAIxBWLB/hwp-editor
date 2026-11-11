@@ -33,7 +33,11 @@
             },
             {
               "blocks": [
-                { "type": "paragraph", "runs": [{ "type": "text", "text": "{{시행번호}}" }] }
+                {
+                  "type": "paragraph",
+                  "style": "바탕글",
+                  "runs": [{ "type": "text", "text": "{{시행번호}}" }]
+                }
               ]
             }
           ]
@@ -51,7 +55,11 @@
             },
             {
               "blocks": [
-                { "type": "paragraph", "runs": [{ "type": "text", "text": "{{접수번호}}" }] }
+                {
+                  "type": "paragraph",
+                  "style": "바탕글",
+                  "runs": [{ "type": "text", "text": "{{접수번호}}" }]
+                }
               ]
             }
           ]
@@ -68,7 +76,13 @@
               ]
             },
             {
-              "blocks": [{ "type": "paragraph", "runs": [{ "type": "text", "text": "{{주소}}" }] }]
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "style": "바탕글",
+                  "runs": [{ "type": "text", "text": "{{주소}}" }]
+                }
+              ]
             }
           ]
         },
@@ -84,7 +98,13 @@
               ]
             },
             {
-              "blocks": [{ "type": "paragraph", "runs": [{ "type": "text", "text": "{{전화}}" }] }]
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "style": "바탕글",
+                  "runs": [{ "type": "text", "text": "{{전화}}" }]
+                }
+              ]
             }
           ]
         },
@@ -100,7 +120,13 @@
               ]
             },
             {
-              "blocks": [{ "type": "paragraph", "runs": [{ "type": "text", "text": "{{이메일}}" }] }]
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "style": "바탕글",
+                  "runs": [{ "type": "text", "text": "{{이메일}}" }]
+                }
+              ]
             }
           ]
         },
@@ -117,7 +143,11 @@
             },
             {
               "blocks": [
-                { "type": "paragraph", "runs": [{ "type": "text", "text": "{{공개구분}}" }] }
+                {
+                  "type": "paragraph",
+                  "style": "바탕글",
+                  "runs": [{ "type": "text", "text": "{{공개구분}}" }]
+                }
               ]
             }
           ]

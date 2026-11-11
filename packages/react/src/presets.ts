@@ -3,9 +3,13 @@
  *
  * Profile values mirror hwp-cli's official presets
  * (crates/hwp-convert/src/official.rs): body font, size (1/100 pt there,
- * plain pt here), line spacing percent, and page-number footer policy.
+ * plain pt here), line spacing percent, and page-number footer policy. The
+ * `official` entry is not restated here: it reads the one copy core keeps in
+ * `OFFICIAL_BODY_PROFILE`, whose values a binary-gated test diffs against
+ * `hwp new --preset official`.
  */
 
+import { OFFICIAL_BODY_PROFILE } from "@hwp-editor/core";
 import type { DocumentSpecV2 } from "@hwp-editor/core";
 
 export type ComposePreset =
@@ -41,11 +45,16 @@ interface PresetProfile {
  * unreachable from the string table. The picker's human-readable LABELS
  * live in messages.ts under `presets.*`.
  */
-const MALGUN = "맑은 고딕";
+const MALGUN = OFFICIAL_BODY_PROFILE.fontFamily;
 const HCR_BATANG = "함초롬바탕";
 
 const PRESET_PROFILES: Record<ComposePreset, PresetProfile> = {
-  official: { fontFamily: MALGUN, bodySizePt: 12, lineHeightPercent: 160, pageNumber: false },
+  official: {
+    fontFamily: OFFICIAL_BODY_PROFILE.fontFamily,
+    bodySizePt: OFFICIAL_BODY_PROFILE.fontSizePt,
+    lineHeightPercent: OFFICIAL_BODY_PROFILE.lineHeightPercent,
+    pageNumber: false,
+  },
   report: { fontFamily: HCR_BATANG, bodySizePt: 15, lineHeightPercent: 160, pageNumber: true },
   plan: { fontFamily: HCR_BATANG, bodySizePt: 15, lineHeightPercent: 160, pageNumber: true },
   notice: { fontFamily: MALGUN, bodySizePt: 15, lineHeightPercent: 160, pageNumber: true },

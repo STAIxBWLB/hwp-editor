@@ -10,10 +10,11 @@
   "blocks": [
     {
       "type": "paragraph",
+      "style": "바탕글",
       "runs": [{ "type": "text", "text": "{{표제}}", "bold": true }]
     },
-    { "type": "paragraph", "runs": [{ "type": "text", "text": "{{항목1}}" }] },
-    { "type": "paragraph", "runs": [{ "type": "text", "text": "{{항목2}}" }] },
-    { "type": "paragraph", "runs": [{ "type": "text", "text": "{{항목3}}" }] }
+    { "type": "paragraph", "style": "바탕글", "runs": [{ "type": "text", "text": "{{항목1}}" }] },
+    { "type": "paragraph", "style": "바탕글", "runs": [{ "type": "text", "text": "{{항목2}}" }] },
+    { "type": "paragraph", "style": "바탕글", "runs": [{ "type": "text", "text": "{{항목3}}" }] }
   ]
 }

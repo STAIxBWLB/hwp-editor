@@ -83,9 +83,44 @@ function onlyKeys(
   }
 }
 
-function text(value: unknown, source: string, field: string, allowEmpty = false): string {
+/**
+ * String bounds `schemas/document-spec-v1.schema.json` publishes. A component
+ * is validated against the pinned schema's shape, so it is validated against
+ * its lengths too: a value the engine would refuse must be refused here, with
+ * the field that carries it.
+ */
+const MAX_LENGTH = {
+  styleName: 128,
+  fontFamily: 256,
+  text: 2_000_000,
+  fieldName: 128,
+  fieldValue: 4096,
+  script: 100_000,
+  path: 4096,
+  alt: 4096,
+} as const;
+
+/** The v1 schema's `maxItems` for a table's columns and rows. */
+const MAX_ITEMS = 65535;
+
+/** JSON Schema counts code points, so a surrogate pair is one character there. */
+function exceeds(value: string, maxLength: number): boolean {
+  if (value.length <= maxLength) return false;
+  return Array.from(value).length > maxLength;
+}
+
+function text(
+  value: unknown,
+  source: string,
+  field: string,
+  allowEmpty = false,
+  maxLength?: number,
+): string {
   if (typeof value !== "string" || (!allowEmpty && value.trim() === "")) {
     refuse(source, field, allowEmpty ? "must be a string" : "must be a non-empty string");
+  }
+  if (maxLength !== undefined && exceeds(value, maxLength)) {
+    refuse(source, field, `must be at most ${maxLength} characters, as document-spec-v1 allows`);
   }
   return value;
 }
@@ -169,8 +204,10 @@ function validateStyle(raw: unknown, source: string, field: string): Style {
     const where = at(field, key);
     switch (key) {
       case "based_on":
+        text(value, source, where, false, MAX_LENGTH.styleName);
+        break;
       case "font_family":
-        text(value, source, where);
+        text(value, source, where, false, MAX_LENGTH.fontFamily);
         break;
       case "font_size_pt":
         count(value, source, where, 1, 1000);
@@ -202,14 +239,36 @@ function validateStyle(raw: unknown, source: string, field: string): Style {
 
 function validateStyles(raw: unknown, source: string): Record<string, Style> {
   const value = asObject(raw, source, "styles");
-  const styles: Record<string, Style> = {};
+  const validated: [string, Style][] = [];
   for (const [name, style] of Object.entries(value)) {
     if (name.trim() === "" || name.trim() !== name) {
       refuse(source, at("styles", name), "must be a style name without surrounding spaces");
     }
-    styles[name] = validateStyle(style, source, at("styles", name));
+    if (exceeds(name, MAX_LENGTH.styleName)) {
+      refuse(
+        source,
+        at("styles", name),
+        `must be at most ${MAX_LENGTH.styleName} characters, as document-spec-v1 allows a style name`,
+      );
+    }
+    validated.push([name, validateStyle(style, source, at("styles", name))]);
   }
-  return styles;
+  // `fromEntries` defines own properties, so a style named `__proto__` survives.
+  return Object.fromEntries(validated);
+}
+
+/**
+ * One style definition equals another when every property matches. Two
+ * components that spell the same style with their keys in a different order
+ * describe one style, not a conflict.
+ */
+function sameStyle(left: Style, right: Style): boolean {
+  const leftStyle = left as Record<string, unknown>;
+  const rightStyle = right as Record<string, unknown>;
+  for (const key of new Set([...Object.keys(leftStyle), ...Object.keys(rightStyle)])) {
+    if (leftStyle[key] !== rightStyle[key]) return false;
+  }
+  return true;
 }
 
 function validateRun(raw: unknown, source: string, field: string): void {
@@ -235,9 +294,13 @@ function validateRun(raw: unknown, source: string, field: string): void {
         source,
         field,
       );
-      text(run.text, source, at(field, "text"), true);
-      if (run.style !== undefined) text(run.style, source, at(field, "style"));
-      if (run.font_family !== undefined) text(run.font_family, source, at(field, "font_family"));
+      text(run.text, source, at(field, "text"), true, MAX_LENGTH.text);
+      if (run.style !== undefined) {
+        text(run.style, source, at(field, "style"), false, MAX_LENGTH.styleName);
+      }
+      if (run.font_family !== undefined) {
+        text(run.font_family, source, at(field, "font_family"), false, MAX_LENGTH.fontFamily);
+      }
       if (run.font_size_pt !== undefined) {
         count(run.font_size_pt, source, at(field, "font_size_pt"), 1, 1000);
       }
@@ -250,22 +313,26 @@ function validateRun(raw: unknown, source: string, field: string): void {
       break;
     case "field":
       onlyKeys(run, ["type", "name", "value", "style"], source, field);
-      text(run.name, source, at(field, "name"));
-      if (run.value !== undefined) text(run.value, source, at(field, "value"), true);
-      if (run.style !== undefined) text(run.style, source, at(field, "style"));
+      text(run.name, source, at(field, "name"), false, MAX_LENGTH.fieldName);
+      if (run.value !== undefined) {
+        text(run.value, source, at(field, "value"), true, MAX_LENGTH.fieldValue);
+      }
+      if (run.style !== undefined) {
+        text(run.style, source, at(field, "style"), false, MAX_LENGTH.styleName);
+      }
       break;
     case "equation":
       onlyKeys(run, ["type", "script", "width_mm", "height_mm"], source, field);
-      text(run.script, source, at(field, "script"));
+      text(run.script, source, at(field, "script"), false, MAX_LENGTH.script);
       if (run.width_mm !== undefined) dimension(run.width_mm, source, at(field, "width_mm"));
       if (run.height_mm !== undefined) dimension(run.height_mm, source, at(field, "height_mm"));
       break;
     case "image":
       onlyKeys(run, ["type", "path", "width_mm", "height_mm", "alt"], source, field);
-      text(run.path, source, at(field, "path"));
+      text(run.path, source, at(field, "path"), false, MAX_LENGTH.path);
       dimension(run.width_mm, source, at(field, "width_mm"));
       if (run.height_mm !== undefined) dimension(run.height_mm, source, at(field, "height_mm"));
-      if (run.alt !== undefined) text(run.alt, source, at(field, "alt"), true);
+      if (run.alt !== undefined) text(run.alt, source, at(field, "alt"), true, MAX_LENGTH.alt);
       break;
     case "line_break":
       onlyKeys(run, ["type"], source, field);
@@ -275,7 +342,9 @@ function validateRun(raw: unknown, source: string, field: string): void {
 
 function validateParagraph(block: Record<string, unknown>, source: string, field: string): void {
   onlyKeys(block, ["type", "style", "list", "keep_with_next", "runs"], source, field);
-  if (block.style !== undefined) text(block.style, source, at(field, "style"));
+  if (block.style !== undefined) {
+    text(block.style, source, at(field, "style"), false, MAX_LENGTH.styleName);
+  }
   if (block.keep_with_next !== undefined) {
     flag(block.keep_with_next, source, at(field, "keep_with_next"));
   }
@@ -283,7 +352,7 @@ function validateParagraph(block: Record<string, unknown>, source: string, field
     const listField = at(field, "list");
     const list = asObject(block.list, source, listField);
     onlyKeys(list, ["name", "level"], source, listField);
-    text(list.name, source, at(listField, "name"));
+    text(list.name, source, at(listField, "name"), false, MAX_LENGTH.styleName);
     if (list.level !== undefined) {
       count(list.level, source, at(listField, "level"), 0, 6, true);
     }
@@ -302,6 +371,9 @@ function validateTable(block: Record<string, unknown>, source: string, field: st
   if (!Array.isArray(block.columns) || block.columns.length === 0) {
     refuse(source, columnsField, "must be an array of at least 1 column");
   }
+  if (block.columns.length > MAX_ITEMS) {
+    refuse(source, columnsField, `must be at most ${MAX_ITEMS} columns, as document-spec-v1 allows`);
+  }
   block.columns.forEach((column, index) => {
     const columnField = at(columnsField, index);
     const value = asObject(column, source, columnField);
@@ -311,6 +383,9 @@ function validateTable(block: Record<string, unknown>, source: string, field: st
   const rowsField = at(field, "rows");
   if (!Array.isArray(block.rows) || block.rows.length === 0) {
     refuse(source, rowsField, "must be an array of at least 1 row");
+  }
+  if (block.rows.length > MAX_ITEMS) {
+    refuse(source, rowsField, `must be at most ${MAX_ITEMS} rows, as document-spec-v1 allows`);
   }
   block.rows.forEach((row, index) => {
     const rowField = at(rowsField, index);
@@ -347,19 +422,19 @@ function validateBlock(raw: unknown, source: string, field: string): void {
       return;
     case "image":
       onlyKeys(block, ["type", "path", "width_mm", "height_mm", "alt", "placement"], source, field);
-      text(block.path, source, at(field, "path"));
+      text(block.path, source, at(field, "path"), false, MAX_LENGTH.path);
       dimension(block.width_mm, source, at(field, "width_mm"));
       if (block.height_mm !== undefined) {
         dimension(block.height_mm, source, at(field, "height_mm"));
       }
-      if (block.alt !== undefined) text(block.alt, source, at(field, "alt"), true);
+      if (block.alt !== undefined) text(block.alt, source, at(field, "alt"), true, MAX_LENGTH.alt);
       if (block.placement !== undefined) {
         oneOf(block.placement, PLACEMENTS, source, at(field, "placement"));
       }
       return;
     case "equation":
       onlyKeys(block, ["type", "script", "width_mm", "height_mm"], source, field);
-      text(block.script, source, at(field, "script"));
+      text(block.script, source, at(field, "script"), false, MAX_LENGTH.script);
       if (block.width_mm !== undefined) dimension(block.width_mm, source, at(field, "width_mm"));
       if (block.height_mm !== undefined) {
         dimension(block.height_mm, source, at(field, "height_mm"));
@@ -367,9 +442,13 @@ function validateBlock(raw: unknown, source: string, field: string): void {
       return;
     case "field":
       onlyKeys(block, ["type", "name", "value", "style"], source, field);
-      text(block.name, source, at(field, "name"));
-      if (block.value !== undefined) text(block.value, source, at(field, "value"), true);
-      if (block.style !== undefined) text(block.style, source, at(field, "style"));
+      text(block.name, source, at(field, "name"), false, MAX_LENGTH.fieldName);
+      if (block.value !== undefined) {
+        text(block.value, source, at(field, "value"), true, MAX_LENGTH.fieldValue);
+      }
+      if (block.style !== undefined) {
+        text(block.style, source, at(field, "style"), false, MAX_LENGTH.styleName);
+      }
       return;
     case "break":
       onlyKeys(block, ["type", "kind"], source, field);
@@ -391,14 +470,15 @@ function validateBlocks(raw: unknown, source: string, field: string, minItems: n
 
 function validateParams(raw: unknown, source: string): Record<string, string> {
   const value = asObject(raw, source, "params");
-  const params: Record<string, string> = {};
+  const params: [string, string][] = [];
   for (const [name, item] of Object.entries(value)) {
     if (name.trim() === "" || name.trim() !== name || name.includes("{") || name.includes("}")) {
       refuse(source, at("params", name), "must be a param name without braces or surrounding spaces");
     }
-    params[name] = text(item, source, at("params", name), true);
+    params.push([name, text(item, source, at("params", name), true, MAX_LENGTH.text)]);
   }
-  return params;
+  // `fromEntries` defines own properties, so a param named `__proto__` survives.
+  return Object.fromEntries(params);
 }
 
 type TextMap = (value: string, field: string) => string;
@@ -514,8 +594,23 @@ export function substituteParams(
       return params[name] as string;
     }),
   ) as Blocks;
+  // A value can push a run past a bound the placeholder itself met, so the
+  // result is held to the same contract the component was validated against.
+  validateBlocks(blocks, source, "blocks", 1);
   return { ...component, params, blocks };
 }
+
+/**
+ * The official profile's body font, size and line spacing as plain data, so a
+ * caller that builds its own document (the compose panel's presets) reads the
+ * same values instead of restating them. `OFFICIAL_PROFILE` is derived from
+ * this, so there is one copy in the repo.
+ */
+export const OFFICIAL_BODY_PROFILE = {
+  fontFamily: "맑은 고딕",
+  fontSizePt: 12,
+  lineHeightPercent: 160,
+} as const;
 
 /**
  * The engine's official profile, copied once. `hwp new --preset official`
@@ -533,10 +628,10 @@ export function substituteParams(
  */
 export const OFFICIAL_PROFILE: Readonly<Record<string, Style>> = {
   "바탕글": {
-    font_family: "맑은 고딕",
-    font_size_pt: 12,
+    font_family: OFFICIAL_BODY_PROFILE.fontFamily,
+    font_size_pt: OFFICIAL_BODY_PROFILE.fontSizePt,
     align: "justify",
-    line_height_percent: 160,
+    line_height_percent: OFFICIAL_BODY_PROFILE.lineHeightPercent,
   },
   "개요 1": { based_on: "바탕글", bold: true, font_size_pt: 15, align: "left" },
   "개요 2": { based_on: "바탕글", bold: true, font_size_pt: 14, align: "left" },
@@ -545,6 +640,9 @@ export const OFFICIAL_PROFILE: Readonly<Record<string, Style>> = {
   "개요 5": { based_on: "바탕글", bold: true, font_size_pt: 12, align: "left" },
   "개요 6": { based_on: "바탕글", bold: true, font_size_pt: 12, align: "left" },
 };
+
+/** The profile as a map, so a style named `constructor` is not mistaken for one. */
+const PROFILE_STYLES = new Map<string, Style>(Object.entries(OFFICIAL_PROFILE));
 
 interface StyleRef {
   field: string;
@@ -619,20 +717,20 @@ export function documentSpecFromComponents(
   if (components.length === 0) {
     refuse("components", "", "at least one component is needed to compose a document");
   }
-  const styles: Record<string, Style> = {};
+  const styles = new Map<string, Style>();
   const definedBy = new Map<string, string>();
   const blocks: Block[] = [];
   for (const component of components) {
     for (const [name, style] of Object.entries(component.styles ?? {})) {
-      const previous = styles[name];
-      if (previous !== undefined && JSON.stringify(previous) !== JSON.stringify(style)) {
+      const previous = styles.get(name);
+      if (previous !== undefined && !sameStyle(previous, style)) {
         refuse(
           component.name,
           at("styles", name),
           `is defined differently by ${definedBy.get(name) ?? "an earlier component"} and this component`,
         );
       }
-      styles[name] = style;
+      styles.set(name, style);
       definedBy.set(name, component.name);
     }
     blocks.push(...component.blocks);
@@ -641,13 +739,13 @@ export function documentSpecFromComponents(
   const unresolved: { source: string; field: string; name: string }[] = [];
   for (const component of components) {
     for (const ref of styleRefs(component.blocks, "blocks")) {
-      if (!Object.hasOwn(styles, ref.name)) {
+      if (!styles.has(ref.name)) {
         unresolved.push({ source: component.name, field: ref.field, name: ref.name });
       }
     }
   }
-  for (const [name, style] of Object.entries(styles)) {
-    if (style.based_on !== undefined && !Object.hasOwn(styles, style.based_on)) {
+  for (const [name, style] of styles) {
+    if (style.based_on !== undefined && !styles.has(style.based_on)) {
       unresolved.push({
         source: definedBy.get(name) ?? name,
         field: `${at("styles", name)}.based_on`,
@@ -658,7 +756,7 @@ export function documentSpecFromComponents(
   const fromProfile = new Set<string>();
   while (unresolved.length > 0) {
     const item = unresolved.shift() as { source: string; field: string; name: string };
-    const profile = OFFICIAL_PROFILE[item.name];
+    const profile = PROFILE_STYLES.get(item.name);
     if (profile === undefined) {
       refuse(
         item.source,
@@ -668,7 +766,7 @@ export function documentSpecFromComponents(
     }
     if (fromProfile.has(item.name)) continue;
     fromProfile.add(item.name);
-    if (profile.based_on !== undefined && !Object.hasOwn(styles, profile.based_on)) {
+    if (profile.based_on !== undefined && !styles.has(profile.based_on)) {
       unresolved.push({
         source: item.source,
         field: `${at("styles", item.name)}.based_on`,
@@ -677,19 +775,18 @@ export function documentSpecFromComponents(
     }
   }
 
-  const resolved: Record<string, Style> = {};
-  for (const name of Object.keys(OFFICIAL_PROFILE)) {
-    const profile = OFFICIAL_PROFILE[name];
-    if (profile !== undefined && fromProfile.has(name)) resolved[name] = profile;
+  const resolved = new Map<string, Style>();
+  for (const [name, profile] of PROFILE_STYLES) {
+    if (fromProfile.has(name)) resolved.set(name, profile);
   }
-  Object.assign(resolved, styles);
+  for (const [name, style] of styles) resolved.set(name, style);
 
   const document: DocumentSpecV2["document"] = {
     version: "1.0",
     sections: [options.sectionId === undefined ? { blocks } : { id: options.sectionId, blocks }],
   };
   if (options.title !== undefined) document.metadata = { title: options.title };
-  if (Object.keys(resolved).length > 0) document.styles = resolved;
+  if (resolved.size > 0) document.styles = Object.fromEntries(resolved);
   return { version: "2.0", document };
 }
 
@@ -722,21 +819,95 @@ export interface LoadComponentsOptions {
   fetch?: ComponentFetch;
 }
 
+function failureOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** A cancelled load stays a cancellation; it is not a broken library. */
+function isCancellation(error: unknown): boolean {
+  const candidate = error as { name?: unknown; code?: unknown } | null | undefined;
+  return candidate?.name === "AbortError" || candidate?.code === 20;
+}
+
 async function readJson(transport: ComponentFetch, url: string): Promise<unknown> {
-  const response = await transport(url);
-  if (!response.ok) refuse(url, "", `could not be loaded (HTTP ${response.status})`);
-  const body = await response.text();
+  let response: ComponentFetchResponse;
+  try {
+    response = await transport(url);
+  } catch (error) {
+    if (isCancellation(error)) throw error;
+    refuse(
+      url,
+      "",
+      `could not be loaded (${failureOf(error)}); check the URL, the network and access permissions, then retry`,
+    );
+  }
+  if (!response.ok) {
+    refuse(
+      url,
+      "",
+      `could not be loaded (HTTP ${response.status}); check the URL and that the server serves the library there, then retry`,
+    );
+  }
+  let body: string;
+  try {
+    body = await response.text();
+  } catch (error) {
+    if (isCancellation(error)) throw error;
+    refuse(url, "", `could not be read (${failureOf(error)}); check the connection to that URL, then retry`);
+  }
   try {
     return JSON.parse(body) as unknown;
   } catch (error) {
-    refuse(url, "", `is not valid JSON (${error instanceof Error ? error.message : String(error)})`);
+    refuse(url, "", `is not valid JSON (${failureOf(error)}); fix the file at that URL, then retry`);
+  }
+}
+
+/** The document URL a browser resolves a relative fetch against, when there is one. */
+function pageHref(): string | undefined {
+  const location = (globalThis as { location?: { href?: unknown } }).location;
+  return typeof location?.href === "string" ? location.href : undefined;
+}
+
+/**
+ * `source` as an absolute URL. An index fetched from `/lib/index.json` has to
+ * become absolute before its entries can resolve against it, so a relative
+ * source is resolved against the caller's `baseUrl` or, in a browser, the
+ * document URL. A relative source with neither is left as given, so
+ * `resolveEntry` can explain what is missing.
+ */
+function absoluteSource(source: string, baseUrl: string | undefined): string {
+  try {
+    return new URL(source).toString();
+  } catch {
+    // Not absolute: resolve it against a base below.
+  }
+  const base = baseUrl ?? pageHref();
+  if (base === undefined) return source;
+  try {
+    return new URL(source, base).toString();
+  } catch {
+    return source;
   }
 }
 
 function resolveEntry(field: string, path: string, base: string | undefined): string {
-  if (base !== undefined) return new URL(path, base).toString();
+  if (base !== undefined) {
+    try {
+      return new URL(path, base).toString();
+    } catch {
+      refuse(
+        "component index",
+        field,
+        `cannot be resolved against ${base}; pass LoadComponentsOptions.baseUrl as an absolute URL or a valid path, then retry`,
+      );
+    }
+  }
   if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(path)) return path;
-  refuse("component index", field, "is a relative path, and no baseUrl was given to resolve it");
+  refuse(
+    "component index",
+    field,
+    "is a relative path, and no baseUrl was given to resolve it; pass LoadComponentsOptions.baseUrl (the library folder URL) and retry",
+  );
 }
 
 /**
@@ -795,8 +966,9 @@ export async function loadComponents(
   };
 
   if (typeof source === "string") {
-    const index = await readJson(transport, source);
-    await loadIndex(index, source, source, transport, add);
+    const indexUrl = absoluteSource(source, options.baseUrl);
+    const index = await readJson(transport, indexUrl);
+    await loadIndex(index, indexUrl, indexUrl, transport, add);
     return loaded;
   }
   if (Array.isArray(source)) {

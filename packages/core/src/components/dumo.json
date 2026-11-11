@@ -18,14 +18,17 @@
     },
     {
       "type": "paragraph",
+      "style": "바탕글",
       "runs": [{ "type": "text", "text": "{{문서번호}}" }]
     },
     {
       "type": "paragraph",
+      "style": "바탕글",
       "runs": [{ "type": "text", "text": "수신: {{수신}}" }]
     },
     {
       "type": "paragraph",
+      "style": "바탕글",
       "runs": [{ "type": "text", "text": "경유: {{경유}}" }]
     }
   ]

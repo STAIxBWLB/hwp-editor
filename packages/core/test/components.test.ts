@@ -335,6 +335,130 @@ describe("validateComponent refusals", () => {
       "components: src/components/broken.json: blocks: must be an array of at least 1 block",
     );
   });
+
+  it("accepts a 128-character style name and refuses 129", () => {
+    const name = "가".repeat(128);
+    expect(
+      validateComponent(
+        {
+          ...BASE_COMPONENT,
+          styles: { [name]: { based_on: "바탕글" } },
+          blocks: [{ type: "paragraph", style: name, runs: [{ type: "text", text: "값" }] }],
+        },
+        REFUSAL_SOURCE,
+      ).styles,
+    ).toEqual({ [name]: { based_on: "바탕글" } });
+    expect(
+      refusalFor((value) => {
+        value["blocks"] = [
+          {
+            type: "paragraph",
+            style: "가".repeat(129),
+            runs: [{ type: "text", text: "값" }],
+          },
+        ];
+      }),
+    ).toBe(
+      "components: src/components/broken.json: blocks[0].style: " +
+        "must be at most 128 characters, as document-spec-v1 allows",
+    );
+  });
+
+  it("refuses a font family, field value and image path past their bounds", () => {
+    expect(
+      refusalFor((value) => {
+        value["styles"] = { 강조: { font_family: "가".repeat(257) } };
+      }),
+    ).toBe(
+      "components: src/components/broken.json: styles.강조.font_family: " +
+        "must be at most 256 characters, as document-spec-v1 allows",
+    );
+    expect(
+      refusalFor((value) => {
+        value["blocks"] = [
+          {
+            type: "paragraph",
+            runs: [{ type: "field", name: "제목", value: "가".repeat(4097) }],
+          },
+        ];
+      }),
+    ).toBe(
+      "components: src/components/broken.json: blocks[0].runs[0].value: " +
+        "must be at most 4096 characters, as document-spec-v1 allows",
+    );
+    expect(
+      refusalFor((value) => {
+        value["blocks"] = [
+          { type: "image", path: `사진/${"가".repeat(4096)}.png`, width_mm: 10 },
+        ];
+      }),
+    ).toBe(
+      "components: src/components/broken.json: blocks[0].path: " +
+        "must be at most 4096 characters, as document-spec-v1 allows",
+    );
+  });
+
+  it("accepts a 2,000,000-character run and refuses one character more", () => {
+    const text = "가".repeat(2_000_000);
+    expect(
+      textsOf(
+        validateComponent(
+          {
+            ...BASE_COMPONENT,
+            blocks: [{ type: "paragraph", runs: [{ type: "text", text }] }],
+          },
+          REFUSAL_SOURCE,
+        ).blocks,
+      ),
+    ).toEqual([text]);
+    expect(
+      refusalFor((value) => {
+        value["blocks"] = [
+          { type: "paragraph", runs: [{ type: "text", text: `${text}가` }] },
+        ];
+      }),
+    ).toBe(
+      "components: src/components/broken.json: blocks[0].runs[0].text: " +
+        "must be at most 2000000 characters, as document-spec-v1 allows",
+    );
+  });
+
+  it("refuses a table with more rows than the schema allows", () => {
+    const cell = {
+      cells: [{ blocks: [{ type: "paragraph", runs: [{ type: "text", text: "값" }] }] }],
+    };
+    expect(
+      refusalFor((value) => {
+        value["blocks"] = [
+          {
+            type: "table",
+            columns: [{ width_mm: 10 }],
+            rows: Array.from({ length: 65_536 }, () => cell),
+          },
+        ];
+      }),
+    ).toBe(
+      "components: src/components/broken.json: blocks[0].rows: " +
+        "must be at most 65535 rows, as document-spec-v1 allows",
+    );
+  });
+
+  it("keeps a param named like an Object.prototype member", () => {
+    const component = validateComponent(
+      {
+        name: "시험",
+        description: "시험용 구성요소",
+        params: { constructor: "기본값", toString: "다른 값" },
+        blocks: [
+          { type: "paragraph", runs: [{ type: "text", text: "{{constructor}}" }] },
+          { type: "paragraph", runs: [{ type: "text", text: "{{toString}}" }] },
+        ],
+      },
+      REFUSAL_SOURCE,
+    );
+    expect(Object.keys(component.params)).toEqual(["constructor", "toString"]);
+    expect(textsOf(substituteParams(component).blocks)).toEqual(["기본값", "다른 값"]);
+  });
 });
 
 describe("documentSpecFromComponents", () => {
@@ -391,6 +515,63 @@ describe("documentSpecFromComponents", () => {
     );
     expect(() => documentSpecFromComponents([first, second])).toThrow(
       /components: 둘째: styles\.같은: is defined differently by 첫째 and this component/,
+    );
+  });
+
+  it("accepts one style name whose properties are spelled in a different order", () => {
+    const first = validateComponent(
+      {
+        ...BASE_COMPONENT,
+        name: "첫째",
+        styles: { 같은: { based_on: "바탕글", bold: true, italic: true } },
+        blocks: [{ type: "paragraph", style: "같은", runs: [{ type: "text", text: "가" }] }],
+      },
+      "첫째",
+    );
+    const second = validateComponent(
+      {
+        ...BASE_COMPONENT,
+        name: "둘째",
+        styles: { 같은: { italic: true, bold: true, based_on: "바탕글" } },
+        blocks: [{ type: "paragraph", style: "같은", runs: [{ type: "text", text: "나" }] }],
+      },
+      "둘째",
+    );
+    const spec = documentSpecFromComponents([first, second]);
+    expect(spec.document.styles?.["같은"]).toEqual({
+      based_on: "바탕글",
+      bold: true,
+      italic: true,
+    });
+  });
+
+  it("keeps a style named like an Object.prototype member", () => {
+    const component = validateComponent(
+      {
+        ...BASE_COMPONENT,
+        styles: { constructor: { based_on: "바탕글", bold: true } },
+        blocks: [
+          { type: "paragraph", style: "constructor", runs: [{ type: "text", text: "가" }] },
+        ],
+      },
+      "시험",
+    );
+    const styles = documentSpecFromComponents([component]).document.styles ?? {};
+    expect(Object.keys(styles)).toEqual(["바탕글", "constructor"]);
+    expect(styles["constructor"]).toEqual({ based_on: "바탕글", bold: true });
+  });
+
+  it("refuses a style reference named like an Object.prototype member", () => {
+    const component = validateComponent(
+      {
+        ...BASE_COMPONENT,
+        styles: { 정의됨: { based_on: "바탕글" } },
+        blocks: [{ type: "paragraph", style: "toString", runs: [{ type: "text", text: "가" }] }],
+      },
+      "시험",
+    );
+    expect(() => documentSpecFromComponents([component])).toThrow(
+      /components: 시험: blocks\[0\]\.style: references style toString, which no component defines/,
     );
   });
 
@@ -493,6 +674,81 @@ describe("loadComponents", () => {
     );
     expect(requested).toEqual(["https://example.test/lib/dumo.json"]);
     expect(loaded[0]?.name).toBe("두문");
+  });
+
+  it("resolves a relative index URL against the baseUrl, then its entries against it", async () => {
+    const requested: string[] = [];
+    const loaded = await loadComponents("/lib/index.json", {
+      baseUrl: "https://example.test/docs/page.html",
+      fetch: async (url) => {
+        requested.push(url);
+        if (url === "https://example.test/lib/index.json") {
+          return respond(JSON.stringify({ version: "1.0", components: ["dumo.json"] }));
+        }
+        return respond(shipped(url.slice(url.lastIndexOf("/") + 1)));
+      },
+    });
+    expect(requested).toEqual([
+      "https://example.test/lib/index.json",
+      "https://example.test/lib/dumo.json",
+    ]);
+    expect(loaded[0]?.name).toBe("두문");
+  });
+
+  it("resolves a relative index URL against the document URL in a browser", async () => {
+    const requested: string[] = [];
+    const browser = globalThis as { location?: { href: string } };
+    browser.location = { href: "https://example.test/app/index.html" };
+    try {
+      const loaded = await loadComponents("/lib/index.json", {
+        fetch: async (url) => {
+          requested.push(url);
+          if (url === "https://example.test/lib/index.json") {
+            return respond(JSON.stringify({ version: "1.0", components: ["dumo.json"] }));
+          }
+          return respond(shipped("dumo.json"));
+        },
+      });
+      expect(loaded[0]?.name).toBe("두문");
+    } finally {
+      delete browser.location;
+    }
+    expect(requested).toEqual([
+      "https://example.test/lib/index.json",
+      "https://example.test/lib/dumo.json",
+    ]);
+  });
+
+  it("refuses a transport that rejects, naming the URL and the failure", async () => {
+    await expect(
+      loadComponents("https://example.test/lib/index.json", {
+        fetch: async () => {
+          throw new Error("ECONNREFUSED 127.0.0.1:1");
+        },
+      }),
+    ).rejects.toThrow(
+      /components: https:\/\/example\.test\/lib\/index\.json: could not be loaded \(ECONNREFUSED/,
+    );
+  });
+
+  it("keeps a cancelled load a cancellation, not a failed library", async () => {
+    const cancelled = Object.assign(new Error("The operation was aborted."), {
+      name: "AbortError",
+    });
+    const transport: ComponentFetch = async () => {
+      throw cancelled;
+    };
+    await expect(
+      loadComponents("https://example.test/lib/index.json", { fetch: transport }),
+    ).rejects.toBe(cancelled);
+  });
+
+  it("refuses an entry it cannot resolve against the baseUrl, naming the base", async () => {
+    await expect(
+      loadComponents({ version: "1.0", components: ["dumo.json"] }, { baseUrl: "not a url" }),
+    ).rejects.toThrow(
+      /components: component index: components\[0\]: cannot be resolved against not a url; pass LoadComponentsOptions\.baseUrl/,
+    );
   });
 
   it("refuses a failed fetch, naming the URL and the status", async () => {
@@ -641,6 +897,57 @@ describeBin("compose with the real hwp", () => {
         "PK",
       );
     });
+  });
+
+  const runAttrs = (name: string): { face: string | undefined; size: number | undefined }[] => {
+    const stdout = execFileSync(
+      BIN,
+      ["cat", out(`${name}.hwpx`), "--with-segments", "--segments", "v2", "--format", "json"],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+    );
+    const parsed = JSON.parse(stdout) as {
+      segments: { kind: string; style: { char: { faces: string[]; size_pt: number } } }[];
+    };
+    return parsed.segments
+      .filter((segment) => segment.kind === "run")
+      .map((segment) => ({
+        face: segment.style.char.faces[0],
+        size: segment.style.char.size_pt,
+      }));
+  };
+
+  it("resolves every starter's text to the official body font, not the app default", () => {
+    STARTER_COMPONENTS.forEach((component, index) => {
+      compose(
+        documentSpecFromComponents([component], { title: component.name }),
+        `font-${index}`,
+      );
+      const runs = runAttrs(`font-${index}`);
+      expect({ name: component.name, runs: runs.length > 0 }).toEqual({
+        name: component.name,
+        runs: true,
+      });
+      for (const run of runs) {
+        // 함초롬바탕 10pt is what a paragraph with no style resolves to; the
+        // profile's 맑은 고딕 is the only face a starter may land on.
+        expect({ name: component.name, face: run.face }).toEqual({
+          name: component.name,
+          face: "맑은 고딕",
+        });
+        expect([12, 13, 14, 15]).toContain(run.size);
+      }
+    });
+  });
+
+  it("gives the 붙임 body the profile's 12pt on all four lines", () => {
+    const index = STARTER_COMPONENTS.findIndex((component) => component.name === "붙임");
+    compose(documentSpecFromComponents([STARTER_COMPONENTS[index]!]), "font-attachment");
+    expect(runAttrs("font-attachment")).toEqual([
+      { face: "맑은 고딕", size: 12 },
+      { face: "맑은 고딕", size: 12 },
+      { face: "맑은 고딕", size: 12 },
+      { face: "맑은 고딕", size: 12 },
+    ]);
   });
 
   it("composes all seven in list order, with the params visible in the output", () => {
