@@ -1,0 +1,20 @@
+{
+  "name": "붙임",
+  "description": "붙임 목록: 표제와 항목 문단 (빈 값은 빈 문단 한 줄)",
+  "params": {
+    "표제": "붙임",
+    "항목1": "붙임 1. 관련 자료 1부.",
+    "항목2": "붙임 2. 세부 일정 1부.",
+    "항목3": ""
+  },
+  "blocks": [
+    {
+      "type": "paragraph",
+      "style": "바탕글",
+      "runs": [{ "type": "text", "text": "{{표제}}", "bold": true }]
+    },
+    { "type": "paragraph", "style": "바탕글", "runs": [{ "type": "text", "text": "{{항목1}}" }] },
+    { "type": "paragraph", "style": "바탕글", "runs": [{ "type": "text", "text": "{{항목2}}" }] },
+    { "type": "paragraph", "style": "바탕글", "runs": [{ "type": "text", "text": "{{항목3}}" }] }
+  ]
+}

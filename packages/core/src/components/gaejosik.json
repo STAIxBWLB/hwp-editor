@@ -1,0 +1,38 @@
+{
+  "name": "개조식",
+  "description": "개조식 항목 묶음: 제목과 □→○→-→· 사다리",
+  "params": {
+    "표제": "추진 개요",
+    "항목1": "추진 배경",
+    "항목2": "추진 내용",
+    "항목3": "기대 효과",
+    "항목4": "향후 계획"
+  },
+  "blocks": [
+    {
+      "type": "paragraph",
+      "style": "개요 2",
+      "runs": [{ "type": "text", "text": "{{표제}}" }]
+    },
+    {
+      "type": "paragraph",
+      "style": "바탕글",
+      "runs": [{ "type": "text", "text": "□ {{항목1}}" }]
+    },
+    {
+      "type": "paragraph",
+      "style": "바탕글",
+      "runs": [{ "type": "text", "text": "○ {{항목2}}" }]
+    },
+    {
+      "type": "paragraph",
+      "style": "바탕글",
+      "runs": [{ "type": "text", "text": "- {{항목3}}" }]
+    },
+    {
+      "type": "paragraph",
+      "style": "바탕글",
+      "runs": [{ "type": "text", "text": "· {{항목4}}" }]
+    }
+  ]
+}

@@ -1,58 +1,28 @@
 /**
  * Compose-panel presets → DocumentSpec v2.
  *
- * Profile values mirror hwp-cli's official presets
- * (crates/hwp-convert/src/official.rs): body font, size (1/100 pt there,
- * plain pt here), line spacing percent, and page-number footer policy.
+ * The profile values are not here: `DOCUMENT_PROFILES` in `@hwp-editor/core`
+ * is the one copy (issue #54 Decision 2026-11-10), read here and by the
+ * component library, with a binary-gated test that diffs each engine preset
+ * against `hwp new --preset <name>`.
  */
 
+import { DOCUMENT_PROFILE_NAMES, DOCUMENT_PROFILES } from "@hwp-editor/core";
+import type { DocumentProfile, ProfileName } from "@hwp-editor/core";
 import type { DocumentSpecV2 } from "@hwp-editor/core";
 
-export type ComposePreset =
-  | "official"
-  | "report"
-  | "plan"
-  | "notice"
-  | "minutes"
-  | "gaejosik"
-  | "press";
+export type ComposePreset = ProfileName;
 
-export const COMPOSE_PRESETS: ComposePreset[] = [
-  "official",
-  "report",
-  "plan",
-  "notice",
-  "minutes",
-  "gaejosik",
-  "press",
-];
-
-interface PresetProfile {
-  fontFamily: string;
-  bodySizePt: number;
-  lineHeightPercent: number;
-  pageNumber: boolean;
-}
+/** The presets the picker offers, in its order. */
+export const COMPOSE_PRESETS: ComposePreset[] = [...DOCUMENT_PROFILE_NAMES];
 
 /**
- * Document data, NOT chrome (I18N-05). These font names travel into the
- * composed DocumentSpec and are consumed by hwp-cli; translating them would
- * change what the engine receives, so they stay here and are structurally
- * unreachable from the string table. The picker's human-readable LABELS
- * live in messages.ts under `presets.*`.
+ * Document data, NOT chrome (I18N-05): the font names in the profile table
+ * travel into the composed DocumentSpec and are consumed by hwp-cli, so
+ * translating one would change what the engine receives. The picker's
+ * human-readable LABELS live in messages.ts under `presets.*`.
  */
-const MALGUN = "맑은 고딕";
-const HCR_BATANG = "함초롬바탕";
-
-const PRESET_PROFILES: Record<ComposePreset, PresetProfile> = {
-  official: { fontFamily: MALGUN, bodySizePt: 12, lineHeightPercent: 160, pageNumber: false },
-  report: { fontFamily: HCR_BATANG, bodySizePt: 15, lineHeightPercent: 160, pageNumber: true },
-  plan: { fontFamily: HCR_BATANG, bodySizePt: 15, lineHeightPercent: 160, pageNumber: true },
-  notice: { fontFamily: MALGUN, bodySizePt: 15, lineHeightPercent: 160, pageNumber: true },
-  minutes: { fontFamily: HCR_BATANG, bodySizePt: 14, lineHeightPercent: 130, pageNumber: false },
-  gaejosik: { fontFamily: MALGUN, bodySizePt: 15, lineHeightPercent: 160, pageNumber: true },
-  press: { fontFamily: HCR_BATANG, bodySizePt: 14, lineHeightPercent: 160, pageNumber: true },
-};
+const PRESET_PROFILES: Readonly<Record<ComposePreset, DocumentProfile>> = DOCUMENT_PROFILES;
 
 export interface ComposeInput {
   title: string;

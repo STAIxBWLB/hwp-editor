@@ -1,0 +1,160 @@
+{
+  "name": "일정표",
+  "description": "일정표: 구분·일자·내용 3열 표",
+  "params": {
+    "표제": "추진 일정",
+    "열1": "구분",
+    "열2": "일자",
+    "열3": "내용",
+    "구분1": "1",
+    "일자1": "2026. 3. 2.",
+    "내용1": "착수 및 요구 분석",
+    "구분2": "2",
+    "일자2": "2026. 6. 1.",
+    "내용2": "중간 점검",
+    "구분3": "3",
+    "일자3": "2026. 12. 11.",
+    "내용3": "결과 보고"
+  },
+  "styles": {
+    "일정표 머리": { "based_on": "바탕글", "align": "center", "bold": true }
+  },
+  "blocks": [
+    {
+      "type": "paragraph",
+      "style": "개요 2",
+      "runs": [{ "type": "text", "text": "{{표제}}" }]
+    },
+    {
+      "type": "table",
+      "width_mm": 170,
+      "columns": [{ "width_mm": 40 }, { "width_mm": 50 }, { "width_mm": 80 }],
+      "rows": [
+        {
+          "cells": [
+            {
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "style": "일정표 머리",
+                  "runs": [{ "type": "text", "text": "{{열1}}" }]
+                }
+              ]
+            },
+            {
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "style": "일정표 머리",
+                  "runs": [{ "type": "text", "text": "{{열2}}" }]
+                }
+              ]
+            },
+            {
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "style": "일정표 머리",
+                  "runs": [{ "type": "text", "text": "{{열3}}" }]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "style": "바탕글",
+                  "runs": [{ "type": "text", "text": "{{구분1}}" }]
+                }
+              ]
+            },
+            {
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "style": "바탕글",
+                  "runs": [{ "type": "text", "text": "{{일자1}}" }]
+                }
+              ]
+            },
+            {
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "style": "바탕글",
+                  "runs": [{ "type": "text", "text": "{{내용1}}" }]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "style": "바탕글",
+                  "runs": [{ "type": "text", "text": "{{구분2}}" }]
+                }
+              ]
+            },
+            {
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "style": "바탕글",
+                  "runs": [{ "type": "text", "text": "{{일자2}}" }]
+                }
+              ]
+            },
+            {
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "style": "바탕글",
+                  "runs": [{ "type": "text", "text": "{{내용2}}" }]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "style": "바탕글",
+                  "runs": [{ "type": "text", "text": "{{구분3}}" }]
+                }
+              ]
+            },
+            {
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "style": "바탕글",
+                  "runs": [{ "type": "text", "text": "{{일자3}}" }]
+                }
+              ]
+            },
+            {
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "style": "바탕글",
+                  "runs": [{ "type": "text", "text": "{{내용3}}" }]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

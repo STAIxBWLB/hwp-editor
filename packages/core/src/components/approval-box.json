@@ -1,0 +1,117 @@
+{
+  "name": "결재란",
+  "description": "결재란: 기안·검토·결재 열과 서명·일자 행",
+  "params": {
+    "기안자": "기안자",
+    "검토자": "검토자",
+    "결재자": "결재자",
+    "기안일자": "2026. 11. 9.",
+    "검토일자": "2026. 11. 9.",
+    "결재일자": "2026. 11. 9."
+  },
+  "styles": {
+    "결재란 셀": { "based_on": "바탕글", "align": "center" }
+  },
+  "blocks": [
+    {
+      "type": "table",
+      "width_mm": 120,
+      "columns": [{ "width_mm": 40 }, { "width_mm": 40 }, { "width_mm": 40 }],
+      "rows": [
+        {
+          "cells": [
+            {
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "style": "결재란 셀",
+                  "runs": [{ "type": "text", "text": "기안", "bold": true }]
+                }
+              ]
+            },
+            {
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "style": "결재란 셀",
+                  "runs": [{ "type": "text", "text": "검토", "bold": true }]
+                }
+              ]
+            },
+            {
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "style": "결재란 셀",
+                  "runs": [{ "type": "text", "text": "결재", "bold": true }]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "style": "결재란 셀",
+                  "runs": [{ "type": "text", "text": "{{기안자}}" }]
+                }
+              ]
+            },
+            {
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "style": "결재란 셀",
+                  "runs": [{ "type": "text", "text": "{{검토자}}" }]
+                }
+              ]
+            },
+            {
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "style": "결재란 셀",
+                  "runs": [{ "type": "text", "text": "{{결재자}}" }]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "style": "결재란 셀",
+                  "runs": [{ "type": "text", "text": "{{기안일자}}" }]
+                }
+              ]
+            },
+            {
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "style": "결재란 셀",
+                  "runs": [{ "type": "text", "text": "{{검토일자}}" }]
+                }
+              ]
+            },
+            {
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "style": "결재란 셀",
+                  "runs": [{ "type": "text", "text": "{{결재일자}}" }]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
