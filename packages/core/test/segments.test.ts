@@ -84,6 +84,21 @@ describe("parseCatEnvelope", () => {
       ),
     ).toThrow(/malformed segment/);
   });
+
+  it("uses UTF-16 markdown slice boundaries for non-BMP text and validates direct attrs", () => {
+    const json = JSON.stringify({
+      contract: "hwp-segment-envelope-v2", schema_version: "1.0", markdown: "😀한",
+      segments: [{ id: "p", kind: "para", path: { section: 0, indices: [0] }, char_range: { start: 1, end: 2 },
+        direct: { char: { bold: true, italic: false, size_pt: 11, color: "#000000", faces: ["A"], face_ids: [2] },
+          char_shape_id: 999, para: { alignment: "left", indent: 0, line_spacing: 160, line_spacing_type: 0 }, para_shape_id: 999 } }],
+    });
+    const env = parseCatEnvelope(json);
+    expect(env.segments[0]).toMatchObject({ start: 2, end: 3, directChar: { bold: true, face_ids: [2] }, directPara: { alignment: "left" } });
+    expect(segmentText(env, env.segments[0]!)).toBe("한");
+    const malformed = JSON.parse(json) as { segments: Array<{ direct: { char: { size_pt: number } } }> };
+    malformed.segments[0]!.direct.char.size_pt = Number.NaN;
+    expect(() => parseCatEnvelope(JSON.stringify(malformed))).toThrow(/malformed direct[.]char/);
+  });
 });
 
 describe("segment coordinate helpers", () => {

@@ -29,6 +29,35 @@ describe("reducer", () => {
     expect(s.document?.name).toBe("a.hwpx");
   });
 
+  it("selects unique refs with a coherent primary and batches ops atomically", () => {
+    const a = { section: 0, para: 1, id: "a" };
+    let s = reducer(loaded, { type: "selectMany", selections: [a, a, { section: 0, para: 2 }], primary: a });
+    expect(s.selection).toEqual(a);
+    expect(s.selections).toEqual([a, { section: 0, para: 2 }]);
+    s = reducer(s, { type: "setRange", range: { paragraph: a, start: 2, end: 4 } });
+    s = reducer(s, { type: "queueOps", ops: [
+      { kind: "set-field", name: "a", value: "1" },
+      { kind: "set-field", name: "b", value: "2" },
+    ] });
+    expect(s.pendingOps).toHaveLength(2);
+    expect(s.status).toBe("dirty");
+    const applying = reducer(s, { type: "applyStarted" });
+    expect(reducer(applying, { type: "queueOps", ops: [{ kind: "set-field", name: "c", value: "3" }] })).toBe(applying);
+  });
+
+  it("single selection and lifecycle transitions clear every selection field", () => {
+    let s = reducer(loaded, { type: "selectMany", selections: [{ section: 0, para: 2 }], anchor: { section: 0, para: 1 } });
+    s = reducer(s, { type: "setRange", range: { paragraph: { section: 0, para: 2 }, start: 0, end: 1 } });
+    s = reducer(s, { type: "select", selection: { section: 0, para: 3 } });
+    expect(s.selections).toEqual([{ section: 0, para: 3 }]);
+    expect(s.selectionAnchor).toBeNull();
+    expect(s.range).toBeNull();
+    s = reducer(s, { type: "applySucceeded", document: doc("a.hwpx", "v2") });
+    expect(s.selections).toEqual([]);
+    expect(s.selectionAnchor).toBeNull();
+    expect(s.range).toBeNull();
+  });
+
   it("apply lifecycle: snapshot on start, clean on success", () => {
     let s = reducer(loaded, {
       type: "queueOp",
