@@ -45,7 +45,8 @@ import { componentFailure, insertionFailure, insertionPreflight } from "./compon
 import { isTableSlice } from "./tables.js";
 import { pendingKindKey, pendingTargetLabel } from "./pending-ops.js";
 import { ErrorLine } from "./ErrorLine.js";
-import { isUnmatchedReplaceRefusal, toEditorError } from "./errors.js";
+import { engineRefusalKind, toEditorError } from "./errors.js";
+import type { EngineRefusalKind } from "./errors.js";
 import { createT } from "./messages.js";
 import type { HwpEditorMessages, Locale } from "./messages.js";
 import { segmentText } from "@hwp-editor/core";
@@ -191,6 +192,13 @@ function toError(value: unknown): Error {
  * and maru at hwped.rs:485-486 (the `hwp_failed:` prefix).
  */
 const RENDER_SVG = { format: "svg" } as const;
+
+/** The sentence each classified edit refusal shows: a total Record, so a new kind must name one. */
+const REFUSAL_MESSAGE = {
+  unmatched_replace: "error.unmatchedReplace",
+  run_range_conflict: "error.runRangeConflict",
+  range_tag: "error.rangeTagRefused",
+} as const satisfies Record<EngineRefusalKind, string>;
 
 /**
  * Top-level embeddable editor. Layout: toolbar (apply/revert/validation
@@ -656,9 +664,15 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           // failure as it arrived — code, status and cause intact — because a
           // wrapper that drops them cannot be branched on (`onError`'s contract).
           const stored = toEditorError(e);
+          // The classified refusals (#76) each get their own cause and next
+          // step. A run-range conflict (hwp-cli#420) is classified rather than
+          // blocked at queue time: the queue and the applying lock stay as
+          // they are, and the batch fails whole with nothing written.
+          const refusal = engineRefusalKind(e);
+          const refusalSentence = refusal === undefined ? undefined : t(REFUSAL_MESSAGE[refusal]);
           store.dispatch({
             type: "applyFailed",
-            error: isUnmatchedReplaceRefusal(e) ? { ...stored, message: t("error.unmatchedReplace") } : stored,
+            error: refusalSentence === undefined ? stored : { ...stored, message: refusalSentence },
           });
           emitError(e);
         }

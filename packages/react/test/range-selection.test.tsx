@@ -637,3 +637,26 @@ describe.each([["en", en], ["ko", ko]] as const)("Placeholder guards (%s)", (loc
     expect(engine.calls.edit).toHaveLength(0);
   });
 });
+
+describe.each([["en", en], ["ko", ko]] as const)("Classified engine refusals on Apply (#76, %s)", (locale, messages) => {
+  it.each([
+    ["run_range_conflict", "error.runRangeConflict"],
+    ["range_tag", "error.rangeTagRefused"],
+  ] as const)("shows %s as its own sentence, not the engine's line", async (marker, key) => {
+    const engine = createMockEngine({ envelope: sentenceEnvelope("hello", [[0, 5]]) });
+    engine.edit = async () => {
+      throw new Error(`hwped_edit failed: failed: edit refused: ${marker}`);
+    };
+    render(<HwpEditor engine={engine} file={file} locale={locale} />);
+    await selectFirstParagraph(messages);
+    fireEvent.change(screen.getByLabelText(messages["segment.replaceLabel"]), { target: { value: "x" } });
+    fireEvent.click(screen.getByRole("button", { name: messages["segment.replaceSubmit"] }));
+    fireEvent.click(await screen.findByRole("button", { name: messages["toolbar.applyWithCount"]({ count: 1 }) }));
+    await waitFor(() => {
+      const alerts = screen.queryAllByRole("alert").map(alert => alert.textContent ?? "");
+      expect(alerts.some(text => text.includes(messages[key]))).toBe(true);
+    });
+    const shown = screen.queryAllByRole("alert").map(alert => alert.textContent ?? "").join(" ");
+    expect(shown).not.toContain(marker);
+  });
+});

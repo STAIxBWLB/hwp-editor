@@ -229,4 +229,20 @@ describe("paragraph run reorder and delete", () => {
     expect(screen.getByText(en["segment.sectionDefinitionLocked"])).toBeTruthy();
     expect(engine.calls.edit).toHaveLength(0);
   });
+
+  it("refuses inserting before the section definition paragraph but not after it (#76, hwp-cli#451)", async () => {
+    const engine = createMockEngine({ envelope: addressedFive() });
+    render(<HwpEditor engine={engine} file={file} locale="en" />);
+    const options = await screen.findAllByRole("option");
+    fireEvent.click(options[0]!);
+    fireEvent.change(screen.getByPlaceholderText(en["segment.insertPlaceholder"]), { target: { value: "new" } });
+    expect((screen.getByRole("button", { name: en["segment.insertBefore"] }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: en["segment.insertAfter"] }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByText(en["segment.sectionDefinitionLocked"])).toBeTruthy();
+
+    // Any other paragraph keeps "Insert before".
+    fireEvent.click(options[1]!);
+    fireEvent.change(screen.getByPlaceholderText(en["segment.insertPlaceholder"]), { target: { value: "new" } });
+    expect((screen.getByRole("button", { name: en["segment.insertBefore"] }) as HTMLButtonElement).disabled).toBe(false);
+  });
 });

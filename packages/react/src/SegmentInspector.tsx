@@ -551,7 +551,9 @@ export function SegmentInspector(): JSX.Element {
           <button
             type="button"
             className="hwped-btn"
-            disabled={singleTargetDisabled || insertText === ""}
+            // hwp-cli 1.6.0+ refuses an insert before the section definition
+            // paragraph (hwp-cli#451), the same fixed point move and delete honour.
+            disabled={singleTargetDisabled || definitionLocked || insertText === ""}
             onClick={() =>
               store.dispatch({
                 type: "queueOp",

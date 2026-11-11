@@ -322,7 +322,7 @@ export const en = {
     "Move and delete act on one paragraph or on paragraphs next to each other in the same place. Select such a run to move or delete it together.",
   "segment.sectionDefinitionLocked":
     "The first paragraph of a section holds the section's page setup, so it cannot be moved or deleted, " +
-    "and no paragraph can be moved above it. Pick another paragraph.",
+    "and no paragraph can be moved or inserted above it. Insert after it, or pick another paragraph.",
   "segment.alignLabel": "Alignment",
   "segment.alignGroupAria": "Paragraph alignment",
   "segment.alignLeft": "Left",
@@ -424,6 +424,8 @@ export const en = {
   "error.staleCompose": "The open document changed while the new document was being composed; compose again.",
   "error.stalePreview": "The document changed while this preview was being made; preview again on the open document.",
   "error.unmatchedReplace": "The engine found no text to replace in that paragraph, so nothing was applied. Select the text again and retry.",
+  "error.runRangeConflict": "A run format change was refused because an earlier pending change in that paragraph (text, a link, a field, a bookmark, an image or a cell) changes its length, so the run no longer names the same characters. Nothing was applied. Remove the format change from the pending list, apply the rest, then format the run again; or queue the format change before the others.",
+  "error.rangeTagRefused": "A paragraph in this HWP document holds a range mark the engine cannot move, so an edit that changes that paragraph's length was refused. Nothing was applied. Convert the document to HWPX and edit it again, or remove the range mark in Hangul.",
   "error.readOnlyReplacement": "The editor became read-only before the template could be applied; switch to an editable document and retry.",
   "error.pendingReplacement": "Pending edits would be lost; apply or clear them before replacing this document.",
   "error.loadingReplacement": "A new document is still loading; wait for it to finish, then retry.",
@@ -827,7 +829,7 @@ export const ko: MessageTable = {
   "segment.multiReorderRefused":
     "이동과 삭제는 문단 하나, 또는 같은 자리에서 연속한 문단들을 대상으로 합니다. 그런 문단들을 함께 선택하면 한 번에 옮기거나 삭제할 수 있습니다.",
   "segment.sectionDefinitionLocked":
-    "구역의 첫 문단은 구역의 용지 설정을 담고 있어 옮기거나 삭제할 수 없고, 그 위로 다른 문단을 옮길 수도 없습니다. 다른 문단을 선택하세요.",
+    "구역의 첫 문단은 구역의 용지 설정을 담고 있어 옮기거나 삭제할 수 없고, 그 위로 다른 문단을 옮기거나 삽입할 수도 없습니다. 이 문단 뒤에 삽입하거나 다른 문단을 선택하세요.",
   "segment.alignLabel": "정렬",
   "segment.alignGroupAria": "문단 정렬",
   "segment.alignLeft": "왼쪽",
@@ -925,6 +927,8 @@ export const ko: MessageTable = {
   "error.staleCompose": "새 문서를 작성하는 동안 열린 문서가 바뀌었습니다. 다시 작성하세요.",
   "error.stalePreview": "미리보기를 만드는 동안 문서가 바뀌었습니다. 열린 문서에서 다시 미리보기하세요.",
   "error.unmatchedReplace": "해당 문단에서 바꿀 텍스트를 엔진이 찾지 못해 아무것도 적용되지 않았습니다. 텍스트를 다시 선택한 뒤 재시도하세요.",
+  "error.runRangeConflict": "같은 문단에 대기 중인 앞선 변경(텍스트, 링크, 필드, 책갈피, 그림, 셀)이 문단 길이를 바꾸어 run이 더 이상 같은 글자를 가리키지 않으므로 run 서식 변경이 거부되었습니다. 아무것도 적용되지 않았습니다. 대기 목록에서 서식 변경을 제거하고 나머지를 적용한 뒤 run 서식을 다시 지정하거나, 서식 변경을 다른 변경보다 먼저 대기열에 넣으세요.",
+  "error.rangeTagRefused": "이 HWP 문서의 한 문단에 엔진이 옮길 수 없는 구간 표시가 있어, 그 문단의 길이를 바꾸는 편집이 거부되었습니다. 아무것도 적용되지 않았습니다. 문서를 HWPX로 변환한 뒤 다시 편집하거나, 한글에서 구간 표시를 제거하세요.",
   "error.readOnlyReplacement": "템플릿을 적용하기 전에 편집기가 읽기 전용으로 바뀌었습니다. 편집 가능한 문서에서 다시 시도하세요.",
   "error.pendingReplacement": "대기 중인 편집이 사라질 수 있습니다. 문서를 바꾸기 전에 편집을 적용하거나 지우세요.",
   "error.loadingReplacement": "새 문서를 아직 불러오는 중입니다. 불러오기가 끝난 뒤에 다시 시도하세요.",
