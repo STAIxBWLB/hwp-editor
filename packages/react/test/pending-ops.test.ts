@@ -56,6 +56,26 @@ describe.each([["en", en], ["ko", ko]] as const)("pending row text (%s)", (local
     expect(range).toContain(locale === "en" ? "end excluded" : "끝 제외");
   });
 
+  it("says a set-format row with no window formats the whole run", () => {
+    // A range op that names only the id formats every character of the run
+    // (edit-ops-v1), so its row cannot read like a paragraph target: the
+    // reader dropping it from the queue has to know the whole run goes with
+    // the selection.
+    expect(pendingTargetLabel({ kind: "set-format", address: { id: "r7" }, props: { bold: "on" } }, t))
+      .toBe(messages["pending.target.wholeRun"]({ id: "r7" }));
+    // With a source window the row names the window, as before.
+    expect(pendingTargetLabel({ kind: "set-format", address: { id: "r7", chars: [2, 5] }, props: { bold: "on" } }, t))
+      .toBe(messages["pending.target.chars"]({
+        range: messages["pending.target.id"]({ id: "r7" }), start: 2, end: 5,
+      }));
+    // The rule belongs to set-format alone: another op that addresses the same
+    // id edits the segment the id names, whatever its length.
+    expect(pendingTargetLabel({ kind: "delete-para", address: { id: "p1" } }, t))
+      .toBe(messages["pending.target.id"]({ id: "p1" }));
+    // A legacy set-format names its text to find, which is also no window.
+    expect(pendingTargetLabel({ kind: "set-format", find: "굵게", props: { bold: "on" } }, t)).toBe("굵게");
+  });
+
   it("resolves a style row and a metadata key through the tables that own them", () => {
     expect(pendingTargetLabel({ kind: "update-style", style: 3 }, t, { style: () => "바탕글" }))
       .toBe("바탕글");

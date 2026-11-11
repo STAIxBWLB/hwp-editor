@@ -519,6 +519,31 @@ export function segmentText(envelope: CatEnvelope, segment: Segment): string {
   return envelope.markdown.slice(start, end);
 }
 
+/**
+ * The document format, as far as the sub-run mapping has to know it.
+ *
+ * The two formats publish the same `source_chars` numbers for different
+ * reasons, so a rule that reads a span has to be told which one it is reading.
+ * `unknown` is a real answer and gets no allowance at all, which is the same
+ * answer as a document whose format the caller did not pass.
+ */
+export type DocumentFormat = "hwp" | "hwpx" | "unknown";
+
+/**
+ * The format a document's file name says it is.
+ *
+ * `DocumentHandle.name` carries the extension, and it is the only place the
+ * format reaches the editor: the envelope does not say which format it was
+ * read from. A name with neither extension is `unknown` rather than a default,
+ * because the two rules differ by one character.
+ */
+export function documentFormat(name: string | undefined): DocumentFormat {
+  const lower = name?.toLowerCase() ?? "";
+  if (lower.endsWith(".hwpx")) return "hwpx";
+  if (lower.endsWith(".hwp")) return "hwp";
+  return "unknown";
+}
+
 /** What a markdown scalar window inside one run piece can be named as. */
 export type RunCoverage =
   /** The window covers no character the piece shows, so it names nothing. */
@@ -546,14 +571,18 @@ export type RunCoverage =
  * reason: those characters are published under a segment of their own, so an
  * equal length there is a coincidence rather than an identity.
  *
- * The published span must be the width the piece shows, with one allowance: a
- * paragraph's last piece reads one unit longer where the document stores its
- * paragraph break as a character. A `.hwp` document does that; an HWPX
- * document trims a fragment's edge whitespace and still counts it, which
- * publishes the same `+1` for a leading or trailing space. One paragraph
- * cannot tell those apart, so the allowance is granted only when every
- * paragraph of the envelope shows the trailing unit (see
- * `publishesParagraphBreak`). Without that evidence the piece is named whole.
+ * The published span must be the width the piece shows, with one allowance,
+ * and the document's format decides it: an HWP5 paragraph stores its break as
+ * the paragraph's last character, so that paragraph's last piece reads one
+ * unit longer than the text it shows, and every other piece of either format
+ * must be exact. HWPX does not store a break that way, and its piece has to be
+ * exact too, because an HWPX fragment trims its edge whitespace and still
+ * counts it: a leading or trailing space publishes the same `+1`, and reading
+ * that unit as a break would shift every character of the piece by one. So
+ * the format is a parameter and never an inference from the numbers - a
+ * document-wide inference cannot tell those two shapes apart, and one HWPX
+ * paragraph starting with a space was enough to make it grant the allowance
+ * to a document that does not store the break. `unknown` gets no allowance.
  *
  * The window is clamped to the characters the run shows. A selection is drawn
  * over the rendered markdown, so its edges land on a marker or on the edge
@@ -573,13 +602,22 @@ export function runCoverage(
   run: Segment,
   start: number,
   end: number,
+  format: DocumentFormat,
 ): RunCoverage {
   if (!Number.isInteger(start) || !Number.isInteger(end) ||
       start < run.start || end > run.end || start >= end) return { kind: "none" };
   if (start <= run.start && end >= run.end) return { kind: "whole" };
   const source = run.sourceChars;
   if (source === undefined) return { kind: "whole" };
-  const inner = runWindowText(run, segmentText(envelope, run));
+  const fragment = segmentText(envelope, run);
+  // Whether the window reaches a character this piece SHOWS is decided before
+  // the fragment is read back, because a piece a block control split may carry
+  // only one half of its marker pair (`**굵` and `게**` are the two pieces of
+  // one bold run) and no window can be read out of a half pair. Answering
+  // "whole" there would widen a drag that stopped on the opening marker.
+  const shown = visibleSpan(run, fragment);
+  if (Math.max(start, run.start + shown.start) >= Math.min(end, run.start + shown.end)) return { kind: "none" };
+  const inner = runWindowText(run, fragment);
   if (inner === undefined) return { kind: "whole" };
   const chars = [...inner.text];
   const innerStart = run.start + inner.offset;
@@ -590,7 +628,7 @@ export function runCoverage(
   // character of the run, so it names nothing: widening it to the whole piece
   // would format characters the selection never touched.
   if (from >= to) return { kind: "none" };
-  if (!mapsBackExactly(envelope, run, inner)) return { kind: "whole" };
+  if (!mapsBackExactly(envelope, run, inner, format)) return { kind: "whole" };
   let utf16 = 0;
   for (let at = 0; at < from; at++) utf16 += chars[at]!.length;
   const utf16Start = utf16;
@@ -616,6 +654,7 @@ function mapsBackExactly(
   envelope: CatEnvelope,
   run: Segment,
   inner: { text: string; lead: number; trail: number },
+  format: DocumentFormat,
 ): boolean {
   if (REWRITTEN_FRAGMENT.test(inner.text)) return false;
   if (envelope.segments.some((nested) => (nested.kind === "field" || nested.kind === "bookmark" ||
@@ -624,70 +663,26 @@ function mapsBackExactly(
   const span = source.end - source.start;
   const visible = inner.lead + inner.text.length + inner.trail;
   if (span === visible) return true;
-  return span === visible + 1 && isParagraphLastPiece(envelope, run) && publishesParagraphBreak(envelope);
+  // An HWP5 paragraph stores its break as the paragraph's last character, so
+  // that piece - and only that piece - ends one unit past the text it shows.
+  return format === "hwp" && span === visible + 1 && isParagraphLastPiece(envelope, run);
 }
 
 /**
  * A fragment the engine rewrites rather than reproduces character for character.
  *
  * Measured on ahwp 1.6.1: `가$xy$나` projects as an equation, a hard break as
- * two spaces before the newline, a footnote as `[^N]`, an image as `![](…)`, a
- * link as `[text](url)`, and `&`/`<` as their entities. None of those lengths
- * says anything about the source characters behind them.
+ * two spaces before the newline, a footnote as `[^N]`, an image as `![](…)`,
+ * a link as `[text](url)`, and a literal `<`/`&` as an entity inside a table
+ * cell. None of those lengths says anything about the source characters behind
+ * them.
+ *
+ * This is deliberately wider than what 1.6.1 emits in a body paragraph, where
+ * `a\b a&b a<b` comes back verbatim and the span equals the text: refusing
+ * those costs a whole-run format, and the widening it prevents is the failure
+ * this list exists to stop. The range hint says so.
  */
 const REWRITTEN_FRAGMENT = /[$&\n<>\\]|\]\(|!\[|\[\^|~~/u;
-
-/**
- * Whether this document publishes a paragraph break as the paragraph's own
- * last character.
- *
- * Both shapes of that question look alike inside one paragraph: a `.hwp`
- * paragraph's last piece ends one unit past its text, and an HWPX fragment
- * whose edge whitespace was trimmed is also one unit wider than it shows. So
- * the answer is taken document-wide and only from paragraphs that agree: every
- * cleanly readable last piece must read exactly one unit longer, and at least
- * one must exist. A document that stores no break (`0`, exact where it is
- * exact) or that mixes the two shapes has no such evidence and gets no
- * allowance.
- *
- * Cached per envelope because the answer is the same for every paragraph and
- * the caller asks once per run.
- */
-function publishesParagraphBreak(envelope: CatEnvelope): boolean {
-  const cached = paragraphBreakCache.get(envelope);
-  if (cached !== undefined) return cached;
-  let evidence = 0;
-  let consistent = true;
-  for (const paragraph of envelope.segments) {
-    if (paragraph.kind !== "para") continue;
-    let last: Segment | undefined;
-    for (const run of envelope.segments) {
-      if (run.kind !== "run" || run.sourceChars === undefined) continue;
-      if (!pieceOf(paragraph, run)) continue;
-      if (last === undefined || run.sourceChars.end >= last.sourceChars!.end) last = run;
-    }
-    if (last === undefined) continue;
-    const inner = runWindowText(last, segmentText(envelope, last));
-    if (inner === undefined || REWRITTEN_FRAGMENT.test(inner.text)) continue;
-    const span = last.sourceChars!.end - last.sourceChars!.start;
-    const visible = inner.lead + inner.text.length + inner.trail;
-    if (span !== visible + 1) { consistent = false; break; }
-    evidence += 1;
-  }
-  const verdict = consistent && evidence > 0;
-  paragraphBreakCache.set(envelope, verdict);
-  return verdict;
-}
-
-const paragraphBreakCache = new WeakMap<CatEnvelope, boolean>();
-
-/** Whether a run piece's path sits directly under a paragraph's path. */
-function pieceOf(paragraph: Segment, run: Segment): boolean {
-  if (run.section !== paragraph.section || run.para !== paragraph.para) return false;
-  if (paragraph.indices === undefined || run.indices === undefined) return true;
-  return run.indices.length === paragraph.indices.length + 1 &&
-    paragraph.indices.every((index, at) => run.indices![at] === index);
-}
 
 /**
  * Whether this piece is the last its paragraph publishes.
@@ -711,6 +706,41 @@ function sameParagraph(a: Segment, b: Segment): boolean {
   if (a.indices.length !== b.indices.length) return false;
   const depth = a.indices.length - 1;
   return a.indices.slice(0, depth).every((index, at) => b.indices![at] === index);
+}
+
+/**
+ * The scalars of a piece's fragment that are the text it shows.
+ *
+ * A piece whose fragment is its own text shows all of it. A piece an emphasis
+ * marker pair closes around shows the text between the pair, and the edge
+ * whitespace the engine leaves outside the pair is not text. A piece a block
+ * control split can carry only one half of the pair - `**굵` and `게**` are the
+ * two pieces of one bold run - so the half it does carry is stripped as a
+ * marker, with whatever whitespace sits outside it.
+ *
+ * This answers one question: does a window reach a character this piece shows?
+ * It never widens an answer to a window: a piece whose half pair was stripped
+ * cannot be read back by `runWindowText`, so it still names the whole run when
+ * the window reaches it.
+ */
+function visibleSpan(run: Segment, fragment: string): { start: number; end: number } {
+  const chars = [...fragment];
+  const whole = { start: 0, end: chars.length };
+  const direct = run.directChar;
+  if (direct === undefined || (!direct.bold && !direct.italic)) return whole;
+  const stars = direct.bold && direct.italic ? 3 : direct.bold ? 2 : 1;
+  const marker = "\\*".repeat(stars);
+  const wrapped = new RegExp(`^(\\s*)${marker}([\\s\\S]+)${marker}(\\s*)$`, "u").exec(fragment);
+  if (wrapped !== null) {
+    const lead = [...wrapped[1]!].length;
+    return { start: lead + stars, end: lead + stars + [...wrapped[2]!].length };
+  }
+  // One half of a pair, opening or closing, never both.
+  const opening = /^\s*\*+/u.exec(fragment);
+  if (opening !== null) return { start: [...opening[0]].length, end: chars.length };
+  const closing = /\*+\s*$/u.exec(fragment);
+  if (closing !== null) return { start: 0, end: chars.length - [...closing[0]].length };
+  return whole;
 }
 
 /**

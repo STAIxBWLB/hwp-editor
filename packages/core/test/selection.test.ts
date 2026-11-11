@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compareSegments, formatAddresses, hasOwnRef, isSectionDefinitionParagraph, paragraphAddress, resolveSelection, segmentPath, selectSimilar, selectionAction, selectedParagraphs } from "../src/selection.js";
+import { compareSegments, formatAddresses, formatTargets, hasOwnRef, isSectionDefinitionParagraph, paragraphAddress, resolveSelection, segmentPath, selectSimilar, selectionAction, selectedParagraphs } from "../src/selection.js";
 import type { CatEnvelope, Segment } from "../src/segments.js";
 import { initialState, reducer } from "../src/state.js";
 
@@ -381,12 +381,18 @@ describe("selection helpers", () => {
     // On .hwp the paragraph's last run publishes one unit more than it shows
     // (the stored break), and the window still covers only the characters
     // selected - measured on ahwp 1.6.1, where `chars` `[0, 3)` bolds the
-    // first three characters of a six-character last run.
+    // first three characters of a six-character last run. The format is what
+    // says so, and the default (no format named) grants nothing.
     const hwpRun: Segment = { ...run, sourceChars: { start: 0, end: 7 } };
     const hwp: CatEnvelope = { markdown: source.markdown, segments: [p, hwpRun] };
-    expect(formatAddresses(hwp, [p], range)).toEqual([{ id: "r0", chars: [0, 3] }]);
-    expect(formatAddresses(hwp, [p], { ...range, start: 3, end: 6 })).toEqual([{ id: "r0", chars: [3, 6] }]);
-    expect(formatAddresses(hwp, [p], { ...range, start: 0, end: 6 })).toEqual([{ id: "r0" }]);
+    expect(formatAddresses(hwp, [p], range, "hwp")).toEqual([{ id: "r0", chars: [0, 3] }]);
+    expect(formatAddresses(hwp, [p], { ...range, start: 3, end: 6 }, "hwp")).toEqual([{ id: "r0", chars: [3, 6] }]);
+    expect(formatAddresses(hwp, [p], { ...range, start: 0, end: 6 }, "hwp")).toEqual([{ id: "r0" }]);
+    // The same span under an HWPX name is the shape a trimmed edge space
+    // publishes, so the piece is named whole rather than shifted by one
+    // (t30-c1), and so is a document whose format is not known at all.
+    expect(formatAddresses(hwp, [p], range, "hwpx")).toEqual([{ id: "r0" }]);
+    expect(formatAddresses(hwp, [p], range)).toEqual([{ id: "r0" }]);
   });
 
   it("clamps a range that stops on a marker instead of dropping the selection", () => {
@@ -417,8 +423,10 @@ describe("selection helpers", () => {
     const second: Segment = { id: "split", indices: [0, 1], start: 4, end: 6, kind: "run", section: 0, para: 0,
       directChar: plain, sourceChars: { start: 11, end: 14 } };
     const envelope: CatEnvelope = { markdown: "abc|de\n", segments: [p, first, second] };
+    // The last piece carries the stored break, so the format that stores one
+    // is the one whose windows reach it.
     const at = (start: number, end: number) =>
-      formatAddresses(envelope, [p], { paragraph: { section: 0, para: 0, id: "p" }, start, end });
+      formatAddresses(envelope, [p], { paragraph: { section: 0, para: 0, id: "p" }, start, end }, "hwp");
     // One id names two pieces, so a covered piece names its own span: an op
     // with the id alone would format the other piece too.
     expect(at(0, 5)).toEqual([{ id: "split", chars: [0, 3] }, { id: "split", chars: [11, 12] }]);
@@ -428,6 +436,29 @@ describe("selection helpers", () => {
     // The interrupting control belongs to no piece, so a range inside the gap
     // names nothing at all.
     expect(at(3, 4)).toEqual([]);
+  });
+
+  it("labels a widened piece from its coverage, not from the op shape (t30-c3)", () => {
+    // A split run has to name each piece by its own source window, because an
+    // op that carries the id alone formats the whole run. So a piece the range
+    // was widened to arrives with `chars` exactly like one it mapped - and a
+    // reader counting missing `chars` as "whole run" labels nothing. The
+    // coverage answer is the label, and it travels beside the address.
+    const plain = { bold: false, italic: false, size_pt: 10, color: "#000000", faces: Array(7).fill("A"), face_ids: Array(7).fill(0) };
+    const p: Segment = { id: "p", indices: [0], start: 0, end: 6, kind: "para", section: 0, para: 0 };
+    const first: Segment = { id: "split", indices: [0, 0], start: 0, end: 3, kind: "run", section: 0, para: 0,
+      directChar: plain, sourceChars: { start: 0, end: 3 } };
+    const second: Segment = { id: "split", indices: [0, 1], start: 4, end: 6, kind: "run", section: 0, para: 0,
+      directChar: plain, sourceChars: { start: 11, end: 14 } };
+    const envelope: CatEnvelope = { markdown: "abc|de\n", segments: [p, first, second] };
+    const at = (start: number, end: number) =>
+      formatTargets(envelope, [p], { paragraph: { section: 0, para: 0, id: "p" }, start, end }, "hwpx");
+    // HWPX publishes no break, so the last piece's span is one unit wider than
+    // its text: a partial selection there is widened to the piece, and the op
+    // still carries the piece's window.
+    expect(at(4, 5)).toEqual([{ address: { id: "split", chars: [11, 14] }, whole: true }]);
+    // A window the range really maps is not labelled, even with `chars` on it.
+    expect(at(0, 2)).toEqual([{ address: { id: "split", chars: [0, 2] }, whole: false }]);
   });
 
   it("names no target for a piece a drag touches only through its marker", () => {

@@ -101,13 +101,17 @@ function bandsForPage(
   const selectedIds = new Set([...selected].flatMap(segment => segment.id === undefined ? [] : [segment.id]));
   for (const segment of envelope.segments) {
     const key = segment.id ?? `${segment.section}:${segment.para}`;
+    // A split run publishes one id per piece, so the id alone does not name a
+    // segment: two pieces would be two bands under one React key. The nesting
+    // path is what tells them apart.
+    const identity = `${segment.section}/${segment.indices?.join(".") ?? segment.para}`;
     const isSelected = selected.has(segment) || (segment.id !== undefined && selectedIds.has(segment.id));
     const isPending = !isSelected && pendingKeys.has(key);
     if (!isSelected && !isPending) continue;
     for (const [index, band] of bandsOnPage(envelope, segment, page, pageIndex, pageCount).entries()) {
       bands.push({
         ...band,
-        key: `${isSelected ? "sel" : "pend"}-${key}-${index}`,
+        key: `${isSelected ? "sel" : "pend"}-${key}-${identity}-${index}`,
         className: isSelected
           ? "hwped-band hwped-band-selected"
           : "hwped-band hwped-band-pending",
