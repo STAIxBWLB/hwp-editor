@@ -12,14 +12,15 @@
  * the strict parser below accepts the 0.20.x and 1.4.x envelopes alike.
  *
  * Re-verified against v1.6.1, whose `--segments v2` envelope is schema `1.1`:
- * the only delta is an optional `source_chars` on `run` segments, UTF-16 offsets
- * into the source paragraph that this projection does not read (and a consumer
- * that needed them would have to gate on their presence, because a schema `1.0`
- * host omits them). The 1.6.1 capture in test/fixtures/cat-segments-runs.json
- * is the same document 1.4.0 emits at `1.0`, minus that field, which is what
- * `parseCatEnvelope`'s additive-schema cases hold. The version test below is a
- * supported-major match on purpose (REVIEW.md): pinning an exact minor would
- * refuse this envelope.
+ * the only delta is an optional `source_chars` on `run` segments, absolute
+ * UTF-16 offsets into the source paragraph, projected here as
+ * `Segment.sourceChars`. A schema `1.0` host omits the field, so a consumer
+ * gates the feature on the field's presence rather than on the version: the
+ * 1.6.1 capture in test/fixtures/cat-segments-runs.json is the same document
+ * 1.4.0 emits at `1.0`, minus that field, which is what `parseCatEnvelope`'s
+ * additive-schema cases hold. The version test below is a supported-major
+ * match on purpose (REVIEW.md): pinning an exact minor would refuse this
+ * envelope.
  *
  * The wire envelope carries `{id, kind, path: {section, indices},
  * char_range: {start, end}, style, direct}` per segment, with ranges that
@@ -87,6 +88,18 @@ export interface Segment {
    * `style` to answer whether this segment carries formatting of its own.
    */
   direct?: ShapeAttrs;
+  /**
+   * Source coverage of this run piece, on the `run` segments of a schema `1.1`
+   * host (`source_chars` on the wire).
+   *
+   * `[start, end)` in UTF-16 code units ABSOLUTE within the source paragraph,
+   * the same unit and origin as `edit-ops-v1` `address.chars` and
+   * `render-layout-v1` `source_chars`; `runSourceRange` maps a markdown window
+   * onto it. A run that a block control interrupts is published once per
+   * contiguous piece, each carrying its own span. Absent on a schema `1.0`
+   * host, which is the feature gate: no version check is needed.
+   */
+  sourceChars?: { start: number; end: number };
 }
 
 /**
@@ -177,6 +190,7 @@ function projectSegment(raw: unknown): Segment {
   const directPara = para == null ? undefined : projectDirectPara(para);
   const style = projectShapeLevel((raw as Record<string, unknown>).style, "segment.style");
   const directShape = projectShapeLevel(direct, "segment.direct");
+  const sourceChars = projectSourceChars((raw as Record<string, unknown>).source_chars, kind as SegmentKind);
   return {
     id,
     indices: p.indices,
@@ -189,7 +203,35 @@ function projectSegment(raw: unknown): Segment {
     ...(directPara === undefined ? {} : { directPara }),
     ...(style === undefined ? {} : { style }),
     ...(directShape === undefined ? {} : { direct: directShape }),
+    ...(sourceChars === undefined ? {} : { sourceChars }),
   };
+}
+
+/**
+ * Project a run piece's `source_chars`, the schema `1.1` optional field.
+ *
+ * Absent is the whole story for a `1.0` host, so absence answers `undefined`
+ * rather than refusing. Present, it is held to the contract the schema states:
+ * the field exists on `run` segments and no other kind (the schema enforces
+ * that direction, and a strict parser must too), both bounds are nonnegative
+ * integers, and the range is never zero-length — a piece with nothing to
+ * report is not published at all. The unit is UTF-16 code units absolute
+ * within the source paragraph, which this function does not reinterpret.
+ */
+function projectSourceChars(value: unknown, kind: SegmentKind): { start: number; end: number } | undefined {
+  if (value === undefined) return undefined;
+  if (kind !== "run") {
+    throw new Error("segments envelope: source_chars outside a run segment; upgrade the host adapter to emit valid segment-envelope-v2 schema 1.1 data.");
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("segments envelope: malformed source_chars; upgrade the host adapter to project valid run source offsets.");
+  }
+  const { start, end } = value as Record<string, unknown>;
+  if (typeof start !== "number" || typeof end !== "number" ||
+      !Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end <= start) {
+    throw new Error("segments envelope: malformed source_chars; upgrade the host adapter to project an ordered, nonempty run source range.");
+  }
+  return { start, end };
 }
 
 /**
@@ -405,6 +447,7 @@ export function validateProjectedMetadata(envelope: CatEnvelope): CatEnvelope {
       directPara?: DirectPara | null;
       style?: ShapeAttrs | null;
       direct?: ShapeAttrs | null;
+      sourceChars?: Segment["sourceChars"] | null;
     };
     let normalized = segment;
     // Copy on the first normalization, so the caller's object is never the
@@ -418,8 +461,10 @@ export function validateProjectedMetadata(envelope: CatEnvelope): CatEnvelope {
     };
     if (nullable.directChar === null) { detach(); delete normalized.directChar; }
     if (nullable.directPara === null) { detach(); delete normalized.directPara; }
+    if (nullable.sourceChars === null) { detach(); delete normalized.sourceChars; }
     if (normalized.directChar !== undefined) projectDirectChar(normalized.directChar);
     if (normalized.directPara !== undefined) projectDirectPara(normalized.directPara);
+    if (normalized.sourceChars !== undefined) projectSourceChars(normalized.sourceChars, normalized.kind);
     // A level that projects to nothing (null, or the engine's null-char/null-
     // para spelling) is removed, so a consumer reads one shape for "no level"
     // instead of two. A malformed level still throws, through the same helper.
@@ -472,6 +517,96 @@ export function segmentText(envelope: CatEnvelope, segment: Segment): string {
   const end = info.utf16ByScalar.get(segment.end);
   if (start === undefined || end === undefined) throw new Error("segments envelope: segment range is not in this envelope; reload the document before selecting it again.");
   return envelope.markdown.slice(start, end);
+}
+
+/**
+ * Map a markdown scalar window inside one run piece to the source WCHAR
+ * window an edit-ops-v1 `address.chars` takes, or `undefined` when the
+ * projection cannot be read back character for character.
+ *
+ * This is the one place the two coordinate spaces meet, and they only meet
+ * exactly: the emitted fragment is the source text unless the engine wraps or
+ * rewrites it. So the mapping is checked, never assumed. The marker pair a
+ * bold, italic or bold-italic run is wrapped in is stripped only when the
+ * run's own `directChar` says it IS a marker (a literal `*Note*` projects like
+ * an italic run, and the direct level is what tells them apart), and what
+ * remains must be exactly as long as the published source span. An underline
+ * (`<u>…</u>`) or strike (`~~…~~`) wrapper, an escaped `&`/`<`, a trimmed
+ * fragment and an inline control counted in the source span all fail one of
+ * those checks, and the caller keeps the whole run instead of guessing a
+ * window that would format the wrong source characters.
+ *
+ * The window is half-open and expressed in scalars into the emitted markdown;
+ * a surrogate pair inside it counts once for the range and twice for the
+ * source, which is why the offsets are summed per code point rather than
+ * subtracted.
+ */
+export function runSourceRange(
+  envelope: CatEnvelope,
+  run: Segment,
+  start: number,
+  end: number,
+): [number, number] | undefined {
+  const source = run.sourceChars;
+  if (source === undefined || !Number.isInteger(start) || !Number.isInteger(end) ||
+      start < run.start || end > run.end || start >= end) return undefined;
+  const inner = runWindowText(run, segmentText(envelope, run));
+  if (inner === undefined) return undefined;
+  const base = run.start + inner.offset;
+  const from = start - base;
+  const to = end - base;
+  const text = [...inner.text];
+  if (from < 0 || to > text.length || from >= to) return undefined;
+  // The visible text and the source span must be the same characters. A
+  // control counted in the source, an escape that grows the output, or a
+  // trim that shrinks it all break this equality; nothing converts between
+  // the spaces, so a mismatch is a refusal rather than an estimate. The
+  // source span of a formatted run also holds the edge whitespace the marker
+  // pair was placed inside, so those widths are part of the comparison and of
+  // the window's origin.
+  if (inner.lead + inner.text.length + inner.trail !== source.end - source.start) return undefined;
+  let utf16 = 0;
+  for (let at = 0; at < from; at++) utf16 += text[at]!.length;
+  const utf16Start = utf16;
+  for (let at = from; at < to; at++) utf16 += text[at]!.length;
+  const sourceBase = source.start + inner.lead;
+  return [sourceBase + utf16Start, sourceBase + utf16];
+}
+
+/**
+ * A run's text inside the emitted fragment, the scalar offset where it starts,
+ * and the width of the edge whitespace the marker pair was placed inside.
+ *
+ * A run that its character properties mark bold, italic or both is wrapped in
+ * exactly that marker pair, and the wrapper is removed only when the wrapper
+ * found and the properties agree. The engine wraps the run's TRIMMED text and
+ * leaves its edge whitespace outside the markers (a bold `" / "` projects as
+ * space, the bold marker pair, `/`, the pair again, space, measured on
+ * 1.6.1), so the pattern allows whitespace around the pair and the returned
+ * offset points at the first non-space character; a window in that edge
+ * whitespace is refused.
+ *
+ * A plain run is read as itself: the engine does not escape `*`, so a literal
+ * `*Note*` projects exactly like an italic run, and the direct level is what
+ * tells them apart. Other wrappers (underline, strike, links, escapes) are
+ * left in place; the caller's length check refuses them, because they are not
+ * published in `directChar`.
+ */
+function runWindowText(
+  run: Segment,
+  markdown: string,
+): { text: string; offset: number; lead: number; trail: number } | undefined {
+  const direct = run.directChar;
+  if (direct === undefined) return undefined;
+  if (!direct.bold && !direct.italic) return { text: markdown, offset: 0, lead: 0, trail: 0 };
+  const stars = direct.bold && direct.italic ? 3 : direct.bold ? 2 : 1;
+  const marker = "\\*".repeat(stars);
+  const wrapped = new RegExp(`^(\\s*)${marker}([\\s\\S]+)${marker}(\\s*)$`, "u").exec(markdown);
+  if (wrapped === null) return undefined;
+  const text = wrapped[2]!;
+  if (text !== text.trim()) return undefined;
+  const lead = [...wrapped[1]!].length;
+  return { text, offset: lead + stars, lead, trail: [...wrapped[3]!].length };
 }
 
 /** Map a markdown offset to its source coordinate, if inside a segment. */

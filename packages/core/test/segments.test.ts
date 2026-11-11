@@ -29,12 +29,14 @@ import {
   markdownLength,
   offsetToRef,
   parseCatEnvelope,
+  runSourceRange,
   segmentAtOffset,
   segmentAtRef,
   segmentRef,
   segmentText,
   validateProjectedMetadata,
 } from "../src/segments.js";
+import type { CatEnvelope, DirectChar, Segment } from "../src/segments.js";
 
 const fixture = (name: string) =>
   readFileSync(join(import.meta.dirname, "fixtures", name), "utf8");
@@ -45,27 +47,48 @@ describe("parseCatEnvelope", () => {
     wire.schema_version = schema_version;
     expect(parseCatEnvelope(JSON.stringify(wire)).segments).toHaveLength(5);
   });
-  it("parses the real schema 1.1 envelope, whose per-run source_chars it ignores", () => {
+  it("parses the real schema 1.1 envelope and projects its per-run source_chars", () => {
     const wire = JSON.parse(fixture("cat-segments-runs.json"));
     expect(wire.schema_version).toBe("1.1");
     const env = parseCatEnvelope(fixture("cat-segments-runs.json"));
     expect(env.markdown).toBe("앞 **굵게** 뒤\n\n");
     expect(env.segments.map((s) => s.kind)).toEqual(["para", "run", "run", "run"]);
     // char_range counts the emitted markdown, emphasis markers included: the
-    // bold run covers its two `**` while its source_chars span only `굵게`.
-    // The projection keeps the published scalar offsets and drops source_chars,
-    // which no consumer reads yet (a host below 1.6.1 does not send it).
+    // bold run covers its two `**` while its sourceChars span only `굵게`.
     expect(env.segments.map((s) => [s.start, s.end])).toEqual([
       [0, 12], [0, 2], [2, 8], [8, 10],
     ]);
-    expect(env.segments.some((s) => "source_chars" in s)).toBe(false);
+    expect(env.segments.map((s) => s.sourceChars)).toEqual([
+      undefined, { start: 0, end: 2 }, { start: 2, end: 4 }, { start: 4, end: 6 },
+    ]);
   });
-  it("projects the 1.1 envelope to what its 1.0 spelling yields", () => {
+  it("projects the 1.1 envelope to the 1.0 spelling plus the source offsets", () => {
     const wire = JSON.parse(fixture("cat-segments-runs.json"));
     const oneOne = parseCatEnvelope(JSON.stringify(wire));
     for (const segment of wire.segments) delete segment.source_chars;
     const oneZero = parseCatEnvelope(JSON.stringify({ ...wire, schema_version: "1.0" }));
-    expect(oneOne).toEqual(oneZero);
+    // The field's presence is the feature gate: a 1.0 host omits it, and its
+    // absence — not a version number — is what a consumer checks.
+    expect(oneZero.segments.some((segment) => segment.sourceChars !== undefined)).toBe(false);
+    expect(oneOne.segments.map((segment) => segment.sourceChars !== undefined))
+      .toEqual([false, true, true, true]);
+    expect(oneOne.segments.map(({ sourceChars: _source, ...rest }) => rest)).toEqual(oneZero.segments);
+  });
+  it.each([
+    ["a zero-length range", { start: 2, end: 2 }],
+    ["a reversed range", { start: 4, end: 2 }],
+    ["a negative bound", { start: -1, end: 2 }],
+    ["a fractional bound", { start: 0.5, end: 2 }],
+    ["a non-object", [0, 2]],
+  ])("rejects source_chars with %s", (_label, source_chars) => {
+    const wire = JSON.parse(fixture("cat-segments-runs.json"));
+    wire.segments[1].source_chars = source_chars;
+    expect(() => parseCatEnvelope(JSON.stringify(wire))).toThrow("source_chars");
+  });
+  it("rejects source_chars on a segment that is not a run", () => {
+    const wire = JSON.parse(fixture("cat-segments-runs.json"));
+    wire.segments[0].source_chars = { start: 0, end: 2 };
+    expect(() => parseCatEnvelope(JSON.stringify(wire))).toThrow("outside a run segment");
   });
   it.each([-1, 0.5])("rejects malformed path indices %s before selection", index => {
     const wire = JSON.parse(fixture("cat-segments-basic.json"));
@@ -150,6 +173,20 @@ describe("parseCatEnvelope", () => {
     expect(validateProjectedMetadata(oldHost)).toBe(oldHost);
     const malformed = { ...oldHost, segments: [{ ...oldHost.segments[0]!, directChar: { bold: "yes" } as never }] };
     expect(() => validateProjectedMetadata(malformed)).toThrow(/malformed direct[.]char properties; upgrade the host adapter/);
+  });
+
+  it("revalidates projected run source offsets and drops a null one", () => {
+    const run = { start: 0, end: 1, kind: "run" as const, section: 0, para: 0, sourceChars: { start: 3, end: 5 } };
+    const kept = { markdown: "x", segments: [run] };
+    expect(validateProjectedMetadata(kept)).toBe(kept);
+    const nulled = validateProjectedMetadata({ markdown: "x", segments: [{ ...run, sourceChars: null as never }] });
+    expect(nulled.segments[0]).not.toHaveProperty("sourceChars");
+    for (const sourceChars of [{ start: 5, end: 5 }, { start: 5, end: 3 }, { start: -1, end: 2 }, { start: 0.5, end: 2 }]) {
+      expect(() => validateProjectedMetadata({ markdown: "x", segments: [{ ...run, sourceChars }] }))
+        .toThrow(/malformed source_chars/);
+    }
+    expect(() => validateProjectedMetadata({ markdown: "x", segments: [{ start: 0, end: 1, kind: "para", section: 0, para: 0,
+      sourceChars: { start: 0, end: 1 } }] })).toThrow(/outside a run segment/);
   });
 
   it("fails an out-of-range projected offset at the boundary, not later in render", () => {
@@ -248,3 +285,111 @@ describe("segment coordinate helpers", () => {
     expect(segmentAtRef(env, { section: 0, para: 99 })).toBeUndefined();
   });
 });
+
+/**
+ * The markdown-to-source mapping behind a sub-run address.
+ *
+ * Every case starts from a shape the engine was measured to emit: a plain run
+ * whose fragment is its text, a bold/italic run wrapped in its markers, and a
+ * run whose block control splits it into one segment per piece.
+ */
+describe("runSourceRange", () => {
+  const directChar = (bold = false, italic = false): DirectChar => ({
+    bold, italic, size_pt: 10, color: "#000000",
+    faces: [null, null, null, null, null, null, null],
+    face_ids: [0, 0, 0, 0, 0, 0, 0],
+  });
+  const run = (
+    markdown: string,
+    start: number,
+    end: number,
+    sourceChars: [number, number] | undefined,
+    direct = directChar(),
+  ): { envelope: CatEnvelope; segment: Segment } => {
+    const segment: Segment = {
+      id: `r${start}`,
+      indices: [1, 0],
+      start,
+      end,
+      kind: "run",
+      section: 0,
+      para: 1,
+      directChar: direct,
+      ...(sourceChars === undefined ? {} : { sourceChars: { start: sourceChars[0], end: sourceChars[1] } }),
+    };
+    return { envelope: { markdown, segments: [segment] }, segment };
+  };
+
+  it("maps a window inside a plain run, counting a surrogate pair as two source units", () => {
+    const { envelope, segment } = run("둘째 😀문단\n", 0, 6, [0, 7]);
+    expect(runSourceRange(envelope, segment, 0, 2)).toEqual([0, 2]);
+    expect(runSourceRange(envelope, segment, 2, 4)).toEqual([2, 5]);
+    expect(runSourceRange(envelope, segment, 3, 4)).toEqual([3, 5]);
+    expect(runSourceRange(envelope, segment, 4, 6)).toEqual([5, 7]);
+    expect(runSourceRange(envelope, segment, 2, 2)).toBeUndefined();
+    expect(runSourceRange(envelope, segment, 0, 7)).toBeUndefined();
+  });
+
+  it("reads an emphasis wrapper back only when the properties vouch for it", () => {
+    const bold = run("앞 **굵게** 뒤\n", 2, 8, [2, 4], directChar(true));
+    expect(runSourceRange(bold.envelope, bold.segment, 4, 5)).toEqual([2, 3]);
+    expect(runSourceRange(bold.envelope, bold.segment, 5, 6)).toEqual([3, 4]);
+    // A window that starts on a marker, or lies wholly inside one, has no
+    // source character to name.
+    expect(runSourceRange(bold.envelope, bold.segment, 3, 5)).toBeUndefined();
+    expect(runSourceRange(bold.envelope, bold.segment, 6, 8)).toBeUndefined();
+    const italic = run("*굵게*\n", 0, 4, [0, 2], directChar(false, true));
+    expect(runSourceRange(italic.envelope, italic.segment, 1, 2)).toEqual([0, 1]);
+    const both = run("***굵게***\n", 0, 8, [0, 2], directChar(true, true));
+    expect(runSourceRange(both.envelope, both.segment, 3, 5)).toEqual([0, 2]);
+    // The engine trims the wrapped text and leaves edge whitespace outside
+    // the markers: a bold " / " projects as " **/** ", so the word inside
+    // maps and a window in the edge whitespace is refused.
+    const spaced = run(" **/** \n", 0, 7, [0, 3], directChar(true));
+    expect(runSourceRange(spaced.envelope, spaced.segment, 3, 4)).toEqual([1, 2]);
+    expect(runSourceRange(spaced.envelope, spaced.segment, 0, 1)).toBeUndefined();
+    // A literal `*Note*` in a plain run is text, not a marker: the direct
+    // level says plain, and the fragment is the source verbatim.
+    const literal = run("*Note*\n", 0, 6, [0, 6]);
+    expect(runSourceRange(literal.envelope, literal.segment, 1, 5)).toEqual([1, 5]);
+    // Properties that claim emphasis the fragment does not carry are refused.
+    const missing = run("굵게\n", 0, 2, [0, 2], directChar(true));
+    expect(runSourceRange(missing.envelope, missing.segment, 0, 1)).toBeUndefined();
+    // A host that publishes no direct level cannot be told apart from a
+    // literal marker, so it is refused rather than guessed.
+    const noDirect = run("굵게\n", 0, 2, [0, 2]);
+    delete noDirect.segment.directChar;
+    expect(runSourceRange(noDirect.envelope, noDirect.segment, 0, 1)).toBeUndefined();
+  });
+
+  it("keeps each piece of a block-control-split run on its own source span", () => {
+    const first: Segment = { id: "split", indices: [1, 0], start: 0, end: 3, kind: "run", section: 0, para: 1,
+      directChar: directChar(), sourceChars: { start: 0, end: 3 } };
+    const second: Segment = { id: "split", indices: [1, 1], start: 4, end: 6, kind: "run", section: 0, para: 1,
+      directChar: directChar(), sourceChars: { start: 3, end: 5 } };
+    const envelope: CatEnvelope = { markdown: "abc|de\n", segments: [first, second] };
+    expect(runSourceRange(envelope, first, 1, 3)).toEqual([1, 3]);
+    expect(runSourceRange(envelope, second, 4, 5)).toEqual([3, 4]);
+    expect(runSourceRange(envelope, second, 5, 6)).toEqual([4, 5]);
+    // The interrupting control's own character belongs to no piece: a window
+    // that reaches back over it is outside the piece's own range.
+    expect(runSourceRange(envelope, second, 3, 5)).toBeUndefined();
+  });
+
+  it("refuses a window whose text is not the source text", () => {
+    const underline = run("<u>x</u>\n", 0, 8, [0, 1]);
+    expect(runSourceRange(underline.envelope, underline.segment, 3, 4)).toBeUndefined();
+    const strike = run("~~x~~\n", 0, 5, [0, 1]);
+    expect(runSourceRange(strike.envelope, strike.segment, 2, 3)).toBeUndefined();
+    // Escaping grows the output; an inline control counted in the source span
+    // shrinks it. Neither converts, so both are refused.
+    const escaped = run("a&amp;b\n", 0, 7, [0, 3]);
+    expect(runSourceRange(escaped.envelope, escaped.segment, 0, 1)).toBeUndefined();
+    const inlineControl = run("ab\n", 0, 2, [0, 4]);
+    expect(runSourceRange(inlineControl.envelope, inlineControl.segment, 0, 1)).toBeUndefined();
+    // No published source offsets: there is no source coordinate to map to.
+    const noSource = run("ab\n", 0, 2, undefined);
+    expect(runSourceRange(noSource.envelope, noSource.segment, 0, 1)).toBeUndefined();
+  });
+});
+

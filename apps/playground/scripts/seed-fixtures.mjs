@@ -86,11 +86,14 @@ writeFileSync(layoutSpecPath, JSON.stringify(layoutSpec));
 specs.push({ spec: layoutSpecPath, out: "z-layout-demo.hwpx" });
 
 // T3 selection fixture: five paragraphs plus repeated text in distinct formatting runs.
+// The first occurrence sits inside one run LONGER than the three characters
+// #46 AC2 selects ("동일문 안내"), so the e2e proves a sub-run address rather
+// than a whole-run one that happens to match the selection.
 const selectionSpec = {
   version: "2.0",
   document: { version: "1.0", sections: [{ blocks: [
     { type: "paragraph", runs: [
-      { type: "text", text: "동일문" }, { type: "text", text: " / ", bold: true },
+      { type: "text", text: "동일문 안내" }, { type: "text", text: " / ", bold: true },
       { type: "text", text: "동일문", italic: true },
     ] },
     ...["둘째 😀문단", "셋째 문단", "넷째 문단", "다섯째 문단"].map(text => ({ type: "paragraph", runs: [{ type: "text", text }] })),

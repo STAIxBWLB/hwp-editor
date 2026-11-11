@@ -33,6 +33,9 @@ describe.each([["en", en], ["ko", ko]] as const)("pending row text (%s)", (local
     const label = pendingAddressLabel({ at: { section: 0, paragraph: 3 } }, t);
     expect(label).toBe(messages["pending.target.at"]({ section: 0, paragraph: 3 }));
     expect(label).not.toContain("{");
+    // Engine indices are 0-based while other labels in the editor are 1-based,
+    // so a row has to say which base it prints (#58 item 26).
+    expect(label).toContain(locale === "en" ? "0-based" : "0 기준");
   });
 
   it("keeps a run and a character range readable", () => {
@@ -40,12 +43,17 @@ describe.each([["en", en], ["ko", ko]] as const)("pending row text (%s)", (local
       .toBe(messages["pending.target.run"]({ section: 1, paragraph: 2, run: 4 }));
     // A range op addresses a paragraph or a run by id and carries the WCHAR
     // window separately, so the window reads on top of whichever one it is.
-    expect(pendingAddressLabel({ id: "r7", chars: [2, 5] }, t))
+    const range = pendingAddressLabel({ id: "r7", chars: [2, 5] }, t);
+    expect(range)
       .toBe(messages["pending.target.chars"]({
         range: messages["pending.target.id"]({ id: "r7" }),
         start: 2,
         end: 5,
       }));
+    // The window is half-open, counted in UTF-16 code units of the source
+    // paragraph, and 0-based; the row states all three before #71 emits one.
+    expect(range).toContain(locale === "en" ? "0-based UTF-16" : "0 기준 UTF-16");
+    expect(range).toContain(locale === "en" ? "end excluded" : "끝 제외");
   });
 
   it("resolves a style row and a metadata key through the tables that own them", () => {

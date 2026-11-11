@@ -1,6 +1,6 @@
 import type { EditAddress, ParagraphAddress } from "./ops.js";
 import type { CatEnvelope, Segment, SegmentRef } from "./segments.js";
-import { markdownLength, segmentRef } from "./segments.js";
+import { markdownLength, runSourceRange, segmentRef } from "./segments.js";
 import type { EditorAction, EditorState, MarkdownRangeSelection } from "./state.js";
 
 function segmentKey(segment: Segment): string {
@@ -204,7 +204,7 @@ export function formatAddresses(
       ? paragraph.id === range.paragraph.id
       : paragraph.section === range.paragraph.section && paragraph.para === range.paragraph.para;
     if (!matches || range.start < paragraph.start || range.end > paragraph.end) return [];
-    return addressesForRuns(envelope, paragraphRuns(envelope, paragraph, range), paragraph, false);
+    return addressesForRuns(envelope, paragraphRuns(envelope, paragraph, range), paragraph, false, range);
   }
   const out: EditAddress[] = [];
   const targets = new Set<string>();
@@ -245,7 +245,13 @@ function addressForSelectedRun(envelope: CatEnvelope, run: Segment): EditAddress
   return undefined;
 }
 
-function addressesForRuns(envelope: CatEnvelope, runs: Segment[], paragraph: Segment, allowLegacyFallback: boolean): EditAddress[] {
+function addressesForRuns(
+  envelope: CatEnvelope,
+  runs: Segment[],
+  paragraph: Segment,
+  allowLegacyFallback: boolean,
+  range?: MarkdownRangeSelection | null,
+): EditAddress[] {
   const out: EditAddress[] = [];
   const targets = new Set<string>();
   const legacyProjection = paragraph.indices === undefined && runs.every((run) => run.indices === undefined);
@@ -264,6 +270,13 @@ function addressesForRuns(envelope: CatEnvelope, runs: Segment[], paragraph: Seg
       address = { at: { section: run.section, paragraph: run.para, run: run.indices[1]! } };
     }
     if (address === undefined) continue;
+    if (range !== undefined && range !== null) {
+      const narrow = narrowToRange(envelope, run, range);
+      // One unaddressable piece refuses the whole selection: a partial list
+      // would format fewer characters than the user selected without saying so.
+      if (narrow === "refuse") return [];
+      if (narrow !== "whole") address = { ...address, chars: narrow };
+    }
     const key = addressKey(address);
     if (targets.has(key)) continue;
     targets.add(key);
@@ -275,8 +288,36 @@ function addressesForRuns(envelope: CatEnvelope, runs: Segment[], paragraph: Seg
   return out;
 }
 
+/**
+ * What a markdown range selects inside one run piece.
+ *
+ * - `"whole"` — the range covers the piece, or the piece publishes no
+ *   `source_chars` (a schema `1.0` host), which keeps the pre-#71 behavior of
+ *   snapping the selection to the whole run.
+ * - a `[start, end)` source window — the range covers part of a piece that
+ *   publishes where its characters are, and `runSourceRange` could read the
+ *   window back exactly.
+ * - `"refuse"` — the piece is only partly selected and carries source offsets
+ *   the projection cannot map (emphasis wrappers, escapes, inline controls).
+ *   Guessing here would format source characters the user did not select.
+ */
+function narrowToRange(
+  envelope: CatEnvelope,
+  run: Segment,
+  range: MarkdownRangeSelection,
+): "whole" | "refuse" | [number, number] {
+  if (range.start <= run.start && range.end >= run.end) return "whole";
+  if (run.sourceChars === undefined) return "whole";
+  return runSourceRange(envelope, run, Math.max(range.start, run.start), Math.min(range.end, run.end)) ?? "refuse";
+}
+
 function addressKey(address: EditAddress): string {
-  return "id" in address ? `id:${address.id}` : `${address.at.section}:${address.at.paragraph}:${address.at.run}`;
+  const base = "id" in address
+    ? `id:${address.id}`
+    : `${address.at.section}:${address.at.paragraph}:${address.at.run}`;
+  // A split run publishes one id per piece, so the source window is part of
+  // the identity: two windows of the same run are two ops, not a duplicate.
+  return address.chars === undefined ? base : `${base}@${address.chars[0]}-${address.chars[1]}`;
 }
 
 /**

@@ -84,22 +84,21 @@ test("AC3: five selected paragraphs use one edit request and one undo restores a
 });
 
 /**
- * #46 AC2: bolding part of a phrase that occurs twice changes only the selected
- * occurrence.
+ * #46 AC2 as written: bolding three characters inside a longer run that occurs
+ * twice changes only the selected occurrence and only the selected characters.
  *
- * The selection here is three characters of the first occurrence, which is
- * what AC2 asks. Under the 2026-11-11 address decision a sub-run selection
- * snaps to the whole run it sits in (sub-run characters are #71, waiting on
- * hwp-cli#517), so the op carries the run and no `chars`. That makes AC2's
- * literal claim hold on this fixture only because the phrase IS one run, which
- * the premise below asserts rather than assumes: a fixture change that left the
- * run longer than the selection would otherwise make this test bold more than
- * the three characters it claims.
+ * The first occurrence is the six-character run "동일문 안내", and the e2e
+ * selects its first three characters. hwp-cli 1.6.1 publishes `source_chars`
+ * on run segments (schema 1.1, hwp-cli#517), so the op addresses the run with
+ * the half-open source window `chars: [0, 3]` instead of snapping to the whole
+ * run, and the untouched " 안내" and the second occurrence prove the window
+ * landed where it was asked.
  */
-test("AC2: a range over a repeated phrase changes only the selected occurrence", async ({page}) => {
+test("AC2: three characters inside a longer run are bolded, the rest and the other occurrence unchanged", async ({page}) => {
   const before = await loadSelectionFixture(page);
   const firstRun=before.segments.find(segment=>segment.kind==="run")!;
-  expect(segmentText(before,firstRun)).toBe("동일문");
+  expect(segmentText(before,firstRun)).toBe("동일문 안내");
+  expect(firstRun.sourceChars).toEqual({start:0,end:6});
   const bodies = await recordEdits(page);
   const list=page.getByRole("listbox",{name:en["segment.paragraphChoices"]});
   await list.getByRole("option").nth(0).click();
@@ -111,11 +110,48 @@ test("AC2: a range over a repeated phrase changes only the selected occurrence",
   await page.getByRole("button",{name:en["toolbar.applyWithCount"]({count:1}),exact:true}).click();
   expect(bodies).toHaveLength(1);
   const ops=editOps(bodies[0]!);
-  expect(ops).toEqual([{kind:"set-format",address:{id:firstRun.id},props:{bold:"on"}}]);
-  const op=ops[0]!;
-  expect("address" in op && "chars" in op.address).toBe(false);
+  expect(ops).toEqual([{kind:"set-format",address:{id:firstRun.id,chars:[0,3]},props:{bold:"on"}}]);
   const after=await (await applied).json() as CatEnvelope;
-  const repeated=after.segments.filter(segment=>segment.kind==="run" && segmentText(after,segment).includes("동일문"));
-  expect(repeated).toHaveLength(2);
-  expect(repeated.map(segment=>segment.directChar?.bold)).toEqual([true,false]);
+  // The engine wraps a formatted run in its markers, so compare the text a
+  // reader sees: the bolded run is now the phrase alone, the rest of the
+  // source run follows unbolded, and the italic occurrence is untouched.
+  const visible=(segment:CatEnvelope["segments"][number])=>
+    segmentText(after,segment)
+      .replace(/\*\*([\s\S]+?)\*\*/u,"$1")
+      .replace(/\*([\s\S]+?)\*/u,"$1");
+  const inParagraph=after.segments.filter(segment=>segment.kind==="run" &&
+    segment.section===firstRun.section && segment.para===firstRun.para);
+  expect(inParagraph.filter(segment=>segment.directChar?.bold).map(visible)).toEqual(["동일문"," / "]);
+  expect(inParagraph.filter(segment=>!segment.directChar?.bold).map(visible)).toEqual([" 안내","동일문"]);
+  expect(inParagraph.filter(segment=>visible(segment)==="동일문").map(segment=>segment.directChar?.italic))
+    .toEqual([false,true]);
+});
+
+/**
+ * The same selection against a schema `1.0` envelope: it carries no
+ * `source_chars`, because the field's presence is the feature gate. The range
+ * then keeps the pre-#71 behavior and names the whole run, rather than
+ * inventing a window from markdown offsets the host never published.
+ */
+test("AC2 fallback: an envelope without source_chars formats the whole run", async ({page}) => {
+  await page.route("**/api/hwp-editor/read", async route => {
+    const response = await route.fetch();
+    const body = await response.json() as CatEnvelope;
+    for (const segment of body.segments) delete (segment as {sourceChars?: unknown}).sourceChars;
+    await route.fulfill({ response, json: body });
+  });
+  const before = await loadSelectionFixture(page);
+  const firstRun=before.segments.find(segment=>segment.kind==="run")!;
+  expect(firstRun.sourceChars).toBeUndefined();
+  expect(segmentText(before,firstRun)).toBe("동일문 안내");
+  const bodies = await recordEdits(page);
+  const list=page.getByRole("listbox",{name:en["segment.paragraphChoices"]});
+  await list.getByRole("option").nth(0).click();
+  await selectRunRange(page, 0, 3);
+  await expect(page.getByText(en["segment.rangeRunCount"]({count:1}),{exact:true})).toBeVisible();
+  await page.getByLabel(en["segment.bold"],{exact:true}).check();
+  await page.getByRole("button",{name:en["segment.formatSubmit"],exact:true}).click();
+  await page.getByRole("button",{name:en["toolbar.applyWithCount"]({count:1}),exact:true}).click();
+  expect(bodies).toHaveLength(1);
+  expect(editOps(bodies[0]!)).toEqual([{kind:"set-format",address:{id:firstRun.id},props:{bold:"on"}}]);
 });

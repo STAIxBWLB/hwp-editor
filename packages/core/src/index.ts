@@ -56,6 +56,7 @@ export {
   parseCatEnvelope,
   hasDirectFormatting,
   projectShapeAttrs,
+  runSourceRange,
   segmentAtOffset,
   segmentAtRef,
   segmentRef,

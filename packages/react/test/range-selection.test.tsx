@@ -174,6 +174,32 @@ describe.each([["en", en], ["ko", ko]] as const)("Markdown run range selection (
     expect(JSON.stringify(engine.calls.edit[0]?.ops)).not.toContain('"ir"');
   });
 
+  it("addresses characters inside one run with the run id and its source window", async () => {
+    // A schema 1.1 host publishes where the run's characters are, so three of
+    // six are addressed as a window instead of widening to the whole run.
+    const text = "동일문 안내";
+    const envelope: CatEnvelope = {
+      markdown: `${text}\n\n`,
+      segments: [
+        { id: "para-one", indices: [0], start: 0, end: 6, kind: "para", section: 0, para: 0 },
+        { id: "run-one", indices: [0, 0], start: 0, end: 6, kind: "run", section: 0, para: 0,
+          directChar: runChar(), sourceChars: { start: 0, end: 6 } },
+      ],
+    };
+    const engine = createMockEngine({ envelope });
+    render(<HwpEditor engine={engine} file={file} locale={locale} />);
+    const textarea = await selectFirstParagraph(messages);
+    await selectRange(textarea, 0, 3);
+    expect(await screen.findByText(messages["segment.rangeRunCount"]({ count: 1 }))).toBeTruthy();
+    fireEvent.click(screen.getByLabelText(messages["segment.bold"]));
+    fireEvent.click(screen.getByRole("button", { name: messages["segment.formatSubmit"] }));
+    fireEvent.click(await screen.findByRole("button", { name: messages["toolbar.applyWithCount"]({ count: 1 }) }));
+    await waitFor(() => expect(engine.calls.edit).toHaveLength(1));
+    expect(engine.calls.edit[0]?.ops).toEqual([
+      { kind: "set-format", address: { id: "run-one", chars: [0, 3] }, props: { bold: "on" } },
+    ]);
+  });
+
   it("maps an emoji-only UTF-16 range to its whole run and rejects a half-surrogate", async () => {
     const engine = createMockEngine({ envelope: rangeEnvelope() });
     render(<HwpEditor engine={engine} file={file} locale={locale} />);

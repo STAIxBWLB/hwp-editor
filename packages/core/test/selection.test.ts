@@ -357,6 +357,46 @@ describe("selection helpers", () => {
       { paragraph: { section: 0, para: 2, id: "emoji-p" }, start: 0, end: 1 })).toEqual([{ id: "emoji-run" }]);
   });
 
+  it("addresses a character window from published source offsets, and keeps the whole-run fallback", () => {
+    const plain = { bold: false, italic: false, size_pt: 10, color: "#000000", faces: Array(7).fill("A"), face_ids: Array(7).fill(0) };
+    const p: Segment = { id: "p", indices: [0], start: 0, end: 7, kind: "para", section: 0, para: 0 };
+    const run: Segment = { id: "r0", indices: [0, 0], start: 0, end: 6, kind: "run", section: 0, para: 0,
+      directChar: plain, sourceChars: { start: 0, end: 6 } };
+    const source: CatEnvelope = { markdown: "동일문 안내\n", segments: [p, run] };
+    const range = { paragraph: { section: 0, para: 0, id: "p" }, start: 0, end: 3 };
+    // Three of the six characters: the op names the run and the half-open
+    // source window, so the rest of the run is outside the edit.
+    expect(formatAddresses(source, [p], range)).toEqual([{ id: "r0", chars: [0, 3] }]);
+    // The whole run needs no window, exactly as before #71.
+    expect(formatAddresses(source, [p], { ...range, start: 0, end: 6 })).toEqual([{ id: "r0" }]);
+    // A schema 1.0 host publishes no source offsets, so a partial selection
+    // keeps the pre-#71 behavior and formats the whole run.
+    const legacy = { ...run } as Segment;
+    delete legacy.sourceChars;
+    expect(formatAddresses({ markdown: source.markdown, segments: [p, legacy] }, [p], range)).toEqual([{ id: "r0" }]);
+    // A source span the projection cannot read back exactly refuses the
+    // selection rather than formatting characters the user did not pick.
+    expect(formatAddresses({ markdown: source.markdown, segments: [p, { ...run, sourceChars: { start: 0, end: 4 } }] }, [p], range))
+      .toEqual([]);
+  });
+
+  it("keeps a split run's pieces apart by their source windows", () => {
+    const plain = { bold: false, italic: false, size_pt: 10, color: "#000000", faces: Array(7).fill("A"), face_ids: Array(7).fill(0) };
+    const p: Segment = { id: "p", indices: [0], start: 0, end: 6, kind: "para", section: 0, para: 0 };
+    const first: Segment = { id: "split", indices: [0, 0], start: 0, end: 3, kind: "run", section: 0, para: 0,
+      directChar: plain, sourceChars: { start: 0, end: 3 } };
+    const second: Segment = { id: "split", indices: [0, 1], start: 4, end: 6, kind: "run", section: 0, para: 0,
+      directChar: plain, sourceChars: { start: 3, end: 5 } };
+    const envelope: CatEnvelope = { markdown: "abc|de\n", segments: [p, first, second] };
+    // A block control interrupts the run, so one id names two pieces: the
+    // covered piece is the whole run, the partly covered one carries its own
+    // window, and the two are not deduplicated into one op.
+    expect(formatAddresses(envelope, [p], { paragraph: { section: 0, para: 0, id: "p" }, start: 0, end: 5 }))
+      .toEqual([{ id: "split" }, { id: "split", chars: [3, 4] }]);
+    expect(formatAddresses(envelope, [p], { paragraph: { section: 0, para: 0, id: "p" }, start: 1, end: 5 }))
+      .toEqual([{ id: "split", chars: [1, 3] }, { id: "split", chars: [3, 4] }]);
+  });
+
   it("does not emit top-level addresses for nested no-id runs", () => {
     const paragraph: Segment = { id: "nested-p", indices: [2, 0, 0], start: 0, end: 5, kind: "para", section: 0, para: 2 };
     const nestedRun: Segment = { indices: [2, 0, 0, 1], start: 0, end: 5, kind: "run", section: 0, para: 2 };
