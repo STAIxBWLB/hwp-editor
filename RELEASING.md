@@ -8,10 +8,10 @@ one tag releases all three.
 
 Publishing carries no stored credential: `.github/workflows/release.yml` publishes through npm
 trusted publishing, and the only credential a publish ever sees is an OIDC token minted per
-run. One step after the publishes, moving `next` (step 7), reads a single stored token scoped
-to the three packages, because trusted publishing cannot run `npm dist-tag`. The steps that
-still need a real npm login are the ones marked manual below, and they are manual for that
-reason.
+run. Moving `next` (step 7) tries that same OIDC token first and falls back to a single stored
+token scoped to the three packages, needed only while `Allow npm dist-tag` is off for the three
+trusted-publisher configurations. The steps that still need a real npm login are the ones
+marked manual below, and they are manual for that reason.
 
 Engine range, for the local checks and for anyone mounting the editor: this repository
 supports hwp-cli `>= 0.20.0` and `< 2.0.0`, matching `MIN_VERSION` and `MAX_VERSION_EXCLUSIVE`
@@ -89,9 +89,10 @@ consumed it was the one intended.
 
 In order:
 
-- It installs `npm@^11.5.1` on the runner and prints `npm --version`. Node 22 bundles an npm
-  from the 10.x line, which predates trusted publishing; the printed version is the job log's
-  only evidence that the CLI can perform the OIDC exchange at all.
+- It installs `npm@^11.21.0` on the runner and prints `npm --version`. Node 22 bundles an npm
+  from the 10.x line, which predates trusted publishing; 11.21.0 is the first release that also
+  signs `npm dist-tag` with the OIDC identity (#45 item 5). The printed version is the job
+  log's only evidence that the CLI can perform the exchange at all.
 - It derives the version from the tag and packs and publishes core, then waits, then publishes
   react and server. The shell that does this is `scripts/release-helpers.sh`, sourced by each
   step - read it there, not in the workflow file.
@@ -148,7 +149,8 @@ never established before the first release. This is the check that settles it.
 
 The `publish` job's last step, `Move the next dist-tag (stable releases)`, points `next` at
 `$VERSION` for all three packages (`move_next_tag` in `scripts/release-helpers.sh`, #38). Check
-it in the job log: three `+next: @hwp-editor/<pkg>@$VERSION` lines. Then confirm:
+it in the job log: three `[ok] @hwp-editor/<pkg> next -> $VERSION (OIDC)` lines, or the same
+three ending in `(token)` when the OIDC attempt was refused. Then confirm:
 
 ```sh
 npm dist-tag ls @hwp-editor/core          # latest and next both at $VERSION
@@ -158,9 +160,23 @@ For a prerelease the step does nothing. `dist_tag_for` already published the pre
 `next` and deliberately left `latest` where it was, so `latest` is expected NOT to equal
 `$VERSION`.
 
-**How it is authorized.** Trusted publishing covers `npm publish` and `npm stage publish`
-only; `npm dist-tag` is not among a trusted publisher's allowed actions, so an OIDC token
-cannot do this. The step reads `NPM_DIST_TAG_TOKEN`, set up as follows:
+**How it is authorized: OIDC first, one stored token second (#45 item 5).** npm 11.21.0 and
+later sign `npm dist-tag` with the run's OIDC identity, so `move_next_tag` makes its first
+attempt with no credential configured anywhere - no `--userconfig`, no `NODE_AUTH_TOKEN`, the
+runner's own `.npmrc`. That path needs one thing in the package settings, and it is not the
+publish permission:
+
+- On npmjs.com, each package's trusted-publisher configuration has an **`Allow npm dist-tag`**
+  switch. It is **off by default**, it is independent of "publish directly with `npm publish`",
+  and enabling it on one package does not enable it on another
+  (npm docs, "Managing dist-tags with trusted publishing", read 2026-11-11).
+- Turn it on for all three packages to make the `(OIDC)` path the normal one. Note that a
+  trusted-publisher configuration cannot be edited: changing it means deleting the connection
+  and creating a new one, which re-mints the binding with the environment name (release.yml
+  header point 5).
+
+Until then npm refuses with E403 and the step logs `::group::npm dist-tag output (OIDC
+attempt)` with the message, then falls back to `NPM_DIST_TAG_TOKEN`:
 
 - It is an npm granular access token limited to `@hwp-editor/core`, `@hwp-editor/react` and
   `@hwp-editor/server`, with read and write access and an expiry.
@@ -173,9 +189,10 @@ cannot do this. The step reads `NPM_DIST_TAG_TOKEN`, set up as follows:
 - `repo-guards.test.ts` allows this one reference in that one place and no other secret
   anywhere.
 
-**When it did not happen.** The step is `continue-on-error`, so a missing, expired or
-rejected token leaves a warning or a failed step on an otherwise green run rather than
-skipping the release notes. Finish by hand from an `npm login` session (expect a 2FA prompt):
+**When it did not happen.** The step is `continue-on-error`, so OIDC refused with no token
+stored, or an expired or rejected token, leaves a warning or a failed step on an otherwise
+green run rather than skipping the release notes. Finish by hand from an `npm login` session
+(expect a 2FA prompt):
 
 ```sh
 npm dist-tag add "@hwp-editor/core@$VERSION" next

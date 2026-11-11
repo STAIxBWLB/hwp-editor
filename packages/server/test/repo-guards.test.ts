@@ -1034,3 +1034,149 @@ describe("CI-2: bounded workflows and an explicit gating aggregate", () => {
     expect(readFileSync(summary, "utf8")).toContain(`### ${title} advisory failed`);
   });
 });
+
+/** A `uses:` reference to another repository, action and ref captured. */
+const USES = /^(\s*)(?:-\s*)?uses:\s*(\S+)(\s+#\s*(\S+))?\s*$/;
+
+/** A full commit SHA, which is the only reference that cannot be repointed. */
+const FULL_SHA = /^[0-9a-f]{40}$/;
+
+interface ThirdPartyUse {
+  action: string;
+  ref: string;
+  /** Version in the trailing comment, which keeps the pin readable. */
+  comment: string | undefined;
+  where: string;
+}
+
+/**
+ * Every `uses:` that names another repository's action, third-party ones first.
+ *
+ * `actions/*` is GitHub's own and stays on its major tag by the owner's decision
+ * (#45 item 6 scopes the pinning to third-party actions); a local `./path`
+ * action is this repository's own code and has no ref at all.
+ */
+function thirdPartyUses(dir: string): ThirdPartyUse[] {
+  const uses: ThirdPartyUse[] = [];
+  for (const workflow of readWorkflows(dir)) {
+    for (const [index, line] of workflow.lines.entries()) {
+      const match = USES.exec(line);
+      const reference = match?.[2];
+      if (reference === undefined) continue;
+      if (reference.startsWith("./") || reference.startsWith("docker://")) continue;
+      const at = reference.lastIndexOf("@");
+      const action = at === -1 ? reference : reference.slice(0, at);
+      if (action.split("/")[0] === "actions") continue;
+      uses.push({
+        action,
+        ref: at === -1 ? "" : reference.slice(at + 1),
+        comment: match?.[4],
+        where: `${workflow.name}:${index + 1}`,
+      });
+    }
+  }
+  return uses;
+}
+
+/**
+ * #45 item 6: a third-party action may only run at a full commit SHA.
+ *
+ * Why this is a guard and not a style rule: `uses: pnpm/action-setup@v6` names a
+ * tag, and a tag is a pointer the action's owner can move. A workflow run then
+ * executes whatever that owner pushed next, with no diff in this repository to
+ * review, and the permission it runs with is the one the job was given - the
+ * publish job's OIDC identity included. The SHA is the reviewed commit; the
+ * trailing comment is the version, because a 40-character hash names nothing a
+ * reader can check.
+ *
+ * Fail-closed in the same way as the other guards here: a workflow directory
+ * that yields no third-party reference at all throws, so an indentation change
+ * that stops this from reading the files reads as a failure rather than a pass.
+ */
+function unpinnedActionViolations(dir: string): string[] {
+  const uses = thirdPartyUses(dir);
+  if (uses.length === 0) {
+    throw new Error(
+      `CI-3 guard found no third-party action reference in ${dir}; the guard did not run.`,
+    );
+  }
+  const violations: string[] = [];
+  for (const use of uses) {
+    if (!FULL_SHA.test(use.ref)) {
+      violations.push(`${use.where}: ${use.action}@${use.ref} is not a full commit SHA`);
+      continue;
+    }
+    if (use.comment === undefined || !/^v?\d/.test(use.comment)) {
+      violations.push(`${use.where}: ${use.action}@${use.ref} has no version comment`);
+    }
+  }
+  return violations;
+}
+
+describe("CI-3: a third-party action runs only at a pinned commit (#45 item 6)", () => {
+  it("pins every third-party action in the workflows to a SHA with its version", () => {
+    expect(unpinnedActionViolations(WORKFLOWS_DIR)).toEqual([]);
+    // Non-vacuous on this tree: the pin above is one of these.
+    expect(thirdPartyUses(WORKFLOWS_DIR).map((use) => use.action)).toContain(
+      "pnpm/action-setup",
+    );
+  });
+
+  it("reports a tag reference, which its owner can repoint", () => {
+    const dir = fixtureDir({
+      "ci.yml": [
+        "jobs:",
+        "  build:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - uses: pnpm/action-setup@v6",
+      ].join("\n"),
+    });
+    expect(unpinnedActionViolations(dir)).toEqual([
+      "ci.yml:5: pnpm/action-setup@v6 is not a full commit SHA",
+    ]);
+  });
+
+  it("reports a pinned action that lost its version comment", () => {
+    const dir = fixtureDir({
+      "ci.yml": [
+        "jobs:",
+        "  build:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        `      - uses: pnpm/action-setup@${"a".repeat(40)}`,
+      ].join("\n"),
+    });
+    expect(unpinnedActionViolations(dir)).toEqual([
+      `ci.yml:5: pnpm/action-setup@${"a".repeat(40)} has no version comment`,
+    ]);
+  });
+
+  it("allows a pinned action, an actions/* tag and a local action", () => {
+    const dir = fixtureDir({
+      "ci.yml": [
+        "jobs:",
+        "  build:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        `      - uses: pnpm/action-setup@${"b".repeat(40)} # v6.1.1`,
+        "      - uses: actions/checkout@v5",
+        "      - uses: ./scripts/local-action",
+      ].join("\n"),
+    });
+    expect(unpinnedActionViolations(dir)).toEqual([]);
+  });
+
+  it("fails rather than passing when it reads no third-party reference", () => {
+    const dir = fixtureDir({
+      "ci.yml": [
+        "jobs:",
+        "  build:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - run: echo hi",
+      ].join("\n"),
+    });
+    expect(() => unpinnedActionViolations(dir)).toThrow(/the guard did not run/);
+  });
+});

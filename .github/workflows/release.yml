@@ -41,6 +41,12 @@ name: release
 # step rather than assumed in a comment: it is the only evidence in the job log
 # that the CLI on the runner can perform the exchange at all.
 #
+# The floor is 11.21.0, not 11.5.1 (#45 item 5). 11.5.1 is the first npm that
+# performs the publish exchange, but OIDC for `npm dist-tag` - the move in point
+# 12 - arrived in 11.21.0 (npm docs, "Managing dist-tags with trusted
+# publishing", read 2026-11-11). One npm serves both, so the job installs the
+# higher floor.
+#
 # 5. THE ENVIRONMENT NAME IS HALF OF A BINDING, not a local setting. When a job
 # targets a deployment environment, GitHub mints the OIDC token with a subject
 # claim of the form repo:<owner>/<repo>:environment:<name>; without one the
@@ -93,12 +99,13 @@ name: release
 # 10. THE DIST-TAG IS DERIVED FROM THE VERSION AND ALWAYS PASSED EXPLICITLY.
 # `npm publish` writes `latest` when no --tag is given, so an approved
 # prerelease tag would put an RC on `latest` for every consumer - a violation of
-# Phase 1's D-01, and one no automated step can undo, because `npm dist-tag` is
-# not among a trusted publisher's allowed actions (06-RESEARCH.md §4). A version
-# carrying a prerelease identifier therefore publishes under `next`, matching
-# the hand-published RC, and every other version under `latest`; neither case
-# leaves the choice to npm's default. The same derivation drives `--prerelease`
-# on the GitHub Release, so a candidate is never presented as the stable one.
+# Phase 1's D-01, and one no automated step can undo: moving a dist-tag back is a
+# separate registry write (point 12), and one that has to be enabled per package
+# before npm will accept it. A version carrying a prerelease identifier
+# therefore publishes under `next`, matching the hand-published RC, and every
+# other version under `latest`; neither case leaves the choice to npm's default.
+# The same derivation drives `--prerelease` on the GitHub Release, so a candidate
+# is never presented as the stable one.
 #
 # 11. THE SHELL THAT DECIDES ALL OF THIS LIVES IN scripts/release-helpers.sh,
 # not in a heredoc here. Every function in it decides something irreversible,
@@ -106,17 +113,26 @@ name: release
 # publish it governs. Committed, it is read by shellcheck and driven branch by
 # branch against a stub npm by packages/server/test/release-helpers.test.ts.
 #
-# 12. ONE STORED CREDENTIAL, AND ONLY AFTER EVERY PUBLISH (#38). Publishing
-# authenticates through the ephemeral OIDC token minted per run and nothing
-# else. Trusted publishing cannot run `npm dist-tag`, so moving `next` to a new
-# stable version (RELEASING.md step 7) reads one stored token,
-# NPM_DIST_TAG_TOKEN: an npm granular token limited to the three packages,
-# kept as an environment secret of npm-publish, so it exists for a run only
-# after the approval. It is referenced in exactly one step, the last one in
-# the publish job, and handed to npm through a throwaway userconfig by
-# move_next_tag - never NODE_AUTH_TOKEN or the runner's .npmrc, which would make
-# npm skip the OIDC exchange (point 3). REL-02's guard allows this one
-# reference in this one place and nothing else.
+# 12. ONE STORED CREDENTIAL, AND ONLY AFTER EVERY PUBLISH (#38, #45 item 5).
+# Publishing authenticates through the ephemeral OIDC token minted per run and
+# nothing else. Moving `next` to a new stable version (RELEASING.md step 7) has
+# two paths, and move_next_tag tries them in this order:
+#
+#   OIDC first, with no credential configured anywhere. npm 11.21.0+ signs
+#   `npm dist-tag` with the same ephemeral token a publish uses (npm docs,
+#   "Managing dist-tags with trusted publishing", read 2026-11-11), provided the
+#   package's trusted-publisher configuration has `Allow npm dist-tag` enabled.
+#   That permission is off by default and is NOT implied by the publish
+#   permission, so npm refuses with E403 until a maintainer turns it on for all
+#   three packages.
+#
+#   NPM_DIST_TAG_TOKEN second, only on that refusal: an npm granular token
+#   limited to the three packages, kept as an environment secret of npm-publish,
+#   so it exists for a run only after the approval. It is referenced in exactly
+#   one step, the last one in the publish job, and handed to npm through a
+#   throwaway userconfig by move_next_tag - never NODE_AUTH_TOKEN or the
+#   runner's .npmrc, which would make npm skip the OIDC exchange (point 3).
+#   REL-02's guard allows this one reference in this one place and nothing else.
 
 on:
   push:
@@ -161,7 +177,7 @@ jobs:
       - uses: actions/checkout@v5
       # pnpm before setup-node: setup-node's pnpm cache shells out to
       # `pnpm store path`. No version input - the pin comes from packageManager.
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       - uses: actions/setup-node@v5
         with:
           node-version: 22
@@ -208,16 +224,17 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
 
-      # Header point 4. The floor is the first npm that implements trusted
-      # publishing; the print below is the job's evidence that it took.
+      # Header point 4. The floor is the first npm that performs the OIDC
+      # publish exchange AND the first that can sign `npm dist-tag` with it;
+      # the print below is the job's evidence that it took.
       - name: Install an npm that can perform the OIDC exchange
-        run: npm install -g "npm@^11.5.1"
+        run: npm install -g "npm@^11.21.0"
       - run: npm --version
 
       - run: pnpm install --frozen-lockfile
@@ -257,6 +274,10 @@ jobs:
       # Header point 12. Last on purpose, and continue-on-error: the packages are
       # published by now, and failing this job would skip release-notes. A
       # failure shows as an annotated step; RELEASING.md step 7 finishes by hand.
+      # move_next_tag tries the job's OIDC token first - id-token: write is on
+      # the job for the publish - and only reaches the secret below when npm
+      # refuses that, which is the state while `Allow npm dist-tag` is off for
+      # these packages.
       - name: Move the next dist-tag (stable releases)
         continue-on-error: true
         env:

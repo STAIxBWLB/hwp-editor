@@ -70,7 +70,27 @@ type Outcome =
 
 const STUB_NPM = `#!/bin/sh
 printf '%s\\n' "$*" >> "$CALLS_NPM"
-if [ "$1" != "install" ]; then exit 0; fi
+case "$1" in
+  dist-tag)
+    # Scripted separately from \`install\`: the OIDC attempt and the token
+    # fallback are two different credentials on the same command, so the
+    # sequence of dist-tag outcomes is what the fallback tests drive. With no
+    # outcome written the attempt succeeds, which is the OIDC path.
+    d=$(cat "$DIST_TAG_COUNTER" 2>/dev/null || echo 0)
+    d=$(( d + 1 ))
+    echo "$d" > "$DIST_TAG_COUNTER"
+    dtag=$(sed -n "\${d}p" "$DIST_TAG_OUTCOMES" 2>/dev/null)
+    if [ -z "$dtag" ]; then dtag=$(tail -n 1 "$DIST_TAG_OUTCOMES" 2>/dev/null); fi
+    if [ "$dtag" = "denied" ]; then
+      echo "npm error code E403"
+      echo "npm error 403 Forbidden - the trusted publisher cannot manage dist-tags for this package"
+      echo "npm error Ask a package maintainer to enable Allow npm dist-tag for this configuration."
+      exit 1
+    fi
+    exit 0 ;;
+  install) ;;
+  *) exit 0 ;;
+esac
 for a in "$@"; do probed="$a"; done
 n=$(cat "$COUNTER" 2>/dev/null || echo 0)
 n=$(( n + 1 ))
@@ -155,10 +175,17 @@ for (const [name, body] of [
   chmodSync(path, 0o755);
 }
 
-function runHelpers(snippet: string, outcomes: Outcome[] = [], env: Record<string, string> = {}): Run {
+function runHelpers(
+  snippet: string,
+  outcomes: Outcome[] = [],
+  env: Record<string, string> = {},
+  distTag: ("ok" | "denied")[] = [],
+): Run {
   const dir = mkdtempSync(join(tmpdir(), "hwped-release-helpers-"));
   const outcomesFile = join(dir, "outcomes");
   writeFileSync(outcomesFile, `${outcomes.join("\n")}\n`);
+  const distTagFile = join(dir, "dist-tag-outcomes");
+  writeFileSync(distTagFile, `${distTag.join("\n")}\n`);
   const callsNpm = join(dir, "calls-npm");
   const callsPnpm = join(dir, "calls-pnpm");
   writeFileSync(callsNpm, "");
@@ -177,6 +204,8 @@ function runHelpers(snippet: string, outcomes: Outcome[] = [], env: Record<strin
       UNKNOWN_RETRY_SECONDS: "0",
       OUTCOMES: outcomesFile,
       COUNTER: join(dir, "counter"),
+      DIST_TAG_OUTCOMES: distTagFile,
+      DIST_TAG_COUNTER: join(dir, "dist-tag-counter"),
       CALLS_NPM: callsNpm,
       CALLS_PNPM: callsPnpm,
       ...env,
@@ -388,24 +417,56 @@ describe("publish_package: a skipped publish is not a skipped build", () => {
   });
 });
 
-describe("move_next_tag: next follows a stable release (#38)", () => {
+describe("move_next_tag: next follows a stable release (#38, #45 item 5)", () => {
   const TOKEN = "npm_test_token_value_1234567890";
+  const PKGS = ["core", "react", "server"];
 
-  it("moves next on all three packages through a throwaway userconfig", () => {
-    const run = runHelpers('move_next_tag "$VER"', [], { VER: "1.2.0", NPM_DIST_TAG_TOKEN: TOKEN });
+  it("moves next on all three packages with OIDC, configuring no credential", () => {
+    // #45 item 5: npm 11.21.0+ authenticates `npm dist-tag` with the OIDC
+    // identity, so the first attempt must pass no credential at all - a
+    // --userconfig with a token in it would be a configured credential, which
+    // is what makes npm skip the OIDC exchange.
+    const run = runHelpers('move_next_tag "$VER"', [], { VER: "1.2.0", NPM_DIST_TAG_TOKEN: TOKEN }, [
+      "ok",
+      "ok",
+      "ok",
+    ]);
     expect(run.status).toBe(0);
-    expect(run.npmCalls).toHaveLength(3);
-    const pkgs = ["core", "react", "server"];
-    run.npmCalls.forEach((call, i) => {
-      expect(call).toMatch(
-        new RegExp(`^--userconfig \\S+ dist-tag add @hwp-editor/${pkgs[i]}@1\\.2\\.0 next$`),
-      );
-    });
+    expect(run.npmCalls).toEqual(
+      PKGS.map((pkg) => `dist-tag add @hwp-editor/${pkg}@1.2.0 next`),
+    );
+    expect(run.stdout).toContain("[ok] @hwp-editor/server next -> 1.2.0 (OIDC)");
+    expect(run.npmCalls.join("\n")).not.toContain(TOKEN);
+    expect(run.stdout).not.toContain("falling back");
+  });
+
+  it("falls back to the stored token only when OIDC is refused", () => {
+    const run = runHelpers(
+      'move_next_tag "$VER"',
+      [],
+      { VER: "1.2.0", NPM_DIST_TAG_TOKEN: TOKEN },
+      ["denied"],
+    );
+    expect(run.status).toBe(0);
+    // The bare attempt, then all three through the throwaway userconfig -
+    // all three even though OIDC moved none, because a partial pass must not
+    // leave one package on an older next.
+    expect(run.npmCalls).toHaveLength(4);
+    expect(run.npmCalls[0]).toBe("dist-tag add @hwp-editor/core@1.2.0 next");
+    expect(run.npmCalls.slice(1).map((call) => call.replace(/--userconfig \S+ /, ""))).toEqual(
+      PKGS.map((pkg) => `dist-tag add @hwp-editor/${pkg}@1.2.0 next`),
+    );
+    expect(run.npmCalls[1]).toMatch(/^--userconfig \S+ dist-tag add /);
+    expect(run.stdout).toContain("[ok] @hwp-editor/server next -> 1.2.0 (token)");
     // The token rides in the file, never on the command line (argv shows in
     // process listings and in npm's own logs).
     expect(run.npmCalls.join("\n")).not.toContain(TOKEN);
-    // And the file is gone once the helper returns.
-    const cfg = run.npmCalls[0]!.split(" ")[1]!;
+    // The refusal is printed, because "Allow npm dist-tag is off" and a
+    // registry failure need different repairs.
+    expect(run.stdout).toContain("::group::npm dist-tag output (OIDC attempt)");
+    expect(run.stdout).toContain("the trusted publisher cannot manage dist-tags");
+    // And the userconfig is gone once the helper returns.
+    const cfg = run.npmCalls[1]!.split(" ")[1]!;
     expect(existsSync(cfg)).toBe(false);
   });
 
@@ -416,10 +477,16 @@ describe("move_next_tag: next follows a stable release (#38)", () => {
     expect(run.stdout).toContain("[skip] 1.3.0-rc.0 is a prerelease");
   });
 
-  it("warns and skips without a token, so a published release is not failed by it", () => {
-    const run = runHelpers('move_next_tag "$VER"', [], { VER: "1.2.0", NPM_DIST_TAG_TOKEN: "" });
+  it("warns and skips when OIDC is refused and no token is stored", () => {
+    // The packages are published by this point, so this must not fail the job:
+    // the warning is the only signal that next still points at the old version.
+    const run = runHelpers('move_next_tag "$VER"', [], { VER: "1.2.0", NPM_DIST_TAG_TOKEN: "" }, [
+      "denied",
+    ]);
     expect(run.status).toBe(0);
-    expect(run.npmCalls).toEqual([]);
-    expect(run.stdout).toContain("::warning::NPM_DIST_TAG_TOKEN is not set");
+    expect(run.npmCalls).toEqual(["dist-tag add @hwp-editor/core@1.2.0 next"]);
+    expect(run.stdout).toContain(
+      "::warning::OIDC was refused and NPM_DIST_TAG_TOKEN is not set",
+    );
   });
 });
