@@ -1,4 +1,5 @@
 import { parsePageLayout } from "./layout.js";
+import { imageAssetMediaType, validateImageAssets } from "./assets.js";
 /**
  * HwpEngine client for the HTTP route contract defined in protocol.ts.
  * Works in browsers, Node >= 22, and Tauri (all have fetch + FormData).
@@ -259,10 +260,15 @@ export function createHttpEngine(
     },
 
     async edit(document, ops: EditOp[], options: EditOptions = {}) {
+      const assets = options.assets;
+      if (assets !== undefined) validateImageAssets(assets);
       const form = fileForm(document);
       form.append("ops", JSON.stringify(ops));
       if (options.verify) form.append("verify", "true");
       if (options.allowPartial) form.append("allowPartial", "true");
+      if (assets !== undefined) {
+        for (const asset of assets) form.append("asset", new Blob([asset.data as BlobPart], { type: imageAssetMediaType(asset.data)! }), asset.name);
+      }
       const res = await request<EditResponse>("/edit", {
         method: "POST",
         body: form,
@@ -293,7 +299,8 @@ export function createHttpEngine(
     async capabilities(): Promise<Capabilities> {
       const raw = reportObject(await request<unknown>("/capabilities", { method: "GET" }), "capabilities");
       const methods = raw.templateMethods === undefined ? [] : parseTemplateMethods(raw.templateMethods);
-      return { ...(raw as unknown as Capabilities), templateMethods: methods };
+      const { imageAssets, ...rest } = raw as unknown as Capabilities;
+      return { ...rest, templateMethods: methods, ...(imageAssets === "v1" ? { imageAssets: "v1" as const } : {}) };
     },
   };
 }

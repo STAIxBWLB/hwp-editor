@@ -455,6 +455,7 @@ describe("capabilities", () => {
       editable: true,
       templateMethods: [],
       editOps: "v1",
+      imageAssets: "v1",
       formats: ["hwp", "hwpx"],
     });
   }, 30_000);

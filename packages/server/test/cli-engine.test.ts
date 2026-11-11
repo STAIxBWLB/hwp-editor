@@ -74,6 +74,29 @@ describeBin("cli-engine (real hwp-cli binary)", () => {
     await expect(bad.capabilities()).rejects.toThrow(HwpCliError);
   });
 
+  it("inserts an uploaded PNG from its per-call staged asset path", async () => {
+    const cli = engine();
+    const { document } = await cli.compose(sampleSpec() as unknown as DocumentSpecV2, "image-upload.hwpx");
+    const image = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    const edited = await cli.edit(document, [{
+      kind: "insert-image", anchor: "안녕하세요", path: "figure.png", width: 20, height: 15,
+    }], { assets: [{ name: "figure.png", data: new Uint8Array(image) }], verify: true });
+    expect(edited.data.length).toBeGreaterThan(document.data.length);
+    expect((await cli.validate(edited)).valid).toBe(true);
+    expect((await cli.render(edited, { format: "png", pages: "1" })).length).toBeGreaterThan(0);
+  });
+
+  it("rejects direct API asset references before resolving or spawning the binary", async () => {
+    const missing = createCliEngine({ bin: "/no/such/hwp-binary" });
+    await expect(missing.edit({ name: "doc.hwpx", data: new Uint8Array() }, [
+      { kind: "insert-image", anchor: "x", path: "not-uploaded.png" },
+    ], { assets: [{ name: "figure.png", data: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) }] }))
+      .rejects.toMatchObject({ reason: "bad_request" });
+  });
+
   it("full loop: compose -> read -> edit -> render -> validate -> undo", async () => {
     const cli = engine();
 
