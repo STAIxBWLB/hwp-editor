@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { JSX, KeyboardEvent as ReactKeyboardEvent } from "react";
+import type { JSX } from "react";
 import type { Capabilities, Component, DocumentHandle, EditorError, EmbeddedTemplate } from "@hwp-editor/core";
 import { STARTER_COMPONENTS, documentSpecFromComponents } from "@hwp-editor/core";
 import { ErrorLine } from "./ErrorLine.js";
@@ -218,16 +218,6 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
     } finally { if (mounted.current) setBusy(false); }
   };
 
-  // Cmd/Ctrl+Enter belongs to the editor's root handler, which applies the
-  // queued edits. Inside this dialog that is not what the user pressed it
-  // for: the apply would rewrite the document the compose is about to
-  // replace, and its result would land on the composed file. The chord is
-  // stopped here so it never reaches the root; the dialog's own buttons
-  // remain the only way to compose or cancel.
-  const swallowApplyChord = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
-    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") event.stopPropagation();
-  };
-
   return (
     <div className="hwped-overlay" role="presentation" onClick={props.onClose}>
       <div
@@ -236,7 +226,6 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
         aria-modal="true"
         aria-label={t("compose.title")}
         onClick={(e) => e.stopPropagation()}
-        onKeyDown={swallowApplyChord}
       >
         <h2 className="hwped-dialog-title">{t("compose.title")}</h2>
 

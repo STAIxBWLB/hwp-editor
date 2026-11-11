@@ -1382,6 +1382,10 @@ describe("ComponentsPanel (TEST-03)", () => {
 
     await waitFor(() => expect(onError).toHaveBeenCalled());
     expect((onError.mock.calls[0]?.[0] as Error).message).toBe(en["error.loadingReplacement"]);
+    // On screen as well: a host that wires no `onError` (the playground) would
+    // otherwise see a click that did nothing.
+    const notice = await screen.findByText(en["error.loadingReplacement"]);
+    expect(notice.getAttribute("role")).toBe("status");
     // Refused before the engine was asked, and nothing replaced the document
     // the host had already left.
     expect(engine.calls.edit).toHaveLength(0);

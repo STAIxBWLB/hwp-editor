@@ -695,6 +695,10 @@ describe("HwpEditor refuses work against a document a load is replacing (t25)", 
     );
     expect(engine.calls.edit).toHaveLength(0);
     expect(onChange).not.toHaveBeenCalled();
+    // The refusal is a sentence, not a press that did nothing: the toolbar
+    // Apply stays enabled while the load runs.
+    const notice = await screen.findByText(en["error.loadingReplacement"]);
+    expect(notice.getAttribute("role")).toBe("status");
     // The ops are still staged: nothing was consumed by the refusal.
     expect(screen.getByText(en["toolbar.pendingEdits"]({ count: 1 }))).toBeTruthy();
 
@@ -727,20 +731,118 @@ describe("HwpEditor refuses work against a document a load is replacing (t25)", 
     await vi.waitFor(() => expect(started()).toBe(true));
     releaseEdit?.();
     // The edit itself ran, but its result belongs to the document the host
-    // left: no change reaches the host, and no error is recorded against the
-    // document that replaced it.
+    // left: no change reaches the host. The drop is recorded against the
+    // document still in the store, so the editor says why nothing happened —
+    // and the load that follows resets that state with the document.
     await vi.waitFor(() => expect(engine.calls.edit).toHaveLength(1));
     expect(onChange).not.toHaveBeenCalled();
-    expect(screen.queryByRole("alert")).toBeNull();
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      en["error.loadingReplacement"],
+    );
     release();
     await vi.waitFor(() => expect(engine.calls.read.at(-1)?.name).toBe(other.name));
     expect(onChange).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
   });
 
-  it("does not start an apply from Cmd/Ctrl+Enter inside the compose dialog", async () => {
+  it("leaves applying when the load that overtook the apply failed", async () => {
+    // A failed load, a null file and a refused compose read all move the
+    // generation without dispatching `load`, so nothing would reset
+    // "applying" — where the reducer refuses queue, undo and apply. The drop
+    // is recorded against the document and the snapshot stack this attempt
+    // staged, which unlocks the editor and names the reason.
+    const other: DocumentHandle = { name: "broken.hwpx", data: new TextEncoder().encode("broken") };
+    const engine = createMockEngine();
+    const readDocument = engine.read.bind(engine);
+    engine.read = async (document) => {
+      if (document.name === other.name) throw new Error("read failed");
+      return readDocument(document);
+    };
+    const releases: Array<() => void> = [];
+    const edit = engine.edit.bind(engine);
+    engine.edit = async (...args) => {
+      await new Promise<void>((resolve) => { releases.push(resolve); });
+      return edit(...args);
+    };
+    const onChange = vi.fn();
+    const { container, rerender } = render(
+      <HwpEditor engine={engine} file={file} onChange={onChange} />,
+    );
+    await selectAndQueueReplace(en);
+    await screen.findByText(en["toolbar.pendingEdits"]({ count: 1 }));
+    await applyOne(en);
+    await vi.waitFor(() => expect(releases).toHaveLength(1));
+
+    rerender(<HwpEditor engine={engine} file={other} onChange={onChange} />);
+    // The switched-to read fails, so no `load` follows this generation bump.
+    expect((await screen.findByRole("alert")).textContent).toContain(en["error.prefix.load"]);
+    releases[0]?.();
+
+    await vi.waitFor(() => expect(engine.calls.edit).toHaveLength(1));
+    await vi.waitFor(() =>
+      expect(
+        screen.getAllByRole("alert").map((node) => node.textContent ?? "").join("\n"),
+      ).toContain(en["error.loadingReplacement"]),
+    );
+    expect(container.firstElementChild?.getAttribute("data-status")).toBe("error");
+    expect(onChange).not.toHaveBeenCalled();
+
+    // Usable again: the ops are still staged, and a second Apply starts rather
+    // than being refused by a reducer still holding "applying".
+    await applyOne(en);
+    await vi.waitFor(() => expect(releases).toHaveLength(2));
+    releases[1]?.();
+    await vi.waitFor(() => expect(engine.calls.edit).toHaveLength(2));
+    await vi.waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
+  });
+
+  it("opens the replacement guard when the surface goes read-only during a compose read", async () => {
+    // `onComposed` bumps the load generation and then reads the composed
+    // file. A host that turns the surface read-only during that read leaves no
+    // load to finish the job, so the guard must open there: it otherwise
+    // stayed armed with nothing loading, and every later apply or replacement
+    // was refused as if a load were still running.
+    const engine = createMockEngine();
+    const composed: DocumentHandle = {
+      name: "composed.hwpx",
+      data: new TextEncoder().encode("composed"),
+    };
+    engine.compose = async () => ({ document: composed });
+    const readDocument = engine.read.bind(engine);
+    let releaseComposed: (() => void) | undefined;
+    engine.read = async (document) => {
+      if (document.name === composed.name) {
+        await new Promise<void>((resolve) => { releaseComposed = resolve; });
+      }
+      return readDocument(document);
+    };
+    const onChange = vi.fn();
+    const view = render(<HwpEditor engine={engine} file={file} onChange={onChange} />);
+    await selectAndQueueReplace(en);
+    await screen.findByText(en["toolbar.pendingEdits"]({ count: 1 }));
+
+    fireEvent.click(screen.getByRole("button", { name: en["toolbar.newDocument"] }));
+    const dialog = await screen.findByRole("dialog", { name: en["compose.title"] });
+    fireEvent.click(within(dialog).getByRole("button", { name: en["compose.submit"] }));
+    await vi.waitFor(() => expect(releaseComposed).toBeDefined());
+
+    view.rerender(<HwpEditor engine={engine} file={file} onChange={onChange} readOnly />);
+    releaseComposed?.();
+    await vi.waitFor(() => expect(engine.calls.read.at(-1)?.name).toBe(composed.name));
+    view.rerender(<HwpEditor engine={engine} file={file} onChange={onChange} />);
+
+    // Nothing is loading now, so the staged op applies instead of being told
+    // to wait for a load that will never finish.
+    await applyOne(en);
+    await vi.waitFor(() => expect(engine.calls.edit).toHaveLength(1));
+    expect(screen.queryByText(en["error.loadingReplacement"])).toBeNull();
+  });
+
+  it("does not start an apply from Cmd/Ctrl+Enter while the compose dialog is open", async () => {
     // The chord is handled at the root, so a press inside the modal used to
     // apply the queued edits: that rewrites the document the compose is about
-    // to replace, and the result lands on the composed file.
+    // to replace, and the result lands on the composed file. Focus stays on
+    // the toolbar trigger when the dialog opens, so the root has to refuse it.
     const engine = createMockEngine();
     const composed: DocumentHandle = { name: "composed.hwpx", data: new TextEncoder().encode("composed") };
     engine.compose = async () => ({ document: composed });
@@ -749,8 +851,14 @@ describe("HwpEditor refuses work against a document a load is replacing (t25)", 
     await selectAndQueueReplace(en);
     await screen.findByText(en["toolbar.pendingEdits"]({ count: 1 }));
 
-    fireEvent.click(screen.getByRole("button", { name: en["toolbar.newDocument"] }));
+    const trigger = screen.getByRole("button", { name: en["toolbar.newDocument"] });
+    fireEvent.click(trigger);
     const dialog = await screen.findByRole("dialog", { name: en["compose.title"] });
+    // The press a dialog-level handler cannot see: the trigger still has focus.
+    fireEvent.keyDown(trigger, { key: "Enter", ctrlKey: true });
+    expect(engine.calls.edit).toHaveLength(0);
+    expect(onChange).not.toHaveBeenCalled();
+    // And one inside the dialog, which must not start an apply either.
     const title = within(dialog).getByLabelText(en["compose.titleLabel"]);
     fireEvent.keyDown(title, { key: "Enter", ctrlKey: true });
     expect(engine.calls.edit).toHaveLength(0);

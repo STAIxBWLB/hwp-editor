@@ -435,16 +435,43 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         snapshot.document === null ||
         snapshot.pendingOps.length === 0 ||
         snapshot.status === "applying" ||
-        !editable ||
-        // The staged ops describe the document in the store, which a load in
-        // flight is about to replace. Starting now would edit a document the
-        // host already left, and the result would land on the new one.
-        loadGeneration.current !== loadedGeneration.current
+        !editable
       ) {
+        return Promise.resolve();
+      }
+      // The staged ops describe the document in the store, which a load in
+      // flight is about to replace. Starting now would edit a document the
+      // host already left, and the result would land on the new one. Said out
+      // loud rather than dropped: the toolbar Apply stays enabled while the
+      // load runs, so a press has to answer with the reason.
+      if (loadGeneration.current !== loadedGeneration.current) {
+        noteNotice(t("error.loadingReplacement"));
         return Promise.resolve();
       }
       const generation = loadGeneration.current;
       store.dispatch({ type: "applyStarted" });
+      // The stack `applyStarted` staged, so a drop can tell whether this
+      // attempt's transaction is still the one the store holds.
+      const applyingSnapshots = store.getState().snapshots;
+      /**
+       * A load or a compose that moved the generation owns the document now.
+       * Its paths that never dispatch `load` (a failed load, a null file, a
+       * refused compose read) would otherwise leave the status at "applying"
+       * forever, where the reducer refuses queue, undo and apply: the editor
+       * would be locked with no way out but another successful load. When the
+       * store still holds the document and the snapshot stack this attempt
+       * staged, the drop is recorded against them, which unlocks the editor
+       * and renders the reason. When the store has moved on, its own
+       * transition owns the state and `emitChange` stays silent either way.
+       */
+      const dropApply = (): void => {
+        const latest = store.getState();
+        if (latest.document !== snapshot.document || latest.snapshots !== applyingSnapshots) return;
+        store.dispatch({
+          type: "applyFailed",
+          error: { message: t("error.loadingReplacement") },
+        });
+      };
       return (async () => {
         try {
           const assets = snapshot.pendingOps.flatMap(op => {
@@ -463,7 +490,10 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           // A load or a compose that moved the generation owns the document
           // now: its own transition replaced the snapshot stack, so this
           // result is dropped whole rather than applied to the new document.
-          if (generation !== loadGeneration.current) return;
+          if (generation !== loadGeneration.current) {
+            dropApply();
+            return;
+          }
           setEnvelope(nextEnvelope);
           setValidation(report);
           store.dispatch({ type: "applySucceeded", document: next, pages });
@@ -471,7 +501,10 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         } catch (e) {
           // As above: a failure belongs to the document this attempt read, so
           // it is not recorded against the one a load put in its place.
-          if (generation !== loadGeneration.current) return;
+          if (generation !== loadGeneration.current) {
+            dropApply();
+            return;
+          }
           // A find that matched nothing leaves nothing applied, and the engine's
           // own line for it is Korean prose naming staged paths, so the error
           // line carries the localized sentence. The host still hears the
@@ -485,7 +518,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           emitError(e);
         }
       })();
-    }, [editable, engine, store, t]);
+    }, [editable, engine, noteNotice, store, t]);
 
     const replaceDocument = useCallback(
       (
@@ -599,6 +632,13 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         // disabled for the same reason.
         if (snapshot.pendingOps.length > 0) {
           noteNotice(t("components.pendingEdits"));
+          return;
+        }
+        // Checked here rather than left to `replaceDocument`: that refusal
+        // reaches only a host that listens on `onError`, and a palette click
+        // that does nothing is the bug this notice exists to prevent.
+        if (loadGeneration.current !== loadedGeneration.current) {
+          noteNotice(t("error.loadingReplacement"));
           return;
         }
         const segment = snapshot.selection === null ? undefined : segmentAtRef(envelope, snapshot.selection);
@@ -861,6 +901,12 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         if (composing) return;
         store.dispatch({ type: "select", selection: null });
       } else if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+        // With the compose dialog open the chord belongs to nobody: focus is
+        // still on the toolbar trigger when it opens, so the dialog cannot
+        // stop a press that never reaches it, and an apply here would rewrite
+        // the document the compose is about to replace. Refused at the root,
+        // like Escape above; the dialog's own buttons remain the way through.
+        if (composing) return;
         e.preventDefault();
         void applyPendingOps();
       }
@@ -1079,13 +1125,18 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
                       engine.capabilities(),
                       engine.validate(document).catch(() => null),
                     ]);
-                    if (generation !== loadGeneration.current || !editableRef.current) return;
+                    if (generation !== loadGeneration.current) return;
+                    // The generation still matches, so no load is in flight:
+                    // the guard opens here even when the surface went
+                    // read-only during the read, which is a refusal to show
+                    // the file and not a load that will finish the job.
+                    loadedGeneration.current = generation;
+                    if (!editableRef.current) return;
                     setCapabilities(caps);
                     setValidation(report);
                     setLoadError(null);
                     setEnvelope(nextEnvelope);
                     store.dispatch({ type: "load", document, pages });
-                    loadedGeneration.current = generation;
                   } catch (e) {
                     // Covers the render AFTER a successful compose; the
                     // compose call itself fails inside ComposePanel.
