@@ -26,6 +26,7 @@ function mockInvoke(responses: Record<string, unknown>): {
     args?: Record<string, unknown>,
   ): Promise<T> => {
     calls.push({ cmd, args });
+    if (cmd === "hwped_capabilities" && !(cmd in responses)) return Promise.resolve({version:"0.20.0",editable:true,formats:["hwp","hwpx"]} as T);
     if (cmd in responses) return Promise.resolve(responses[cmd] as T);
     return Promise.reject(new Error(`unexpected command: ${cmd}`));
   };
@@ -122,13 +123,15 @@ describe("createTauriEngine commands", () => {
       verify: true,
       allowPartial: true,
     });
-    expect(calls[0]?.cmd).toBe("hwped_edit");
-    expect(calls[0]?.args?.["opsArgv"]).toEqual([
+    const edit = calls.find(call => call.cmd === "hwped_edit");
+    expect(edit).toBeDefined();
+    expect(edit?.args).not.toHaveProperty("ops");
+    expect(edit?.args?.["opsArgv"]).toEqual([
       "--replace",
       "구교재=>신교재",
     ]);
-    expect(calls[0]?.args?.["verify"]).toBe(true);
-    expect(calls[0]?.args?.["allowPartial"]).toBe(true);
+    expect(edit?.args?.["verify"]).toBe(true);
+    expect(edit?.args?.["allowPartial"]).toBe(true);
     expect(result).toEqual({ name: doc.name, data: edited });
   });
 
@@ -237,8 +240,9 @@ describe("createTauriEngine errors", () => {
  * that branch is dead until maru moves off `Result<T, String>`.
  */
 describe("createTauriEngine protection backstop", () => {
-  const rejectWith = (detail: string): TauriInvoke => () =>
-    Promise.reject(detail);
+  const rejectWith = (detail: string): TauriInvoke => <T>(cmd: string) => cmd === "hwped_capabilities"
+    ? Promise.resolve({version:"0.20.0",editable:true,formats:["hwp","hwpx"]} as T)
+    : Promise.reject(detail);
 
   const MARKER_CASES: readonly (readonly [string, string])[] = [
     ["암호화된 문서", "encrypted document; hwp-cli refuses edit/compose"],
@@ -321,7 +325,7 @@ it("rejects addressed edits before invoking the legacy Tauri host", async () => 
   await expect(createTauriEngine(invoke).edit({ name: "test.hwpx", data: new Uint8Array() }, [
     { kind: "set-format", address: { at: { section: 0, paragraph: 1, run: 0 }, chars: [0, 3] }, props: { bold: "on" } },
   ])).rejects.toThrow(/JSON transport/);
-  expect(calls).toEqual([]);
+  expect(calls).toEqual(["hwped_capabilities"]);
 });
 
 describe("Tauri present layout validation", () => {
@@ -330,5 +334,43 @@ describe("Tauri present layout validation", () => {
     const failure=await createTauriEngine(invoke).render(doc).catch((error:unknown)=>error);
     expect(failure).toMatchObject({code:"failed",message:expect.stringContaining(field)});
     expect((failure as Error).message).toContain(RENDER_LAYOUT_NEXT_STEP);
+  });
+});
+
+describe("Tauri JSON edit channel", () => {
+  const caps={version:"1.4.0",editable:true,formats:["hwp","hwpx"],editOps:"v1"};
+  it("sends only ops with addresses and literal separators when v1 is advertised", async () => {
+    const {invoke,calls}=mockInvoke({hwped_capabilities:caps,hwped_edit:{name:doc.name,dataBase64:"AQI="}});
+    const engine=createTauriEngine(invoke,{workspaceRoot:"/work",pathOf:()=>"docs/source.hwpx"});
+    expect((await engine.capabilities()).editOps).toBe("v1");
+    await engine.edit(doc,[
+      {kind:"replace",find:"가=>나:@",replace:"값=다"},
+      {kind:"set-format",address:{id:"run-1",chars:[1,4]},props:{bold:"on"}},
+    ],{verify:true,allowPartial:false});
+    const edits=calls.filter(call=>call.cmd==="hwped_edit");
+    expect(edits).toHaveLength(1);
+    expect(edits[0]!.args).toEqual({document:{name:doc.name,path:"docs/source.hwpx"},workspaceRoot:"/work",ops:[
+      {op:"replace",from:"가=>나:@",to:"값=다"},
+      {op:"set_format",address:{id:"run-1",chars:[1,4]},bold:"on"},
+    ],verify:true,allowPartial:false});
+    expect(edits[0]!.args).not.toHaveProperty("opsArgv");
+  });
+  it("does not retry the legacy channel after a JSON edit fails", async () => {
+    const calls:Call[]=[];
+    const invoke:TauriInvoke=<T>(cmd:string,args?:Record<string,unknown>)=>{
+      calls.push({cmd,args});
+      if(cmd==="hwped_capabilities")return Promise.resolve(caps as T);
+      return Promise.reject("hwped_bad_request: ops is refused");
+    };
+    await expect(createTauriEngine(invoke).edit(doc,[{kind:"set-format",address:{id:"run-1"},props:{bold:"on"}}])).rejects.toMatchObject({code:"bad_request"});
+    expect(calls.filter(call=>call.cmd==="hwped_edit")).toHaveLength(1);
+    expect(calls.find(call=>call.cmd==="hwped_edit")!.args).not.toHaveProperty("opsArgv");
+  });
+  it("omits unimplemented capability versions and uses the legacy channel", async () => {
+    const {invoke,calls}=mockInvoke({hwped_capabilities:{...caps,editOps:"v2"},hwped_edit:{name:doc.name,dataBase64:"AQI="}});
+    const engine=createTauriEngine(invoke);
+    expect(await engine.capabilities()).not.toHaveProperty("editOps");
+    await engine.edit(doc,[{kind:"set-field",name:"title",value:"x"}]);
+    expect(calls.find(call=>call.cmd==="hwped_edit")!.args).toMatchObject({opsArgv:["--set-field","title=x"]});
   });
 });

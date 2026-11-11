@@ -9,9 +9,9 @@ import { parsePageLayout } from "./layout.js";
  *     the bridge as a path string (`pathOf`); only in-memory bytes are sent,
  *     as base64 (`dataBase64`). Rust resolves relative paths against
  *     `workspaceRoot`.
- *   - Edit: EditOp[] is serialized JS-side via opsToArgv and crosses as
- *     `opsArgv` argv fragments, so the Rust side stays a thin spawner with
- *     no op grammar of its own.
+ *   - Edit: a host advertising editOps v1 receives the edit-ops-v1 JSON
+ *     array as `ops`; older hosts receive `opsArgv`. Exactly one is sent,
+ *     and an edit failure never retries through the other channel.
  *
  * Zero dependencies: `invoke` is injected (peer pattern) — pass the real
  * `@tauri-apps/api/core` invoke in the host. Response shapes are the same
@@ -30,7 +30,7 @@ import type {
   ValidationReport,
 } from "./engine.js";
 import type { EditOp } from "./ops.js";
-import { opsToArgv } from "./ops.js";
+import { opsToArgv, opsToJson } from "./ops.js";
 import type { CatEnvelope } from "./segments.js";
 import type { DocumentSpecV2 } from "./generated/document-spec-v2.js";
 import type {
@@ -212,6 +212,15 @@ export function createTauriEngine(
     }
   }
 
+  async function capabilities(): Promise<Capabilities> {
+    const raw = await call<Capabilities>("hwped_capabilities", {});
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+      throw new HwpEngineError("failed", "hwped_capabilities returned invalid capability metadata; update the host adapter and retry.");
+    }
+    const { editOps, ...rest } = raw;
+    return { ...rest, ...(editOps === "v1" ? { editOps: "v1" as const } : {}) };
+  }
+
   return {
     read(document) {
       return call<CatEnvelope>("hwped_read", {
@@ -240,9 +249,13 @@ export function createTauriEngine(
     },
 
     async edit(document, ops: EditOp[], options: EditOptions = {}) {
+      const caps = await capabilities();
+      const channel = caps.editOps === "v1"
+        ? { ops: JSON.parse(opsToJson(ops)) as unknown[] }
+        : { opsArgv: opsToArgv(ops) };
       const res = await call<EditResponse>("hwped_edit", {
         document: ref(document),
-        opsArgv: opsToArgv(ops),
+        ...channel,
         ...(options.verify !== undefined ? { verify: options.verify } : {}),
         ...(options.allowPartial !== undefined
           ? { allowPartial: options.allowPartial }
@@ -267,8 +280,6 @@ export function createTauriEngine(
       });
     },
 
-    capabilities() {
-      return call<Capabilities>("hwped_capabilities", {});
-    },
+    capabilities,
   };
 }

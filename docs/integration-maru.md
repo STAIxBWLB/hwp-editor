@@ -31,7 +31,7 @@ Payloads mirror `packages/core/src/protocol.ts`, with two Tauri deltas:
 |---|---|---|
 | `hwped_read` | `{ document, workspaceRoot? }` | `CatEnvelope` |
 | `hwped_render` | `{ document, options?, workspaceRoot? }` | `RenderResponse` |
-| `hwped_edit` | `{ document, opsArgv, verify?, allowPartial?, workspaceRoot? }` | `EditResponse` |
+| `hwped_edit` | `{ document, ops? / opsArgv?, verify?, allowPartial?, workspaceRoot? }` | `EditResponse` |
 | `hwped_compose` | `{ spec, name }` | `ComposeResponse` |
 | `hwped_validate` | `{ document, workspaceRoot? }` | `ValidationReport` |
 | `hwped_capabilities` | `{}` | `Capabilities` |
@@ -40,18 +40,21 @@ Payloads mirror `packages/core/src/protocol.ts`, with two Tauri deltas:
   already on disk (relative paths resolve against `workspaceRoot`, with an
   escape guard), `{ name, dataBase64 }` otherwise. Paths are preferred —
   base64 only when the document is in-memory.
-- `opsArgv` is `opsToArgv(ops)` output, computed JS-side. Rust splices the
-  fragments into `hwp edit` verbatim and owns no op grammar. Addressed segment
-  edits cannot be represented by these flags: `opsToArgv` rejects them before
-  invoking the host. The HTTP/CLI transport supports these edits through
-  `edit-ops-v1` JSON. A Tauri host must adopt that JSON channel before enabling
-  addressed segment editing; falling back to text selectors can edit duplicate
-  occurrences unintentionally.
-- `Capabilities.editOps: "v1"` means both the client and the host support JSON
-  ops. Without it, the inspector disables addressed-edit controls and shows a
-  localized upgrade reason. The current argv-only Tauri bridge must leave the
-  flag absent; add it only when both sides send/accept the edit-ops-v1 JSON
-  channel. Other legacy argv controls remain available.
+- The client queries `hwped_capabilities` before each edit. If `editOps` is
+  `"v1"`, it serializes `EditOp[]` with `opsToJson`, parses that JSON into an
+  array and sends it as `ops`. Other hosts receive only `opsArgv`, generated
+  by `opsToArgv`. Exactly one of these fields is present, even for an empty
+  edit list; both/neither is `hwped_bad_request` on the host.
+- The JSON channel preserves addresses, WCHAR ranges and literal separator
+  characters. Rust validates that `ops` is an array, writes it into the
+  call's private work directory and invokes `hwp edit --ops <file>`. The
+  engine validates the grammar. A JSON edit failure is never retried through
+  argv, which could lose the target or repeat an edit.
+- `Capabilities.editOps: "v1"` means this client and the host both support the
+  JSON channel. Only that implemented capability is exposed; unknown future
+  channel versions are omitted. Older hosts keep legacy argv controls, and
+  addressed edits are refused before `hwped_edit` with an upgrade next step.
+
 - Rust errors are prefixed strings: `cli_missing:`, `hwp_timeout:`,
   `hwp_failed:`, `hwp_parse_failed:`, `hwped_bad_request:`. The engine wraps
   them as `<cmd> failed: <detail>`.
