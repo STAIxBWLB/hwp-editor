@@ -354,7 +354,7 @@ describe("HTTP image asset admission", () => {
   it("checks asset count and Blob.size before reading uploaded bytes", async () => {
     let calls = 0;
     const handler = createHwpEditorHandler({ engine: stubEngine({ async edit() { calls++; return { name: "x", data: png }; } }), sessions: false });
-    const ops = Array.from({ length: 9 }, (_, i) => ({ kind: "insert-image", anchor: `x${i}`, path: `x${i}.png` } as EditOp));
+    const ops = Array.from({ length: 9 }, (_, i) => ({ kind: "insert-image" as const, anchor: `x${i}`, path: `x${i}.png` }));
     const tooMany = await handler(request(ops.map((op) => ({ name: op.path, data: png })), ops));
     expect(tooMany.status).toBe(400);
     const tooLarge = await handler(request([

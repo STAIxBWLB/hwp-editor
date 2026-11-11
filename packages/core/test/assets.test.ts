@@ -25,7 +25,7 @@ describe("image assets", () => {
 
   it("rejects duplicate names, more than eight files, and oversized individual files", () => {
     expect(() => validateImageAssets([{ name: "a.png", data: png }, { name: "a.png", data: png }])).toThrow(/duplicate/);
-    expect(() => validateImageAssets(Array.from({ length: 9 }, (_, i) => ({ name: `a${i}.png`, data: png }))).toThrow(/at most 8/);
+    expect(() => validateImageAssets(Array.from({ length: 9 }, (_, i) => ({ name: `a${i}.png`, data: png })))).toThrow(/at most 8/);
     const oversized = new Uint8Array(10 * 1024 * 1024 + 1);
     oversized.set(png.subarray(0, 8));
     expect(() => validateImageAssets([{ name: "large.png", data: oversized }])).toThrow(/exceeds/);
