@@ -1,3 +1,5 @@
+import { malformedLayouts } from "./fixtures/layout.js";
+import { RENDER_LAYOUT_NEXT_STEP } from "../src/layout.js";
 /**
  * createHttpEngine error-path tests with a stub fetch. Pin the published
  * error carrier: a wire `error.code` survives to `HwpEngineError.code`, the
@@ -329,5 +331,14 @@ describe("render layout transport", () => {
     expect(page?.page).toBe(3);
     expect(page?.data).toEqual(new Uint8Array([1, 2]));
     expect(page?.layout).toEqual(layout);
+  });
+});
+
+describe("HTTP present layout validation", () => {
+  it.each(malformedLayouts)("rejects malformed $field before exposing page geometry", async ({value,field}) => {
+    const engine=createHttpEngine("/api",{fetch:stubFetch(JSON.stringify({pages:[{page:1,width:600,height:800,dpi:96,format:"png",dataBase64:base64.encode(new Uint8Array([1])),layout:value}]}),{status:200})});
+    const failure=await engine.render(doc).catch((error:unknown)=>error);
+    expect(failure).toMatchObject({code:"failed",message:expect.stringContaining(field)});
+    expect((failure as Error).message).toContain(RENDER_LAYOUT_NEXT_STEP);
   });
 });

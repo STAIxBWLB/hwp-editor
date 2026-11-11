@@ -1,3 +1,5 @@
+import { malformedLayouts } from "./fixtures/layout.js";
+import { RENDER_LAYOUT_NEXT_STEP } from "../src/layout.js";
 /**
  * createTauriEngine tests with a mock invoke. Pin the bridge contract:
  * command names, payload shapes (protocol.ts mirroring + opsArgv fragments),
@@ -320,4 +322,13 @@ it("rejects addressed edits before invoking the legacy Tauri host", async () => 
     { kind: "set-format", address: { at: { section: 0, paragraph: 1, run: 0 }, chars: [0, 3] }, props: { bold: "on" } },
   ])).rejects.toThrow(/JSON transport/);
   expect(calls).toEqual([]);
+});
+
+describe("Tauri present layout validation", () => {
+  it.each(malformedLayouts)("rejects malformed $field before exposing page geometry", async ({value,field}) => {
+    const {invoke}=mockInvoke({hwped_render:{pages:[{page:1,width:600,height:800,dpi:96,format:"png",dataBase64:base64.encode(new Uint8Array([1])),layout:value}]}});
+    const failure=await createTauriEngine(invoke).render(doc).catch((error:unknown)=>error);
+    expect(failure).toMatchObject({code:"failed",message:expect.stringContaining(field)});
+    expect((failure as Error).message).toContain(RENDER_LAYOUT_NEXT_STEP);
+  });
 });

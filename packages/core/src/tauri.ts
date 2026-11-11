@@ -1,3 +1,4 @@
+import { parsePageLayout } from "./layout.js";
 /**
  * HwpEngine client for Tauri hosts (e.g. maru). Calls Rust commands named
  * `hwped_read / hwped_render / hwped_edit / hwped_compose / hwped_validate /
@@ -232,7 +233,7 @@ export function createTauriEngine(
           height: p.height,
           dpi: p.dpi,
           format: p.format,
-          ...(p.layout === undefined ? {} : { layout: p.layout }),
+          ...(p.layout === undefined ? {} : { layout: parsePageLayout(p.layout) }),
           data: base64.decode(p.dataBase64),
         }),
       );

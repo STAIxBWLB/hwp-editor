@@ -1,3 +1,4 @@
+import { parsePageLayout } from "./layout.js";
 /**
  * HwpEngine client for the HTTP route contract defined in protocol.ts.
  * Works in browsers, Node >= 22, and Tauri (all have fetch + FormData).
@@ -176,7 +177,7 @@ export function createHttpEngine(
           height: p.height,
           dpi: p.dpi,
           format: p.format,
-          ...(p.layout === undefined ? {} : { layout: p.layout }),
+          ...(p.layout === undefined ? {} : { layout: parsePageLayout(p.layout) }),
           data: fromBase64(p.dataBase64),
         }),
       );
