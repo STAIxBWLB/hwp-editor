@@ -522,7 +522,7 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
         return error(400, "bad_request", "invalid content-length");
       }
       if (bytes > maxRequestBytes) {
-        return error(413, "bad_request", `request exceeds the ${maxRequestBytes} byte limit`);
+        return error(413, "bad_request", `request exceeds the ${maxRequestBytes} byte limit; use a smaller document or fewer image uploads`);
       }
       switch (action) {
         case "read":
