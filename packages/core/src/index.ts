@@ -142,6 +142,7 @@ export {
   editReportSupported,
   insertedParagraphIds,
   parseEditReport,
+  withCallerName,
 } from "./edit-report.js";
 export type { EditIdPair, EditOpOutcome, EditReport } from "./edit-report.js";
 export type { Blocks } from "./generated/document-spec-v2.js";

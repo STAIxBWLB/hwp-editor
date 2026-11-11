@@ -19,7 +19,7 @@
 
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { CatEnvelope, DocumentHandle, EditOp, EditReport, LayoutRow, PageImage, Segment } from "@hwp-editor/core";
+import type { CatEnvelope, Component, DocumentHandle, EditOp, EditReport, LayoutRow, PageImage, Segment } from "@hwp-editor/core";
 import tableFixture from "../../core/test/fixtures/cat-segments-table.json";
 import { base64, createTauriEngine, HwpEngineError, parseCatEnvelope } from "@hwp-editor/core";
 import { targetsSegment } from "../src/PageCanvas.js";
@@ -747,6 +747,24 @@ describe("ComponentsPanel (TEST-03)", () => {
     return engine;
   }
 
+  /**
+   * Render the editor with a catalogue of one-off components and select
+   * paragraph 1, then open the palette. The default catalogue is all
+   * paragraphs and tables, so a refusal only one block type triggers needs a
+   * component built for it.
+   */
+  async function renderPalette(
+    engine: Engine,
+    components: Component[],
+    document: DocumentHandle = file,
+  ): Promise<void> {
+    const envelope = await engine.read(document);
+    render(<HwpEditor engine={engine} file={document} components={components} />);
+    const page = await screen.findByRole("button", { name: en["page.label"]({ page: 1 }) });
+    fireEvent.click(page, { clientY: clientYForPara(envelope, 1) });
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+  }
+
   it("substitutes the palette's values and sends the profile styles the component needs", async () => {
     const engine = composedEngine();
     const envelope = await engine.read(file);
@@ -1086,8 +1104,7 @@ describe("ComponentsPanel (TEST-03)", () => {
     const engine = composedEngine();
     engine.edit = () => Promise.reject(new HwpEngineError(
       "failed",
-      "hwp edit failed (exit 3): insert_blocks refused: unknown_style (결재란 셀); provide that " +
-        "style in `styles` or name one the document defines, then retry",
+      "hwp edit failed (exit 3): insert_blocks refused: unknown_style; 결재란 셀",
       { status: 422 },
     ));
     const envelope = await engine.read(file);
@@ -1100,6 +1117,90 @@ describe("ComponentsPanel (TEST-03)", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain(en["components.unknownStyle"]({ style: "결재란 셀" }));
     expect(screen.getAllByRole("alert")).toHaveLength(1);
+  });
+
+  /**
+   * The three refusals the palette can see coming. Each is a component whose
+   * blocks the engine would reject, so the row is off with a sentence naming
+   * the fix and no edit is sent at all.
+   */
+  it("refuses an image component before sending it", async () => {
+    const stamp: Component = {
+      name: "직인",
+      description: "A stamp",
+      params: {},
+      blocks: [{ type: "image", path: "stamp.png", width_mm: 20, height_mm: 20 }],
+    };
+    const engine = composedEngine();
+    await renderPalette(engine, [stamp]);
+
+    const insert = screen.getByRole("button", { name: en["components.insert"]({ name: "직인" }) }) as HTMLButtonElement;
+    expect(insert.disabled).toBe(true);
+    expect(screen.getByText(en["components.preflightImage"])).toBeTruthy();
+    expect(engine.calls.edit).toHaveLength(0);
+  });
+
+  it("refuses a top-level section break inside a component", async () => {
+    const chapter: Component = {
+      name: "새 장",
+      description: "Starts a new section",
+      params: {},
+      blocks: [
+        { type: "break", kind: "section" },
+        { type: "paragraph", runs: [{ type: "text", text: "1. 개요" }] },
+      ],
+    };
+    const engine = composedEngine();
+    await renderPalette(engine, [chapter]);
+
+    const insert = screen.getByRole("button", { name: en["components.insert"]({ name: "새 장" }) }) as HTMLButtonElement;
+    expect(insert.disabled).toBe(true);
+    expect(screen.getByText(en["components.preflightSectionBreak"])).toBeTruthy();
+    expect(engine.calls.edit).toHaveLength(0);
+  });
+
+  it("refuses an equation into a .hwp document only", async () => {
+    const formula: Component = {
+      name: "수식",
+      description: "An equation",
+      params: {},
+      blocks: [{ type: "equation", script: "x^2" }],
+    };
+    const engine = composedEngine();
+    const hwp: DocumentHandle = { ...file, name: "minutes.hwp" };
+    await renderPalette(engine, [formula], hwp);
+
+    expect(screen.getByText(en["components.preflightEquation"]({ name: hwp.name }))).toBeTruthy();
+    expect(
+      (screen.getByRole("button", { name: en["components.insert"]({ name: "수식" }) }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+
+    // The same catalogue in an .hwpx document is insertable: the refusal is
+    // about the output format, not about equations.
+    cleanup();
+    const hwpx = composedEngine();
+    await renderPalette(hwpx, [formula], { ...file, name: "minutes2.hwpx" });
+    expect(screen.queryByText(en["components.preflightEquation"]({ name: "minutes2.hwpx" }))).toBeNull();
+    expect(
+      (screen.getByRole("button", { name: en["components.insert"]({ name: "수식" }) }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+  });
+
+  it("drops the notice when another document is loaded", async () => {
+    const engine = composedEngine();
+    engine.edit = async () => ({ name: "edited.hwpx", data: new Uint8Array([9]) });
+    const envelope = await engine.read(file);
+    const view = render(<HwpEditor engine={engine} file={file} />);
+    const page = await screen.findByRole("button", { name: en["page.label"]({ page: 1 }) });
+    fireEvent.click(page, { clientY: clientYForPara(envelope, 1) });
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) }),
+    );
+    expect(await screen.findByText(en["components.noReport"])).toBeTruthy();
+
+    view.rerender(<HwpEditor engine={engine} file={{ name: "second.hwpx", data: new Uint8Array([4]) }} />);
+    await waitFor(() => expect(screen.queryByText(en["components.noReport"])).toBeNull());
   });
 
   it("says so when no edit report came back, without calling it a failure", async () => {

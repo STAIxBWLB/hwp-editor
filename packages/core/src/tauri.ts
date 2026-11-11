@@ -37,7 +37,7 @@ import type { DocumentSpecV2 } from "./generated/document-spec-v2.js";
 import type { TemplateDataV1, TemplateSpecV1 } from "./spec.js";
 import type { LintProfile } from "./templates.js";
 import { parseEmbeddedTemplates, parseFillReport, parseLintReport, parseTemplateInputs, parseTemplateMethods, parseTemplateReport, reportObject, reportString } from "./templates.js";
-import { parseEditReport } from "./edit-report.js";
+import { parseEditReport, withCallerName } from "./edit-report.js";
 import type { EditReport } from "./edit-report.js";
 import type {
   ComposeResponse,
@@ -329,7 +329,11 @@ export function createTauriEngine(
           report = undefined;
         }
       }
-      return { name: res.name, data: base64.decode(res.dataBase64), ...(report === undefined ? {} : { report }) };
+      // The host's report names the `-o` path it staged the document at, and a
+      // caller has no business seeing it: the same rewrite the CLI server's
+      // engine and its HTTP route apply.
+      const named = report === undefined ? undefined : withCallerName(report, res.name);
+      return { name: res.name, data: base64.decode(res.dataBase64), ...(named === undefined ? {} : { report: named }) };
     },
 
     async compose(spec: DocumentSpecV2, name: string): Promise<ComposeResult> {

@@ -168,6 +168,20 @@ export function parseEditReport(raw: unknown): EditReport {
 }
 
 /**
+ * An edit report with its `output` replaced by the caller's own document name.
+ *
+ * The engine writes the `-o` path it was given, which is inside whatever work
+ * directory the host staged the document in. "No temp path reaches a caller"
+ * applies to report fields as much as to messages, so every boundary that
+ * hands a report out — the CLI server's engine, its HTTP route, the Tauri
+ * bridge — rewrites this one field, and a caller never learns where the
+ * document was staged.
+ */
+export function withCallerName(report: EditReport, name: string): EditReport {
+  return { ...report, output: name };
+}
+
+/**
  * The ids of the top-level paragraphs one `insert_blocks` outcome created.
  *
  * `changed` lists every inserted segment: a paragraph id followed by its run

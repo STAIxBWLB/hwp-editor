@@ -151,6 +151,10 @@ describe("createTauriEngine commands", () => {
     expect(asked.calls.find(call => call.cmd === "hwped_edit")?.args?.["report"]).toBe(true);
     expect(withReport.report?.contract).toBe("hwp-edit-report-v1");
     expect(withReport.data).toEqual(edited);
+    // The host's report names where it staged the document, which is no more a
+    // caller's business on this transport than it is over HTTP.
+    expect(withReport.report?.output).toBe(doc.name);
+    expect(JSON.stringify(withReport.report)).not.toContain("/tmp/t21-table.hwpx");
 
     // Not asked: no flag, and no report invented for the caller.
     const unasked = mockInvoke({

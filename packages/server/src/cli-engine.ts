@@ -1,5 +1,5 @@
 import { createTemplateCommands } from "./template-engine.js";
-import { TEMPLATE_METHODS, templateVersionSupported, parseEditReport, type EditReport, type TemplateInputs, type FillResult, type LintReport, type LintProfile, type EmbeddedTemplate, type TemplateSpecV1, type TemplateDataV1 } from "@hwp-editor/core";
+import { TEMPLATE_METHODS, templateVersionSupported, parseEditReport, withCallerName, type EditReport, type TemplateInputs, type FillResult, type LintReport, type LintProfile, type EmbeddedTemplate, type TemplateSpecV1, type TemplateDataV1 } from "@hwp-editor/core";
 /**
  * CliEngine — HwpEngine implementation that shells out to the hwp-cli binary.
  *
@@ -686,15 +686,37 @@ function rethrowUploadedImageFailure(error: unknown, imageOnly: boolean): never 
 }
 
 /**
+ * Text the engine wrote, with no path in it.
+ *
+ * The staged input is what the engine names when it complains, so the work dir
+ * this call created is removed first. Anything else that still reads as an
+ * absolute path belongs to whoever runs the engine and is replaced too: "no
+ * temp path reaches a caller" is a rule about the message a caller reads, not
+ * about one particular directory. The replacement only fires where a path can
+ * start (after a space, a quote, an opening bracket or the beginning), so a
+ * Korean diagnostic's own `블록/스타일/목록` slashes survive.
+ */
+function withoutPaths(text: string, workDir: string | undefined): string {
+  const withoutWorkDir = workDir === undefined || workDir === "" ? text : text.split(workDir).join("<work dir>");
+  return withoutWorkDir.replace(
+    /(^|[\s"'(\[{])([A-Za-z]:[\\/][^\s"')\]}]*|\/[^\s"')\]}]*)/g,
+    "$1<path>",
+  );
+}
+
+/**
  * The cause class of an `insert_blocks` refusal, as one line a caller can act
- * on, or null when the stderr is not one of them.
+ * on. Every insertion that fails gets one: a bare exit code tells a caller
+ * nothing about which of its blocks the engine refused.
  *
  * `runCliOk` reports the exit code alone, because the CLI's own text names the
- * staged input file and no temp path may reach a caller. An insertion's
- * actionable causes write no path — a block wider than its destination (the
- * engine prints both widths) and a style the target does not define (it prints
- * the style's name) — so those are carried out here and the raw stderr stays in
- * `detail` for an operator. Everything else keeps the bare exit line.
+ * staged input file and no temp path may reach a caller. Two classes therefore
+ * get a summary built from what the engine printed without a path — a block
+ * wider than its destination (both widths) and a style the target does not
+ * define (its name, last on the line, because a style name can hold a `)` or a
+ * `'` and a delimiter would truncate it) — and everything else is the engine's
+ * own first line with paths replaced. The raw stderr stays in `detail` for an
+ * operator.
  *
  * The engine writes these diagnostics in Korean under every locale (`--lang`
  * localizes clap help text only: the same refusal is byte-identical under
@@ -705,59 +727,48 @@ function rethrowUploadedImageFailure(error: unknown, imageOnly: boolean): never 
  * not on the `insert_blocks` token: that token also appears in refusals with
  * nothing to say about the component (an insertion before a section's
  * definition paragraph, an address that is not a body paragraph or a cell),
- * and those keep the bare exit line rather than being blamed on the component.
+ * and those are carried out verbatim rather than blamed on the component.
  */
-function insertBlocksRefusal(stderr: string): string | null {
+function insertBlocksRefusal(stderr: string, workDir: string | undefined): string {
   const millimetres = (pattern: RegExp): string | undefined => pattern.exec(stderr)?.[1];
-  const style = /스타일 '([^']+)'을 대상 문서에서 찾을 수 없습니다/.exec(stderr)?.[1];
-  if (style !== undefined) {
-    return `insert_blocks refused: unknown_style (${style}); ` +
-      "provide that style in `styles` or name one the document defines, then retry";
-  }
-  if (!stderr.includes("블록/스타일/목록 정의가 유효하지 않습니다")) return null;
-  if (stderr.includes("layout_overflow")) {
-    // "column widths total 120.00 mm; body width is 46.40 mm" for a column
-    // sum, "exceeds body width 46.40 mm" for the table's own width, and the
-    // destination width again in the Korean tail.
-    const block = millimetres(/column widths total ([\d.]+) ?mm/);
-    const insertion = millimetres(/body width (?:is )?([\d.]+) ?mm/) ??
-      millimetres(/삽입 위치의 폭은 ([\d.]+)mm/);
-    const widths = [
-      ...(block === undefined ? [] : [`block ${block} mm`]),
-      ...(insertion === undefined ? [] : [`insertion point ${insertion} mm`]),
-    ];
-    return `insert_blocks refused: layout_overflow${widths.length === 0 ? "" : ` (${widths.join(", ")})`}; ` +
-      "insert it where the body is wide enough or use a narrower component, then retry";
-  }
-  return "insert_blocks refused: invalid_definition; " +
-    "fix the component's blocks, styles or lists, then retry";
-}
-
-/**
- * An edit report with its `output` replaced by the caller's own document name.
- *
- * The report the engine writes names the `-o` path it was given, which is
- * inside a server work dir; "no temp path reaches a caller" applies to fields
- * as much as to messages. Every boundary that serializes a report rewrites this
- * one — the engine here and the HTTP route — so a caller never learns where the
- * document was staged.
- */
-export function withCallerName(report: EditReport, name: string): EditReport {
-  return { ...report, output: name };
-}
-
-/**
- * Report an insertion's refusal as its cause class. Nothing else changes: a
- * batch without an insertion, and a non-insertion failure, keep the bare exit
- * line, and a protected document's refusal was already remapped before this
- * runs.
- */
-function rethrowInsertBlocksRefusal(error: unknown, insertion: boolean): never {
-  if (insertion && error instanceof HwpCliError && error.reason === "failed" && error.stderr !== undefined) {
-    const cause = insertBlocksRefusal(error.stderr);
-    if (cause !== null) {
-      throw new HwpCliError("failed", `${error.message}: ${cause}`, error.stderr, error.detail);
+  const style = /스타일 '(.*)'을 대상 문서에서 찾을 수 없습니다/.exec(stderr)?.[1];
+  if (style !== undefined) return `insert_blocks refused: unknown_style; ${style}`;
+  if (stderr.includes("블록/스타일/목록 정의가 유효하지 않습니다")) {
+    if (stderr.includes("layout_overflow")) {
+      // "column widths total 120.00 mm; body width is 46.40 mm" for a column
+      // sum, "exceeds body width 46.40 mm" for the table's own width, and the
+      // destination width again in the Korean tail.
+      const block = millimetres(/column widths total ([\d.]+) ?mm/);
+      const insertion = millimetres(/body width (?:is )?([\d.]+) ?mm/) ??
+        millimetres(/삽입 위치의 폭은 ([\d.]+)mm/);
+      const widths = [
+        ...(block === undefined ? [] : [`block ${block} mm`]),
+        ...(insertion === undefined ? [] : [`insertion point ${insertion} mm`]),
+      ];
+      return `insert_blocks refused: layout_overflow${widths.length === 0 ? "" : ` (${widths.join(", ")})`}`;
     }
+    return "insert_blocks refused: invalid_definition";
+  }
+  const line = stderr.split(/\r?\n/).map((entry) => entry.trim()).find((entry) => entry !== "") ?? "";
+  // The engine opens the line with the op's own name ("Error: insert_blocks …");
+  // the prefix below already names the op, so the token is dropped rather than
+  // printed twice.
+  const reason = withoutPaths(
+    line.replace(/^error:\s*/i, "").replace(/^insert_blocks\s+/, ""),
+    workDir,
+  );
+  return reason === "" ? "insert_blocks refused" : `insert_blocks refused: ${reason}`;
+}
+
+/**
+ * Report an insertion's refusal as its cause class. A batch without an
+ * insertion, and a non-insertion failure, keep the bare exit line, and a
+ * protected document's refusal was already remapped before this runs.
+ */
+function rethrowInsertBlocksRefusal(error: unknown, insertion: boolean, workDir: string): never {
+  if (insertion && error instanceof HwpCliError && error.reason === "failed" && error.stderr !== undefined) {
+    const cause = insertBlocksRefusal(error.stderr, workDir);
+    throw new HwpCliError("failed", `${error.message}: ${cause}`, error.stderr, error.detail);
   }
   throw error;
 }
@@ -1350,7 +1361,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         if (options.report === true) args.push("--report", reportPath);
         await runCliOk(bin, args, timeoutMs, opts.locale, call?.signal).catch(options.assets?.length
           ? error => rethrowUploadedImageFailure(error, ops.every(op => op.kind === "insert-image"))
-          : rethrowProtected).catch(error => rethrowInsertBlocksRefusal(error, ops.some(op => op.kind === "insert-blocks")));
+          : rethrowProtected).catch(error => rethrowInsertBlocksRefusal(error, ops.some(op => op.kind === "insert-blocks"), dir));
         const data = new Uint8Array(await readFile(output));
         if (options.report !== true) return { name: document.name, data };
         let report: EditReport | undefined;

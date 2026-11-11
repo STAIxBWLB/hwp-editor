@@ -64,8 +64,7 @@ describe("insert_blocks refusal classification", () => {
 
     expect(error.message).toBe(
       "hwp edit failed (exit 3): insert_blocks refused: layout_overflow " +
-        "(block 120.00 mm, insertion point 46.40 mm); insert it where the body is wide enough " +
-        "or use a narrower component, then retry",
+        "(block 120.00 mm, insertion point 46.40 mm)",
     );
     // The one thing the message must never carry is where the input was staged.
     expect(error.message).not.toContain(tmpdir());
@@ -78,9 +77,10 @@ describe("insert_blocks refusal classification", () => {
   it("names unknown_style and the style the document lacks", async () => {
     const error = await failure(STYLE_REFUSAL, INSERT);
 
+    // The name is printed last on its own line: a style name is user text and
+    // can hold a `)` or a `'`, which any bracketed form would cut in half.
     expect(error.message).toBe(
-      "hwp edit failed (exit 3): insert_blocks refused: unknown_style (결재란 셀); " +
-        "provide that style in `styles` or name one the document defines, then retry",
+      "hwp edit failed (exit 3): insert_blocks refused: unknown_style; 결재란 셀",
     );
     expect(error.message).not.toContain(tmpdir());
     expect(error.detail).toContain("결재란 셀");
@@ -92,7 +92,7 @@ describe("insert_blocks refusal classification", () => {
       INSERT,
     );
 
-    expect(error.message).toContain("insert_blocks refused: layout_overflow;");
+    expect(error.message).toBe("hwp edit failed (exit 3): insert_blocks refused: layout_overflow");
     expect(error.message).not.toContain("mm");
   });
 
@@ -106,17 +106,37 @@ describe("insert_blocks refusal classification", () => {
     expect(error.message).not.toContain(tmpdir());
   });
 
-  it("leaves a refusal that is not about the definition on the bare exit line", async () => {
+  it("carries the engine's own line when the refusal is not about the definition", async () => {
     // The `insert_blocks` token alone is not a class: the engine also says it
     // when the address is a section's definition paragraph or not a body
-    // paragraph or cell, and those say nothing about the component.
+    // paragraph or cell. Those say nothing about the component, so the cause
+    // is the engine's own line rather than a class name invented here.
     const error = await failure(
       "Error: insert_blocks 구역 정의 문단 앞에는 삽입할 수 없습니다",
       INSERT,
     );
 
-    expect(error.message).toBe("hwp edit failed (exit 3)");
+    expect(error.message).toBe(
+      "hwp edit failed (exit 3): insert_blocks refused: 구역 정의 문단 앞에는 삽입할 수 없습니다",
+    );
     expect(error.stderr).toContain("구역 정의 문단");
+  });
+
+  it("replaces a temp path in the engine's line instead of passing it on", async () => {
+    // Everything the engine says reaches the caller now, so the scrubber is
+    // the only thing between a caller and the work dir it never knew about.
+    const error = await failure(
+      "Error: failed to parse /tmp/hwp-edit-abc123/input.hwpx at byte 42",
+      INSERT,
+    );
+
+    expect(error.message).toBe(
+      "hwp edit failed (exit 3): insert_blocks refused: failed to parse <path> at byte 42",
+    );
+    expect(error.message).not.toContain("/tmp");
+    expect(error.message).not.toContain("input.hwpx");
+    // The operator's copy is untouched.
+    expect(error.detail).toContain("/tmp/hwp-edit-abc123/input.hwpx");
   });
 
   it("leaves a batch with no insertion on the bare exit line", async () => {

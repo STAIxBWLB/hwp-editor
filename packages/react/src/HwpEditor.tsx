@@ -39,7 +39,7 @@ import { ComposePanel } from "./ComposePanel.js";
 import { ComponentsPanel } from "./ComponentsPanel.js";
 import { componentsSupportReason } from "./ComponentsPanel.js";
 import type { InsertPosition } from "./ComponentsPanel.js";
-import { componentFailure, insertionFailure } from "./components-support.js";
+import { componentFailure, insertionFailure, insertionPreflight } from "./components-support.js";
 import { isTableSlice } from "./tables.js";
 import { ErrorLine } from "./ErrorLine.js";
 import { toEditorError } from "./errors.js";
@@ -265,10 +265,11 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     // would be indistinguishable from a real `internal`.
     const [loadError, setLoadError] = useState<EditorError | null>(null);
     /**
-     * A notice about an operation that succeeded in the document but could not
-     * finish its follow-up — an insertion whose report names no usable ids, so
-     * nothing can be selected. Not a failure, so it does not take the error
-     * line; it is shown here and still reaches the host through `onError`.
+     * A sentence about an operation the editor finished differently than the
+     * document did: an insertion whose report names no usable ids, so nothing
+     * can be selected, or one the editor refuses to send at all. Neither is a
+     * failure line, so it is shown here and still reaches the host through
+     * `onError`. A new document load clears it.
      */
     const [notice, setNotice] = useState<string | null>(null);
     const loadGeneration = useRef(0);
@@ -282,8 +283,8 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
      * row list would keep ids that describe the document as it was written.
      */
     const [pendingInserted, setPendingInserted] = useState<string[]>([]);
-    /** Show a post-success notice and hand the same text to the host. */
-    const noteInsertion = useCallback((text: string): void => {
+    /** Show a notice and hand the same text to the host. */
+    const noteNotice = useCallback((text: string): void => {
       setNotice(text);
       emitError(new Error(text));
     }, [emitError]);
@@ -322,6 +323,9 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     useEffect(() => {
       const generation = ++loadGeneration.current;
       let cancelled = false;
+      // A notice describes one attempt against the document that is going
+      // away, so a load retires it along with that document's ids.
+      setNotice(null);
       if (file === null) {
         setEnvelope(null);
         setCapabilities(null);
@@ -555,6 +559,14 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           emitError(toError(componentFailure(error, t)));
           return;
         }
+        // Three refusals are certain before the document is touched, so they
+        // are answered here rather than by a failed round trip; the palette
+        // disables the same rows with the same sentences.
+        const preflight = insertionPreflight(blocks, snapshot.document.name, t);
+        if (preflight !== "") {
+          noteNotice(preflight);
+          return;
+        }
         void (async () => {
           let report: EditReport | undefined;
           let applied = false;
@@ -594,14 +606,14 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           if (outcome === undefined) {
             // The document was published, so this is a notice rather than a
             // failure: the editor shows it and the host still hears it.
-            noteInsertion(t("components.noReport"));
+            noteNotice(t("components.noReport"));
             return;
           }
           if (outcome.status !== "applied") return;
           // A capped list means the ids that would name the rest are simply
           // absent; selecting a partial run would reorder half a component.
           if (outcome.changed_total !== undefined) {
-            noteInsertion(t("components.reportTruncated"));
+            noteNotice(t("components.reportTruncated"));
             return;
           }
           let ids: string[];
@@ -614,7 +626,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           setPendingInserted(ids);
         })();
       },
-      [emitError, engine, envelope, noteInsertion, replaceDocument, store, t],
+      [emitError, engine, envelope, noteNotice, replaceDocument, store, t],
     );
 
     const selectedTargets =
@@ -651,6 +663,16 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
               : selectedTargets?.refusal === "container"
                 ? t("segment.containerSelectionRefused")
                 : t("components.noAddress"));
+    /**
+     * Why the palette refuses one component's insertion before sending it, or
+     * "": the rows it refuses are disabled with that sentence, so a component
+     * the engine would certainly reject does not cost a round trip.
+     */
+    const componentRefusal = useCallback(
+      (component: Component): string =>
+        insertionPreflight(component.blocks, state.document?.name ?? "", t),
+      [state.document, t],
+    );
 
     const revert = useCallback((): Promise<void> => {
       const snapshot = store.getState();
@@ -947,6 +969,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
                   components={catalogue}
                   disabledReason={componentDisabled}
                   beforeDisabledReason={beforeDisabledReason}
+                  refusalFor={componentRefusal}
                   busy={!editable || state.status === "applying"}
                   onInsert={insertComponent}
                 />

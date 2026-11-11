@@ -206,10 +206,10 @@ describe("paragraph run reorder and delete", () => {
   });
 
   it("keeps the section definition paragraph and everything above it in place", async () => {
-    // Body paragraph 0 of a section carries SectionDef: `move_paragraph` will
-    // not move it, and moving paragraph 1 up would put it at index 1, so both
-    // controls are off with a reason rather than queuing an op the engine
-    // refuses with no cause a caller can read.
+    // Body paragraph 0 of a section carries SectionDef: the engine will not
+    // move it, will not delete it, and moving paragraph 1 up would put it at
+    // index 1, so the controls are off with a reason rather than queuing an op
+    // the engine refuses with no cause a caller can read.
     const envelope = addressedFive();
     const engine = createMockEngine({ envelope });
     render(<HwpEditor engine={engine} file={file} locale="en" />);
@@ -218,12 +218,15 @@ describe("paragraph run reorder and delete", () => {
     fireEvent.click(options[1]!);
     expect((screen.getByRole("button", { name: en["segment.moveUp"] }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: en["segment.moveDown"] }) as HTMLButtonElement).disabled).toBe(false);
+    // A paragraph below the definition paragraph is still deletable.
+    expect((screen.getByRole("button", { name: en["segment.deletePara"] }) as HTMLButtonElement).disabled).toBe(false);
     expect(screen.getByText(en["segment.sectionDefinitionLocked"])).toBeTruthy();
 
     fireEvent.click(options[0]!);
-    for (const name of [en["segment.moveUp"], en["segment.moveDown"]]) {
+    for (const name of [en["segment.moveUp"], en["segment.moveDown"], en["segment.deletePara"]]) {
       expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(true);
     }
+    expect(screen.getByText(en["segment.sectionDefinitionLocked"])).toBeTruthy();
     expect(engine.calls.edit).toHaveLength(0);
   });
 });

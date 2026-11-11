@@ -37,6 +37,13 @@ export interface ComponentsPanelProps {
    * paragraph takes no insertion ahead of it — so the palette stays usable.
    */
   beforeDisabledReason?: string;
+  /**
+   * Localized reason this component's insertion is refused before it is sent,
+   * given a component and returning "" when it can go. The refusals are the
+   * certain ones (an image, a section break, an equation into .hwp), and the
+   * row is disabled with the sentence rather than failing at the engine.
+   */
+  refusalFor?: (component: Component) => string;
   /** True while an engine call owns the document. */
   busy?: boolean;
   onInsert?: (component: Component, values: Record<string, string>, position: InsertPosition) => void;
@@ -59,6 +66,7 @@ export function ComponentsPanel({
   components = STARTER_COMPONENTS,
   disabledReason = "",
   beforeDisabledReason = "",
+  refusalFor,
   busy = false,
   onInsert,
 }: ComponentsPanelProps): JSX.Element {
@@ -124,6 +132,7 @@ export function ComponentsPanel({
       <ul className="hwped-component-list" aria-label={t("components.catalogueAria")}>
         {components.map((component) => {
           const params = Object.entries(component.params);
+          const refused = refusalFor?.(component) ?? "";
           return (
             <li key={component.name} className="hwped-component-item">
               <div>
@@ -154,12 +163,13 @@ export function ComponentsPanel({
               <button
                 type="button"
                 className="hwped-btn"
-                disabled={disabled || onInsert === undefined || positionRefused(position) !== ""}
+                disabled={disabled || onInsert === undefined || positionRefused(position) !== "" || refused !== ""}
                 aria-label={t("components.insert", { name: component.name })}
                 onClick={() => onInsert?.(component, filled(component), position)}
               >
                 {t("components.insert", { name: component.name })}
               </button>
+              {refused !== "" && <p className="hwped-hint" role="status">{refused}</p>}
             </li>
           );
         })}

@@ -40,8 +40,8 @@ const UNMEASURED: Blocks = [{ type: "paragraph", runs: [{ type: "text", text: "�
 /** What the CLI server's classification puts in the message (no paths). */
 const serverSummary = (widths: boolean): string =>
   `hwp edit failed (exit 1): insert_blocks refused: layout_overflow${widths
-    ? " (block 120.00 mm, insertion point 46.40 mm)"
-    : ""}; insert it where the body is wide enough or use a narrower component, then retry`;
+    ? " (block 120 mm, insertion point 46.4 mm)"
+    : ""}`;
 
 /** The engine's own text when a host runs in process: body width, no block width. */
 const engineText =
@@ -89,8 +89,39 @@ describe("insertionFailure", () => {
     expect(shown.message).not.toMatch(/is\s*[.,]|:\s*$/);
   });
 
-  it("passes any other engine failure through untouched", () => {
-    const error = new HwpEngineError("failed", "hwp edit failed (exit 1)");
+  it("wraps a cause it cannot classify in one localized frame", () => {
+    // The frame names both things a caller can vary; the engine's own line
+    // rides inside it rather than replacing it.
+    const error = new HwpEngineError(
+      "failed",
+      "hwp edit failed (exit 1): 구역 정의 문단 앞에는 삽입할 수 없습니다",
+    );
+    const shown = insertionFailure(error, WIDE, en) as Error & { detail?: string; code?: string };
+
+    expect(shown.message).toBe(en("components.insertionRefused", { reason: "구역 정의 문단 앞에는 삽입할 수 없습니다" }));
+    expect(shown.message).toContain("Check the component and the insertion point, then retry.");
+    expect(shown.detail).toContain("exit 1");
+    expect(shown.code).toBe("failed");
+  });
+
+  it("strips the Tauri transport's own prefixes from the cause", () => {
+    // The bridge refuses with maru's prefix over the engine's own, so the
+    // frame would read as one long chain if the reason were not the last link.
+    const error = new HwpEngineError(
+      "failed",
+      "hwped_edit failed: hwp_failed: Error: insert_blocks 구역 정의 문단 앞에는 삽입할 수 없습니다",
+    );
+    const shown = insertionFailure(error, WIDE, en) as Error;
+
+    expect(shown.message).toBe(
+      en("components.insertionRefused", { reason: "구역 정의 문단 앞에는 삽입할 수 없습니다" }),
+    );
+  });
+
+  it("leaves a failure that is not a refusal with the handling it has", () => {
+    // A timeout is not the engine refusing this component, so it keeps its own
+    // badge and message rather than being relabelled.
+    const error = new HwpEngineError("timeout", "hwp edit failed (exit 124)");
     expect(insertionFailure(error, WIDE, en)).toBe(error);
   });
 
@@ -101,8 +132,7 @@ describe("insertionFailure", () => {
    */
   it("names the style the target document lacks", () => {
     const error = overflow(
-      "hwp edit failed (exit 1): insert_blocks refused: unknown_style (결재란 셀); provide that " +
-        "style in `styles` or name one the document defines, then retry",
+      "hwp edit failed (exit 1): insert_blocks refused: unknown_style; 결재란 셀",
     );
     const shown = insertionFailure(error, WIDE, ko) as Error & { detail?: string; code?: string };
 
@@ -113,11 +143,28 @@ describe("insertionFailure", () => {
     expect((shown as { code?: string }).code).toBe("failed");
   });
 
+  it("keeps a style name that holds a parenthesis or a quote whole", () => {
+    // The server prints the name last on its own line for exactly this: a name
+    // is user text, and the parenthesised form it used before cut one at its
+    // first `)`.
+    const style = "결재란 (법인) '대표'";
+    const error = overflow(`hwp edit failed (exit 1): insert_blocks refused: unknown_style; ${style}`);
+    const shown = insertionFailure(error, WIDE, en) as Error;
+
+    expect(shown.message).toBe(en("components.unknownStyle", { style }));
+  });
+
+  it("reads the engine's own Korean style sentence from an in-process host", () => {
+    // A host wired in process hands over the engine's words, not the server's
+    // summary; the name sits between quotes there.
+    const error = new Error("스타일 '결재란 (법인)'을 대상 문서에서 찾을 수 없습니다");
+    const shown = insertionFailure(error, WIDE, en) as Error;
+
+    expect(shown.message).toBe(en("components.unknownStyle", { style: "결재란 (법인)" }));
+  });
+
   it("turns an unclassified definition refusal into a sentence with a next step", () => {
-    const error = overflow(
-      "hwp edit failed (exit 1): insert_blocks refused: invalid_definition; fix the component's " +
-        "blocks, styles or lists, then retry",
-    );
+    const error = overflow("hwp edit failed (exit 1): insert_blocks refused: invalid_definition");
     const shown = insertionFailure(error, WIDE, en) as Error & { detail?: string };
 
     expect(shown.message).toBe(en("components.invalidDefinition"));

@@ -33,6 +33,7 @@ import {
   MAX_IMAGE_ASSETS_TOTAL_BYTES,
   validateImageAssets,
   imageAssetsMatchOps,
+  withCallerName,
   type ImageAsset,
 } from "@hwp-editor/core";
 
@@ -54,7 +55,7 @@ import type {
   RenderResponse,
 } from "@hwp-editor/core";
 
-import { createCliEngine, HwpCliError, withCallerName, type CliEngine } from "./cli-engine.js";
+import { createCliEngine, HwpCliError, type CliEngine } from "./cli-engine.js";
 import { createSessionStore, SessionNotFoundError, type SessionStore } from "./session.js";
 
 /** Supported actions; the runtime guard and `HwpAction` share this list. */

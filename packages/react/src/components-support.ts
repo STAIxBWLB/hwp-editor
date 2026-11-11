@@ -1,8 +1,8 @@
 /**
- * What the palette does when a component cannot become an op, or when the
- * engine refuses the one it was sent.
+ * What the palette does when a component cannot become an op, when the engine
+ * is certain to refuse it, or when it refuses the op that was sent.
  *
- * Two things are translated here rather than shown as the engine wrote them:
+ * Three things are translated here rather than shown as the engine wrote them:
  *
  * - A component refusal (`ComponentError`) carries a code, the component's
  *   name or file and the field that failed, so the sentence a user reads is in
@@ -17,9 +17,16 @@
  *   refuse insertions the engine accepts.
  * - The same refusal has two other classes the CLI server names — a style the
  *   target document does not define, and a block, style or list definition the
- *   engine rejected without naming a field — and each gets its own sentence
- *   and next step here. Both arrive already classified, because the raw stderr
- *   names the staged input file and never crosses the HTTP boundary.
+ *   engine rejected — and each gets its own sentence and next step here. Both
+ *   arrive already classified, because the raw stderr names the staged input
+ *   file and never crosses the HTTP boundary.
+ *
+ * Every other refusal — an insertion before a section's definition paragraph,
+ * an equation into `.hwp`, a compile failure — is one class: the engine's own
+ * cause inside one frame that names the component and the insertion point, so
+ * no transport can leave a caller with a causeless exit code. The three
+ * refusals that are certain before the document is touched are answered
+ * without a round trip at all.
  */
 import type { MessageKey, TFunction } from "./messages.js";
 import { isComponentError, isHwpEngineError, HwpEngineError } from "@hwp-editor/core";
@@ -63,6 +70,46 @@ export function widestBlockMm(blocks: Blocks): number | undefined {
   };
   walk(blocks);
   return widest;
+}
+
+/**
+ * The localized reason to refuse an insertion before it is sent, or "" when
+ * the engine would accept it.
+ *
+ * Three refusals are certain rather than speculative, so they are answered
+ * here instead of by a failed round trip: the palette stages no image bytes,
+ * an insertion carries no section break at the top level of a component, and
+ * the engine cannot write an equation into `.hwp` output. Each sentence names
+ * the thing to change; the three classes the engine does report stay
+ * translated in `insertionFailure` for everything this cannot predict.
+ */
+export function insertionPreflight(
+  blocks: Blocks,
+  documentName: string,
+  t: TFunction,
+): string {
+  let image = false;
+  let equation = false;
+  const walk = (list: Blocks): void => {
+    for (const block of list) {
+      if (block.type === "image") image = true;
+      else if (block.type === "equation") equation = true;
+      else if (block.type === "table") {
+        for (const row of block.rows) {
+          for (const cell of row.cells) if (cell.blocks !== undefined) walk(cell.blocks);
+        }
+      }
+    }
+  };
+  walk(blocks);
+  if (image) return t("components.preflightImage");
+  if (blocks.some((block) => block.type === "break" && block.kind === "section")) {
+    return t("components.preflightSectionBreak");
+  }
+  if (equation && documentName.toLowerCase().endsWith(".hwp")) {
+    return t("components.preflightEquation", { name: documentName });
+  }
+  return "";
 }
 
 /**
@@ -116,28 +163,69 @@ function wrapped(error: unknown, text: string, detail: string): Error {
 }
 
 /**
- * The style name a server-classified `unknown_style` refusal names, or
- * undefined when this message is not one.
+ * The style name an `unknown_style` refusal names, or undefined when this
+ * message is not one.
  *
- * Only the server writes this form: it is the CLI boundary that pulls the name
- * out of stderr, because the engine's own sentence also names the staged input
- * file. A host wired in process therefore never matches here, and its raw
- * engine text passes through untouched.
+ * Two spellings reach here. The CLI server quotes the name last on its own
+ * line, because a style name is user text and can hold a `)` or a `'` — the
+ * parenthesised form an older server wrote is deliberately not read: that is
+ * the form that cut such a name in half. A host wired in process carries the
+ * engine's own Korean sentence instead, where the name is between quotes; that
+ * capture is greedy, so it is the last quote before 을 that closes it.
  */
 function unknownStyleName(message: string): string | undefined {
-  return /insert_blocks refused: unknown_style \(([^)]+)\)/.exec(message)?.[1];
+  const server = /insert_blocks refused: unknown_style;\s*([^\n]+)/.exec(message)?.[1]?.trim();
+  if (server !== undefined && server !== "") return server;
+  return /스타일 '(.*)'을 대상 문서에서 찾을 수 없습니다/.exec(message)?.[1];
 }
 
 /**
- * An error to report for a failed insertion, in the user's own language and
- * with a next step they can take.
+ * The engine's own words from a transport's failure message.
  *
- * The width refusal is the one three transports spell differently. The other
- * two classes are the server's classification of the engine's refusal, which
- * is the only form that reaches a caller over HTTP: the raw stderr names the
- * staged input file, so it never leaves the server. Both keep the engine's own
- * text on `detail` and nothing else changes — an unclassified failure passes
- * through as it came.
+ * Each transport prefixes its own sentence — `hwp edit failed (exit 3): ` over
+ * HTTP and the CLI engine, `hwped_edit failed: ` through the Tauri bridge, on
+ * top of the engine's own `Error: insert_blocks ` — and the cause sits after
+ * all of them. What the frame prints is the engine's line, so a caller never
+ * reads two prefixes stapled together.
+ */
+function refusalReason(message: string): string {
+  return message
+    .replace(/^.*?hwp edit failed \(exit \d+\):\s*/, "")
+    .replace(/^.*?hwped_edit failed:\s*/, "")
+    .replace(/^hwp_failed:\s*/, "")
+    .replace(/^error:\s*/i, "")
+    .replace(/^insert_blocks refused:?\s*/, "")
+    .replace(/^insert_blocks\s+/, "")
+    .trim();
+}
+
+/**
+ * Whether a failure on the insertion path is the engine refusing the block,
+ * rather than a failure with a message and a badge of its own.
+ *
+ * The frame below localizes a refusal and nothing else: a timeout, a missing
+ * binary, a protected document, an old engine and a staging failure each keep
+ * the handling they already have, because calling one of those "the engine
+ * refused this insertion" would misname the cause. A failure that carries no
+ * error code is judged by the engine's own markers, which is what an
+ * in-process transport passes through untouched.
+ */
+function isInsertionRefusal(error: unknown, message: string): boolean {
+  if (isHwpEngineError(error)) return error.code === "failed" || error.code === "bad_request";
+  return /insert_blocks|layout_overflow|스타일 '(.*)'을 대상 문서에서 찾을 수 없습니다|블록\/스타일\/목록 정의가 유효하지 않습니다/.test(message);
+}
+
+/**
+ * An error to report for a failed insertion, in the user's own language.
+ *
+ * Every transport lands here, so every refused insertion gets a localized
+ * sentence rather than whatever the engine or the server wrote: the specific
+ * classes (too wide, unknown style, rejected definition) say what to change,
+ * and anything else keeps the engine's own reason inside one frame that names
+ * both things a caller can vary — the component and the insertion point. The
+ * transport's text stays on `detail` for a log, and an error that is not an
+ * engine refusal (a timeout, an unavailable binary, a protected document) is
+ * passed through with the handling it already has.
  */
 export function insertionFailure(
   error: unknown,
@@ -145,22 +233,28 @@ export function insertionFailure(
   t: TFunction,
 ): unknown {
   const message = error instanceof Error ? error.message : String(error);
+  if (!isInsertionRefusal(error, message)) return error;
   const style = unknownStyleName(message);
   if (style !== undefined) return wrapped(error, t("components.unknownStyle", { style }), message);
+  if (isLayoutOverflow(error)) {
+    const wanted = widestBlockMm(blocks);
+    const available = overflowingBodyMm(message);
+    // Every sentence below names a next step the user can take; none of them
+    // leaves a blank where a width would go.
+    const text = wanted === undefined
+      ? t("components.tooWideUnknown")
+      : available === undefined
+        ? t("components.tooWideUnmeasured", { width: millimetres(wanted) })
+        : t("components.tooWide", { width: millimetres(wanted), available: millimetres(available) });
+    return wrapped(error, text, message);
+  }
   if (message.includes("insert_blocks refused: invalid_definition")) {
     return wrapped(error, t("components.invalidDefinition"), message);
   }
-  if (!isLayoutOverflow(error)) return error;
-  const wanted = widestBlockMm(blocks);
-  const available = overflowingBodyMm(message);
-  // Every sentence below names a next step the user can take; none of them
-  // leaves a blank where a width would go.
-  const text = wanted === undefined
-    ? t("components.tooWideUnknown")
-    : available === undefined
-      ? t("components.tooWideUnmeasured", { width: millimetres(wanted) })
-      : t("components.tooWide", { width: millimetres(wanted), available: millimetres(available) });
-  return wrapped(error, text, message);
+  const reason = refusalReason(message);
+  // The frame is the whole point: a refusal with no readable cause still names
+  // both things the caller can vary, rather than an empty slot after a colon.
+  return wrapped(error, t("components.insertionRefused", { reason }), message);
 }
 
 /**

@@ -163,20 +163,21 @@ export function SegmentInspector(): JSX.Element {
   const reorderRefused = multiSelection && !runContiguous;
   /**
    * A section's definition paragraph is a fixed point: the engine will not move
-   * it, and it will not move anything above it either. Both halves are needed,
-   * because the move of a neighbour is expressed as that neighbour's address —
-   * moving paragraph 1 up addresses paragraph 0, and moving a run at 1..n up
-   * addresses it too.
+   * it, will not delete it, and will not move anything above it either. All
+   * three are needed, because the move of a neighbour is expressed as that
+   * neighbour's address — moving paragraph 1 up addresses paragraph 0, and
+   * moving a run at 1..n up addresses it too.
    */
   const definitionLocked = paragraphRun === null
     ? singleParagraph !== undefined && isSectionDefinitionParagraph(singleParagraph)
     : paragraphRun.some(isSectionDefinitionParagraph);
   const moveUpNeighbour = siblings[(paragraphRun === null ? siblingAt : runStart) - 1];
   const definitionAbove = moveUpNeighbour !== undefined && isSectionDefinitionParagraph(moveUpNeighbour);
-  const deleteDisabled = disabled || (paragraphRun === null ? textSelectionRestricted || address === undefined : !runContiguous);
-  const moveUpDisabled = deleteDisabled || definitionLocked || definitionAbove ||
+  const deleteDisabled = disabled || definitionLocked ||
+    (paragraphRun === null ? textSelectionRestricted || address === undefined : !runContiguous);
+  const moveUpDisabled = deleteDisabled || definitionAbove ||
     (paragraphRun === null ? siblingAt <= 0 : runStart <= 0);
-  const moveDownDisabled = deleteDisabled || definitionLocked ||
+  const moveDownDisabled = deleteDisabled ||
     (paragraphRun === null ? siblingAt < 0 || siblingAt >= siblings.length - 1 : runEnd >= siblings.length - 1);
   const anchorDisabled = !editable || state.status === "applying" || textSelectionRestricted;
   const legacyLinkSeparator = capabilities?.editOps !== "v1" && [currentText, linkText, linkUrl].some(value => value.includes("=>"));

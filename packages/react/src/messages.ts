@@ -124,6 +124,20 @@ export const en = {
   "components.tooWideUnknown":
     "The engine refused the insertion as too wide for where it would go. Insert it where the body is " +
     "wide enough, or use a narrower component.",
+  "components.insertionRefused": (p: { reason?: string }): string =>
+    p.reason === undefined || p.reason === ""
+      ? "The engine refused this insertion. Check the component and the insertion point, then retry."
+      : `The engine refused this insertion: ${p.reason}. Check the component and the insertion point, then retry.`,
+  "components.preflightImage":
+    "This component inserts an image, and the palette stages no image bytes, so the engine would refuse " +
+    "the insertion. Insert the image with the Images panel, or change the component to paragraphs and " +
+    "tables.",
+  "components.preflightSectionBreak":
+    "This component starts a section of its own, and a component insertion cannot carry a section break. " +
+    "Use a page or column break inside the component, or start the new section from the document panel.",
+  "components.preflightEquation": (p: { name: string }): string =>
+    `The open document is ${p.name}, an .hwp file, and the engine cannot insert an equation into one. ` +
+    "Save it as .hwpx and insert the component again, or remove the equation.",
   "components.refused": (p: {
     code: string;
     source: string;
@@ -140,8 +154,8 @@ export const en = {
     "that style in the component's own styles, or reference one the document already has, then insert " +
     "it again.",
   "components.invalidDefinition":
-    "The engine refused the component's block, style or list definitions and reported no field to " +
-    "fix. Check the component's blocks, styles and lists, then insert it again.",
+    "The engine refused the component's block, style or list definitions. Check the component's blocks, " +
+    "styles and lists, then insert it again.",
   "components.step.param":
     "Correct that value in the panel, or fix the component's params, then insert it again.",
   "components.step.style":
@@ -248,7 +262,8 @@ export const en = {
   "segment.multiReorderRefused":
     "Move and delete act on one paragraph or on paragraphs next to each other in the same place. Select such a run to move or delete it together.",
   "segment.sectionDefinitionLocked":
-    "The first paragraph of a section holds the section's page setup, so it cannot be moved and no paragraph can be moved above it. Pick another paragraph.",
+    "The first paragraph of a section holds the section's page setup, so it cannot be moved or deleted, " +
+    "and no paragraph can be moved above it. Pick another paragraph.",
   "segment.alignLabel": "Alignment",
   "segment.alignGroupAria": "Paragraph alignment",
   "segment.alignLeft": "Left",
@@ -529,6 +544,19 @@ export const ko: MessageTable = {
     "셀 안이 아니라 최상위 문단 옆에 넣거나 더 좁은 구성 요소를 사용하세요.",
   "components.tooWideUnknown":
     "들어갈 자리에 비해 넓다고 엔진이 삽입을 거부했습니다. 본문이 충분히 넓은 곳에 넣거나 더 좁은 구성 요소를 사용하세요.",
+  "components.insertionRefused": (p: { reason?: string }): string =>
+    p.reason === undefined || p.reason === ""
+      ? "엔진이 이 삽입을 거부했습니다. 구성 요소와 삽입 지점을 확인한 뒤 다시 시도하세요."
+      : `엔진이 이 삽입을 거부했습니다: ${p.reason}. 구성 요소와 삽입 지점을 확인한 뒤 다시 시도하세요.`,
+  "components.preflightImage":
+    "이 구성 요소는 그림을 삽입하는데, 팔레트는 그림 바이트를 준비하지 않으므로 엔진이 삽입을 거부합니다. " +
+    "그림 탭에서 그림을 넣거나 구성 요소를 문단과 표로 바꾸세요.",
+  "components.preflightSectionBreak":
+    "이 구성 요소는 자체 구역으로 시작하는데, 구성 요소 삽입은 구역 나누기를 함께 보낼 수 없습니다. " +
+    "구성 요소 안에서는 쪽이나 단 나누기를 쓰거나, 문서 탭에서 새 구역을 시작하세요.",
+  "components.preflightEquation": (p: { name: string }): string =>
+    `열려 있는 문서 ${p.name}은(는) .hwp 파일이고, 엔진은 .hwp에 수식을 삽입할 수 없습니다. ` +
+    ".hwpx로 저장한 뒤 구성 요소를 다시 삽입하거나 수식을 빼세요.",
   "components.refused": (p: {
     code: string;
     source: string;
@@ -543,7 +571,7 @@ export const ko: MessageTable = {
     `대상 문서에 '${p.style}' 스타일이 없어 엔진이 구성 요소를 거부했습니다. 그 스타일을 구성 요소의 ` +
     "styles에 정의하거나 문서에 이미 있는 스타일을 참조한 뒤 다시 삽입하세요.",
   "components.invalidDefinition":
-    "구성 요소의 블록, 스타일, 목록 정의를 엔진이 거부했고 고칠 필드도 알려주지 않았습니다. " +
+    "구성 요소의 블록, 스타일, 목록 정의를 엔진이 거부했습니다. " +
     "구성 요소의 blocks, styles, lists를 확인한 뒤 다시 삽입하세요.",
   "components.step.param": "패널에서 그 값을 고치거나 구성 요소의 매개변수를 수정한 뒤 다시 삽입하세요.",
   "components.step.style":
@@ -636,7 +664,7 @@ export const ko: MessageTable = {
   "segment.multiReorderRefused":
     "이동과 삭제는 문단 하나, 또는 같은 자리에서 연속한 문단들을 대상으로 합니다. 그런 문단들을 함께 선택하면 한 번에 옮기거나 삭제할 수 있습니다.",
   "segment.sectionDefinitionLocked":
-    "구역의 첫 문단은 구역의 용지 설정을 담고 있어 옮길 수 없고, 그 위로 다른 문단을 옮길 수도 없습니다. 다른 문단을 선택하세요.",
+    "구역의 첫 문단은 구역의 용지 설정을 담고 있어 옮기거나 삭제할 수 없고, 그 위로 다른 문단을 옮길 수도 없습니다. 다른 문단을 선택하세요.",
   "segment.alignLabel": "정렬",
   "segment.alignGroupAria": "문단 정렬",
   "segment.alignLeft": "왼쪽",
