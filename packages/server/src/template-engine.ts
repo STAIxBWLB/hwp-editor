@@ -78,13 +78,15 @@ export function createTemplateCommands(deps: Dependencies) {
       for (const item of forms) byKey.set(item.key, item);
       return { items: [...byKey.values()] } as TemplateInputs;
     });
-    const fields = parse(await deps.run(["fields", input, "--json"], call), raw => reportArray(raw, "fields").map(entry => {
+    const fields = parse(await deps.run(["fields", input, "--json"], call), raw => reportArray(raw, "fields").flatMap(entry => {
       const field = reportObject(entry, "fields[]");
+      // Hyperlinks and other unnamed fields cannot be set by name.
+      if (field.name === null) return [];
       const key = reportString(field.name, "field.name");
       reportString(field.kind, "field.kind");
       reportString(field.ctrl_id, "field.ctrl_id");
       reportString(field.value, "field.value");
-      return { key, label: key, kind: "field" as const, required: false };
+      return [{ key, label: key, kind: "field" as const, required: false }];
     }));
     const fieldCounts = new Map<string, number>();
     // Unnamed native fields cannot be targeted by set_field; never offer an

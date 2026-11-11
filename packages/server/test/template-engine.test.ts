@@ -1,3 +1,6 @@
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { templateVersionSupported } from "@hwp-editor/core";
@@ -102,5 +105,30 @@ describe("lint report schema compatibility", () => {
     const { createTemplateCommands } = await import("../src/template-engine.js");
     const commands=createTemplateCommands({version:async()=>"1.4.0",work:async fn=>fn("/unused"),stage:async()=>"/unused/input.hwpx",run:async()=>JSON.stringify({contract:"hwp-lint-report-v1",...report})});
     await expect(commands.lint({name:"x.hwpx",data:new Uint8Array()})).rejects.toThrow(/Invalid template report: (lint.schema_version|finding.severity).*upgrade/);
+  });
+});
+
+describe("nullable native field names", () => {
+  it("skips an unnamed field while listing and filling its named neighbor", async () => {
+    const { createTemplateCommands } = await import("../src/template-engine.js");
+    const dir=await mkdtemp(join(tmpdir(),"hwp-null-field-"));
+    try {
+      const commands=createTemplateCommands({version:async()=>"1.4.0",work:async fn=>fn(dir),stage:async()=>join(dir,"input.hwpx"),run:async args=>{
+        if(args[0]==="slots") return JSON.stringify({placeholders:[],fields:[]});
+        if(args[0]==="fields") return JSON.stringify([
+          {name:null,kind:"하이퍼링크",ctrl_id:"%hlk",value:"링크"},
+          {name:"approval",kind:"누름틀",ctrl_id:"%clk",value:"대기"},
+        ]);
+        expect(args[0]).toBe("edit");
+        expect(JSON.parse(await readFile(args[args.indexOf("--ops")+1]!,"utf8"))).toEqual([{op:"set_field",name:"approval",value:"완료"}]);
+        await writeFile(args[args.indexOf("-o")+1]!,new Uint8Array([7]));
+        return "";
+      }});
+      const document={name:"x.hwpx",data:new Uint8Array()};
+      await expect(commands.slots(document)).resolves.toEqual({items:[{key:"approval",label:"approval",kind:"field",required:false}]});
+      const filled=await commands.fill(document,{approval:"완료"});
+      expect(filled.document.data).toEqual(new Uint8Array([7]));
+      expect(filled.report).toEqual({replaced:1,counts:{approval:1}});
+    } finally { await rm(dir,{recursive:true,force:true}); }
   });
 });
