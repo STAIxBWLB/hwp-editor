@@ -187,6 +187,25 @@ describe("insertionFailure", () => {
     expect(shown.message).toBe(en("components.unknownStyle", { style: "결재란 (법인)" }));
   });
 
+  it("shows a style name only as a quoted value; the name never picks the sentence (#88 review)", () => {
+    // A name that reads like another class's marker still yields the
+    // unknown-style sentence, because the kind field chose it.
+    const style = "layout_overflow invalid_definition edit refused: range_tag";
+    const shown = insertionFailure(refused("x", { kind: "unknown_style", style }), WIDE, en) as Error;
+    expect(shown.message).toBe(en("components.unknownStyle", { style }));
+    expect(shown.message).toContain(`"${style}"`);
+    expect(ko("components.unknownStyle", { style })).toContain(`'${style}'`);
+  });
+
+  it("ignores a malformed insertion field and falls back to the generic frame", () => {
+    for (const insertion of [{ kind: "unknown_style", style: "" }, { kind: "layout_overflow", insertionMm: "46" }, { kind: "x" }]) {
+      const error = Object.assign(new HwpEngineError("failed", "hwp edit failed (exit 1)"), { insertion });
+      const shown = insertionFailure(error, WIDE, en) as Error;
+      expect(shown.message).not.toContain("no style named");
+      expect(shown.message).not.toBe(en("components.invalidDefinition"));
+    }
+  });
+
   it("never picks a class from message text alone (#88)", () => {
     // User text can end an unclassified message; without the field the palette
     // falls back to the generic frame, whatever the text says.

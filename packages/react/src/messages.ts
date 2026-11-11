@@ -203,7 +203,7 @@ export const en = {
       : `${p.source}: ${p.field}${p.value === "" ? "" : ` = ${p.value}`} was refused (${p.code}). `) +
     p.step,
   "components.unknownStyle": (p: { style: string }): string =>
-    `The target document has no style named ${p.style}, so the engine refused the component. Define ` +
+    `The target document has no style named "${p.style}", so the engine refused the component. Define ` +
     "that style in the component's own styles, or reference one the document already has, then insert " +
     "it again.",
   "components.invalidDefinition":

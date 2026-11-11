@@ -30,6 +30,20 @@ describe("insertion refusal classifier (#88)", () => {
     expect(insertionRefusalLine("Error: failed to parse /tmp/w/in.hwpx at byte 42")).toBe("insert_blocks refused: failed to parse <path> at byte 42");
   });
 
+  it("refuses every malformed wire shape (#88 review)", () => {
+    for (const bad of [
+      null, undefined, 42, "layout_overflow", [], {},
+      { kind: "bogus" },
+      { kind: "unknown_style" },
+      { kind: "unknown_style", style: "" },
+      { kind: "unknown_style", style: 7 },
+      { kind: "layout_overflow", blockMm: Number.NaN },
+      { kind: "layout_overflow", insertionMm: Number.POSITIVE_INFINITY },
+      { kind: "layout_overflow", insertionMm: "46.4" },
+      { kind: "layout_overflow", blockMm: null },
+    ]) expect(isInsertionRefusal(bad)).toBe(false);
+  });
+
   it("narrows untrusted values", () => {
     expect(isInsertionRefusal({ kind: "layout_overflow", insertionMm: 46.4 })).toBe(true);
     expect(isInsertionRefusal({ kind: "layout_overflow", insertionMm: "46" })).toBe(false);
