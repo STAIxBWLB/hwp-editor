@@ -227,22 +227,26 @@ function argvSeparatorFields(op: LegacyEditOp): ArgvSeparatorField[] {
         { field: "text", value: op.text, separator: "=>" },
         { field: "url", value: op.url, separator: "=>" },
       ];
-    case "insert-image":
-      return [
-        { field: "anchor", value: op.anchor, separator: "=>" },
-        {
+    case "insert-image": {
+      const fields: ArgvSeparatorField[] = [{ field: "anchor", value: op.anchor, separator: "=>" }];
+      if (op.width === undefined || op.height === undefined) {
+        fields.push({
           field: "path", value: op.path, separator: "@",
           when: path => imagePathHasDimensionSuffix(path),
-        },
-      ];
-    case "seal":
-      return [
-        { field: "anchor", value: op.anchor, separator: "=>" },
-        {
+        });
+      }
+      return fields;
+    }
+    case "seal": {
+      const fields: ArgvSeparatorField[] = [{ field: "anchor", value: op.anchor, separator: "=>" }];
+      if (op.size === undefined) {
+        fields.push({
           field: "path", value: op.path, separator: "@",
           when: path => sealPathHasSizeSuffix(path),
-        },
-      ];
+        });
+      }
+      return fields;
+    }
     case "set-format":
       return [
         { field: "find", value: op.find, separator: ":" },
