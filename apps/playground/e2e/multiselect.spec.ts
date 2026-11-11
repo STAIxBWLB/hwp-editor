@@ -88,13 +88,18 @@ test("AC3: five selected paragraphs use one edit request and one undo restores a
  * occurrence.
  *
  * The selection here is three characters of the first occurrence, which is
- * what AC2 asks. Under the 2026-11-09 address decision a sub-run selection
- * snaps to the whole run it sits in (sub-run characters wait for
- * hwp-cli#517), so the op carries the run and no `chars`; the assertion that
- * decides AC2 is the last one: the two occurrences read bold and not bold.
+ * what AC2 asks. Under the 2026-11-11 address decision a sub-run selection
+ * snaps to the whole run it sits in (sub-run characters are #71, waiting on
+ * hwp-cli#517), so the op carries the run and no `chars`. That makes AC2's
+ * literal claim hold on this fixture only because the phrase IS one run, which
+ * the premise below asserts rather than assumes: a fixture change that left the
+ * run longer than the selection would otherwise make this test bold more than
+ * the three characters it claims.
  */
 test("AC2: a range over a repeated phrase changes only the selected occurrence", async ({page}) => {
   const before = await loadSelectionFixture(page);
+  const firstRun=before.segments.find(segment=>segment.kind==="run")!;
+  expect(segmentText(before,firstRun)).toBe("동일문");
   const bodies = await recordEdits(page);
   const list=page.getByRole("listbox",{name:en["segment.paragraphChoices"]});
   await list.getByRole("option").nth(0).click();
@@ -106,7 +111,6 @@ test("AC2: a range over a repeated phrase changes only the selected occurrence",
   await page.getByRole("button",{name:en["toolbar.applyWithCount"]({count:1}),exact:true}).click();
   expect(bodies).toHaveLength(1);
   const ops=editOps(bodies[0]!);
-  const firstRun=before.segments.find(segment=>segment.kind==="run")!;
   expect(ops).toEqual([{kind:"set-format",address:{id:firstRun.id},props:{bold:"on"}}]);
   const op=ops[0]!;
   expect("address" in op && "chars" in op.address).toBe(false);

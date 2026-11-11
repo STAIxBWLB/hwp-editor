@@ -20,6 +20,19 @@ afterEach(cleanup);
 const tables: Record<Locale, MessageTable> = { en, ko };
 const LOCALES: Locale[] = ["en", "ko"];
 
+/**
+ * Keys whose en and ko values must stay equal, each with why. Two shapes only:
+ * a fallback that is empty or a protocol name, and a template that is nothing
+ * but its own parameters, so there is no word in it to translate.
+ */
+const DELIBERATE_IDENTICAL = new Map<keyof MessageTable, string>([
+  ["error.kind.generic", "the fallback for an error kind the engine did not classify"],
+  ["segment.hyperlinkUrlPlaceholder", "a URL placeholder: the scheme's own name"],
+  ["components.paramLabel", "a label built from two names and a colon, with no word of its own"],
+  ["lint.disabled", "composed from an already-localized reason and remedy"],
+  ["templates.disabled", "composed from an already-localized reason and remedy"],
+]);
+
 const file: DocumentHandle = {
   name: "minutes.hwpx",
   data: new TextEncoder().encode("original"),
@@ -267,19 +280,37 @@ describe("table parity (I18N-06, I18N-08)", () => {
   /**
    * AC10 asks for every new control's strings in both locales, and the two
    * checks above cannot see an untranslated paste: a ko entry that is the en
-   * sentence satisfies "same key" and "same shape". Two keys are deliberately
-   * identical, so they are named rather than waved through by a rule.
+   * sentence satisfies "same key" and "same shape". The identical values that
+   * are intended are named one by one, so an entry here is a decision and not
+   * a rule that can swallow the next paste.
    */
   it("translates every string instead of copying the English text", () => {
-    const deliberate = new Set<keyof MessageTable>([
-      // The fallback for an error kind the engine did not classify.
-      "error.kind.generic",
-      // A URL placeholder: the scheme's own name, not a word to translate.
-      "segment.hyperlinkUrlPlaceholder",
-    ]);
     const copied = (Object.keys(en) as (keyof MessageTable)[]).filter(
-      (key) => typeof en[key] === "string" && en[key] === ko[key] && !deliberate.has(key),
+      (key) =>
+        typeof en[key] === "string" &&
+        en[key] === ko[key] &&
+        !DELIBERATE_IDENTICAL.has(key),
     );
+    expect(copied).toEqual([]);
+  });
+
+  /**
+   * The check above only reads strings, so a template function pasted from en
+   * into ko passes it: the key exists and both values are functions. Both are
+   * called with one sample argument set instead, and a copy renders the same
+   * sentence where a translation renders its own.
+   *
+   * Every parameter is the string "S1" rather than a number, because a
+   * parameter is read as a value in a template and never as a length or an
+   * index, and one shared probe keeps the comparison local to the wording.
+   */
+  it("translates every template instead of copying the English one", () => {
+    const probe = new Proxy({}, { get: () => "S1" }) as unknown;
+    const call = (value: unknown): string => (value as (p: unknown) => string)(probe);
+    const copied = (Object.keys(en) as (keyof MessageTable)[]).filter((key) => {
+      if (typeof en[key] !== "function" || typeof ko[key] !== "function") return false;
+      return call(en[key]) === call(ko[key]) && !DELIBERATE_IDENTICAL.has(key);
+    });
     expect(copied).toEqual([]);
   });
 });

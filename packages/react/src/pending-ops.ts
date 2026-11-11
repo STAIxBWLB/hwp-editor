@@ -96,20 +96,28 @@ export function pendingAddressLabel(
   address: ParagraphAddress | EditAddress,
   t: TFunction,
 ): string {
-  const at = address.at;
-  const run = at !== undefined && "run" in at ? at.run : undefined;
-  const base =
-    at === undefined
-      ? address.id !== undefined
-        ? t("pending.target.id", { id: address.id })
-        : t("pending.target.document")
-      : run === undefined
-        ? t("pending.target.at", { section: at.section, paragraph: at.paragraph })
-        : t("pending.target.run", { section: at.section, paragraph: at.paragraph, run });
+  // A range op addresses a paragraph or a run by id and carries its WCHAR
+  // window separately, so the window closes over whichever address it is.
   const chars = "chars" in address ? address.chars : undefined;
-  return chars === undefined
-    ? base
-    : t("pending.target.chars", { range: base, start: chars[0], end: chars[1] });
+  const withChars = (base: string): string =>
+    chars === undefined
+      ? base
+      : t("pending.target.chars", { range: base, start: chars[0], end: chars[1] });
+
+  const at = address.at;
+  if (at === undefined) {
+    return withChars(
+      address.id === undefined
+        ? t("pending.target.document")
+        : t("pending.target.id", { id: address.id }),
+    );
+  }
+  if ("run" in at) {
+    return withChars(
+      t("pending.target.run", { section: at.section, paragraph: at.paragraph, run: at.run }),
+    );
+  }
+  return withChars(t("pending.target.at", { section: at.section, paragraph: at.paragraph }));
 }
 
 /**
