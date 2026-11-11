@@ -175,6 +175,38 @@ export function pendingTargetLabel(
         return t("pending.target.wholePiece", { id: op.address.id });
       }
     }
+    // Four addressed ops carry a SECOND target beside the address, and a row
+    // that showed only the address would name half of what the op does: which
+    // text a replace looks for, which side of the paragraph blocks land on,
+    // where a move puts it, and which style an apply-style applies.
+    if (op.kind === "replace") {
+      return t("pending.target.replaceFind", {
+        find: op.find, range: pendingAddressLabel(op.address, t),
+      });
+    }
+    if (op.kind === "insert-blocks") {
+      return t(
+        op.position === "before" ? "pending.target.before" : "pending.target.after",
+        { range: pendingAddressLabel(op.address, t) },
+      );
+    }
+    if (op.kind === "move-para") {
+      return t("pending.target.moveTo", {
+        range: pendingAddressLabel(op.address, t),
+        destination: pendingAddressLabel(op.to.address, t),
+        before: op.to.position === "before",
+      });
+    }
+    // `apply-style` carries a style beside its address, so the address-only
+    // return below hid the half a reader needs to tell two rows apart: a
+    // queued row read "Apply style: element p3" whatever style it applied.
+    // Resolved through the same resolver as the address-less style rows.
+    if (op.kind === "apply-style") {
+      return t("pending.target.styleOn", {
+        style: resolvers.style === undefined ? String(op.style) : resolvers.style(op.style),
+        range: pendingAddressLabel(op.address, t),
+      });
+    }
     return pendingAddressLabel(op.address, t);
   }
   // A style reference is an id (number) or a name this batch creates (string);
@@ -195,10 +227,14 @@ export function pendingTargetLabel(
     const value = (op as Record<string, unknown>)[prop];
     if (typeof value === "string") return value;
   }
+  // A table is the one target whose row counts from one: the panel a reader is
+  // looking at says "Table 2", so the queued row says the same number and the
+  // two can be matched. The op itself keeps the engine's 0-based index, which
+  // is what the engine reports refusals against.
   const table = (op as Record<string, unknown>).table;
-  if (typeof table === "number") return t("table.tableLabel", { index: table });
+  if (typeof table === "number") return t("pending.target.table", { index: table + 1 });
   const target = (op as Record<string, unknown>).target;
-  if (typeof target === "number") return t("table.tableLabel", { index: target });
+  if (typeof target === "number") return t("pending.target.table", { index: target + 1 });
   if (typeof target === "string") return target;
   return t("pending.target.document");
 }

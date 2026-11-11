@@ -12,9 +12,11 @@ import {
  * The pending list's own text (issue #46 AC10, deferred here by T1).
  *
  * A queued row is read by a person deciding what to remove, so it names the
- * operation in their language and the target in the engine's own indices. What
- * this suite pins is exactly what T1 left raw: the op kind and the address,
- * neither of which may reach the list as an identifier or as JSON.
+ * operation in their language and the target in the engine's own indices -
+ * except a table, which the row numbers the way the table panel does so the
+ * two surfaces can be matched. What this suite pins is exactly what T1 left
+ * raw: the op kind and the address, neither of which may reach the list as an
+ * identifier or as JSON.
  */
 describe.each([["en", en], ["ko", ko]] as const)("pending row text (%s)", (locale, messages) => {
   const t = createT(locale, {});
@@ -140,8 +142,66 @@ describe.each([["en", en], ["ko", ko]] as const)("pending row text (%s)", (local
       .toBe(messages["document.page.marginLeft"]);
   });
 
-  it("names a table by the number the table panel shows", () => {
+  it("names the style an addressed apply-style row applies", () => {
+    // `apply-style` carries an address AND a style, so the address-only return
+    // used to answer first and the style was never read: two rows on the same
+    // paragraph read alike whatever they applied (#58 item 25).
+    const op = { kind: "apply-style" as const, address: { id: "p3" }, style: 3 };
+    expect(pendingTargetLabel(op, t, { style: () => "바탕글" }))
+      .toBe(messages["pending.target.styleOn"]({
+        style: "바탕글", range: messages["pending.target.id"]({ id: "p3" }),
+      }));
+    // With no resolver the ref prints as it arrives, the way the address-less
+    // style rows do, rather than dropping the row's other half.
+    expect(pendingTargetLabel(op, t))
+      .toBe(messages["pending.target.styleOn"]({
+        style: "3", range: messages["pending.target.id"]({ id: "p3" }),
+      }));
+    // A style this batch creates arrives as a name and needs no resolver.
+    expect(pendingTargetLabel({ kind: "apply-style", address: { id: "p3" }, style: "바탕글" }, t))
+      .toBe(messages["pending.target.styleOn"]({
+        style: "바탕글", range: messages["pending.target.id"]({ id: "p3" }),
+      }));
+  });
+
+  it("names the second target an op carries beside its address", () => {
+    // A row that showed only the address would name half of what the op does:
+    // which text a replace looks for, which side of the paragraph blocks land
+    // on, and where a move puts the paragraph.
+    expect(pendingTargetLabel(
+      { kind: "replace", address: { id: "p3" }, find: "회의", replace: "미팅" }, t,
+    )).toBe(messages["pending.target.replaceFind"]({
+      find: "회의", range: messages["pending.target.id"]({ id: "p3" }),
+    }));
+    expect(pendingTargetLabel({
+      kind: "insert-blocks", address: { id: "p3" }, position: "after",
+      blocks: [{ type: "paragraph", runs: [{ type: "text", text: "블록" }] }],
+    }, t)).toBe(messages["pending.target.after"]({
+      range: messages["pending.target.id"]({ id: "p3" }),
+    }));
+    expect(pendingTargetLabel({
+      kind: "move-para", address: { id: "p3" },
+      to: { address: { id: "p1" }, position: "before" },
+    }, t)).toBe(messages["pending.target.moveTo"]({
+      range: messages["pending.target.id"]({ id: "p3" }),
+      destination: messages["pending.target.id"]({ id: "p1" }),
+      before: true,
+    }));
+  });
+
+  it("names a table by the ordinal the table panel shows", () => {
+    // The panel a reader is looking at says "Table 3" for the third table, and
+    // a queued row has to match that number or the reader cannot tell which
+    // row removes the table in front of them. The op keeps the engine's
+    // 0-based index; only the row counts from one. Both shapes reach it: a
+    // `table` coordinate and a `delete-table` target.
     expect(pendingTargetLabel({ kind: "delete-table", target: 2 }, t))
-      .toBe(messages["table.tableLabel"]({ index: 2 }));
+      .toBe(messages["pending.target.table"]({ index: 3 }));
+    expect(pendingTargetLabel({ kind: "delete-row", table: 0, row: 1 }, t))
+      .toBe(messages["pending.target.table"]({ index: 1 }));
+    // So the row carries no base statement: the number is the panel's, and the
+    // paragraph rows above it in the same queue still state theirs.
+    expect(pendingTargetLabel({ kind: "delete-table", target: 2 }, t))
+      .not.toContain(locale === "en" ? "0-based" : "0 기준");
   });
 });
