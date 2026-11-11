@@ -1,3 +1,5 @@
+import { createRef } from "react";
+import type { HwpEditorHandle } from "../src/HwpEditor.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { Capabilities, DocumentHandle, HwpEngine, TemplateInputs } from "@hwp-editor/core";
@@ -157,25 +159,55 @@ it("treats prototype-named document slots as input data", async () => {
   await waitFor(()=>expect(engine.fill).toHaveBeenCalledWith(original,{constructor:"safe"}));
 });
 
-it("rolls back a template snapshot when another panel queues an op mid-apply", async () => {
+it("refuses queue and normal apply mid-replacement, leaving exactly one undo", async () => {
   const engine=templateEngine();
   const originalRead=engine.read;
   let finishRead: ((value: ReturnType<typeof makeEnvelope>) => void) | undefined;
   engine.read=vi.fn(document=>document===filled ? new Promise<ReturnType<typeof makeEnvelope>>(resolve=>{finishRead=resolve;}) : originalRead(document));
-  const onChange=vi.fn(), onError=vi.fn();
-  render(<HwpEditor engine={engine} file={original} onChange={onChange} onError={onError} />);
+  const onChange=vi.fn(), onError=vi.fn(), ref=createRef<HwpEditorHandle>();
+  render(<HwpEditor ref={ref} engine={engine} file={original} onChange={onChange} onError={onError} />);
   fireEvent.click(await screen.findByRole("tab",{name:en["tabs.templates"]}));
   fireEvent.change(await screen.findByLabelText("문서번호"),{target:{value:"2026-101"}});
   fireEvent.click(screen.getByRole("button",{name:en["templates.previewFill"]}));
   fireEvent.click(await screen.findByRole("button",{name:en["templates.apply"]}));
   await waitFor(()=>expect(finishRead).toBeTypeOf("function"));
   fireEvent.click(screen.getByRole("tab",{name:en["tabs.fields"]}));
-  fireEvent.change(await screen.findByLabelText(en["fields.fieldValueAria"]({name:"date"})),{target:{value:"2026-11-11"}});
-  fireEvent.click(screen.getByRole("button",{name:en["fields.setValue"]}));
+  const field=await screen.findByLabelText(en["fields.fieldValueAria"]({name:"date"}));
+  expect((field as HTMLInputElement).disabled).toBe(true);
+  fireEvent.change(field,{target:{value:"2026-11-11"}});
+  const queue=screen.getByRole("button",{name:en["fields.setValue"]});
+  expect((queue as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(queue);
+  const apply=screen.getByRole("button",{name:en["toolbar.applying"],exact:true});
+  expect((apply as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(apply);
+  await ref.current!.apply();
+  expect(engine.calls.edit).toEqual([]);
   finishRead!(makeEnvelope());
-  await waitFor(()=>expect(onError).toHaveBeenCalledWith(expect.objectContaining({message:en["error.pendingReplacement"]})));
-  expect(onChange).not.toHaveBeenCalled();
-  const pendingOne=en["toolbar.pendingEdits"]({count:1});
-  expect(screen.getByLabelText(pendingOne).textContent).toBe(pendingOne);
+  await waitFor(()=>expect(onChange).toHaveBeenLastCalledWith(filled));
+  expect(onError).not.toHaveBeenCalled();
+  const pendingZero=en["toolbar.pendingEdits"]({count:0});
+  expect(screen.getByLabelText(pendingZero).textContent).toBe(pendingZero);
+  fireEvent.click(screen.getByRole("button",{name:en["toolbar.revert"]}));
+  await waitFor(()=>expect(onChange).toHaveBeenLastCalledWith(original));
   expect((screen.getByRole("button",{name:en["toolbar.revert"]}) as HTMLButtonElement).disabled).toBe(true);
+});
+
+it("submits unchecked required bool variables and new list bool fields as false", async () => {
+  const engine=templateEngine() as HwpEngine;
+  const template=vi.fn(async()=>({document:filled,report:{schema_version:"1.0",mode:"compose",deterministic:true}}));
+  engine.template=template;
+  render(<HwpEditor engine={engine} file={original} />);
+  fireEvent.click(await screen.findByRole("tab",{name:en["tabs.templates"]}));
+  await screen.findByLabelText("문서번호");
+  const spec={version:"1.0",variables:{approved:{type:"bool",required:true},preset:{type:"bool",default:true},rows:{type:"list",fields:{accepted:{type:"bool",required:true},preset:{type:"bool",default:true}}}},source:{mode:"compose",document:{}}};
+  const file=new File(["{}"],"bools.json",{type:"application/json"});
+  Object.defineProperty(file,"text",{value:async()=>JSON.stringify(spec)});
+  fireEvent.change(screen.getByLabelText(en["templates.specLabel"]),{target:{files:[file]}});
+  expect((await screen.findByLabelText("approved") as HTMLInputElement).checked).toBe(false);
+  expect((screen.getByLabelText("preset") as HTMLInputElement).checked).toBe(true);
+  fireEvent.click(screen.getByRole("button",{name:en["templates.listAdd"]}));
+  expect((screen.getByLabelText(en["templates.listFieldAria"]({row:1,field:"accepted"})) as HTMLInputElement).checked).toBe(false);
+  fireEvent.click(screen.getByRole("button",{name:en["templates.previewSpec"]}));
+  await waitFor(()=>expect(template).toHaveBeenCalledWith(spec,{version:"1.0",values:{approved:false,preset:true,rows:[{accepted:false,preset:true}]}},original.name));
 });
