@@ -1,4 +1,5 @@
 import { parsePageLayout } from "./layout.js";
+import { classifyEditRefusal, editRefusalMarker } from "./refusals.js";
 /**
  * HwpEngine client for Tauri hosts (e.g. maru). Calls Rust commands named
  * `hwped_read / hwped_render / hwped_edit / hwped_compose / hwped_validate /
@@ -169,9 +170,35 @@ function toEngineError(cmd: string, error: unknown): HwpEngineError {
       cause: error,
     });
   }
+  const refusal = editRefusalFor(cmd, code, detail);
+  if (refusal !== null) {
+    return new HwpEngineError(code, `${cmd} failed: ${refusal}`, { cause: error });
+  }
   return new HwpEngineError(code, `${cmd} failed: ${detail}`, {
     cause: error,
   });
+}
+
+/**
+ * maru's edit failure: `hwp_failed: hwp edit failed (exit N): <raw stderr>`
+ * (dev/maru/src-tauri/src/hwped.rs run_hwp_ok). The head names the exit; the
+ * rest is hwp-cli's stderr verbatim.
+ */
+const MARU_EDIT_FAILURE = /^hwp_failed: (hwp edit failed \(exit -?\d+\)): ([\s\S]*)$/u;
+
+/**
+ * The classified refusal for an edit failure, as the message the HTTP
+ * transport sends for the same stderr (#80): the exit line plus the stable
+ * marker, and no engine prose, staged path or user value. Same classifier as
+ * the server (`classifyEditRefusal`), so the two cannot drift. The raw text
+ * stays on the error's `cause`.
+ */
+function editRefusalFor(cmd: string, code: HwpErrorCode, detail: string): string | null {
+  if (code !== "failed" || cmd !== "hwped_edit") return null;
+  const failure = MARU_EDIT_FAILURE.exec(detail);
+  if (failure === null) return null;
+  const kind = classifyEditRefusal(failure[2]!);
+  return kind === undefined ? null : `${failure[1]!}: ${editRefusalMarker(kind)}`;
 }
 
 /**
