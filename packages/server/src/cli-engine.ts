@@ -685,6 +685,9 @@ function rethrowUploadedImageFailure(error: unknown, imageOnly: boolean): never 
   try { return rethrowProtected(error); }
   catch (failure) {
     if (failure instanceof HwpCliError && failure.reason === "failed") {
+      // A refusal the classifier knows (#76) carries its own next step; an
+      // image remedy beside it would be a second, wrong one.
+      if (failure.stderr !== undefined && engineRefusalCause(failure.stderr) !== undefined) throw failure;
       const nextStep = imageOnly
         ? "Image insertion failed; re-export valid PNG/JPEG image bytes and confirm the anchor text exists, then retry."
         : "Check the edit batch's operation targets and values, then retry.";
@@ -871,23 +874,33 @@ function rethrowUnmatchedEditRefusal(error: unknown): never {
 /**
  * The hwp-cli 1.5-1.6 refusals the editor can reach (#76), as stable markers.
  *
- * hwp-cli v1.6.1 publishes no machine code for either, so each is matched on
- * the most stable token its refusal carries:
+ * hwp-cli v1.6.1 publishes no machine code for these (they are plain anyhow
+ * strings), so each is matched on the most stable fixed token of its line:
  * - `range_tag`: `RANGE_TAG_SHIFT_REFUSAL` (hwp-convert/src/edit.rs:179,
- *   hwp-cli#470) names the HWP5 record by its spec identifier `PARA_RANGE_TAG`,
- *   which is a format name and not prose.
- * - `run_range_conflict`: the `ConflictKind::LengthChange` line
- *   (hwp-cli/src/commands/edit.rs:1137, hwp-cli#420) is the only one with the
- *   fixed phrase `고정된 run 범위가 무효화됩니다`, which its op indices and
- *   paragraph path surround but never replace.
+ *   hwp-cli#470) names the HWP5 record by its identifier `PARA_RANGE_TAG`.
+ * - `run_range_conflict` (hwp-cli#420), two carriers: the batch preflight's
+ *   `ConflictKind::LengthChange` line (commands/edit.rs:1137) and the apply-time
+ *   content-drift bail (commands/edit.rs:3553-3563), which fires when any
+ *   earlier op (hyperlink, field, bookmark, image, set_cell...) changed the
+ *   paragraph's length before a run-addressed set_format.
+ * Only the error line is searched: the rest of stderr can echo user values
+ * (a replace's from/to), which must not decide the classification. anyhow
+ * prints the error first as `Error: ...`, its context chain continuing below;
+ * the search runs from that line to the end of the chain.
  * Neither stderr nor its staged paths cross the boundary: only the marker.
  */
 const RANGE_TAG_TOKEN = "PARA_RANGE_TAG";
-const RUN_RANGE_CONFLICT_TOKEN = "고정된 run 범위가 무효화됩니다";
+const RUN_RANGE_CONFLICT_TOKENS = ["고정된 run 범위가 무효화됩니다", "범위가 다른 글자를 가리킵니다"] as const;
+
+function engineErrorText(stderr: string): string {
+  const at = stderr.search(/^Error: /mu);
+  return at < 0 ? "" : stderr.slice(at);
+}
 
 function engineRefusalCause(stderr: string): "range_tag" | "run_range_conflict" | undefined {
-  if (stderr.includes(RANGE_TAG_TOKEN)) return "range_tag";
-  if (stderr.includes(RUN_RANGE_CONFLICT_TOKEN)) return "run_range_conflict";
+  const text = engineErrorText(stderr);
+  if (text.includes(RANGE_TAG_TOKEN)) return "range_tag";
+  if (RUN_RANGE_CONFLICT_TOKENS.some(token => text.includes(token))) return "run_range_conflict";
   return undefined;
 }
 

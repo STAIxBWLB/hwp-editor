@@ -34,25 +34,15 @@ export function toEditorError(e: unknown): EditorError {
     : { message: e instanceof Error ? e.message : String(e) };
 }
 
-/**
- * Whether a failure is the engine refusing an edit whose text did not match,
- * so nothing was applied.
- *
- * The server classifies this before the error crosses a transport: the
- * engine's own line names the staged work path and its Korean wording is not
- * part of the client contract, so only the stable `unmatched_replace` marker
- * travels. This module still only classifies; the sentence lives in the table.
- */
-export function isUnmatchedReplaceRefusal(e: unknown): boolean {
-  return engineRefusalKind(e) === "unmatched_replace";
-}
-
 /** The classified edit refusals the server marks with `edit refused: <kind>`. */
 export type EngineRefusalKind = "unmatched_replace" | "run_range_conflict" | "range_tag";
 
 /**
- * Which classified refusal a failure carries, if any (#76). Matched on the
- * server's stable marker only; the engine's own prose never reaches here.
+ * Which classified refusal a failure carries, if any (#76), so nothing was
+ * applied. The server classifies before the error crosses a transport: the
+ * engine's own line names staged paths and its Korean wording is not part of
+ * the client contract, so only the stable marker travels. This module only
+ * classifies; the sentence lives in the table.
  */
 export function engineRefusalKind(e: unknown): EngineRefusalKind | undefined {
   const message = e instanceof Error ? e.message : String(e);
