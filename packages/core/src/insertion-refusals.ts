@@ -39,12 +39,23 @@ const UNKNOWN_STYLE_LINE =
 const INVALID_DEFINITION_LINE =
   /^Error: insert_blocks 블록\/스타일\/목록 정의가 유효하지 않습니다: (.*)\. DocumentSpec v1 정의를 수정한 뒤 다시 시도하세요 \(삽입 위치의 폭은 (\d+(?:\.\d+)?)mm입니다\)$/u;
 
-/** A layout_overflow issue, at the start of an issue entry. */
-const OVERFLOW_ISSUE = /(?:^|; )layout_overflow at \$[^\s:;]*: /u;
-
-/** document_spec.rs:1495, the column-sum overflow, in its own issue entry. */
-const COLUMN_SUM =
-  /(?:^|; )layout_overflow at \$[^\s:;]*\.columns: column widths total (\d+(?:\.\d+)?) mm; body width is \d+(?:\.\d+)? mm(?=; |$)/u;
+/**
+ * A layout_overflow issue from document_spec.rs, as its own entry in the
+ * `; `-joined list: the path is the spec's own (`$.sections[...]`), never a
+ * style name's, and the message is one of the engine's two width messages:
+ * - :1495, columns: `column widths total X mm; body width is Y mm`
+ * - :1503 and the image check: `... exceeds body width Y mm`
+ * Y is the width the block was measured against: the body, or a cell's
+ * content width for a block inside a table cell (:1568-1580), which differs
+ * from the insertion point's width in the line's tail.
+ *
+ * The issue list joins entries with `; ` and paths can carry user style
+ * names (document_spec.rs:506-517), so a name holding `; layout_overflow at
+ * $.sections[...]` can still forge an entry. Only machine-readable refusal
+ * codes from the engine close that; it waits on STAIxBWLB/hwp-cli#531.
+ */
+const OVERFLOW_ENTRY =
+  /(?:^|; )layout_overflow at (\$\.sections\[[^\s:;]*): (?:column widths total (\d+(?:\.\d+)?) mm; body width is (\d+(?:\.\d+)?) mm|[^;]*? exceeds body width (\d+(?:\.\d+)?) mm)(?=; |$)/gu;
 
 function positive(raw: string | undefined): number | undefined {
   if (raw === undefined) return undefined;
@@ -63,10 +74,15 @@ export function classifyInsertionRefusal(stderr: string): InsertionRefusal | und
   if (style !== undefined && style.trim() !== "") return { kind: "unknown_style", style };
   const definition = INVALID_DEFINITION_LINE.exec(line);
   if (definition === null) return undefined;
-  const issues = definition[1]!;
-  if (!OVERFLOW_ISSUE.test(issues)) return { kind: "invalid_definition" };
-  const blockMm = positive(COLUMN_SUM.exec(issues)?.[1]);
-  const insertionMm = positive(definition[2]);
+  const entries = [...definition[1]!.matchAll(OVERFLOW_ENTRY)];
+  if (entries.length === 0) return { kind: "invalid_definition" };
+  // Widths come from one issue: the column-sum entry when there is one
+  // (it names both), else the first overflow entry. The tail's insertion
+  // width is only a fallback, because a block in a cell is measured against
+  // the cell, not the insertion point.
+  const entry = entries.find(match => match[2] !== undefined) ?? entries[0]!;
+  const blockMm = positive(entry[2]);
+  const insertionMm = positive(entry[3] ?? entry[4]) ?? positive(definition[2]);
   return {
     kind: "layout_overflow",
     ...(blockMm === undefined ? {} : { blockMm }),

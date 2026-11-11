@@ -31,6 +31,21 @@ describe("insertion refusal classifier (#88)", () => {
     expect(classifyInsertionRefusal("Error: insert_blocks 구역 정의 문단 앞에는 삽입할 수 없습니다")).toBeUndefined();
   });
 
+  it("reads a nested cell's width from its own issue, not the insertion point (t37-a6)", () => {
+    // Measured: a 120 mm table inside a 100 mm cell; the cell's content width
+    // is 96.40 mm while the line's tail names the 150 mm insertion point.
+    const nested = definition(
+      "layout_overflow at $.sections[0].blocks[0].rows[0].cells[0].blocks[0].columns: column widths total 120.00 mm; body width is 96.40 mm; " +
+      "layout_overflow at $.sections[0].blocks[0].rows[0].cells[0].blocks[0].width_mm: table width exceeds body width 96.40 mm",
+    );
+    expect(classifyInsertionRefusal(nested)).toEqual({ kind: "layout_overflow", blockMm: 120, insertionMm: 96.4 });
+  });
+
+  it("reads an image overflow's width from its issue", () => {
+    const image = definition("layout_overflow at $.sections[0].blocks[0].width_mm: image width exceeds body width 46.40 mm");
+    expect(classifyInsertionRefusal(image)).toEqual({ kind: "layout_overflow", insertionMm: 46.4 });
+  });
+
   it("keeps a style name that holds a quote or the tail's own words whole", () => {
     expect(classifyInsertionRefusal(style("결재란 (법인) '대표'"))).toEqual({ kind: "unknown_style", style: "결재란 (법인) '대표'" });
   });
@@ -52,6 +67,21 @@ describe("insertion refusal classifier (#88)", () => {
       const name = `x'${STYLE_TAIL} '`;
       const line = `Error: 스타일 '${name}'이 대상 문서에 여러 개 있어 삽입을 거부했습니다. 원본 문서의 중복 이름을 정리한 뒤 hwp styles에서 확인하세요`;
       expect(classifyInsertionRefusal(line)).toBeUndefined();
+    });
+
+    it("a style name forging a layout_overflow entry with a non-spec path (t37-a1 recurrence)", () => {
+      // Issue paths carry style names (document_spec.rs:506-517); this one
+      // holds `; layout_overflow at $.z: b`.
+      const line = definition("unknown_style at $.styles[\"a; layout_overflow at $.z: b\"].based_on: missing parent");
+      expect(classifyInsertionRefusal(line)).toEqual({ kind: "invalid_definition" });
+    });
+
+    it("a forged entry cannot supply blockMm to a real overflow", () => {
+      const line = definition(
+        "unknown_style at $.styles[\"a; layout_overflow at $.z.columns: column widths total 999.00 mm; body width is 1.00 mm\"]: x; " +
+        "layout_overflow at $.sections[0].blocks[0].width_mm: image width exceeds body width 46.40 mm",
+      );
+      expect(classifyInsertionRefusal(line)).toEqual({ kind: "layout_overflow", insertionMm: 46.4 });
     });
 
     it("a layout_overflow token inside another issue's message", () => {

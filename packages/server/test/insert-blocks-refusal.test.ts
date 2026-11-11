@@ -103,7 +103,7 @@ describe("insert_blocks refusal classification", () => {
     const error = await failure(
       // The engine's real line always carries the fixed tail; this issue names no width.
       "Error: insert_blocks 블록/스타일/목록 정의가 유효하지 않습니다: layout_overflow at $.sections[0].blocks[0].width_mm: " +
-        "image width exceeds the page" + ". DocumentSpec v1 정의를 수정한 뒤 다시 시도하세요 (삽입 위치의 폭은 46.4mm입니다)",
+        "image width exceeds body width 46.40 mm" + ". DocumentSpec v1 정의를 수정한 뒤 다시 시도하세요 (삽입 위치의 폭은 46.4mm입니다)",
       INSERT,
     );
 
