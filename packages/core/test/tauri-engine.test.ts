@@ -177,6 +177,89 @@ describe("createTauriEngine commands", () => {
     }
   });
 
+  /**
+   * t12-a9: a preset batch needs BOTH flags, and the report's verdict, on this
+   * transport too. The HTTP client and the CLI engine obeyed one core rule and
+   * this client obeyed none of it, so a desktop host aborted the whole edit on
+   * a table-less document and lost the body-style update.
+   */
+  const presetCaps = { version: "1.4.0", editable: true, formats: ["hwp", "hwpx"], editOps: "v1" };
+  const presetBatch: EditOp[] = [
+    { kind: "update-style", style: 7, size: "12" },
+    { kind: "style-tables", preset: "official" },
+  ];
+  const presetOutcomes = (ops: { op: string; status: "applied" | "failed"; pieces?: number; reason?: string }[]) => ({
+    schema_version: "1.0",
+    contract: "hwp-edit-report-v1",
+    output: "/tmp/staged/once.hwpx",
+    dry_run: false,
+    ops: ops.map((outcome, index) => ({
+      index,
+      op: outcome.op,
+      status: outcome.status,
+      pieces_touched: outcome.pieces ?? 0,
+      changed: [],
+      reason: outcome.reason ?? null,
+    })),
+    applied_count: ops.filter((outcome) => outcome.status === "applied").length,
+    failed_count: ops.filter((outcome) => outcome.status === "failed").length,
+  });
+
+  it("t12-a9: asks for allowPartial and report for a preset batch, whatever the caller passed", async () => {
+    const host = mockInvoke({
+      hwped_capabilities: presetCaps,
+      hwped_edit: {
+        name: doc.name,
+        dataBase64: base64.encode(new Uint8Array([7])),
+        report: presetOutcomes([
+          { op: "update_style", status: "applied", pieces: 1 },
+          { op: "style_tables", status: "failed", reason: "style_tables: no styleable table" },
+        ]),
+      },
+    });
+    const result = await createTauriEngine(host.invoke).edit(doc, presetBatch, { verify: true });
+    const args = host.calls.find(call => call.cmd === "hwped_edit")?.args;
+    // The caller asked for neither; the batch needs both.
+    expect(args?.["allowPartial"]).toBe(true);
+    expect(args?.["report"]).toBe(true);
+    // The preset's own miss is not a failed edit: the document is published
+    // and the report says which op was skipped.
+    expect(result.data).toEqual(new Uint8Array([7]));
+    expect(result.report?.ops[1]?.reason).toContain("no styleable table");
+  });
+
+  it("t12-a9: refuses a preset batch the host published with another op unapplied", async () => {
+    const host = mockInvoke({
+      hwped_capabilities: presetCaps,
+      hwped_edit: {
+        name: doc.name,
+        dataBase64: base64.encode(new Uint8Array([7])),
+        report: presetOutcomes([
+          { op: "update_style", status: "failed", reason: "update_style: no match or no change" },
+          { op: "style_tables", status: "applied", pieces: 1 },
+        ]),
+      },
+    });
+    const error = await createTauriEngine(host.invoke).edit(doc, presetBatch, {}).catch((e: unknown) => e);
+    expect(isHwpEngineError(error)).toBe(true);
+    expect((error as HwpEngineError).code).toBe("bad_request");
+    expect((error as HwpEngineError).message).toContain("no match or no change");
+    expect((error as HwpEngineError).message).toContain("apply again");
+  });
+
+  it("t12-a9: refuses a preset batch whose host answers without a readable report", async () => {
+    for (const answer of [
+      { name: doc.name, dataBase64: base64.encode(new Uint8Array([7])) },
+      { name: doc.name, dataBase64: base64.encode(new Uint8Array([7])), report: { contract: "something-else" } },
+    ]) {
+      const host = mockInvoke({ hwped_capabilities: presetCaps, hwped_edit: answer });
+      const error = await createTauriEngine(host.invoke).edit(doc, presetBatch, {}).catch((e: unknown) => e);
+      expect(isHwpEngineError(error)).toBe(true);
+      expect((error as HwpEngineError).code).toBe("unavailable");
+      expect((error as HwpEngineError).message).toContain("edit-report-v1");
+    }
+  });
+
   it("compose sends the spec verbatim and decodes the document", async () => {
     const bytes = new Uint8Array([7]);
     const report = { warnings: [] };

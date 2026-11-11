@@ -1,5 +1,5 @@
 import { createTemplateCommands } from "./template-engine.js";
-import { TEMPLATE_METHODS, templateVersionSupported, parseEditReport, withCallerName, type EditReport, type TemplateInputs, type FillResult, type LintReport, type LintProfile, type EmbeddedTemplate, type TemplateSpecV1, type TemplateDataV1 } from "@hwp-editor/core";
+import { TEMPLATE_METHODS, templateVersionSupported, parseEditReport, withCallerName, presetBatchOptions, readPresetBatch, type EditReport, type TemplateInputs, type FillResult, type LintReport, type LintProfile, type EmbeddedTemplate, type TemplateSpecV1, type TemplateDataV1 } from "@hwp-editor/core";
 /**
  * CliEngine — HwpEngine implementation that shells out to the hwp-cli binary.
  *
@@ -34,7 +34,9 @@ import {
   imageAssetsMatchOps,
   imageAssetMediaType,
   parseCatEnvelope,
+  parseStyleTable,
   protectedReasonFromDiagnostics,
+  stylesVersionSupported,
   type Capabilities,
   type CatEnvelope,
   type ComposeResult,
@@ -49,6 +51,7 @@ import {
   type PageImageFormat,
   type PageLayout,
   type RenderOptions,
+  type StyleTable,
   type ValidationError,
   type ValidationReport,
 } from "@hwp-editor/core";
@@ -261,6 +264,12 @@ export interface CliEngine extends HwpEngine {
   lint(document: DocumentHandle, profile?: LintProfile, call?: CliCallOptions): Promise<LintReport>;
   listTemplates(call?: CliCallOptions): Promise<EmbeddedTemplate[]>;
   create(templateId: string, name: string, call?: CliCallOptions): Promise<DocumentHandle>;
+  /**
+   * Named styles (`hwp styles <file> --format json`, hwp-cli 1.4.0+). Refuses
+   * with reason `version` below that floor rather than spawning a subcommand
+   * the binary does not have.
+   */
+  styles(document: DocumentHandle, call?: CliCallOptions): Promise<StyleTable>;
 
   /**
    * Full read pipeline: cat --with-segments plus fields/bookmarks/slots/info.
@@ -851,6 +860,32 @@ function rethrowUnmatchedEditRefusal(error: unknown): never {
   throw error;
 }
 
+/**
+ * Refuse a batch a preset dragged through with `--allow-partial` intact.
+ *
+ * The rule itself lives in core (`readPresetBatch`), because every transport
+ * owes it and the HTTP client and the Tauri client call the same function:
+ * a preset batch is published under `--allow-partial`, so the process status
+ * no longer answers "did the whole batch land" and the report does. Two cases
+ * are NOT acceptable, and the published bytes are discarded by this engine's
+ * own error path:
+ *
+ * - any op other than `style_tables` unapplied — a queued edit silently
+ *   dropped is the failure the whole batch is one call to prevent;
+ * - no readable report at all — the outcome of the preset, and of every other
+ *   op in the batch, is then unknown, and a host that cannot report cannot
+ *   promise the batch was applied.
+ *
+ * One `style_tables` outcome on its own is not an error: "no styleable table"
+ * is a fact about the document (it has no table, or only one-column frame
+ * tables), the rest of the batch was published, and the report the caller
+ * holds says so.
+ */
+function rethrowPartialPresetBatch(report: EditReport | undefined): void {
+  const { refusal } = readPresetBatch(report);
+  if (refusal !== null) throw new HwpCliError(refusal.code, refusal.message);
+}
+
 
 /**
  * A page dimension is only trustworthy when it is finite and strictly
@@ -1250,6 +1285,40 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       return (await describe(document, call)).envelope;
     },
 
+    async styles(document, call) {
+      const version = await ensureVersion();
+      if (!stylesVersionSupported(version)) {
+        // The floor is checked before the spawn, not after: an older binary
+        // has no `styles` subcommand, and its exit-2 "unrecognized subcommand"
+        // is a worse answer than naming the version this engine needs.
+        throw new HwpCliError(
+          "version",
+          `hwp ${version} has no styles command; >= 1.4.0 required for named styles`,
+        );
+      }
+      const bin = resolveBin();
+      return withWorkDir(async (dir) => {
+        const file = await stage(dir, document);
+        const result = await runCliOk(bin, ["styles", file, "--format", "json"], timeoutMs, opts.locale, call?.signal);
+        try {
+          return parseStyleTable(result.stdout);
+        } catch (cause) {
+          // Same reasoning as `cat`'s envelope rewrite: this JSON came out of
+          // the hwp binary, so the remedy names hwp-cli rather than "upgrade
+          // the host adapter".
+          const problem = cause instanceof Error && cause.message.startsWith("Invalid styles-v1 table: ")
+            ? cause.message.slice("Invalid styles-v1 table: ".length).split("; ")[0]!
+            : "invalid style JSON";
+          const failure = new HwpCliError(
+            "failed",
+            `hwp styles returned a style table this client cannot read (${problem}); check hwp --version and use hwp-cli 1.4.0 or newer, then retry.`,
+          );
+          failure.cause = cause;
+          throw failure;
+        }
+      });
+    },
+
     describe,
 
     async render(document, options = {}, call) {
@@ -1378,9 +1447,27 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
           throw new HwpCliError("bad_request", "image upload and insert-image paths do not match; upload matching PNG/JPEG files for the referenced names");
         }
       }
-      await ensureVersion();
+      const version = await ensureVersion();
       const bin = resolveBin();
       const ext = sniffExtension(document);
+      // The preset switch is ONE batch, not two calls. `--style-tables` and
+      // `--ops` are mutually exclusive, and the flag path has a second trap:
+      // the engine pushes the flag to "unapplied" and aborts the whole edit
+      // when the document has no multi-column table (measured on ahwp 1.6.1,
+      // `style_tables: no styleable table`), which would take the body-style
+      // update down with it. As the edit-ops-v1 `style_tables` op it shares
+      // the batch atomically, and `--allow-partial` lets the rest of the batch
+      // publish while the report says what the preset could not style.
+      const presets = ops.filter((op) => op?.kind === "style-tables").length;
+      if (presets > 0 && !stylesVersionSupported(version)) {
+        throw new HwpCliError("version", `hwp ${version} has no style_tables op; >= 1.4.0 required for preset style tables`);
+      }
+      // The two flags a preset batch owes are decided by the shared rule, not
+      // here: core's `presetBatchOptions` is what the HTTP and Tauri clients
+      // obey, so this engine cannot drift out of step with them.
+      const effective = presetBatchOptions(ops, options);
+      const wantsReport = effective.report === true;
+      const allowPartial = effective.allowPartial === true;
       const edited = await withWorkDir(async (dir) => {
         const input = await stage(dir, document);
         if (options.assets !== undefined) {
@@ -1416,6 +1503,9 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         // so a `find`/`value` containing `=>`, `=` or `:` is kept verbatim
         // instead of being parsed as a CLI separator. hwp-cli validates the
         // file against the published schema before applying anything.
+        //
+        // Every op goes through this one file, presets included: the
+        // `style_tables` op is how a preset shares a batch with the style ops.
         const opsPath = path.join(dir, "ops.json");
         let encodedOps: string;
         try { encodedOps = opsToJson(stagedOps); }
@@ -1430,19 +1520,19 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         await writeFile(opsPath, encodedOps, { mode: 0o600 });
         const args = ["edit", input, "-o", output, "--ops", opsPath];
         if (options.verify !== false) args.push("--verify");
-        if (options.allowPartial === true) args.push("--allow-partial");
+        if (allowPartial) args.push("--allow-partial");
         // `--report` takes a path on `edit` (unlike compose's bare flag), and
         // only this file names the segment ids an op created. Read before the
         // work dir is removed; a truncated or absent file stays absent rather
         // than becoming empty ids the caller could act on.
         const reportPath = path.join(dir, "edit-report.json");
-        if (options.report === true) args.push("--report", reportPath);
+        if (wantsReport) args.push("--report", reportPath);
         await runCliOk(bin, args, timeoutMs, opts.locale, call?.signal).catch(options.assets?.length
           ? error => rethrowUploadedImageFailure(error, ops.every(op => op.kind === "insert-image"))
           : rethrowProtected).catch(error => rethrowInsertBlocksRefusal(error, ops.some(op => op.kind === "insert-blocks"), dir))
           .catch(rethrowUnmatchedEditRefusal);
         const data = new Uint8Array(await readFile(output));
-        if (options.report !== true) return { name: document.name, data };
+        if (!wantsReport) return { name: document.name, data };
         let report: EditReport | undefined;
         try {
           // The report's `output` is the `-o` path this engine wrote, inside the
@@ -1458,6 +1548,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
           // are unknown, not a failed edit: the document itself was published.
           report = undefined;
         }
+        if (presets > 0) rethrowPartialPresetBatch(report);
         return { name: document.name, data, ...(report === undefined ? {} : { report }) };
       });
       // Pre-edit snapshot keyed by the edited hash SALTED WITH THIS CALL'S
@@ -1540,7 +1631,17 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
 
     async capabilities(): Promise<Capabilities> {
       const version = await ensureVersion();
-      return { version, editable: true, editOps: "v1", imageAssets: "v1", formats: ["hwp", "hwpx"], templateMethods: templateVersionSupported(version) ? [...TEMPLATE_METHODS] : [] };
+      return {
+        version,
+        editable: true,
+        editOps: "v1",
+        imageAssets: "v1",
+        // Its own gate, not `templateMethods`': the two command families share
+        // the 1.4.0 floor today, but a host can carry one and not the other.
+        ...(stylesVersionSupported(version) ? { styles: "v1" as const } : {}),
+        formats: ["hwp", "hwpx"],
+        templateMethods: templateVersionSupported(version) ? [...TEMPLATE_METHODS] : [],
+      };
     },
 
     async binaryInfo() {

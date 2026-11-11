@@ -20,15 +20,17 @@ import type {
   ImageAsset,
   ParagraphAddress,
   Segment,
+  StyleTable,
   ValidationReport,
 } from "@hwp-editor/core";
 import type { AddressedEditOp } from "@hwp-editor/core";
 import { compareSegments, componentStyleMap, createStore, insertedParagraphIds, isSectionDefinitionParagraph, resolveSelection, segmentAtRef, segmentRef, substituteParams, validateImageAssets, HwpEngineError, MAX_IMAGE_ASSETS, MAX_IMAGE_ASSETS_TOTAL_BYTES, STARTER_COMPONENTS } from "@hwp-editor/core";
 import type { EditorError, EditorState, EditorStore } from "@hwp-editor/core";
 import { HwpEditorContext } from "./context.js";
-import type { HwpEditorContextValue } from "./context.js";
+import type { HwpEditorContextValue, StylesStatus } from "./context.js";
 import { PageCanvas } from "./PageCanvas.js";
 import { SegmentInspector } from "./SegmentInspector.js";
+import { StylesPanel } from "./StylesPanel.js";
 import { TableGrid } from "./TableGrid.js";
 import { FieldsPanel } from "./FieldsPanel.js";
 import { TemplatePanel } from "./TemplatePanel.js";
@@ -126,7 +128,7 @@ export interface HwpEditorHandle {
   openCompose(): void;
 }
 
-type SideTab = "para" | "table" | "fields" | "templates" | "components" | "lint" | "document" | "images";
+type SideTab = "para" | "styles" | "table" | "fields" | "templates" | "components" | "lint" | "document" | "images";
 
 /**
  * Every paragraph the current selection covers, in document order.
@@ -284,8 +286,47 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
      * document then would overwrite the file the host just chose.
      */
     const loadedGeneration = useRef(0);
+    /**
+     * A counter that moves whenever the editor takes on a NEW document: a load,
+     * or a composed document handed back. An applied edit and an undo keep it,
+     * because they move within the document the user is working on.
+     *
+     * Panels that hold a choice tied to the document read this rather than the
+     * host's file: a compose replaces the document without changing it, and two
+     * different files can share a name, so neither the name nor the document
+     * handle answers "is this still the document I chose in".
+     */
+    const [documentOrigin, setDocumentOrigin] = useState(0);
     const [tab, setTab] = useState<SideTab>("para");
     const [composing, setComposing] = useState(false);
+    /**
+     * The current document's named styles, read once per document. The Styles
+     * panel and the direct-format indicator both read this one table: two
+     * independent reads would let the indicator name a style the panel's list
+     * no longer carries.
+     *
+     * The answer is stored WITH the document it describes, and handed out only
+     * while that document is still the one on screen. A read that lands after
+     * the file changed describes paragraphs this document does not have —
+     * segment ids are content checksums — so the pairing is the guard, not the
+     * effect's cancellation flag.
+     */
+    const [stylesLoad, setStylesLoad] = useState<{ document: DocumentHandle; table: StyleTable | null; failed: boolean } | null>(null);
+    const styles = state.document !== null && stylesLoad !== null && stylesLoad.document === state.document
+      ? stylesLoad.table
+      : null;
+    /**
+     * Why the styles table is what it is. A host can advertise the capability
+     * and still hand over an engine object with no `styles` to call: that is
+     * `unsupported`, not a read in flight, and leaving it at `loading`
+     * promised an answer that never comes.
+     */
+    const stylesStatus: StylesStatus = (() => {
+      if (state.document === null || capabilities?.styles !== "v1") return "idle";
+      if (engine.styles === undefined) return "unsupported";
+      if (stylesLoad === null || stylesLoad.document !== state.document) return "loading";
+      return stylesLoad.failed ? "failed" : "ready";
+    })();
     /**
      * Ids one insertion reported, held until the re-read envelope carries them.
      * The paragraphs do not exist in the envelope the op was sent with, so the
@@ -295,17 +336,28 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
      */
     const [pendingInserted, setPendingInserted] = useState<string[]>([]);
     /**
-     * Show a notice and hand the failure to the host.
+     * Show a notice, and hand a failure to the host.
      *
      * A palette refusal is not an engine failure of the document, so it does
      * not take the error line; it is shown here (role="status") and `onError`
-     * still hears it. The error travels as it came when there is one, so a
-     * host that branches on a `code` keeps the code.
+     * still hears it, with the error as it came so a host that branches on a
+     * `code` keeps the code. A caller with no error to hand over is reporting
+     * an OUTCOME, not a failure — a preset whose document has no table to
+     * style — and that must not reach `onError`, which promises the work went
+     * wrong.
      */
     const noteNotice = useCallback((text: string, error?: unknown): void => {
       setNotice(text);
-      emitError(error ?? new Error(text));
+      if (error !== undefined) emitError(error);
     }, [emitError]);
+    /**
+     * Report a refusal: an edit the user asked for that did not happen. The
+     * host hears it even though the engine never answered, so the sentence is
+     * carried as an `Error` when there is no engine failure to carry instead.
+     */
+    const noteRefusal = useCallback((text: string, error?: unknown): void => {
+      noteNotice(text, error ?? new Error(text));
+    }, [noteNotice]);
     /**
      * The sentence a refusal made during a load puts on the notice line. Kept
      * as a ref so a load that ends can retire exactly that sentence — and no
@@ -356,6 +408,9 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     // Load the document whenever the engine/file pair changes.
     useEffect(() => {
       const generation = ++loadGeneration.current;
+      // Every load is a new document, even one whose file has the name of the
+      // document it replaces: a panel's choice of row belongs to the one before.
+      setDocumentOrigin((count) => count + 1);
       let cancelled = false;
       // A notice describes one attempt against the document that is going
       // away, so a load retires it along with that document's ids.
@@ -437,7 +492,11 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       // The palette keeps its tab: the selection an insertion produces is its
       // own result, and leaving its rows behind for the tab it created is not
       // the jump the user asked for. Every other tab still follows.
-      setTab((current) => current === "components" ? current : next);
+      //
+      // The Styles tab keeps it for the same reason: selecting a style IS the
+      // gesture, and the highlight it produces would carry the user to a tab
+      // that no longer lists the style they just picked.
+      setTab((current) => current === "components" || current === "styles" ? current : next);
     }, [envelope, state.selection]);
 
     // Dirty-change callback.
@@ -462,7 +521,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       // loud rather than dropped: the toolbar Apply stays enabled while the
       // load runs, so a press has to answer with the reason.
       if (loadGeneration.current !== loadedGeneration.current) {
-        noteNotice(t("error.loadingReplacement"));
+        noteRefusal(t("error.loadingReplacement"));
         return Promise.resolve();
       }
       const generation = loadGeneration.current;
@@ -521,6 +580,11 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           setEnvelope(nextEnvelope);
           setValidation(report);
           store.dispatch({ type: "applySucceeded", document: next, pages });
+          // The edit landed, so the previous attempt's notice ("this document
+          // has no table to style") describes a state this document has left.
+          // Cleared here rather than when the attempt starts: a failed apply
+          // leaves the document alone, and the notice is still true of it.
+          setNotice(null);
           emitChange(next);
         } catch (e) {
           // As above: a failure belongs to the document this attempt read, so
@@ -542,7 +606,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           emitError(e);
         }
       })();
-    }, [editable, engine, noteNotice, store, t]);
+    }, [editable, engine, noteRefusal, store, t]);
 
     const replaceDocument = useCallback(
       (
@@ -559,15 +623,17 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         // The store keeps the previous document until a load resolves, so a
         // caller that produced a result from it would replace the file the
         // host has already switched to. Refused, not silently dropped: the
-        // caller's result is worthless, and only the message says why.
+        // caller's result is worthless, and only the message says why. The
+        // sentence goes on the notice line as well as to `onError`: a host
+        // that passes no callback would otherwise see a click do nothing.
         if (generation !== loadedGeneration.current) {
           const refusal = new Error(t("error.loadingReplacement"));
-          emitError(refusal);
+          noteRefusal(refusal.message, refusal);
           return Promise.reject(refusal);
         }
         if (snapshot.pendingOps.length > 0) {
           const refusal = new Error(t("error.pendingReplacement"));
-          emitError(refusal);
+          noteRefusal(refusal.message, refusal);
           return Promise.reject(refusal);
         }
         store.dispatch({ type: "applyStarted" });
@@ -575,6 +641,22 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         return (async () => {
           try {
             const next = await produce(current);
+            // A producer hands back the document it was given when the edit
+            // changed nothing: there is nothing to replace, and the snapshot
+            // applyStarted staged would undo the document to itself. Whatever
+            // the generation says, the snapshot stack is this attempt's — a
+            // load that moved the generation and then failed, or a null file,
+            // dispatches nothing, so only this release ends "applying".
+            if (next === current) {
+              const latest = store.getState();
+              if (
+                latest.document === current &&
+                latest.snapshots === replacementSnapshots
+              ) {
+                store.dispatch({ type: "applyUnchanged" });
+              }
+              return false;
+            }
             const [nextEnvelope, pages, report] = await Promise.all([
               engine.read(next),
               engine.render(next, RENDER_SVG),
@@ -605,6 +687,11 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
             setEnvelope(nextEnvelope);
             setValidation(report);
             store.dispatch({ type: "applySucceeded", document: next, pages });
+            // Same rule as an apply: the replacement landed, so a notice about
+            // the document it replaced describes a state that no longer holds.
+            // A caller that has its own sentence for the new document sets it
+            // after this resolves.
+            setNotice(null);
             emitChange(next);
             return true;
           } catch (e) {
@@ -621,7 +708,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           }
         })();
       },
-      [emitChange, emitError, engine, store, t],
+      [emitChange, emitError, engine, noteRefusal, store, t],
     );
 
     /** Ids of an insertion belong to one document; a new file retires them. */
@@ -655,14 +742,14 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         // than reaching only a host that may not be listening. The palette is
         // disabled for the same reason.
         if (snapshot.pendingOps.length > 0) {
-          noteNotice(t("components.pendingEdits"));
+          noteRefusal(t("components.pendingEdits"));
           return;
         }
         // Checked here rather than left to `replaceDocument`: that refusal
         // reaches only a host that listens on `onError`, and a palette click
         // that does nothing is the bug this notice exists to prevent.
         if (loadGeneration.current !== loadedGeneration.current) {
-          noteNotice(t("error.loadingReplacement"));
+          noteRefusal(t("error.loadingReplacement"));
           return;
         }
         const segment = snapshot.selection === null ? undefined : segmentAtRef(envelope, snapshot.selection);
@@ -695,7 +782,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         // disables the same rows with the same sentences.
         const preflight = insertionPreflight(blocks, snapshot.document.name, t);
         if (preflight !== "") {
-          noteNotice(preflight);
+          noteRefusal(preflight);
           return;
         }
         void (async () => {
@@ -737,20 +824,20 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           if (outcome === undefined) {
             // The document was published, so this is a notice rather than a
             // failure: the editor shows it and the host still hears it.
-            noteNotice(t("components.noReport"));
+            noteRefusal(t("components.noReport"));
             return;
           }
           if (outcome.status !== "applied") {
             // The report says the op did not apply, so the engine's own
             // content-free reason is the cause: framed like any other refusal
             // rather than left as a click that changed nothing.
-            noteNotice(t("components.insertionRefused", { reason: outcome.reason ?? "" }));
+            noteRefusal(t("components.insertionRefused", { reason: outcome.reason ?? "" }));
             return;
           }
           // A capped list means the ids that would name the rest are simply
           // absent; selecting a partial run would reorder half a component.
           if (outcome.changed_total !== undefined) {
-            noteNotice(t("components.reportTruncated"));
+            noteRefusal(t("components.reportTruncated"));
             return;
           }
           let ids: string[];
@@ -765,7 +852,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           setPendingInserted(ids);
         })();
       },
-      [emitError, engine, envelope, noteNotice, replaceDocument, store, t],
+      [emitError, engine, envelope, noteRefusal, replaceDocument, store, t],
     );
 
     const selectedTargets =
@@ -839,6 +926,11 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           setEnvelope(nextEnvelope);
           if (report !== null) setValidation(report);
           store.dispatch({ type: "setPages", pages });
+          // Undo moved to another document, so the previous attempt's notice
+          // ("this document has no table to style") describes a state that no
+          // longer holds. Cleared after the undo lands: a failed undo leaves
+          // the document where it was, and the notice is still true of it.
+          setNotice(null);
           emitChange(previous);
         } catch (e) {
           // The store was never touched, so store and canvas stay consistent;
@@ -873,6 +965,53 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     const openCompose = useCallback(() => setComposing(true), []);
     const loadEpoch = useCallback(() => loadGeneration.current, []);
 
+    /**
+     * The sentence a failed table read put on the notice line, captured as it
+     * was recorded: the notice holds text, so the read that finally succeeds
+     * compares against the words that went up rather than the locale's current
+     * ones, and a locale switch between the two reads still retires it.
+     */
+    const stylesFailureSentence = useRef("");
+    /**
+     * Read the named styles once per document. Every applied edit, undo and
+     * new file replaces `state.document`, which is the only signal that makes
+     * the table stale; a host without `styles` (or an engine below 1.4.0,
+     * which is the same advertisement) keeps it null and the tab says why.
+     */
+    useEffect(() => {
+      const document = state.document;
+      if (document === null || capabilities?.styles !== "v1" || engine.styles === undefined) {
+        setStylesLoad(null);
+        return;
+      }
+      let cancelled = false;
+      engine.styles(document).then(
+        (table) => {
+          if (cancelled) return;
+          setStylesLoad({ document, table, failed: false });
+          // The read that works ends the condition the failure described.
+          setNotice((current) => (current === stylesFailureSentence.current ? null : current));
+        },
+        (error: unknown) => {
+          if (cancelled) return;
+          // The document stays editable: what failed is the table the Styles
+          // tab lists, so the tab loses its rows and the notice says why. The
+          // failure is recorded against its document, so the tab can name the
+          // cause rather than looking like a read that never finished.
+          setStylesLoad({ document, table: null, failed: true });
+          const sentence = t("styles.loadFailed");
+          stylesFailureSentence.current = sentence;
+          noteNotice(sentence, error);
+        },
+      );
+      return () => { cancelled = true; };
+      // `t` is deliberately absent: a locale change (or a host that rebuilds an
+      // inline `messages` object on every render) would otherwise re-read the
+      // table, and with it the rows a panel is holding. The one sentence this
+      // effect writes is captured in `stylesFailureSentence` as it is recorded.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [capabilities?.styles, engine, noteNotice, state.document]);
+
     useImperativeHandle(
       ref,
       () => ({ apply: applyPendingOps, revert, refresh, openCompose }),
@@ -892,9 +1031,17 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         replaceDocument,
         queueImage,
         refresh,
+        styles,
+        stylesStatus,
+        noteNotice,
         openCompose,
         loadEpoch,
         t,
+        // Moves when the editor takes on a new document (a load or a compose)
+        // and stays put across an applied edit and an undo, so a panel can
+        // retire a choice made in the previous document without retiring it
+        // every time the document is edited.
+        documentOrigin,
         // Always defined now, and stable: a widening, since every consumer
         // already calls it as `onError?.(e)` and it no-ops when the host
         // supplied no callback. The payload is unchanged.
@@ -912,9 +1059,13 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         replaceDocument,
         queueImage,
         refresh,
+        styles,
+        stylesStatus,
+        noteNotice,
         openCompose,
         loadEpoch,
         t,
+        documentOrigin,
       ],
     );
 
@@ -938,6 +1089,17 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
 
     const rootClass =
       "hwped hwped-root" + (className !== undefined ? ` ${className}` : "");
+
+    /**
+     * A queued style op addresses a style this document defines by its header
+     * id: a styles-v1 name can be empty, and two rows can share one, while the
+     * id is the row. The pending list resolves it back for reading, and a name
+     * this batch creates (which has no id yet) prints as written.
+     */
+    const styleLabel = (ref: string | number): string =>
+      typeof ref === "string"
+        ? ref
+        : styles?.styles.find((row) => row.id === ref)?.name ?? String(ref);
 
     return (
       <HwpEditorContext.Provider value={contextValue}>
@@ -1040,7 +1202,14 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
                 <li key={index}>
                   {op.kind}: {"address" in op
                     ? JSON.stringify(op.address)
-                    : "find" in op ? op.find : "anchor" in op ? op.anchor : "key" in op ? op.key : "name" in op ? op.name : op.kind}
+                    : "find" in op ? op.find : "anchor" in op ? op.anchor : "key" in op ? op.key
+                      // A named-style op names the style it rewrites; without
+                      // this branch an update would read "update-style:
+                      // update-style", which says nothing the kind already did.
+                      // It addresses a style this document defines by its own
+                      // header id (a styles-v1 name can be empty or shared),
+                      // so the row is resolved back for reading.
+                      : "style" in op ? styleLabel(op.style) : "name" in op ? op.name : op.kind}
                   {" "}<button type="button" className="hwped-btn" disabled={state.status === "applying"}
                     onClick={() => store.dispatch({ type: "dequeueOp", index })}>{t("toolbar.removePending", { index: index + 1 })}</button>
                 </li>
@@ -1085,6 +1254,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
                 {(
                   [
                     ["para", t("tabs.para")],
+                    ["styles", t("tabs.styles")],
                     ["table", t("tabs.table")],
                     ["fields", t("tabs.fields")],
                     ["templates", t("tabs.templates")],
@@ -1110,6 +1280,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
               </div>
               {state.status === "applying" && <p className="hwped-hint" role="status">{t("toolbar.applying")}</p>}
               {tab === "para" && <SegmentInspector />}
+              {tab === "styles" && <StylesPanel />}
               {tab === "table" && <TableGrid />}
               {tab === "fields" && <FieldsPanel />}
               {tab === "templates" && <TemplatePanel />}
@@ -1138,6 +1309,12 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
                 if (!editableRef.current) return;
                 setComposing(false);
                 const generation = ++loadGeneration.current;
+                // A composed document is a new document: the host's file did
+                // not change, so nothing else would tell a panel so.
+                setDocumentOrigin((count) => count + 1);
+                // Nor would anything else retire the previous document's
+                // notice: the load effect cannot run when the file is the same.
+                setNotice(null);
                 emitChange(document);
                 // The host passes the composed document back via `file`; load
                 // it directly so the flow also works when the host doesn't.

@@ -13,6 +13,7 @@ export { HwpEditor } from "./HwpEditor.js";
 export type { HwpEditorHandle, HwpEditorProps } from "./HwpEditor.js";
 export { PageCanvas } from "./PageCanvas.js";
 export { SegmentInspector } from "./SegmentInspector.js";
+export { StylesPanel } from "./StylesPanel.js";
 export { TableGrid } from "./TableGrid.js";
 export { FieldsPanel } from "./FieldsPanel.js";
 export { ComposePanel } from "./ComposePanel.js";

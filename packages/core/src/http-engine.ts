@@ -22,6 +22,8 @@ import type { HwpErrorCode } from "./errors.js";
 import type { EditOp } from "./ops.js";
 import type { CatEnvelope } from "./segments.js";
 import { validateProjectedMetadata } from "./segments.js";
+import { parseStyleTableResponse } from "./styles.js";
+import { carriesPresetSwitch, presetBatchOptions, readPresetBatch } from "./style-batch.js";
 import type { DocumentSpecV2 } from "./generated/document-spec-v2.js";
 import type { TemplateDataV1, TemplateSpecV1 } from "./spec.js";
 import type { LintProfile } from "./templates.js";
@@ -240,6 +242,25 @@ export function createHttpEngine(
       }).then(validateProjectedMetadata);
     },
 
+    async styles(document) {
+      let raw: unknown;
+      try {
+        raw = await request<unknown>("/styles", {
+          method: "POST",
+          body: fileForm(document),
+        });
+      } catch (error) {
+        // The route exists only on a host that advertises `styles`, so a 404
+        // here means an older host answered — the same lesson the template
+        // routes teach, in this command family's words.
+        if (error instanceof HwpEngineError && error.status === 404) {
+          throw new HwpEngineError("unavailable", "Styles are unsupported by this host; upgrade it to the hwp-cli 1.4.0 styles command and retry.", { cause: error });
+        }
+        throw error;
+      }
+      return parseStyleTableResponse(raw);
+    },
+
     async render(document, options = {}) {
       const form = fileForm(document);
       if (options.pages !== undefined) form.append("pages", options.pages);
@@ -266,10 +287,24 @@ export function createHttpEngine(
       const assets = options.assets;
       if (assets !== undefined) validateImageAssets(assets);
       const form = fileForm(document);
+      // The ops field is the whole edit, presets included: a `style-tables` op
+      // is an op like any other and rides this one JSON array. A separate form
+      // field for the preset would be a second channel this client would have
+      // to keep in step with the server's, which is how a switch that works on
+      // a desktop host silently stops working here.
       form.append("ops", JSON.stringify(ops));
       if (options.verify) form.append("verify", "true");
-      if (options.allowPartial) form.append("allowPartial", "true");
-      if (options.report) form.append("report", "true");
+      // A preset batch needs both fields, and neither is the caller's to
+      // forget: without `allowPartial` the engine aborts the whole edit on a
+      // table-less document, and without `report` its outcome is unknowable.
+      const effective = presetBatchOptions(ops, options);
+      if (effective.allowPartial) form.append("allowPartial", "true");
+      // A `style-tables` op's outcome is only visible in the report: whether
+      // the document had an eligible table, and whether anything else in the
+      // batch failed. That makes the report part of this request, not an extra
+      // the caller can forget to ask for.
+      const wantsReport = effective.report === true;
+      if (wantsReport) form.append("report", "true");
       if (assets !== undefined) {
         for (const asset of assets) form.append("asset", new Blob([asset.data as BlobPart], { type: imageAssetMediaType(asset.data)! }), asset.name);
       }
@@ -277,16 +312,23 @@ export function createHttpEngine(
         method: "POST",
         body: form,
       });
-      // Parsed only when the caller asked for it, and an unreadable answer is
+      // Parsed only when this call needs it, and an unreadable answer is
       // dropped rather than failing an edit whose document was published: the
       // same rule the Tauri engine applies, so both transports answer one
-      // shape for one request.
+      // shape for one request. A preset batch is different - its report IS the
+      // outcome - so `readPresetBatch` refuses an unreadable one below.
       let report: EditReport | undefined;
-      if (options.report === true && res.report !== undefined) {
+      if (wantsReport && res.report !== undefined) {
         try {
           report = parseEditReport(res.report);
         } catch {
           report = undefined;
+        }
+      }
+      if (carriesPresetSwitch(ops)) {
+        const reading = readPresetBatch(report);
+        if (reading.refusal !== null) {
+          throw new HwpEngineError(reading.refusal.code, reading.refusal.message);
         }
       }
       return {
@@ -319,8 +361,15 @@ export function createHttpEngine(
     async capabilities(): Promise<Capabilities> {
       const raw = reportObject(await request<unknown>("/capabilities", { method: "GET" }), "capabilities");
       const methods = raw.templateMethods === undefined ? [] : parseTemplateMethods(raw.templateMethods);
-      const { imageAssets, ...rest } = raw as unknown as Capabilities;
-      return { ...rest, templateMethods: methods, ...(imageAssets === "v1" ? { imageAssets: "v1" as const } : {}) };
+      const { imageAssets, styles, ...rest } = raw as unknown as Capabilities;
+      return {
+        ...rest,
+        templateMethods: methods,
+        ...(imageAssets === "v1" ? { imageAssets: "v1" as const } : {}),
+        // Narrowed rather than passed through: a host that answers anything
+        // else has not advertised the family, and the tab reads this field.
+        ...(styles === "v1" ? { styles: "v1" as const } : {}),
+      };
     },
   };
 }

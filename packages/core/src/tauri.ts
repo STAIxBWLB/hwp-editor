@@ -2,8 +2,8 @@ import { parsePageLayout } from "./layout.js";
 /**
  * HwpEngine client for Tauri hosts (e.g. maru). Calls Rust commands named
  * `hwped_read / hwped_render / hwped_edit / hwped_compose / hwped_validate /
- * hwped_capabilities`; payloads mirror the protocol.ts wire shapes, with two
- * Tauri-specific deltas:
+ * hwped_capabilities`, optionally `hwped_styles`; payloads mirror the
+ * protocol.ts wire shapes, with two Tauri-specific deltas:
  *
  *   - File transfer: a document that already lives in the workspace crosses
  *     the bridge as a path string (`pathOf`); only in-memory bytes are sent,
@@ -33,6 +33,8 @@ import type { EditOp } from "./ops.js";
 import { opsToArgv, opsToJson } from "./ops.js";
 import type { CatEnvelope } from "./segments.js";
 import { validateProjectedMetadata } from "./segments.js";
+import { parseStyleTableResponse } from "./styles.js";
+import { carriesPresetSwitch, presetBatchOptions, readPresetBatch } from "./style-batch.js";
 import type { DocumentSpecV2 } from "./generated/document-spec-v2.js";
 import type { TemplateDataV1, TemplateSpecV1 } from "./spec.js";
 import type { LintProfile } from "./templates.js";
@@ -112,6 +114,12 @@ const TEMPLATE_COMMANDS = new Set([
   "hwped_slots", "hwped_fill", "hwped_template", "hwped_lint",
   "hwped_list_templates", "hwped_create",
 ]);
+
+/**
+ * The same unknown-command rescue for the styles family, whose remedy names
+ * its own command rather than the template contract.
+ */
+const STYLE_COMMANDS = new Set(["hwped_styles"]);
 
 function isUnknownCommand(error: unknown): boolean {
   const detail = error instanceof Error ? error.message : String(error);
@@ -231,6 +239,13 @@ export function createTauriEngine(
           { cause: error },
         );
       }
+      if (STYLE_COMMANDS.has(cmd) && isUnknownCommand(error)) {
+        throw new HwpEngineError(
+          "unavailable",
+          `${cmd} is unsupported by this host; upgrade the host to the hwp-cli 1.4.0 styles command and retry.`,
+          { cause: error },
+        );
+      }
       throw toEngineError(cmd, error);
     }
   }
@@ -238,10 +253,15 @@ export function createTauriEngine(
   async function capabilities(): Promise<Capabilities> {
     const raw = reportObject(await call<unknown>("hwped_capabilities", {}), "capabilities");
     const methods = raw.templateMethods === undefined ? [] : parseTemplateMethods(raw.templateMethods);
-    const { editOps, ...rest } = raw as unknown as Capabilities;
+    const { editOps, styles, ...rest } = raw as unknown as Capabilities;
     // This client has no image-byte Tauri command, even if a host claims one.
     delete rest.imageAssets;
-    return { ...rest, templateMethods: methods, ...(editOps === "v1" ? { editOps: "v1" as const } : {}) };
+    return {
+      ...rest,
+      templateMethods: methods,
+      ...(editOps === "v1" ? { editOps: "v1" as const } : {}),
+      ...(styles === "v1" ? { styles: "v1" as const } : {}),
+    };
   }
 
   return {
@@ -279,6 +299,12 @@ export function createTauriEngine(
       }).then(validateProjectedMetadata);
     },
 
+    async styles(document) {
+      return parseStyleTableResponse(
+        await call<unknown>("hwped_styles", { document: ref(document), ...scope() }),
+      );
+    },
+
     async render(document, options: RenderOptions = {}) {
       const res = await call<RenderResponse>("hwped_render", {
         document: ref(document),
@@ -306,27 +332,41 @@ export function createTauriEngine(
       const channel = caps.editOps === "v1"
         ? { ops: JSON.parse(opsToJson(ops)) as unknown[] }
         : { opsArgv: opsToArgv(ops) };
+      // A `style-tables` op travels inside the ops array like every other op,
+      // so nothing here needs a field of its own; its outcome arrives in the
+      // report. A preset batch needs `allowPartial` and `report` both, and
+      // the rule that says so is the same one the HTTP client obeys
+      // (style-batch.ts): a desktop host that asked for the report alone
+      // aborted the whole edit on a table-less document, which is t12-a2 on
+      // this transport.
+      const effective = presetBatchOptions(ops, options);
+      const wantsReport = effective.report === true;
       const res = await call<EditResponse>("hwped_edit", {
         document: ref(document),
         ...channel,
         ...(options.verify !== undefined ? { verify: options.verify } : {}),
-        ...(options.allowPartial !== undefined
-          ? { allowPartial: options.allowPartial }
+        ...(effective.allowPartial !== undefined
+          ? { allowPartial: effective.allowPartial }
           : {}),
-        // The host forwards this to `hwp edit --report`; only that report names
-        // the segment ids an op created, and a host that ignores the flag
-        // answers without the field rather than with guessed ids.
-        ...(options.report === true ? { report: true } : {}),
+        ...(wantsReport ? { report: true } : {}),
         ...scope(),
       });
       let report: EditReport | undefined;
-      if (options.report === true && res.report !== undefined) {
+      if (wantsReport && res.report !== undefined) {
         try {
           report = parseEditReport(res.report);
         } catch {
           // A host that answers with an unreadable report is a host whose ids
           // are unknown, not a failed edit: the document itself was published.
+          // A preset batch below reads that absence as a refusal, because for
+          // it the report IS the outcome.
           report = undefined;
+        }
+      }
+      if (carriesPresetSwitch(ops)) {
+        const reading = readPresetBatch(report);
+        if (reading.refusal !== null) {
+          throw new HwpEngineError(reading.refusal.code, reading.refusal.message);
         }
       }
       // The host's report names the `-o` path it staged the document at, and a

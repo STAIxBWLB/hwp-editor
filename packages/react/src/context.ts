@@ -12,9 +12,18 @@ import type {
   HwpEngine,
   EditOp,
   ImageAsset,
+  StyleTable,
   ValidationReport,
 } from "@hwp-editor/core";
 import type { TFunction } from "./messages.js";
+
+/**
+ * The state of the document's styles read, so a consumer telling the user why
+ * there are no rows can name the right cause: still loading, failed, a host
+ * that advertises the command and does not implement it, or no styles command
+ * at all are four different next steps.
+ */
+export type StylesStatus = "idle" | "loading" | "ready" | "failed" | "unsupported";
 
 export interface HwpEditorContextValue {
   engine: HwpEngine;
@@ -44,6 +53,25 @@ export interface HwpEditorContextValue {
   /** Re-read + re-render the current document after an external change. */
   refresh: () => Promise<void>;
   /**
+   * The current document's `styles-v1` table, or null when this host has no
+   * styles command, the read is still running, or it failed. Loaded once per
+   * document by the editor, so the Styles panel and the direct-format
+   * indicator read one table rather than two snapshots that can disagree. A
+   * table read for a PREVIOUS document is never handed out: segment ids are
+   * content checksums, so the old table's `used_by` would name paragraphs this
+   * document does not have.
+   */
+  styles: StyleTable | null;
+  /**
+   * Why `styles` is what it is: `ready` with a table, `loading` while the read
+   * runs, `failed` when it threw, `unsupported` when the host advertises the
+   * command and the engine object has no `styles` to call, and `idle` when
+   * this host serves no styles command at all. Four empty states need four
+   * sentences, so a consumer that reports one reads this rather than guessing
+   * from `styles === null`.
+   */
+  stylesStatus: StylesStatus;
+  /**
    * The editor's document generation. It moves when a load starts and when
    * the compose flow hands a document back, so an async flow captures it
    * before it awaits and refuses its own result once it has moved on: a slow
@@ -52,6 +80,23 @@ export interface HwpEditorContextValue {
   loadEpoch: () => number;
   /** Open the compose panel (new-document flow). */
   openCompose: () => void;
+  /**
+   * Put one sentence on the editor's notice line. A panel that learns an
+   * outcome the user must hear but that is not an error — a preset whose
+   * document has no table to style — reports it here instead of through
+   * `onError`, which promises something went wrong.
+   */
+  noteNotice: (text: string, error?: unknown) => void;
+  /**
+   * Moves when the editor takes on a NEW document: a load, or a composed
+   * document handed back. An applied edit and an undo leave it where it is,
+   * because they move within the document the user is working on. A panel that
+   * holds a choice tied to the document (a selected style row, whose id means
+   * another style in the next file) retires it on a change here: the host's
+   * file name cannot answer that, since a compose replaces the document without
+   * changing it and two files can share one name.
+   */
+  documentOrigin: number;
   /**
    * Message lookup bound to the active locale and host overrides. Every
    * panel localizes through this one channel; a panel that cannot reach `t`

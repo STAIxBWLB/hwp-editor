@@ -8,9 +8,11 @@
  *   POST {base}/render       multipart: file=<document>,
  *                            fields: pages?, dpi?, format?         -> RenderResponse
  *   POST {base}/edit         multipart: file=<document>,
- *                            field: ops=<EditOp[] JSON>,
- *                            fields: verify?, allowPartial?,
+ *                            field: ops=<EditOp[] JSON> (a preset is a
+ *                            `style-tables` op inside it),
+ *                            fields: verify?, allowPartial?, report?,
  *                            repeated asset=<image File filename=asset.name> -> EditResponse
+ *   POST {base}/styles       multipart: file=<document>            -> StylesResponse
  *   POST {base}/compose      JSON: ComposeRequest                  -> ComposeResponse
  *   POST {base}/slots        multipart: file=<document>            -> SlotsResponse
  *   POST {base}/fill         multipart: file=<document>, values=<JSON> -> FillResponse
@@ -38,6 +40,7 @@ import type { CatEnvelope } from "./segments.js";
 import type { DocumentSpecV2 } from "./generated/document-spec-v2.js";
 import type { TemplateDataV1, TemplateSpecV1 } from "./spec.js";
 import type { EmbeddedTemplate, FillReport, LintReport, TemplateInputs, TemplateReport } from "./templates.js";
+import type { StyleTable } from "./styles.js";
 
 /** POST /read response — the `hwp cat --with-segments` envelope verbatim. */
 export type ReadResponse = CatEnvelope;
@@ -106,6 +109,13 @@ export interface CreateRequest {
 export type SlotsResponse = TemplateInputs;
 export type LintResponse = LintReport;
 export type TemplatesResponse = EmbeddedTemplate[];
+
+/**
+ * POST /styles response — the projected `styles-v1` table. The contract
+ * header stays behind at the engine: what a client needs is the schema
+ * version and the rows, and `parseStyleTableResponse` holds this shape.
+ */
+export type StylesResponse = StyleTable;
 
 /** POST /validate response. */
 export type ValidateResponse = ValidationReport;

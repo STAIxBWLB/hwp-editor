@@ -103,6 +103,7 @@ export type EditorAction =
   | { type: "applyStarted" }
   | { type: "applySucceeded"; document: DocumentHandle; pages?: PageImage[] }
   | { type: "applyFailed"; error: EditorError }
+  | { type: "applyUnchanged" }
   | { type: "undo" };
 
 export function reducer(state: EditorState, action: EditorAction): EditorState {
@@ -201,6 +202,16 @@ export function reducer(state: EditorState, action: EditorAction): EditorState {
         snapshots: state.snapshots.slice(0, -1),
         status: "error",
         error: action.error,
+      };
+    case "applyUnchanged":
+      // The edit ran and the document is the one it started from, so the
+      // snapshot applyStarted staged would undo it to itself: popped, and the
+      // queue and selection stay where the caller left them.
+      return {
+        ...state,
+        snapshots: state.snapshots.slice(0, -1),
+        status: state.pendingOps.length === 0 ? "clean" : "dirty",
+        error: null,
       };
     case "undo": {
       const previous = state.snapshots[state.snapshots.length - 1];
