@@ -18,7 +18,7 @@
  */
 
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { CatEnvelope, Component, DocumentHandle, EditOp, EditReport, LayoutRow, PageImage, Segment } from "@hwp-editor/core";
 import tableFixture from "../../core/test/fixtures/cat-segments-table.json";
 import { base64, createTauriEngine, HwpEngineError, parseCatEnvelope } from "@hwp-editor/core";
@@ -1322,6 +1322,11 @@ describe("ComponentsPanel (TEST-03)", () => {
     const sentence = en["components.insertionRefused"]({ reason: "layout_overflow" });
     expect(await screen.findByText(sentence)).toBeTruthy();
 
+    // The landed edit cleared the selection, so the paragraph is picked again.
+    fireEvent.click(screen.getByRole("button", { name: en["page.label"]({ page: 1 }) }), {
+      clientY: clientYForPara(envelope, 1),
+    });
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
     fireEvent.click(
       await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) }),
     );
