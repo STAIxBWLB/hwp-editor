@@ -121,7 +121,10 @@ function readWorkflows(dir: string): WorkflowFile[] {
           `none or its indentation is no longer the two-space form this guard reads.`,
       );
     }
-    return { name, jobs, lines: text.split("\n") };
+    // A CRLF file is a workflow Actions accepts. Splitting on "\n" alone leaves
+    // a trailing "\r" on every line, which any pattern ending in `.` cannot
+    // match - so every line of such a file would be skipped rather than read.
+    return { name, jobs, lines: text.split(/\r?\n/) };
   });
 }
 
@@ -1032,5 +1035,356 @@ describe("CI-2: bounded workflows and an explicit gating aggregate", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain(`::warning title=${title} advisory::`);
     expect(readFileSync(summary, "utf8")).toContain(`### ${title} advisory failed`);
+  });
+});
+
+/**
+ * A `uses:` line, matched LOOSELY: `uses:` and then the rest of the line,
+ * whatever it holds.
+ *
+ * The strict shape is parsed out of that rest by `USES_STRICT` afterwards, and
+ * a rest it cannot read is reported rather than dropped. A single regex doing
+ * both silently skipped any line it did not understand - `uses:
+ * evil/act@v1 # pin later` matched neither the reference-plus-comment form nor
+ * the bare form, so it reached neither the pin check nor the failure list,
+ * which is the opposite of what a fail-closed guard means.
+ */
+const USES_LINE = /^(\s*)(?:-\s*)?uses:[ \t]*(\S.*)?$/;
+
+/** What may follow `uses:`: the reference, then an optional `# version`. */
+const USES_STRICT = /^(\S+)(?:\s+#\s*(\S+))?\s*$/;
+
+/**
+ * A `uses:` key in ANY other shape, which is what makes the failure closed.
+ *
+ * YAML admits spellings `USES_LINE` deliberately does not read: a quoted key
+ * (`"uses": ...`), a space before the colon (`uses : ...`) and the flow mapping
+ * (`- {uses: x@v1}`, `{name: n, uses: x@v1}`). Each of those named an action
+ * that the pinned-commit rule never saw. Rather than teaching the scanner every
+ * YAML form, any line naming the key that `USES_LINE` does not parse is a
+ * violation, so an unreadable form fails instead of passing.
+ */
+const USES_KEY_ANYWHERE = /\buses\b\s*["']?\s*:/;
+
+/** A full commit SHA, which is the only action reference that cannot be repointed. */
+const FULL_SHA = /^[0-9a-f]{40}$/;
+
+/**
+ * A container image digest, which is the only `docker://` reference that cannot
+ * be repointed. An image is pinned by `@sha256:` rather than by a commit,
+ * because a tag on an image - `docker://alpine:3` - is repointable in exactly
+ * the way a tag on an action is.
+ */
+const IMAGE_DIGEST = /@sha256:[0-9a-f]{64}$/;
+
+interface ActionUse {
+  /** The reference exactly as written, which is what a message quotes. */
+  text: string;
+  /** Repository action, or container image, without its reference. */
+  action: string;
+  /** Everything after the last `@`, or "" when the reference names none. */
+  ref: string;
+  /** Version in the trailing comment, which keeps the pin readable. */
+  comment: string | undefined;
+  /** A `docker://` image, whose ref is a digest rather than a commit. */
+  image: boolean;
+  where: string;
+}
+
+/**
+ * A `uses:` reference this guard could not read. Reported, never skipped.
+ *
+ * `rest` is the text after a `uses:` key `USES_LINE` did read, which
+ * `USES_STRICT` could not split into a reference and a comment. `line` is a
+ * whole line that names the key in a spelling `USES_LINE` does not read, so
+ * nothing about it was parsed.
+ */
+type UnparsedUse =
+  | { where: string; form: "rest"; rest: string }
+  | { where: string; form: "line"; line: string };
+
+interface UseScan {
+  thirdParty: ActionUse[];
+  unparsed: UnparsedUse[];
+}
+
+/**
+ * Every `uses:` line in the workflows, split into the third-party references
+ * and the lines this scanner could not read.
+ *
+ * `actions/*` is GitHub's own and stays on its major tag by the owner's decision
+ * (#45 item 6 scopes the pinning to third-party actions); a local `./path`
+ * action is this repository's own code and has no ref at all. `docker://` is
+ * third-party by definition, so it is scanned as an image pin - excluding it
+ * would be one more class of reference that vanishes instead of failing.
+ *
+ * Two readings decide each line. `USES_LINE` reads the shape this repository
+ * writes; a line that names the key in any other shape is captured by
+ * `USES_KEY_ANYWHERE` and reported unread, so a YAML spelling nobody tested
+ * cannot carry an unpinned action past the rule. A comment is the one place the
+ * key is discussed rather than used, so it is the one line skipped.
+ */
+function scanUses(dir: string): UseScan {
+  const thirdParty: ActionUse[] = [];
+  const unparsed: UnparsedUse[] = [];
+  for (const workflow of readWorkflows(dir)) {
+    for (const [index, line] of workflow.lines.entries()) {
+      const where = `${workflow.name}:${index + 1}`;
+      const loose = USES_LINE.exec(line);
+      if (loose === null) {
+        if (/^\s*#/.test(line) || !USES_KEY_ANYWHERE.test(line)) continue;
+        unparsed.push({ where, form: "line", line: line.trim() });
+        continue;
+      }
+      const raw = (loose[2] ?? "").trim();
+      const strict = USES_STRICT.exec(raw);
+      if (strict === null) {
+        unparsed.push({ where, form: "rest", rest: raw });
+        continue;
+      }
+      const text = strict[1]!;
+      const comment = strict[2];
+      if (text.startsWith("./")) continue;
+      const image = text.startsWith("docker://");
+      const bare = image ? text.slice("docker://".length) : text;
+      const at = bare.lastIndexOf("@");
+      const action = at === -1 ? bare : bare.slice(0, at);
+      if (!image && action.split("/")[0] === "actions") continue;
+      thirdParty.push({
+        text,
+        action,
+        ref: at === -1 ? "" : bare.slice(at + 1),
+        comment,
+        image,
+        where,
+      });
+    }
+  }
+  return { thirdParty, unparsed };
+}
+
+/**
+ * #45 item 6: a third-party action may only run at a full commit SHA.
+ *
+ * Why this is a guard and not a style rule: `uses: pnpm/action-setup@v6` names a
+ * tag, and a tag is a pointer the action's owner can move. A workflow run then
+ * executes whatever that owner pushed next, with no diff in this repository to
+ * review, and the permission it runs with is the one the job was given - the
+ * publish job's OIDC identity included. The SHA is the reviewed commit; the
+ * trailing comment is the version, because a 40-character hash names nothing a
+ * reader can check.
+ *
+ * Fail-closed in three ways. A `uses:` line whose shape this scanner does not
+ * read is a violation rather than a line to skip, so a hand-edited pin cannot
+ * pass by being unparseable. A line that names the key in a spelling
+ * `USES_LINE` does not read at all - a quoted key, a space before the colon, a
+ * flow mapping - is reported the same way, because YAML
+ * accepts forms this line-based reader does not and a silent skip on an
+ * unfamiliar spelling is exactly how a guard stops guarding. And a workflow
+ * directory that yields no `uses:` line at all throws, so an indentation change
+ * that stops this from reading the files reads as a failure rather than a pass.
+ */
+function unpinnedActionViolations(dir: string): string[] {
+  const scan = scanUses(dir);
+  if (scan.thirdParty.length === 0 && scan.unparsed.length === 0) {
+    throw new Error(
+      `CI-3 guard found no uses: line in ${dir}; the guard did not run.`,
+    );
+  }
+  const violations = scan.unparsed.map((unread) =>
+    unread.form === "rest"
+      ? `${unread.where}: uses: ${unread.rest === "" ? "(nothing)" : unread.rest} does not parse as <action>@<ref> # <version>`
+      : `${unread.where}: ${unread.line} names uses: in a form this guard does not read; write "- uses: <action>@<ref> # <version>"`,
+  );
+  for (const use of scan.thirdParty) {
+    if (use.image) {
+      if (!IMAGE_DIGEST.test(use.text)) {
+        violations.push(`${use.where}: ${use.text} is not pinned to an @sha256: digest`);
+      }
+      continue;
+    }
+    if (!FULL_SHA.test(use.ref)) {
+      violations.push(`${use.where}: ${use.text} is not a full commit SHA`);
+      continue;
+    }
+    if (use.comment === undefined || !/^v?\d/.test(use.comment)) {
+      violations.push(`${use.where}: ${use.text} has no version comment`);
+    }
+  }
+  return violations;
+}
+
+describe("CI-3: a third-party action runs only at a pinned commit (#45 item 6)", () => {
+  it("pins every third-party action in the workflows to a SHA with its version", () => {
+    expect(unpinnedActionViolations(WORKFLOWS_DIR)).toEqual([]);
+    // Non-vacuous on this tree: the pin above is one of these.
+    expect(scanUses(WORKFLOWS_DIR).thirdParty.map((use) => use.action)).toContain(
+      "pnpm/action-setup",
+    );
+  });
+
+  it("reports a tag reference, which its owner can repoint", () => {
+    const dir = fixtureDir({
+      "ci.yml": [
+        "jobs:",
+        "  build:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - uses: pnpm/action-setup@v6",
+      ].join("\n"),
+    });
+    expect(unpinnedActionViolations(dir)).toEqual([
+      "ci.yml:5: pnpm/action-setup@v6 is not a full commit SHA",
+    ]);
+  });
+
+  it("reports a pinned action that lost its version comment", () => {
+    const dir = fixtureDir({
+      "ci.yml": [
+        "jobs:",
+        "  build:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        `      - uses: pnpm/action-setup@${"a".repeat(40)}`,
+      ].join("\n"),
+    });
+    expect(unpinnedActionViolations(dir)).toEqual([
+      `ci.yml:5: pnpm/action-setup@${"a".repeat(40)} has no version comment`,
+    ]);
+  });
+
+  it("reports a tag reference whose comment is prose, not a version", () => {
+    // The shape that used to be skipped entire: a tag followed by a comment
+    // with a space in it matches neither form of a single-pattern parser, so
+    // it silently escaped a guard that claims to fail closed.
+    const dir = fixtureDir({
+      "ci.yml": [
+        "jobs:",
+        "  build:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - uses: evil/act@v1 # pin later",
+      ].join("\n"),
+    });
+    expect(unpinnedActionViolations(dir)).toEqual([
+      "ci.yml:5: uses: evil/act@v1 # pin later does not parse as <action>@<ref> # <version>",
+    ]);
+  });
+
+  it("reports a uses: line it cannot read at all, rather than passing it", () => {
+    const dir = fixtureDir({
+      "ci.yml": [
+        "jobs:",
+        "  build:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        `      - uses: evil/act@${"c".repeat(40)}  # trailing spaces before the comment`,
+        "      - uses:",
+      ].join("\n"),
+    });
+    expect(unpinnedActionViolations(dir)).toEqual([
+      "ci.yml:5: uses: evil/act@" +
+        "c".repeat(40) +
+        "  # trailing spaces before the comment does not parse as <action>@<ref> # <version>",
+      "ci.yml:6: uses: (nothing) does not parse as <action>@<ref> # <version>",
+    ]);
+  });
+
+  it("reads a CRLF workflow instead of skipping every line of it", () => {
+    // Actions accepts a CRLF file. Splitting on "\n" alone leaves "\r" on every
+    // line, and a pattern that ends in `.` or in a bare `$` after `.*` matches
+    // none of them - so a CRLF file used to pass with every pin unchecked.
+    const dir = fixtureDir({
+      "ci.yml": [
+        "jobs:",
+        "  build:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        `      - uses: pnpm/action-setup@${"e".repeat(40)} # v6.1.1`,
+        "      - uses: pnpm/action-setup@v6",
+      ].join("\r\n"),
+    });
+    expect(unpinnedActionViolations(dir)).toEqual([
+      "ci.yml:6: pnpm/action-setup@v6 is not a full commit SHA",
+    ]);
+  });
+
+  it.each([
+    ["a flow mapping", "      - {uses: evil/act@v1}"],
+    ["a quoted key", '      "uses": evil/act@v1'],
+    ["a space before the colon", "      - uses : evil/act@v1"],
+  ])("reports %s, a YAML spelling this reader does not parse", (_label, line) => {
+    const dir = fixtureDir({
+      "ci.yml": [
+        "jobs:",
+        "  build:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        line,
+      ].join("\n"),
+    });
+    expect(unpinnedActionViolations(dir)).toEqual([
+      `ci.yml:5: ${line.trim()} names uses: in a form this guard does not read; ` +
+        `write "- uses: <action>@<ref> # <version>"`,
+    ]);
+  });
+
+  it("leaves a comment that mentions uses: alone", () => {
+    // The key is discussed in prose above the steps; a comment is not a step.
+    const dir = fixtureDir({
+      "ci.yml": [
+        "jobs:",
+        "  build:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      # every uses: in this file must name a full commit",
+        `      - uses: pnpm/action-setup@${"f".repeat(40)} # v6.1.1`,
+      ].join("\n"),
+    });
+    expect(unpinnedActionViolations(dir)).toEqual([]);
+  });
+
+  it("allows a pinned action, an actions/* tag, a local action and a pinned image", () => {
+    const dir = fixtureDir({
+      "ci.yml": [
+        "jobs:",
+        "  build:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        `      - uses: pnpm/action-setup@${"b".repeat(40)} # v6.1.1`,
+        "      - uses: actions/checkout@v5",
+        "      - uses: ./scripts/local-action",
+        `      - uses: docker://alpine:3.20@sha256:${"d".repeat(64)}`,
+      ].join("\n"),
+    });
+    expect(unpinnedActionViolations(dir)).toEqual([]);
+  });
+
+  it("reports an image named by tag, which its publisher can repoint", () => {
+    const dir = fixtureDir({
+      "ci.yml": [
+        "jobs:",
+        "  build:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - uses: docker://alpine:3",
+      ].join("\n"),
+    });
+    expect(unpinnedActionViolations(dir)).toEqual([
+      "ci.yml:5: docker://alpine:3 is not pinned to an @sha256: digest",
+    ]);
+  });
+
+  it("fails rather than passing when it reads no uses: line", () => {
+    const dir = fixtureDir({
+      "ci.yml": [
+        "jobs:",
+        "  build:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - run: echo hi",
+      ].join("\n"),
+    });
+    expect(() => unpinnedActionViolations(dir)).toThrow(/the guard did not run/);
   });
 });

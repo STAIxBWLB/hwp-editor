@@ -30,7 +30,7 @@ jobs:
       # setup-node's pnpm cache shells out to `pnpm store path`, so pnpm must
       # already exist or setup-node fails with "Unable to locate executable
       # file: pnpm". Order here is load-bearing.
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       # No version input on purpose: action-setup reads packageManager from the
       # root package.json, so this workflow cannot drift from the repo's pin.
       - uses: actions/setup-node@v5
@@ -72,7 +72,7 @@ jobs:
     # metadata, not of the runtime axis, so it need not wait for four cells.
     steps:
       - uses: actions/checkout@v5
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       - uses: actions/setup-node@v5
         with:
           node-version: 22
