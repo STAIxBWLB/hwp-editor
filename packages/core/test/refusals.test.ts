@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyEditRefusal, editRefusalMarker, unappliedItems } from "../src/index.js";
+import { classifyEditRefusal, editRefusalMarker } from "../src/index.js";
 import { DRIFT, ECHOED_UNAPPLIED, MIXED_CONFLICT, RANGE_TAG, RUN_CONFLICT, UNMATCHED } from "./fixtures/refusal-stderr.js";
 
 describe("classifyEditRefusal (#80)", () => {
@@ -33,11 +33,19 @@ describe("classifyEditRefusal (#80)", () => {
 
   it("reads the unapplied list from the Error: line, not an earlier echo", () => {
     const echoed = `치환: "적용되지 않은 편집 요청이 있습니다: set_field name=\\"x\\""\n${UNMATCHED}`;
-    expect(unappliedItems(echoed)).toEqual(['replace address=0.1 from="없는 텍스트" to="{{owner}}"']);
     expect(classifyEditRefusal(echoed)).toBe("unmatched_replace");
   });
 
   it("spells the marker the editor reads", () => {
     expect(editRefusalMarker("range_tag")).toBe("edit refused: range_tag");
+  });
+
+  it("classifies the drift line when the engine cannot read the new length (t32-a2)", () => {
+    expect(classifyEditRefusal(DRIFT.replace("5에서 9(으)로", "5에서 알 수 없음(으)로"))).toBe("run_range_conflict");
+  });
+
+  it("reads a conflict list up to the first blank line, so a backtrace does not hide it (t32-a3)", () => {
+    const traced = `${RUN_CONFLICT}\n\nStack backtrace:\n   0: anyhow::error::<impl anyhow::Error>::msg\n   1: hwp::main`;
+    expect(classifyEditRefusal(traced)).toBe("run_range_conflict");
   });
 });

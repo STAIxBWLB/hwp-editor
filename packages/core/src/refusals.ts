@@ -8,8 +8,11 @@
  * anyhow strings. Each is matched on the fixed shape of its OWN line, never on
  * a token anywhere in stderr: the engine echoes user values (a replace's
  * from/to on progress lines, anchors, urls and names on the unapplied-list
- * line), and a value must never decide the classification. Values are
- * written with Rust's `{:?}`, so none of them spans a line.
+ * line), and a value must never decide the classification. Most values are
+ * written with Rust's `{:?}` and cannot span a line; insert_blocks writes a
+ * style name with `{name}` (insert_blocks.rs:364/:383), which could, so no
+ * matcher here relies on a value never starting a line except through the
+ * fixed shapes below, none of which an insert_blocks refusal produces.
  *
  * Only the marker leaves this module: the engine's prose, its staged paths and
  * the user's values stay in the error's stderr/detail for an operator.
@@ -37,7 +40,7 @@ const LENGTH_CHANGE_LINE = /^op\[\d+\]이 문단 \S+의 길이를 바꿀 수 있
  */
 const CHAIN_PREFIX = String.raw`^(?:Error: |\s+(?:\d+: )?)`;
 const DRIFT_LINE = new RegExp(
-  `${CHAIN_PREFIX}set_format 주소 \\[\\d+, \\d+\\)의 문단은 앞선 연산\\([^)]*\\)으로 글자 수가 \\d+에서 \\S+\\(으\\)로 바뀌어 범위가 다른 글자를 가리킵니다\\.`,
+  `${CHAIN_PREFIX}set_format 주소 \\[\\d+, \\d+\\)의 문단은 앞선 연산\\([^)]*\\)으로 글자 수가 \\d+에서 (?:\\d+|알 수 없음)\\(으\\)로 바뀌어 범위가 다른 글자를 가리킵니다\\.`,
   "u",
 );
 /** `RANGE_TAG_SHIFT_REFUSAL` (hwp-convert/src/edit.rs:179), a fixed sentence. */
@@ -60,7 +63,7 @@ function errorLines(stderr: string): string[] {
  * character an unescaped backslash escapes. The suffix is searched from the
  * end, because a value may carry the same text.
  */
-export function unappliedItems(stderr: string): string[] | undefined {
+function unappliedItems(stderr: string): string[] | undefined {
   const line = errorLines(stderr)[0];
   if (line === undefined) return undefined;
   const head = UNAPPLIED_EDIT_LINE.exec(line);
@@ -120,7 +123,11 @@ export function classifyEditRefusal(stderr: string): EditRefusalKind | undefined
       : undefined;
   }
   if (CONFLICT_HEAD.test(first)) {
-    const entries = lines.slice(1).filter(line => line.trim() !== "");
+    // The list ends at the first blank line: anyhow may append a backtrace
+    // below it (RUST_BACKTRACE, which maru passes through), and that is not a
+    // conflict entry.
+    const blank = lines.findIndex((line, at) => at > 0 && line.trim() === "");
+    const entries = lines.slice(1, blank < 0 ? undefined : blank).filter(line => line.trim() !== "");
     return entries.length > 0 && entries.every(line => LENGTH_CHANGE_LINE.test(line))
       ? "run_range_conflict"
       : undefined;

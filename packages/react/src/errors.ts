@@ -46,7 +46,7 @@ export type EngineRefusalKind = EditRefusalKind;
  */
 export function engineRefusalKind(e: unknown): EngineRefusalKind | undefined {
   const message = e instanceof Error ? e.message : String(e);
-  const match = /edit refused: (unmatched_replace|run_range_conflict|range_tag)\b/u.exec(message);
+  const match = /edit refused: (unmatched_replace|run_range_conflict|range_tag)$/u.exec(message);
   return match === null ? undefined : match[1] as EngineRefusalKind;
 }
 
