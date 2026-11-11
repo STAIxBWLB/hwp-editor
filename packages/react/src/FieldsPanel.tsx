@@ -34,9 +34,9 @@ export function FieldsPanel(): JSX.Element {
     >
       {slots.length === 0 ? <p className="hwped-hint">{t("fields.hint")}</p> : <ul className="hwped-fields">
         {slots.map((slot) => {
-          const segment = segmentAtRef(envelope, slot.segment);
+          const segment = envelope === null ? undefined : segmentAtRef(envelope, slot.segment);
           const snippet =
-            segment === undefined
+            envelope === null || segment === undefined
               ? ""
               : segmentText(envelope, segment).trim().slice(0, 40);
           const draft = drafts[slot.name] ?? "";
