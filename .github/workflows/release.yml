@@ -47,6 +47,14 @@ name: release
 # publishing", read 2026-11-11). One npm serves both, so the job installs the
 # higher floor.
 #
+# It installs an EXACT version, not that floor as a range. This job holds
+# `id-token: write`, and a caret range lets a later 11.x land in it unrequested -
+# the same reasoning that pins a third-party action to a commit (point 12's
+# guard, #45 item 6): the thing that runs should be the thing that was reviewed.
+# 11.21.2 is the patch of the 11.21 line that performs the exchange for both the
+# publish and the dist-tag move; bumping it is a reviewed edit, and the
+# `npm --version` line below is the job log's evidence of what it got.
+#
 # 5. THE ENVIRONMENT NAME IS HALF OF A BINDING, not a local setting. When a job
 # targets a deployment environment, GitHub mints the OIDC token with a subject
 # claim of the form repo:<owner>/<repo>:environment:<name>; without one the
@@ -131,15 +139,24 @@ name: release
 #   so it exists for a run only after the approval. It is referenced in exactly
 #   one step, the last one in the publish job, and handed to npm through a
 #   throwaway userconfig by move_next_tag - never NODE_AUTH_TOKEN or the
-#   runner's .npmrc, which would make npm skip the OIDC exchange (point 3).
-#   REL-02's guard allows this one reference in this one place and nothing else.
+#   runner's .npmrc: a credential configured there is what npm would use
+#   wherever the exchange is not available (an older CLI, or a job without
+#   `id-token: write`), and 11.21.x prefers the exchanged token where it is, so
+#   either way the secret stays out of reach of the publishes. REL-02's guard
+#   allows this one reference in this one place and nothing else.
 #
 #   That fallback runs with the OIDC inputs removed from its environment (`env
-#   -u` on the two request variables and NPM_ID_TOKEN). The userconfig alone
-#   would not decide it: `npm dist-tag` runs the exchange itself on every call
+#   -u` on the two request variables, NPM_ID_TOKEN, and the token secret
+#   itself). The userconfig alone would not decide it: `npm dist-tag add` runs
+#   the exchange once per add, before the tag fetch and before the PUT,
 #   whenever those inputs are set, and the token it installs outranks
 #   --userconfig, so the write would be refused exactly as the first attempt
 #   was and `next` would silently not move behind continue-on-error.
+#
+#   The success line names the path that moved the tag: `(OIDC)`, `(token)`, or
+#   `already at` when npm wrote nothing because `next` already named the
+#   version. Only the first is evidence that the per-package permission works,
+#   and it is what RELEASING.md step 7 keys the token's deletion on.
 
 on:
   push:
@@ -240,9 +257,10 @@ jobs:
 
       # Header point 4. The floor is the first npm that performs the OIDC
       # publish exchange AND the first that can sign `npm dist-tag` with it;
-      # the print below is the job's evidence that it took.
+      # the print below is the job's evidence that it took. Exact, not a caret
+      # range: this job holds `id-token: write`.
       - name: Install an npm that can perform the OIDC exchange
-        run: npm install -g "npm@^11.21.0"
+        run: npm install -g "npm@11.21.2"
       - run: npm --version
 
       - run: pnpm install --frozen-lockfile

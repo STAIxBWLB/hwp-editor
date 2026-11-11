@@ -89,10 +89,12 @@ consumed it was the one intended.
 
 In order:
 
-- It installs `npm@^11.21.0` on the runner and prints `npm --version`. Node 22 bundles an npm
+- It installs `npm@11.21.2` on the runner and prints `npm --version`. Node 22 bundles an npm
   from the 10.x line, which predates trusted publishing; 11.21.0 is the first release that also
-  signs `npm dist-tag` with the OIDC identity (#45 item 5). The printed version is the job
-  log's only evidence that the CLI can perform the exchange at all.
+  signs `npm dist-tag` with the OIDC identity (#45 item 5), and the job installs an exact patch
+  of that line rather than a range, because the job holds `id-token: write` and what runs should
+  be what was reviewed. The printed version is the job log's only evidence that the CLI can
+  perform the exchange at all.
 - It derives the version from the tag and packs and publishes core, then waits, then publishes
   react and server. The shell that does this is `scripts/release-helpers.sh`, sourced by each
   step - read it there, not in the workflow file.
@@ -150,7 +152,10 @@ never established before the first release. This is the check that settles it.
 The `publish` job's last step, `Move the next dist-tag (stable releases)`, points `next` at
 `$VERSION` for all three packages (`move_next_tag` in `scripts/release-helpers.sh`, #38). Check
 it in the job log: three `[ok] @hwp-editor/<pkg> next -> $VERSION (OIDC)` lines, or the same
-three ending in `(token)` when the OIDC attempt was refused. Then confirm:
+three ending in `(token)` when the OIDC attempt was refused. A line reading
+`[ok] @hwp-editor/<pkg> next already at $VERSION (no write)` is the third outcome and is not a
+credential path: npm fetched the tags anonymously, found `next` already naming this version, and
+wrote nothing - the ordinary shape of a re-run, or of a `next` you moved by hand. Then confirm:
 
 ```sh
 npm dist-tag ls @hwp-editor/core          # latest and next both at $VERSION
@@ -179,8 +184,10 @@ publish permission:
 fallback that uses it are deleted once a stable release logs the `(OIDC)` path for all three
 packages. That log is the whole test: the three `[ok] ... (OIDC)` lines are the only readable
 evidence that the per-package switch is on, because the setting is not queryable from the
-workflow. Until such a release, keep both - with the switch off and the secret gone, every
-stable release leaves `next` behind a warning.
+workflow. Read it carefully - a run that only re-points an already-moved `next` logs
+`already at ... (no write)` instead, and three of those prove nothing about the switch. Until
+such a release, keep both: with the switch off and the secret gone, every stable release leaves
+`next` behind a warning.
 
 Until then npm refuses with E403 and the step logs `::group::npm dist-tag output (OIDC
 attempt)` with the message, then falls back to `NPM_DIST_TAG_TOKEN`:
@@ -191,13 +198,16 @@ attempt)` with the message, then falls back to `NPM_DIST_TAG_TOKEN`:
 - It is stored as an **environment secret of `npm-publish`**, not a repository secret. A run
   can read it only after the step 4 approval.
 - `move_next_tag` hands it to npm through a throwaway userconfig, never `NODE_AUTH_TOKEN`.
-  That, and running only after the last publish, keeps it out of reach of every publish,
-  which would otherwise skip the OIDC exchange (release.yml header point 3).
-- That fallback runs with `ACTIONS_ID_TOKEN_REQUEST_URL`, `ACTIONS_ID_TOKEN_REQUEST_TOKEN` and
-  `NPM_ID_TOKEN` removed from its environment. A userconfig alone would not be enough: npm
-  performs the OIDC exchange by itself whenever those inputs are set, on every `dist-tag` call,
-  and installs the result above `--userconfig` - so the write would carry the same identity the
-  first attempt was refused for.
+  That, and running only after the last publish, keeps it out of reach of every publish: a
+  credential configured there is what npm would use wherever the exchange is not available (an
+  older CLI, or a job without `id-token: write`), and 11.21.x prefers the exchanged token where
+  it is, so either way the secret must not be in scope of a publish (release.yml header
+  point 3).
+- That fallback runs with `ACTIONS_ID_TOKEN_REQUEST_URL`, `ACTIONS_ID_TOKEN_REQUEST_TOKEN`,
+  `NPM_ID_TOKEN` and the token secret itself removed from its environment. A userconfig alone
+  would not be enough: `npm dist-tag add` runs the OIDC exchange once per add, before the tag
+  fetch and before the PUT, and installs the result above `--userconfig` - so the write would
+  carry the same identity the first attempt was refused for.
 - `repo-guards.test.ts` allows this one reference in that one place and no other secret
   anywhere.
 
