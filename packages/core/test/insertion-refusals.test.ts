@@ -41,6 +41,14 @@ describe("insertion refusal classifier (#88)", () => {
     expect(classifyInsertionRefusal(nested)).toEqual({ kind: "layout_overflow", blockMm: 120, insertionMm: 96.4 });
   });
 
+  it("never borrows the tail's width when the entry printed 0.00 mm (P3-1)", () => {
+    const zero = definition(
+      "layout_overflow at $.sections[0].blocks[0].rows[0].cells[0].blocks[0].width_mm: image width exceeds body width 0.00 mm",
+      "170.0",
+    );
+    expect(classifyInsertionRefusal(zero)).toEqual({ kind: "layout_overflow" });
+  });
+
   it("reads an image overflow's width from its issue", () => {
     const image = definition("layout_overflow at $.sections[0].blocks[0].width_mm: image width exceeds body width 46.40 mm");
     expect(classifyInsertionRefusal(image)).toEqual({ kind: "layout_overflow", insertionMm: 46.4 });

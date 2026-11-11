@@ -82,7 +82,12 @@ export function classifyInsertionRefusal(stderr: string): InsertionRefusal | und
   // the cell, not the insertion point.
   const entry = entries.find(match => match[2] !== undefined) ?? entries[0]!;
   const blockMm = positive(entry[2]);
-  const insertionMm = positive(entry[3] ?? entry[4]) ?? positive(definition[2]);
+  // The tail is a fallback only when the entry printed no width at all: a
+  // printed 0.00 mm (a cell narrower than its margins, document_spec.rs:1570)
+  // is the measurement, so it leaves insertionMm unset rather than borrowing
+  // the insertion point's width.
+  const printed = entry[3] ?? entry[4];
+  const insertionMm = printed === undefined ? positive(definition[2]) : positive(printed);
   return {
     kind: "layout_overflow",
     ...(blockMm === undefined ? {} : { blockMm }),
