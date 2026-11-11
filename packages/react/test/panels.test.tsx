@@ -17,7 +17,7 @@
  * set-field) are deliberately not duplicated here.
  */
 
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { CatEnvelope, Component, DocumentHandle, EditOp, EditReport, LayoutRow, PageImage, Segment } from "@hwp-editor/core";
 import tableFixture from "../../core/test/fixtures/cat-segments-table.json";
@@ -1350,5 +1350,49 @@ describe("ComponentsPanel (TEST-03)", () => {
     const notice = await screen.findByText(en["components.noReport"]);
     expect(notice.getAttribute("role")).toBe("status");
     expect(screen.queryAllByRole("alert")).toHaveLength(0);
+  });
+
+  it("refuses an insert while the switched-to file is still loading (t25)", async () => {
+    // An insertion replaces the document, and the store still holds the one
+    // the host left: the replacement is refused before the engine is asked,
+    // and the refusal is a sentence rather than a click that did nothing.
+    const other: DocumentHandle = { name: "other.hwpx", data: new Uint8Array([7]) };
+    const engine = composedEngine();
+    const readDocument = engine.read.bind(engine);
+    let releaseReload: (() => void) | undefined;
+    engine.read = async (document) => {
+      if (document.name === other.name) {
+        await new Promise<void>((resolve) => { releaseReload = resolve; });
+      }
+      return readDocument(document);
+    };
+    const onChange = vi.fn();
+    const onError = vi.fn();
+    const envelope = await engine.read(file);
+    const view = render(<HwpEditor engine={engine} file={file} onChange={onChange} onError={onError} />);
+    const page = await screen.findByRole("button", { name: en["page.label"]({ page: 1 }) });
+    fireEvent.click(page, { clientY: clientYForPara(envelope, 1) });
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+
+    view.rerender(<HwpEditor engine={engine} file={other} onChange={onChange} onError={onError} />);
+    await waitFor(() => expect(releaseReload).toBeDefined());
+    fireEvent.click(
+      screen.getByRole("button", { name: en["components.insert"]({ name: componentName }) }),
+    );
+
+    await waitFor(() => expect(onError).toHaveBeenCalled());
+    expect((onError.mock.calls[0]?.[0] as Error).message).toBe(en["error.loadingReplacement"]);
+    // On screen as well: a host that wires no `onError` (the playground) would
+    // otherwise see a click that did nothing.
+    const notice = await screen.findByText(en["error.loadingReplacement"]);
+    expect(notice.getAttribute("role")).toBe("status");
+    // Refused before the engine was asked, and nothing replaced the document
+    // the host had already left.
+    expect(engine.calls.edit).toHaveLength(0);
+    expect(onChange).not.toHaveBeenCalled();
+
+    releaseReload?.();
+    await waitFor(() => expect(engine.calls.read.at(-1)?.name).toBe(other.name));
+    expect(engine.calls.edit).toHaveLength(0);
   });
 });
