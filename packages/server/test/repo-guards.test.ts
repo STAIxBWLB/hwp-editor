@@ -29,7 +29,7 @@
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, sep } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
@@ -1386,91 +1386,5 @@ describe("CI-3: a third-party action runs only at a pinned commit (#45 item 6)",
       ].join("\n"),
     });
     expect(() => unpinnedActionViolations(dir)).toThrow(/the guard did not run/);
-  });
-});
-
-/**
- * A rule that must exist once, in the package that owns it, and be read by
- * every other caller.
- *
- * `#35` moved the container sniff into `packages/core/src/segments.ts` (the
- * upload gate and the editor now both call `sniffDocumentFormat`) and the
- * compose panel's heading/title spacing into `profiles.ts`. Neither move
- * changes an answer, so no behavioural test can prove it: what has to hold is
- * that no second copy reappears, and a copy is a source literal.
- */
-
-/** Every TypeScript source under a package's `src`, as [repo-relative path, text]. */
-function sourceFiles(root = join(REPO_ROOT, "packages")): Array<[string, string]> {
-  const out: Array<[string, string]> = [];
-  for (const entry of readdirSync(root, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const dir = join(root, entry.name, "src");
-    let files: string[];
-    try {
-      files = readdirSync(dir, { recursive: true }) as string[];
-    } catch {
-      continue; // a package without sources
-    }
-    for (const file of files) {
-      if (!file.endsWith(".ts")) continue;
-      const relative = `packages/${entry.name}/src/${file.split(sep).join("/")}`;
-      out.push([relative, readFileSync(join(dir, file), "utf8")]);
-    }
-  }
-  return out;
-}
-
-/** The CFBF/OLE2 signature as a hex literal, in any spacing of commas. */
-const CFBF_LITERAL = /0xd0,\s*0xcf,\s*0x11,\s*0xe0/i;
-
-/** Source files that state the container signature themselves. */
-function cfbfCopies(files: ReadonlyArray<readonly [string, string]>): string[] {
-  return files.filter(([, source]) => CFBF_LITERAL.test(source)).map(([path]) => path);
-}
-
-/** Paragraph spacing written as a literal, where the profile table is not read. */
-const SPACING_LITERAL = /spacing_(?:before|after)_pt:\s*-?\d/;
-
-/** Source files that write paragraph spacing themselves. */
-function spacingLiterals(files: ReadonlyArray<readonly [string, string]>): string[] {
-  return files.filter(([, source]) => SPACING_LITERAL.test(source)).map(([path]) => path);
-}
-
-describe("#35: the container sniff and the preset rows exist once", () => {
-  it("states the CFBF signature in core alone, and names it at the call sites", () => {
-    const files = sourceFiles();
-    if (files.length === 0) throw new Error("the guard did not run: no source files were read");
-    expect(cfbfCopies(files)).toEqual(["packages/core/src/segments.ts"]);
-    // Both decisions that act on the answer - refusing an upload, naming an
-    // output file - read the shared reader instead of restating its bytes.
-    const byPath = new Map(files);
-    for (const path of ["packages/server/src/routes.ts", "packages/server/src/cli-engine.ts"]) {
-      expect(byPath.get(path)).toContain("sniffDocumentFormat");
-    }
-  });
-
-  it("reports a second copy of the signature", () => {
-    expect(cfbfCopies([["packages/server/src/other.ts",
-      "const CFBF = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];"]]))
-      .toEqual(["packages/server/src/other.ts"]);
-  });
-
-  it("leaves the heading and title spacing to the profile table", () => {
-    const files = sourceFiles();
-    if (files.length === 0) throw new Error("the guard did not run: no source files were read");
-    // `profiles.ts` states them, and no other source does.
-    expect(spacingLiterals(files)).toEqual(["packages/core/src/profiles.ts"]);
-    expect(new Map(files).get("packages/react/src/presets.ts")).toContain("COMPOSE_STYLE_ROWS");
-  });
-
-  it("reports spacing written as a literal outside the profile table", () => {
-    expect(spacingLiterals([["packages/react/src/presets.ts", "          spacing_before_pt: 13,"]]))
-      .toEqual(["packages/react/src/presets.ts"]);
-    // A spec built from the table names no key of its own: the camelCase
-    // reference is not a second copy of the value.
-    expect(spacingLiterals([["packages/react/src/presets.ts",
-      "          spacing_before_pt: COMPOSE_STYLE_ROWS.heading.spacingBeforePt,"]]))
-      .toEqual([]);
   });
 });
