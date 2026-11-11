@@ -121,6 +121,18 @@ describe("parseCatEnvelope", () => {
     expect(() => validateProjectedMetadata(malformed)).toThrow(/malformed direct[.]char properties; upgrade the host adapter/);
   });
 
+  it("fails an out-of-range projected offset at the boundary, not later in render", () => {
+    // A host can project character ranges that run past its own Markdown. The
+    // projected transport is validated on the way in, so the reader gets this
+    // message instead of segmentText throwing inside a React render.
+    expect(() => validateProjectedMetadata({ markdown: "ab", segments: [{ start: 0, end: 5, kind: "para" as const, section: 0, para: 0 }] }))
+      .toThrow(/character range exceeds markdown/);
+    expect(() => validateProjectedMetadata({ markdown: "ab", segments: [{ start: 3, end: 2, kind: "para" as const, section: 0, para: 0 }] }))
+      .toThrow(/malformed character range/);
+    expect(validateProjectedMetadata({ markdown: "ab", segments: [{ start: 0, end: 2, kind: "para" as const, section: 0, para: 0 }] }))
+      .toEqual({ markdown: "ab", segments: [{ start: 0, end: 2, kind: "para", section: 0, para: 0 }] });
+  });
+
   it("treats null direct shapes and null font faces as published compatibility values", () => {
     const base = { contract: "hwp-segment-envelope-v2", schema_version: "1.0", markdown: "x" };
     const parsed = parseCatEnvelope(JSON.stringify({ ...base, segments: [{ id: "p", kind: "para",

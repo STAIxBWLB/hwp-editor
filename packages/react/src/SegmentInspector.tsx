@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import type { JSX } from "react";
 import type { ParagraphAlignment, ParaShapeKey, Segment } from "@hwp-editor/core";
-import { formatAddresses, paragraphAddress, paragraphForSegment, paragraphRuns, segmentAtRef, segmentRef, segmentText, selectSimilar, selectedParagraphs, selectionAction } from "@hwp-editor/core";
+import { formatAddresses, paragraphAddress, paragraphRuns, resolveSelection, segmentAtRef, segmentPath, segmentRef, segmentText, selectSimilar, selectedParagraphs, selectionAction } from "@hwp-editor/core";
 import { plainSegmentText } from "./text.js";
 import { useHwpEditorContext } from "./context.js";
 import type { MessageKey } from "./messages.js";
@@ -50,15 +50,25 @@ export function SegmentInspector(): JSX.Element {
     envelope !== null && selection !== null
       ? segmentAtRef(envelope, selection)
       : undefined;
-  const paragraph = envelope !== null && segment !== undefined
-    ? paragraphForSegment(envelope, segment)
-    : undefined;
+  // What the selection actually covers: a cell resolves to every paragraph in
+  // it, and a table, image, field or bookmark to none of them.
+  const targets = envelope !== null && segment !== undefined ? resolveSelection(envelope, segment) : undefined;
+  const paragraphTargets = targets?.paragraphs ?? [];
+  const singleParagraph = targets?.paragraph;
+  const refusalReason = targets === undefined || targets.refusal === null ? null
+    : targets.refusal === "cell" ? t("segment.cellSelectionRefused")
+    : targets.refusal === "table" ? t("segment.tableSelectionRefused")
+    : targets.refusal === "container" ? t("segment.containerSelectionRefused")
+    : t("segment.noParagraphSelection");
+  const targetLabel = segment === undefined ? "" : segment.kind === "cell"
+    ? t("segment.selectedCell", { path: segmentPath(segment), count: paragraphTargets.length })
+    : singleParagraph === undefined ? "" : t("segment.selectedPara", { path: segmentPath(singleParagraph) });
   const currentText =
-    envelope !== null && paragraph !== undefined
-      ? plainSegmentText(segmentText(envelope, paragraph))
+    envelope !== null && paragraphTargets.length > 0
+      ? plainSegmentText(paragraphTargets.map(candidate => segmentText(envelope, candidate)).join("\n"))
       : "";
 
-  const markdownText = envelope !== null && paragraph !== undefined ? segmentText(envelope, paragraph) : "";
+  const markdownText = envelope !== null && singleParagraph !== undefined ? segmentText(envelope, singleParagraph) : "";
   const supplementaryStarts = useMemo(() => {
     const positions: number[] = [];
     let offset = 0;
@@ -95,7 +105,7 @@ export function SegmentInspector(): JSX.Element {
   }, [selection]);
 
   const find = currentText;
-  const address = paragraph === undefined ? undefined : paragraphAddress(paragraph);
+  const address = singleParagraph === undefined ? undefined : paragraphAddress(singleParagraph);
   const addressedUnavailable = capabilities?.editOps !== "v1";
   const disabled = !editable || addressedUnavailable || state.status === "applying";
   const selectedRefs = state.selections?.length ? state.selections : selection === null ? [] : [selection];
@@ -104,24 +114,24 @@ export function SegmentInspector(): JSX.Element {
     return item === undefined ? [] : [item];
   });
   const hasRunSelection = explicitSegments.some(item => item.kind === "run");
-  const multiSelection = selected.length > 1;
+  // One selection is one entry in the list, even when it is a cell that covers
+  // several paragraphs.
+  const multiSelection = explicitSegments.length > 1;
   const textSelectionRestricted = multiSelection || hasRunSelection || state.range != null;
   const singleTargetDisabled = disabled || textSelectionRestricted || address === undefined;
   const anchorDisabled = !editable || state.status === "applying" || textSelectionRestricted;
   const legacyLinkSeparator = capabilities?.editOps !== "v1" && [currentText, linkText, linkUrl].some(value => value.includes("=>"));
   const validShape = isPlainDecimal(shapeValue) && (shapeKey !== "line-spacing" || Number(shapeValue) > 0);
   const validFontSize = fontSize.trim() === "" || (isPlainDecimal(fontSize) && Number(fontSize) > 0);
-  const formatInputs = envelope === null ? [] : explicitSegments.flatMap(item => {
-    const target = item.kind === "run" ? item : paragraphForSegment(envelope, item);
-    return target === undefined ? [] : [target];
-  });
+  const formatInputs = envelope === null ? [] : explicitSegments.flatMap(item =>
+    item.kind === "run" ? [item] : resolveSelection(envelope, item).paragraphs);
   const formatTargets = envelope === null ? [] : formatAddresses(envelope, formatInputs, state.range);
-  const runs = envelope === null || paragraph === undefined ? [] : paragraphRuns(envelope, paragraph);
-  const rangeAvailable = !multiSelection && runs.some(run => run.id !== undefined || (paragraph?.indices?.length === 1 && run.indices?.length === 2));
+  const runs = envelope === null || singleParagraph === undefined ? [] : paragraphRuns(envelope, singleParagraph);
+  const rangeAvailable = !multiSelection && runs.some(run => run.id !== undefined || (singleParagraph?.indices?.length === 1 && run.indices?.length === 2));
   const charPrimary = segment?.kind === "run" ? segment
     : envelope !== null && state.range != null && formatTargets[0]?.id !== undefined
-      ? segmentAtRef(envelope, { id: formatTargets[0].id, section: 0, para: 0 }) ?? paragraph
-      : paragraph;
+      ? segmentAtRef(envelope, { id: formatTargets[0].id, section: 0, para: 0 }) ?? singleParagraph
+      : singleParagraph;
 
   const activateSelection = (target: Segment, mode: "single" | "toggle" | "extend"): void => {
     if (envelope === null) return;
@@ -133,16 +143,16 @@ export function SegmentInspector(): JSX.Element {
     activateSelection(target, event.shiftKey ? "extend" : event.ctrlKey || event.metaKey ? "toggle" : "single");
   };
   const selectLikePrimary = (level: "char" | "para"): void => {
-    if (envelope === null || paragraph === undefined) return;
-    const match = level === "char" ? charPrimary : paragraph;
+    if (envelope === null || singleParagraph === undefined) return;
+    const match = level === "char" ? charPrimary : singleParagraph;
     if (match === undefined) return;
     const refs = selectSimilar(envelope, match, level);
     if (refs.length === 0) return;
     const activeMatch = refs.find(ref => {
       const item = segmentAtRef(envelope, ref);
-      const parent = item === undefined ? undefined : paragraphForSegment(envelope, item);
-      return parent === paragraph || (parent?.id !== undefined && parent.id === paragraph.id) ||
-        (parent !== undefined && parent.id === undefined && paragraph.id === undefined && parent.section === paragraph.section && parent.para === paragraph.para);
+      const parent = item === undefined ? undefined : resolveSelection(envelope, item).paragraph;
+      return parent === singleParagraph || (parent?.id !== undefined && parent.id === singleParagraph.id) ||
+        (parent !== undefined && parent.id === undefined && singleParagraph.id === undefined && parent.section === singleParagraph.section && parent.para === singleParagraph.para);
     });
     const primary = activeMatch ?? refs[0]!;
     store.dispatch({
@@ -193,17 +203,16 @@ export function SegmentInspector(): JSX.Element {
         </div>
         <p className="hwped-hint" role="status">{t("segment.selectedCount", { count: selected.length })}</p>
       </div>
-      {selection !== null && segment !== undefined && paragraph === undefined ? (
-        <p className="hwped-hint" role="status">{t("segment.noParagraphSelection")}</p>
-      ) : (segment === undefined || paragraph === undefined || selection === null) ? (
+      {segment === undefined || selection === null ? (
         <p className="hwped-hint">{t("segment.hint")}</p>
+      ) : paragraphTargets.length === 0 ? (
+        <p className="hwped-hint" role="status">{refusalReason}</p>
       ) : <>
       {addressedUnavailable && <p className="hwped-hint" role="status">{t("segment.addressedUnavailable")}</p>}
       {textSelectionRestricted && <p className="hwped-hint" role="status">{t("segment.multiTextEditHint")}</p>}
+      {refusalReason !== null && <p className="hwped-hint" role="status">{refusalReason}</p>}
       <div className="hwped-field">
-        <span className="hwped-label">
-          {t("segment.selectedPara", { section: paragraph.section, para: paragraph.para })}
-        </span>
+        <span className="hwped-label">{targetLabel}</span>
         <div className="hwped-quote">
           {currentText || t("segment.emptyPara")}
         </div>
@@ -339,16 +348,16 @@ export function SegmentInspector(): JSX.Element {
       </div>
 
       {shapeValue !== "" && !validShape && <p role="alert" className="hwped-hint">{t(isPlainDecimal(shapeValue) ? "unit.positive" : "unit.invalid")}</p>}
-      <div className="hwped-field">
+      {singleParagraph !== undefined && <div className="hwped-field">
         <span className="hwped-label">{t("segment.selectSimilar")}</span>
         <div className="hwped-row">
           <button type="button" className="hwped-btn" disabled={charPrimary?.directChar === undefined} onClick={() => selectLikePrimary("char")}>{t("segment.similarChar")}</button>
-          <button type="button" className="hwped-btn" disabled={paragraph.directPara === undefined} onClick={() => selectLikePrimary("para")}>{t("segment.similarPara")}</button>
+          <button type="button" className="hwped-btn" disabled={singleParagraph.directPara === undefined} onClick={() => selectLikePrimary("para")}>{t("segment.similarPara")}</button>
         </div>
         {charPrimary?.directChar === undefined && <p className="hwped-hint">{t("segment.similarCharUnavailable")}</p>}
-        {paragraph.directPara === undefined && <p className="hwped-hint">{t("segment.similarParaUnavailable")}</p>}
-      </div>
-      <div className="hwped-field">
+        {singleParagraph.directPara === undefined && <p className="hwped-hint">{t("segment.similarParaUnavailable")}</p>}
+      </div>}
+      {singleParagraph !== undefined && <div className="hwped-field">
         <span className="hwped-label">{t("segment.hyperlinkLabel")}</span>
         <p className="hwped-hint">{t("segment.hyperlinkHint")}</p>
         {legacyLinkSeparator && <p role="alert" className="hwped-hint">{t("segment.legacyHyperlinkSeparator")}</p>}
@@ -358,22 +367,22 @@ export function SegmentInspector(): JSX.Element {
           aria-label={t("segment.hyperlinkTextAria")} onChange={(e) => setLinkText(e.target.value)} />
         <button type="button" className="hwped-btn" disabled={anchorDisabled || legacyLinkSeparator || currentText === "" || linkUrl.trim() === ""}
           onClick={() => store.dispatch({ type: "queueOp", op: { kind: "create-hyperlink", anchor: currentText, url: linkUrl.trim(), ...(linkText.trim() === "" ? {} : { text: linkText.trim() }) } })}>{t("segment.createHyperlink")}</button>
-      </div>
+      </div>}
 
-      <div className="hwped-field">
+      {singleParagraph !== undefined && <div className="hwped-field">
         <label className="hwped-label" htmlFor="hwped-run-range">{t("segment.rangeTextAria")}</label>
         <p className="hwped-hint">{t("segment.rangeWholeRunHint")}</p>
         {!rangeAvailable && <p className="hwped-hint">{t("segment.rangeUnavailable")}</p>}
         <textarea ref={rangeInput} id="hwped-run-range" className="hwped-textarea" rows={3} readOnly value={markdownText}
           disabled={disabled || !rangeAvailable} onSelect={event => {
-            if (paragraph === undefined || !rangeAvailable) return;
+            if (!rangeAvailable) return;
             const field = event.currentTarget;
             const start = scalarAtUtf16(field.selectionStart, supplementaryStarts);
             const end = scalarAtUtf16(field.selectionEnd, supplementaryStarts);
             if (start === undefined || end === undefined) { setRangeInvalid(true); return; }
             setRangeInvalid(false);
             store.dispatch({ type: "setRange", range: start === end ? null : {
-              paragraph: segmentRef(paragraph), start: paragraph.start + start, end: paragraph.start + end,
+              paragraph: segmentRef(singleParagraph), start: singleParagraph.start + start, end: singleParagraph.start + end,
             } });
           }} />
         {(rangeInvalid || (state.range != null && formatTargets.length === 0)) && <p role="alert" className="hwped-hint">{t("segment.rangeInvalid")}</p>}
@@ -381,11 +390,11 @@ export function SegmentInspector(): JSX.Element {
           <p className="hwped-hint" role="status">{t("segment.rangeRunCount", { count: formatTargets.length })}</p>
           <button type="button" className="hwped-btn" onClick={() => {
             setRangeInvalid(false); rangeInput.current?.setSelectionRange(0, 0);
-            if (hasRunSelection && paragraph !== undefined) store.dispatch({ type: "select", selection: segmentRef(paragraph) });
+            if (hasRunSelection) store.dispatch({ type: "select", selection: segmentRef(singleParagraph) });
             else store.dispatch({ type: "setRange", range: null });
           }}>{t("segment.rangeClear")}</button>
         </>}
-      </div>
+      </div>}
       <div className="hwped-field">
         <span className="hwped-label">{t("segment.formatLabel")}</span>
         <p className="hwped-hint">{t("segment.formatRunCount", { count: formatTargets.length })}</p>

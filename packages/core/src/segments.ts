@@ -244,6 +244,10 @@ export function markdownLength(envelope: CatEnvelope): number {
 
 /** Revalidate optional metadata from a projected transport envelope before it drives behavior. */
 export function validateProjectedMetadata(envelope: CatEnvelope): CatEnvelope {
+  // A host can project offsets that run past its own Markdown. Fail the read
+  // with the boundary message here, rather than crashing render in
+  // segmentText, where no error boundary catches it.
+  boundaryInfo(envelope);
   let changed = false;
   const segments = envelope.segments.map((segment) => {
     const nullable = segment as Segment & { directChar?: DirectChar | null; directPara?: DirectPara | null };

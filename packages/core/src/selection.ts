@@ -19,44 +19,70 @@ function uniqueSegments(segments: Segment[]): Segment[] {
   });
 }
 
+/** Why a selection has no single paragraph target of its own. */
+export type SelectionRefusal = "table" | "cell" | "container" | "unaddressable";
+
+export interface SelectionTargets {
+  /** Paragraphs the selection covers, in envelope order; empty when it covers none. */
+  paragraphs: Segment[];
+  /** The one paragraph a single-target op (replace, insert, delete) may address. */
+  paragraph: Segment | undefined;
+  /** Why the single-target ops are off, or null when `paragraph` is set. */
+  refusal: SelectionRefusal | null;
+}
+
 /**
- * The paragraph an op must address for a selected segment.
+ * Map a selected segment to the paragraphs an op may address.
  *
- * A paragraph is itself; nested content resolves to the paragraph that
- * DIRECTLY holds it, never to a higher one. The distinction is destructive: a
- * table and its cells sit inside a host paragraph (`[p, control, cell, …]`),
- * and `delete-para` on that host paragraph deletes the table with it, so
- * neither a table nor a cell may resolve to the host.
+ * Every kind is mapped explicitly, because guessing is destructive: a table
+ * and a cell sit inside a host paragraph whose range covers the whole table,
+ * so aiming a paragraph op at that host edits or deletes the table itself.
+ * Nothing here falls back to an enclosing paragraph.
  *
- * A cell maps to the first paragraph inside it, which is where its text lives
- * and what align, spacing and format may target. A table, and a cell whose
- * paragraphs the envelope does not carry (an empty cell), map to nothing: the
- * caller disables the paragraph edits and says why, because the engine refuses
- * an address it cannot descend into and a guessed ancestor is how a refused
- * edit becomes a deleted table.
+ * - para: itself.
+ * - run: the paragraph that directly holds it.
+ * - cell: every paragraph inside the cell, since align, spacing and character
+ *   format apply to all of them, but no single target: replace, insert and
+ *   delete address one paragraph, and the engine refuses to delete a cell's
+ *   last one. An empty cell has no paragraph at all.
+ * - table, image, field, bookmark: no paragraph target. Any text they touch
+ *   belongs to the host paragraph they share with the table control.
+ * - a segment with no nesting path (an older projection) that is not a cell:
+ *   the id-less paragraph whose range covers it, which is the only coordinate
+ *   that projection offers.
  */
-export function paragraphForSegment(envelope: CatEnvelope, segment: Segment): Segment | undefined {
-  if (segment.kind === "para") return segment;
-  if (segment.kind === "table") return undefined;
+export function resolveSelection(envelope: CatEnvelope, segment: Segment): SelectionTargets {
+  const refuse = (refusal: SelectionRefusal): SelectionTargets => ({ paragraphs: [], paragraph: undefined, refusal });
+  const only = (paragraph: Segment | undefined): SelectionTargets => paragraph === undefined
+    ? refuse("unaddressable")
+    : { paragraphs: [paragraph], paragraph, refusal: null };
+  if (segment.kind === "para") return only(segment);
+  if (segment.kind === "table") return refuse("table");
+  if (segment.kind === "image" || segment.kind === "field" || segment.kind === "bookmark") return refuse("container");
   const indices = segment.indices;
   if (indices === undefined) {
-    // A legacy projection carries no nesting path, so a cell cannot be
-    // descended into and its host paragraph is not its text.
-    if (segment.kind === "cell") return undefined;
-    return envelope.segments.find((candidate) => candidate.kind === "para" && candidate.indices === undefined &&
+    if (segment.kind === "cell") return refuse("cell");
+    return only(envelope.segments.find((candidate) => candidate.kind === "para" && candidate.indices === undefined &&
       candidate.section === segment.section && candidate.para === segment.para &&
-      candidate.start <= segment.start && candidate.end >= segment.end);
+      candidate.start <= segment.start && candidate.end >= segment.end));
   }
   if (segment.kind === "cell") {
-    return envelope.segments.find((candidate) => candidate.kind === "para" &&
+    const paragraphs = envelope.segments.filter((candidate) => candidate.kind === "para" &&
       candidate.section === segment.section && candidate.indices !== undefined &&
       candidate.indices.length === indices.length + 1 &&
       indices.every((index, at) => candidate.indices![at] === index));
+    return paragraphs.length === 0 ? refuse("cell") : { paragraphs, paragraph: undefined, refusal: "cell" };
   }
-  return envelope.segments.find((candidate) => candidate.kind === "para" &&
+  // Only a run is left: the paragraph one level up holds its text.
+  return only(envelope.segments.find((candidate) => candidate.kind === "para" &&
     candidate.section === segment.section && candidate.indices !== undefined &&
     candidate.indices.length === indices.length - 1 &&
-    candidate.indices.every((index, at) => index === indices[at]));
+    candidate.indices.every((index, at) => index === indices[at])));
+}
+
+/** Full nesting path of a segment, the identity a label must name: `<section>/<indices>`. */
+export function segmentPath(segment: Segment): string {
+  return `${segment.section}/${segment.indices?.join(".") ?? segment.para}`;
 }
 
 export function selectedParagraphs(envelope: CatEnvelope, state: EditorState): Segment[] {
@@ -65,8 +91,7 @@ export function selectedParagraphs(envelope: CatEnvelope, state: EditorState): S
     const segment = envelope.segments.find((candidate) => ref.id !== undefined
       ? candidate.id === ref.id
       : candidate.section === ref.section && candidate.para === ref.para);
-    const paragraph = segment && paragraphForSegment(envelope, segment);
-    return paragraph ? [paragraph] : [];
+    return segment === undefined ? [] : resolveSelection(envelope, segment).paragraphs;
   });
   const orderedParagraphs = uniqueSegments(envelope.segments.filter((s) => s.kind === "para"));
   const order = new Map(orderedParagraphs.map((s, i) => [segmentKey(s), i]));
@@ -108,7 +133,7 @@ export function formatAddresses(
   if (range !== undefined && range !== null) {
     if (paragraphs.length !== 1 || !Number.isInteger(range.start) || !Number.isInteger(range.end) ||
         range.start < 0 || range.start >= range.end || range.end > markdownLength(envelope)) return [];
-    const paragraph = paragraphForSegment(envelope, paragraphs[0]!);
+    const paragraph = resolveSelection(envelope, paragraphs[0]!).paragraph;
     if (paragraph === undefined) return [];
     const matches = range.paragraph.id !== undefined
       ? paragraph.id === range.paragraph.id
@@ -140,7 +165,7 @@ export function formatAddresses(
 
 function addressForSelectedRun(envelope: CatEnvelope, run: Segment): EditAddress | undefined {
   if (run.id !== undefined) return { id: run.id };
-  const paragraph = paragraphForSegment(envelope, run);
+  const paragraph = resolveSelection(envelope, run).paragraph;
   if (paragraph === undefined) return undefined;
   if (paragraph.indices === undefined && run.indices === undefined) {
     const siblings = paragraphRuns(envelope, paragraph);
@@ -195,26 +220,42 @@ export function selectionAction(
   target: Segment,
   mode: "single" | "toggle" | "extend",
 ): EditorAction {
-  const hit = paragraphForSegment(envelope, target);
-  if (!hit || mode === "single") return { type: "select", selection: segmentRef(target) };
+  if (mode === "single") return { type: "select", selection: segmentRef(target) };
+  const hitTargets = resolveSelection(envelope, target).paragraphs;
+  // A table, an image, an empty cell: nothing to extend across, and widening
+  // to the paragraph that encloses it would select that paragraph's text.
+  if (hitTargets.length === 0) return { type: "select", selection: segmentRef(target) };
   const current = selectedParagraphs(envelope, state);
-  const anchorRef = state.selectionAnchor ?? (state.selection ? state.selection : segmentRef(hit));
+  const anchorRef = state.selectionAnchor ?? (state.selection ? state.selection : segmentRef(hitTargets[0]!));
   const anchorHit = envelope.segments.find((s) => anchorRef.id ? s.id === anchorRef.id : s.section === anchorRef.section && s.para === anchorRef.para);
-  const anchor = anchorHit ? paragraphForSegment(envelope, anchorHit) : hit;
+  // An anchor with no paragraph target of its own has nothing to measure a
+  // range from, so the range starts at the click instead of throwing.
+  const anchorTargets = anchorHit === undefined ? [] : resolveSelection(envelope, anchorHit).paragraphs;
+  const anchor = anchorTargets[0] ?? hitTargets[0]!;
+  const paragraphKeys = new Set(hitTargets.map(segmentKey));
   let selected: Segment[];
   if (mode === "toggle") {
-    selected = current.some((p) => segmentKey(p) === segmentKey(hit))
-      ? current.filter((p) => segmentKey(p) !== segmentKey(hit))
-      : [...current, hit];
+    // Toggling a cell takes its whole content, so align and format reach every
+    // paragraph of it rather than the first one.
+    selected = current.some((p) => paragraphKeys.has(segmentKey(p)))
+      ? current.filter((p) => !paragraphKeys.has(segmentKey(p)))
+      : [...current, ...hitTargets];
   } else {
     const paragraphs = uniqueSegments(envelope.segments.filter((s) => s.kind === "para"));
-    const a = paragraphs.findIndex((p) => segmentKey(p) === segmentKey(anchor!));
-    const b = paragraphs.findIndex((p) => segmentKey(p) === segmentKey(hit));
-    selected = a < 0 || b < 0 ? [hit] : paragraphs.slice(Math.min(a, b), Math.max(a, b) + 1);
+    const position = new Map(paragraphs.map((p, i) => [segmentKey(p), i]));
+    const anchorFirst = position.get(segmentKey(anchor)) ?? -1;
+    const anchorLast = position.get(segmentKey(anchorTargets[anchorTargets.length - 1] ?? anchor)) ?? anchorFirst;
+    const hitFirst = position.get(segmentKey(hitTargets[0]!)) ?? -1;
+    const hitLast = position.get(segmentKey(hitTargets[hitTargets.length - 1]!)) ?? hitFirst;
+    const from = anchorFirst < 0 || hitFirst < 0 ? Math.max(anchorFirst, hitFirst) : Math.min(anchorFirst, hitFirst);
+    const to = anchorFirst < 0 || hitFirst < 0 ? from : Math.max(anchorLast, hitLast);
+    // Both endpoints resolve to paragraphs the envelope lists, so this slice is
+    // the range; the `-1` arms only keep an unlisted endpoint selecting itself.
+    selected = from < 0 ? [anchor, ...hitTargets] : paragraphs.slice(from, to + 1);
   }
   const refs = selected.map(segmentRef);
-  const primary = segmentRef(hit);
-  return { type: "selectMany", selections: refs, primary, anchor: mode === "extend" ? segmentRef(anchor!) : anchorRef };
+  const primary = segmentRef(hitTargets[0]!);
+  return { type: "selectMany", selections: refs, primary, anchor: mode === "extend" ? segmentRef(anchor) : anchorRef };
 }
 
 export function selectSimilar(envelope: CatEnvelope, primary: Segment, level: "char" | "para"): SegmentRef[] {

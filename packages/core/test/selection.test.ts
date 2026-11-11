@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatAddresses, paragraphAddress, paragraphForSegment, selectSimilar, selectionAction, selectedParagraphs } from "../src/selection.js";
+import { formatAddresses, paragraphAddress, resolveSelection, segmentPath, selectSimilar, selectionAction, selectedParagraphs } from "../src/selection.js";
 import type { CatEnvelope, Segment } from "../src/segments.js";
 import { initialState, reducer } from "../src/state.js";
 
@@ -21,23 +21,28 @@ const env: CatEnvelope = { markdown: "x".repeat(29), segments: [
 ] };
 
 describe("selection helpers", () => {
-  it("maps nested content to the paragraph that holds its text, never to the table's host", () => {
+  it("maps every segment kind to exactly its own content, never an enclosing paragraph", () => {
     const table = env.segments.find((s) => s.id === "tbl")!;
     const cell = env.segments.find((s) => s.id === "cell")!;
     // The paragraph that anchors the table control is not the table's text: a
     // delete-para there removes the table, so a table has no paragraph target.
-    expect(paragraphForSegment(env, table)).toBeUndefined();
-    // A cell's text lives in the paragraph inside it, and that is what a
-    // paragraph op may address.
-    expect(paragraphForSegment(env, cell)?.id).toBe("inner-para");
+    expect(resolveSelection(env, table)).toEqual({ paragraphs: [], paragraph: undefined, refusal: "table" });
+    // A cell's text lives in the paragraphs inside it, and all of them are the
+    // target; no single one of them is, so replace/insert/delete are refused.
+    expect(resolveSelection(env, cell)).toEqual({ paragraphs: [env.segments[6]!], paragraph: undefined, refusal: "cell" });
+    expect(resolveSelection(env, env.segments[0]!)).toEqual({ paragraphs: [env.segments[0]!], paragraph: env.segments[0]!, refusal: null });
+    expect(resolveSelection(env, env.segments[1]!)).toEqual({ paragraphs: [env.segments[0]!], paragraph: env.segments[0]!, refusal: null });
     expect(paragraphAddress(env.segments[0]!)).toEqual({ id: "p0" });
     expect(formatAddresses(env, [env.segments[0]!, env.segments[3]!])).toEqual([{ id: "r0" }, { id: "r0-other-style" }, { id: "r1" }]);
     expect(formatAddresses(env, [env.segments[1]!])).toEqual([{ id: "r0" }]);
-    expect(paragraphForSegment(env, env.segments.find((s) => s.id === "inner-para")!)?.id).toBe("inner-para");
+    // A label names the real nesting path, not the host paragraph's index.
+    expect(segmentPath(cell)).toBe("0/1.0.0");
+    expect(segmentPath(env.segments[6]!)).toBe("0/1.0.0.0");
     // A cell whose paragraphs the envelope does not carry cannot be descended
     // into, and its host is not a substitute.
     const emptyCell: Segment = { id: "empty-cell", indices: [1, 0, 2], start: 10, end: 15, kind: "cell", section: 0, para: 1 };
-    expect(paragraphForSegment({ markdown: env.markdown, segments: [...env.segments, emptyCell] }, emptyCell)).toBeUndefined();
+    expect(resolveSelection({ markdown: env.markdown, segments: [...env.segments, emptyCell] }, emptyCell))
+      .toEqual({ paragraphs: [], paragraph: undefined, refusal: "cell" });
     // A legacy projection carries no nesting path, so neither a table nor a
     // cell resolves, rather than falling back to the enclosing paragraph.
     const legacyHost: CatEnvelope = { markdown: "x", segments: [
@@ -45,8 +50,87 @@ describe("selection helpers", () => {
       { start: 0, end: 1, kind: "table", section: 0, para: 0 },
       { start: 0, end: 1, kind: "cell", section: 0, para: 0 },
     ] };
-    expect(paragraphForSegment(legacyHost, legacyHost.segments[1]!)).toBeUndefined();
-    expect(paragraphForSegment(legacyHost, legacyHost.segments[2]!)).toBeUndefined();
+    expect(resolveSelection(legacyHost, legacyHost.segments[1]!).paragraphs).toEqual([]);
+    expect(resolveSelection(legacyHost, legacyHost.segments[2]!).paragraphs).toEqual([]);
+    expect(resolveSelection(legacyHost, legacyHost.segments[0]!).paragraph).toBe(legacyHost.segments[0]);
+  });
+
+  it("extends from a table or an empty-cell anchor instead of throwing", () => {
+    const emptyCell: Segment = { id: "empty-cell", indices: [1, 0, 2], start: 10, end: 15, kind: "cell", section: 0, para: 1 };
+    const withEmpty: CatEnvelope = { markdown: env.markdown, segments: [...env.segments, emptyCell] };
+    const last = withEmpty.segments.find((s) => s.id === "p2")!;
+    // Ctrl-clicking a table stores its ref as the anchor; a later Shift-click
+    // has no paragraph to measure the range from, so the range starts at the click.
+    const fromTable = reducer(initialState, { type: "select", selection: { section: 0, para: 1, id: "tbl" } });
+    expect(selectionAction(withEmpty, fromTable, last, "extend")).toEqual({
+      type: "selectMany",
+      selections: [{ section: 0, para: 2, id: "p2" }],
+      primary: { section: 0, para: 2, id: "p2" },
+      anchor: { section: 0, para: 2, id: "p2" },
+    });
+    const fromEmptyCell = reducer(initialState, { type: "select", selection: { section: 0, para: 1, id: "empty-cell" } });
+    expect(selectionAction(withEmpty, fromEmptyCell, withEmpty.segments[0]!, "extend")).toEqual({
+      type: "selectMany",
+      selections: [{ section: 0, para: 0, id: "p0" }],
+      primary: { section: 0, para: 0, id: "p0" },
+      anchor: { section: 0, para: 0, id: "p0" },
+    });
+    // Shift-clicking the table itself selects the table, never the host paragraph.
+    const fromPara = reducer(initialState, { type: "select", selection: { section: 0, para: 0, id: "p0" } });
+    expect(selectionAction(withEmpty, fromPara, withEmpty.segments.find((s) => s.id === "tbl")!, "extend"))
+      .toEqual({ type: "select", selection: { section: 0, para: 1, id: "tbl" } });
+  });
+
+  it("covers every paragraph of a two-paragraph cell, and refuses the single-paragraph edits", () => {
+    const twoCell: CatEnvelope = { markdown: "xy", segments: [
+      { id: "host", indices: [1], start: 0, end: 2, kind: "para", section: 0, para: 1 },
+      { id: "tbl2", indices: [1, 0], start: 0, end: 2, kind: "table", section: 0, para: 1 },
+      { id: "cell2", indices: [1, 0, 0], start: 0, end: 2, kind: "cell", section: 0, para: 1 },
+      { id: "cell-p0", indices: [1, 0, 0, 0], start: 0, end: 1, kind: "para", section: 0, para: 1 },
+      { id: "cell-p0-r0", indices: [1, 0, 0, 0, 0], start: 0, end: 1, kind: "run", section: 0, para: 1 },
+      { id: "cell-p1", indices: [1, 0, 0, 1], start: 1, end: 2, kind: "para", section: 0, para: 1 },
+      { id: "cell-p1-r0", indices: [1, 0, 0, 1, 0], start: 1, end: 2, kind: "run", section: 0, para: 1 },
+    ] };
+    const cell = twoCell.segments.find((s) => s.id === "cell2")!;
+    const resolved = resolveSelection(twoCell, cell);
+    expect(resolved.paragraphs.map((p) => p.id)).toEqual(["cell-p0", "cell-p1"]);
+    expect(resolved.paragraph).toBeUndefined();
+    expect(resolved.refusal).toBe("cell");
+    // What the editor counts as selected is both paragraphs, so align and
+    // spacing reach the whole cell.
+    const selected = reducer(initialState, { type: "select", selection: { section: 0, para: 1, id: "cell2" } });
+    expect(selectedParagraphs(twoCell, selected).map((p) => p.id)).toEqual(["cell-p0", "cell-p1"]);
+    // Character format walks the runs of both, not of the first only.
+    expect(formatAddresses(twoCell, resolved.paragraphs, null)).toEqual([{ id: "cell-p0-r0" }, { id: "cell-p1-r0" }]);
+    // Toggling the cell on takes both together, and the anchor becomes the
+    // first paragraph it covers so a later range has something to measure from.
+    const empty = reducer(initialState, { type: "select", selection: null });
+    expect(selectionAction(twoCell, empty, cell, "toggle")).toEqual({
+      type: "selectMany",
+      selections: [{ section: 0, para: 1, id: "cell-p0" }, { section: 0, para: 1, id: "cell-p1" }],
+      primary: { section: 0, para: 1, id: "cell-p0" },
+      anchor: { section: 0, para: 1, id: "cell-p0" },
+    });
+  });
+
+  it("gives an image, a field and a bookmark no paragraph target at all", () => {
+    const container: CatEnvelope = { markdown: "abcde", segments: [
+      { id: "host", indices: [1], start: 0, end: 5, kind: "para", section: 0, para: 1 },
+      { id: "img", indices: [1, 0], start: 0, end: 5, kind: "image", section: 0, para: 1 },
+      { id: "fld", indices: [1, 1], start: 0, end: 5, kind: "field", section: 0, para: 1 },
+      { id: "bmk", indices: [1, 2], start: 0, end: 5, kind: "bookmark", section: 0, para: 1 },
+    ] };
+    for (const kind of ["image", "field", "bookmark"] as const) {
+      const segment = container.segments.find((s) => s.kind === kind)!;
+      // Its range sits inside the host paragraph's, so resolving to that
+      // paragraph would hand the host's text to a delete.
+      expect(resolveSelection(container, segment))
+        .toEqual({ paragraphs: [], paragraph: undefined, refusal: "container" });
+    }
+    // A range click on one of them selects the segment it hit, not the host.
+    const state = reducer(initialState, { type: "select", selection: { section: 0, para: 1, id: "host" } });
+    expect(selectionAction(container, state, container.segments[1]!, "toggle"))
+      .toEqual({ type: "select", selection: { section: 0, para: 1, id: "img" } });
   });
 
   it("toggles and extends ranges in paragraph reading order", () => {
