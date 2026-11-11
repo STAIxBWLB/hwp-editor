@@ -34,7 +34,7 @@ export function DocumentPanel(): JSX.Element {
         <label className="hwped-label" htmlFor={`hwped-meta-${key}`}>{t(label)}</label>
         <input id={`hwped-meta-${key}`} className="hwped-input" value={meta[key]} disabled={disabled}
           placeholder={t("document.valuePlaceholder")} onChange={(e) => setMeta((prev) => ({ ...prev, [key]: e.target.value }))} />
-        <button type="button" className="hwped-btn" disabled={disabled || meta[key] === ""}
+        <button type="button" className="hwped-btn" disabled={disabled || meta[key].trim() === ""}
           onClick={() => store.dispatch({ type: "queueOp", op: { kind: "set-meta", key, value: meta[key] } })}>{t("document.setMeta")}</button>
       </div>)}
     </div>

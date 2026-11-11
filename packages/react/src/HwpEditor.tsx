@@ -18,7 +18,7 @@ import type {
   ImageAsset,
   ValidationReport,
 } from "@hwp-editor/core";
-import { createStore, segmentAtRef, validateImageAssets, HwpEngineError } from "@hwp-editor/core";
+import { createStore, segmentAtRef, validateImageAssets, HwpEngineError, MAX_IMAGE_ASSETS, MAX_IMAGE_ASSETS_TOTAL_BYTES } from "@hwp-editor/core";
 import type { EditorError, EditorStore } from "@hwp-editor/core";
 import { HwpEditorContext } from "./context.js";
 import type { HwpEditorContextValue } from "./context.js";
@@ -257,6 +257,9 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         const stored = imageAssets.current.get(pending);
         return stored === undefined ? [] : [stored];
       });
+      if (active.length + 1 > MAX_IMAGE_ASSETS || active.reduce((bytes, image) => bytes + image.data.length, asset.data.length) > MAX_IMAGE_ASSETS_TOTAL_BYTES) {
+        throw new HwpEngineError("bad_request", t("image.queueLimit", { count: MAX_IMAGE_ASSETS, miB: MAX_IMAGE_ASSETS_TOTAL_BYTES / (1024 * 1024) }));
+      }
       validateImageAssets([...active, asset]);
       imageAssets.current.set(op, { name: asset.name, data: asset.data.slice() });
       store.dispatch({ type: "queueOp", op });

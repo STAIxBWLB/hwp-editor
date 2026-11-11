@@ -10,7 +10,7 @@ import { useHwpEditorContext } from "./context.js";
  * no native field/bookmark listing; see fields.ts.)
  */
 export function FieldsPanel(): JSX.Element {
-  const { state, store, envelope, editable, t } = useHwpEditorContext();
+  const { state, store, envelope, editable, capabilities, t } = useHwpEditorContext();
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [anchor, setAnchor] = useState("");
   const [name, setName] = useState("");
@@ -25,6 +25,9 @@ export function FieldsPanel(): JSX.Element {
     [envelope],
   );
 
+  const legacy = capabilities?.editOps !== "v1";
+  const badFieldSeparator = legacy && (anchor.includes("=>") || name.includes("=>") || name.includes("="));
+  const badBookmarkSeparator = legacy && (bookmarkAnchor.includes("=>") || bookmarkName.includes("=>"));
   const disabled = !editable || state.document === null || envelope === null || state.status === "applying";
 
   return (
@@ -33,6 +36,7 @@ export function FieldsPanel(): JSX.Element {
       role="region"
       aria-label={t("fields.panelAria")}
     >
+      {legacy && <p className="hwped-hint">{t("fields.legacySeparatorHint")}</p>}
       {slots.length === 0 ? <p className="hwped-hint">{t("fields.hint")}</p> : <ul className="hwped-fields">
         {slots.map((slot) => {
           const segment = envelope === null ? undefined : segmentAtRef(envelope, slot.segment);
@@ -70,7 +74,7 @@ export function FieldsPanel(): JSX.Element {
                 <button
                   type="button"
                   className="hwped-btn"
-                  disabled={!editable || state.status === "applying" || draft === ""}
+                  disabled={!editable || state.status === "applying" || draft === "" || (legacy && slot.name.includes("="))}
                   onClick={() =>
                     store.dispatch({
                       type: "queueOp",
@@ -90,7 +94,7 @@ export function FieldsPanel(): JSX.Element {
         <input className="hwped-input" value={anchor} disabled={disabled} placeholder={t("fields.anchorPlaceholder")} aria-label={t("fields.anchorAria")} onChange={(e) => setAnchor(e.target.value)} />
         <input className="hwped-input" value={name} disabled={disabled} placeholder={t("fields.namePlaceholder")} aria-label={t("fields.nameAria")} onChange={(e) => setName(e.target.value)} />
         <input className="hwped-input" value={initialValue} disabled={disabled} placeholder={t("fields.valuePlaceholder")} aria-label={t("fields.initialValueAria")} onChange={(e) => setInitialValue(e.target.value)} />
-        <button type="button" className="hwped-btn" disabled={disabled || anchor.trim() === "" || name.trim() === ""} onClick={() => store.dispatch({ type: "queueOp", op: { kind: "create-field", anchor: anchor.trim(), name: name.trim(), ...(initialValue === "" ? {} : { value: initialValue }) } })}>{t("fields.createFieldSubmit")}</button>
+        <button type="button" className="hwped-btn" disabled={disabled || badFieldSeparator || anchor.trim() === "" || name.trim() === ""} onClick={() => store.dispatch({ type: "queueOp", op: { kind: "create-field", anchor: anchor.trim(), name: name.trim(), ...(initialValue === "" ? {} : { value: initialValue }) } })}>{t("fields.createFieldSubmit")}</button>
       </div>
       <div className="hwped-field">
         <p id="hwped-delete-field-hint" className="hwped-hint">{t("fields.deleteAllHint")}</p>
@@ -100,7 +104,7 @@ export function FieldsPanel(): JSX.Element {
       <div className="hwped-field">
         <input className="hwped-input" value={bookmarkAnchor} disabled={disabled} placeholder={t("fields.anchorPlaceholder")} aria-label={t("fields.bookmarkAnchorAria")} onChange={(e) => setBookmarkAnchor(e.target.value)} />
         <input className="hwped-input" value={bookmarkName} disabled={disabled} placeholder={t("fields.bookmarkNamePlaceholder")} aria-label={t("fields.bookmarkNameAria")} onChange={(e) => setBookmarkName(e.target.value)} />
-        <button type="button" className="hwped-btn" disabled={disabled || bookmarkAnchor.trim() === "" || bookmarkName.trim() === ""} onClick={() => store.dispatch({ type: "queueOp", op: { kind: "create-bookmark", anchor: bookmarkAnchor.trim(), name: bookmarkName.trim() } })}>{t("fields.createBookmark")}</button>
+        <button type="button" className="hwped-btn" disabled={disabled || badBookmarkSeparator || bookmarkAnchor.trim() === "" || bookmarkName.trim() === ""} onClick={() => store.dispatch({ type: "queueOp", op: { kind: "create-bookmark", anchor: bookmarkAnchor.trim(), name: bookmarkName.trim() } })}>{t("fields.createBookmark")}</button>
         <p id="hwped-delete-bookmark-hint" className="hwped-hint">{t("fields.deleteAllBookmarksHint")}</p>
         <input aria-describedby="hwped-delete-bookmark-hint" className="hwped-input" value={deleteBookmarkName} disabled={disabled} placeholder={t("fields.bookmarkNamePlaceholder")} aria-label={t("fields.deleteBookmarkNameAria")} onChange={(e) => setDeleteBookmarkName(e.target.value)} />
         <button type="button" className="hwped-btn hwped-btn-danger" disabled={disabled || deleteBookmarkName.trim() === ""} onClick={() => store.dispatch({ type: "queueOp", op: { kind: "delete-bookmark", name: deleteBookmarkName.trim() } })}>{t("fields.deleteBookmark")}</button>

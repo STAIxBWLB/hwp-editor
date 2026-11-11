@@ -238,3 +238,70 @@ describe.each(locales)("delete scope and hyperlink separators (%s)", (locale, me
     expect(queued(store)).toEqual([{kind:"set-page",key:"margin-left",value:"0"}]);
   });
 });
+
+describe.each(locales)("table rows and legacy field creation (%s)", (locale, messages) => {
+  it("preserves intended empty cells, skips GFM alignment rows and keeps tabs authoritative", () => {
+    const store = renderPanel(locale, "table", false);
+    fireEvent.change(screen.getByLabelText(plain(messages,"table.anchorAria")), {target:{value:"Budget"}});
+    for (const value of [
+      "| | Q1 | Q2 |\n| --- | :---: | ---: |\n| Sales | 10 | 20 |",
+      "A|B\tC",
+      "| Q1 | Q2 | |",
+    ]) {
+      fireEvent.change(screen.getByLabelText(plain(messages,"table.addTableRowsLabel")), {target:{value}});
+      fireEvent.click(screen.getByRole("button",{name:plain(messages,"table.addTable")}));
+    }
+    expect(queued(store)).toEqual([
+      {kind:"add-table",anchor:"Budget",rows:[["","Q1","Q2"],["Sales","10","20"]]},
+      {kind:"add-table",anchor:"Budget",rows:[["A|B","C"]]},
+      {kind:"add-table",anchor:"Budget",rows:[["Q1","Q2",""]]},
+    ]);
+  });
+  it.each([false,true])("guards separator-joined creation on legacy hosts only (JSON=%s)", addressed => {
+    const store = renderPanel(locale,"fields",true,addressed);
+    if (!addressed) expect(screen.getByText(plain(messages,"fields.legacySeparatorHint"))).toBeTruthy();
+    for (const example of [{anchor:"A=>B",name:"Name"},{anchor:"Safe",name:"a=b"}]) {
+      fireEvent.change(screen.getByLabelText(plain(messages,"fields.anchorAria")),{target:{value:example.anchor}});
+      fireEvent.change(screen.getByLabelText(plain(messages,"fields.nameAria")),{target:{value:example.name}});
+      const button=screen.getByRole("button",{name:plain(messages,"fields.createFieldSubmit")});
+      expect((button as HTMLButtonElement).disabled).toBe(!addressed);
+      fireEvent.click(button);
+    }
+    for (const example of [{anchor:"A=>B",name:"Mark"},{anchor:"Safe",name:"A=>B"}]) {
+      fireEvent.change(screen.getByLabelText(plain(messages,"fields.bookmarkAnchorAria")),{target:{value:example.anchor}});
+      fireEvent.change(screen.getByLabelText(plain(messages,"fields.bookmarkNameAria")),{target:{value:example.name}});
+      const button=screen.getByRole("button",{name:plain(messages,"fields.createBookmark")});
+      expect((button as HTMLButtonElement).disabled).toBe(!addressed);
+      fireEvent.click(button);
+    }
+    expect(queued(store)).toHaveLength(addressed ? 4 : 0);
+  });
+  it("refuses separator-bearing table anchors on legacy hosts with a localized hint", () => {
+    const store = renderPanel(locale,"table",false,false);
+    expect(screen.getByText(plain(messages,"table.legacySeparatorHint"))).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(plain(messages,"table.anchorAria")),{target:{value:"A=>B"}});
+    fireEvent.change(screen.getByLabelText(plain(messages,"table.addTableRowsLabel")),{target:{value:"A|B"}});
+    const button=screen.getByRole("button",{name:plain(messages,"table.addTable")});
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(button);
+    expect(queued(store)).toEqual([]);
+  });
+  it("refuses zero font/line-spacing and whitespace-only metadata", () => {
+    const store = renderPanel(locale,"segment");
+    fireEvent.change(screen.getByLabelText(plain(messages,"segment.paraShapeValueAria")),{target:{value:"0"}});
+    expect((screen.getByRole("button",{name:plain(messages,"segment.setPara")}) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole("alert").textContent).toBe(plain(messages,"unit.positive"));
+    fireEvent.change(screen.getByLabelText(plain(messages,"segment.paraShapeValueAria")),{target:{value:""}});
+    fireEvent.change(screen.getByLabelText(plain(messages,"segment.sizeAria")),{target:{value:"0"}});
+    expect((screen.getByRole("button",{name:plain(messages,"segment.formatSubmit")}) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole("alert").textContent).toBe(plain(messages,"unit.positive"));
+    expect(queued(store)).toEqual([]);
+    cleanup();
+    const metadata = renderPanel(locale,"document");
+    fireEvent.change(screen.getByLabelText(plain(messages,"document.metaTitle")),{target:{value:"   "}});
+    const button=screen.getAllByRole("button",{name:plain(messages,"document.setMeta")})[0]!;
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(button);
+    expect(queued(metadata)).toEqual([]);
+  });
+});

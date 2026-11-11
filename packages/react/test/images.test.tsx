@@ -66,6 +66,32 @@ describe.each([["en",en],["ko",ko]] as const)("image controls (%s)",(locale,mess
     expect(engine.calls.edit[0]!.ops[0]).not.toHaveProperty("width");
     expect(engine.calls.edit[0]!.ops[0]).not.toHaveProperty("height");
   });
+  it.each(["count","bytes"] as const)("localizes the pending image %s limit and recovers after clearing", async mode => {
+    let id=0;
+    vi.stubGlobal("crypto",{randomUUID:()=>`limit-${++id}`});
+    const engine=imageEngine();
+    render(<HwpEditor engine={engine} file={document} locale={locale} />);
+    fireEvent.click(await screen.findByRole("tab",{name:messages["tabs.images"]}));
+    const {file}=imageFile();
+    if (mode === "bytes") {
+      const data=new Uint8Array(9*1024*1024); data.set(png);
+      Object.defineProperty(file,"size",{value:data.length});
+      Object.defineProperty(file,"arrayBuffer",{value:async()=>data.buffer});
+    }
+    fireEvent.change(screen.getByLabelText(messages["image.file"]),{target:{files:[file]}});
+    await screen.findByText(file.name);
+    fireEvent.change(screen.getByLabelText(messages["image.anchor"]),{target:{value:"Anchor"}});
+    const insert=screen.getByRole("button",{name:messages["image.insert"]});
+    const accepted=mode === "count" ? 8 : 4;
+    for (let index=0;index<=accepted;index++) fireEvent.click(insert);
+    expect(screen.getByRole("alert").textContent).toContain(messages["image.queueLimit"]({count:8,miB:40}));
+    expect(screen.getByLabelText(messages["toolbar.pendingEdits"]({count:accepted}),{exact:true})).toBeTruthy();
+    expect(engine.calls.edit).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button",{name:messages["toolbar.clearPending"]}));
+    fireEvent.click(insert);
+    expect(screen.getByLabelText(messages["toolbar.pendingEdits"]({count:1}),{exact:true})).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
   it("keeps deletion available when uploads are unsupported",async()=>{
     const engine=imageEngine(false);
     render(<HwpEditor engine={engine} file={document} locale={locale} />);

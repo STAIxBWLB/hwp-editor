@@ -88,8 +88,8 @@ export function SegmentInspector(): JSX.Element {
   const disabled = !editable || addressedUnavailable || state.status === "applying";
   const anchorDisabled = !editable || state.status === "applying";
   const legacyLinkSeparator = capabilities?.editOps !== "v1" && [currentText, linkText, linkUrl].some(value => value.includes("=>"));
-  const validShape = isPlainDecimal(shapeValue);
-  const validFontSize = fontSize.trim() === "" || isPlainDecimal(fontSize);
+  const validShape = isPlainDecimal(shapeValue) && (shapeKey !== "line-spacing" || Number(shapeValue) > 0);
+  const validFontSize = fontSize.trim() === "" || (isPlainDecimal(fontSize) && Number(fontSize) > 0);
   const formatTargets = formatAddresses(envelope!, segment);
 
   return (
@@ -242,7 +242,7 @@ export function SegmentInspector(): JSX.Element {
         </div>
       </div>
 
-      {shapeValue !== "" && !validShape && <p role="alert" className="hwped-hint">{t("unit.invalid")}</p>}
+      {shapeValue !== "" && !validShape && <p role="alert" className="hwped-hint">{t(isPlainDecimal(shapeValue) ? "unit.positive" : "unit.invalid")}</p>}
       <div className="hwped-field">
         <span className="hwped-label">{t("segment.hyperlinkLabel")}</span>
         <p className="hwped-hint">{t("segment.hyperlinkHint")}</p>
@@ -292,7 +292,7 @@ export function SegmentInspector(): JSX.Element {
             className="hwped-btn"
             disabled={
               disabled || !validFontSize || formatTargets.length === 0 ||
-              (!bold && fontSize === "" && color === "")
+              (!bold && fontSize.trim() === "" && color === "")
             }
             onClick={() => {
               const props: Record<string, string> = {};
@@ -306,7 +306,7 @@ export function SegmentInspector(): JSX.Element {
           >
             {t("segment.formatSubmit")}
           </button>
-          {!validFontSize && <p role="alert" className="hwped-hint">{t("unit.invalid")}</p>}
+          {!validFontSize && <p role="alert" className="hwped-hint">{t(isPlainDecimal(fontSize) ? "unit.positive" : "unit.invalid")}</p>}
         </div>
       </div>
     </div>
