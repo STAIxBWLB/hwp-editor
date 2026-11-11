@@ -860,6 +860,44 @@ function rethrowUnmatchedEditRefusal(error: unknown): never {
   throw error;
 }
 
+/**
+ * Refuse a batch a preset dragged through with `--allow-partial` intact.
+ *
+ * A `style_tables` op makes this engine pass `--allow-partial`, because the
+ * preset must not abort the batch when the document has no multi-column table:
+ * the engine pushes that one op to "unapplied", publishes everything else and
+ * exits 0. So the process status no longer answers "did the whole batch land",
+ * and the report does. Two cases are NOT acceptable and are refused here, with
+ * the published bytes discarded by the caller's own error path:
+ *
+ * - any op other than `style_tables` unapplied — a queued edit silently
+ *   dropped is the failure the whole batch is one call to prevent;
+ * - no readable report at all — the outcome of the preset, and of every other
+ *   op in the batch, is then unknown, and a host that cannot report cannot
+ *   promise the batch was applied.
+ *
+ * One `style_tables` outcome on its own is not an error: "no styleable table"
+ * is a fact about the document (it has no table, or only one-column frame
+ * tables), the rest of the batch was published, and the report the caller
+ * holds says so.
+ */
+function rethrowPartialPresetBatch(report: EditReport | undefined): void {
+  if (report === undefined) {
+    throw new HwpCliError(
+      "unavailable",
+      "the engine published this edit without a readable report, so the preset's outcome is unknown; upgrade the host's hwp-cli to a release that writes edit-report-v1",
+    );
+  }
+  const refused = report.ops.filter((outcome) => outcome.status === "failed" && outcome.op !== "style_tables");
+  if (refused.length > 0) {
+    const reasons = refused.map((outcome) => outcome.reason ?? outcome.op).join("; ");
+    throw new HwpCliError(
+      "bad_request",
+      `the engine left ${refused.length} edit request(s) unapplied (${reasons}); nothing was published`,
+    );
+  }
+}
+
 
 /**
  * A page dimension is only trustworthy when it is finite and strictly
@@ -1424,17 +1462,20 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       const version = await ensureVersion();
       const bin = resolveBin();
       const ext = sniffExtension(document);
-      // `hwp edit` keeps `--style-tables` and `--ops` mutually exclusive. The
-      // preset switch is therefore two calls on this engine (preset, then any
-      // op batch), which the client store groups into one undo entry.
-      if (options.styleTables !== undefined) {
-        if (ops.length > 0) {
-          throw new HwpCliError("bad_request", "styleTables and ops cannot be combined in one edit; apply the preset and the ops as two calls");
-        }
-        if (!stylesVersionSupported(version)) {
-          throw new HwpCliError("version", `hwp ${version} has no --style-tables; >= 1.4.0 required for preset style tables`);
-        }
+      // The preset switch is ONE batch, not two calls. `--style-tables` and
+      // `--ops` are mutually exclusive, and the flag path has a second trap:
+      // the engine pushes the flag to "unapplied" and aborts the whole edit
+      // when the document has no multi-column table (measured on ahwp 1.6.1,
+      // `style_tables: no styleable table`), which would take the body-style
+      // update down with it. As the edit-ops-v1 `style_tables` op it shares
+      // the batch atomically, and `--allow-partial` lets the rest of the batch
+      // publish while the report says what the preset could not style.
+      const presets = ops.filter((op) => op?.kind === "style-tables").length;
+      if (presets > 0 && !stylesVersionSupported(version)) {
+        throw new HwpCliError("version", `hwp ${version} has no style_tables op; >= 1.4.0 required for preset style tables`);
       }
+      const wantsReport = options.report === true || presets > 0;
+      const allowPartial = options.allowPartial === true || presets > 0;
       const edited = await withWorkDir(async (dir) => {
         const input = await stage(dir, document);
         if (options.assets !== undefined) {
@@ -1471,40 +1512,35 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         // instead of being parsed as a CLI separator. hwp-cli validates the
         // file against the published schema before applying anything.
         //
-        // A preset call carries no ops at all: the engine refuses `--ops`
-        // beside `--style-tables` even when the array is empty, so the file is
-        // not written and the flag is not passed.
+        // Every op goes through this one file, presets included: the
+        // `style_tables` op is how a preset shares a batch with the style ops.
         const opsPath = path.join(dir, "ops.json");
-        if (options.styleTables === undefined) {
-          let encodedOps: string;
-          try { encodedOps = opsToJson(stagedOps); }
-          catch (cause) {
-            if (cause instanceof HwpEngineError && cause.code === "bad_request") {
-              const error = new HwpCliError("bad_request", cause.message);
-              error.cause = cause;
-              throw error;
-            }
-            throw cause;
+        let encodedOps: string;
+        try { encodedOps = opsToJson(stagedOps); }
+        catch (cause) {
+          if (cause instanceof HwpEngineError && cause.code === "bad_request") {
+            const error = new HwpCliError("bad_request", cause.message);
+            error.cause = cause;
+            throw error;
           }
-          await writeFile(opsPath, encodedOps, { mode: 0o600 });
+          throw cause;
         }
-        const args = options.styleTables === undefined
-          ? ["edit", input, "-o", output, "--ops", opsPath]
-          : ["edit", input, "-o", output, "--style-tables", options.styleTables];
+        await writeFile(opsPath, encodedOps, { mode: 0o600 });
+        const args = ["edit", input, "-o", output, "--ops", opsPath];
         if (options.verify !== false) args.push("--verify");
-        if (options.allowPartial === true) args.push("--allow-partial");
+        if (allowPartial) args.push("--allow-partial");
         // `--report` takes a path on `edit` (unlike compose's bare flag), and
         // only this file names the segment ids an op created. Read before the
         // work dir is removed; a truncated or absent file stays absent rather
         // than becoming empty ids the caller could act on.
         const reportPath = path.join(dir, "edit-report.json");
-        if (options.report === true) args.push("--report", reportPath);
+        if (wantsReport) args.push("--report", reportPath);
         await runCliOk(bin, args, timeoutMs, opts.locale, call?.signal).catch(options.assets?.length
           ? error => rethrowUploadedImageFailure(error, ops.every(op => op.kind === "insert-image"))
           : rethrowProtected).catch(error => rethrowInsertBlocksRefusal(error, ops.some(op => op.kind === "insert-blocks"), dir))
           .catch(rethrowUnmatchedEditRefusal);
         const data = new Uint8Array(await readFile(output));
-        if (options.report !== true) return { name: document.name, data };
+        if (!wantsReport) return { name: document.name, data };
         let report: EditReport | undefined;
         try {
           // The report's `output` is the `-o` path this engine wrote, inside the
@@ -1520,6 +1556,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
           // are unknown, not a failed edit: the document itself was published.
           report = undefined;
         }
+        if (presets > 0) rethrowPartialPresetBatch(report);
         return { name: document.name, data, ...(report === undefined ? {} : { report }) };
       });
       // Pre-edit snapshot keyed by the edited hash SALTED WITH THIS CALL'S

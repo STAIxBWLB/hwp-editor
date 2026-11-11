@@ -3,7 +3,7 @@ import type { EmbeddedTemplate, FillResult, LintProfile, LintReport, TemplateInp
 import type { EditOp } from "./ops.js";
 import type { EditReport } from "./edit-report.js";
 import type { CatEnvelope } from "./segments.js";
-import type { StyleTable, StyleTablePreset } from "./styles.js";
+import type { StyleTable } from "./styles.js";
 import type { DocumentSpecV2 } from "./generated/document-spec-v2.js";
 
 export interface ImageAsset {
@@ -69,16 +69,12 @@ export interface EditOptions {
    * Ask the engine for `edit-report-v1` (`hwp edit --report <FILE>`, hwp-cli
    * 1.4.0+). Only this report names the segment ids an insertion created, so a
    * caller that will reorder or remove what it inserted has to ask for it.
+   *
+   * An engine also asks for one on its own when the batch carries a
+   * `style-tables` op, because that op's outcome is the only way to know
+   * whether the document had a table to style.
    */
   report?: boolean;
-  /**
-   * Style every eligible table under an official preset (`hwp edit
-   * --style-tables <preset>`, hwp-cli 1.4.0+). The engine keeps this flag and
-   * `--ops` mutually exclusive, so a call carrying `styleTables` must carry no
-   * ops: the preset switch in this editor is two calls grouped into one undo
-   * entry, not one call.
-   */
-  styleTables?: StyleTablePreset;
 }
 
 /**

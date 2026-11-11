@@ -286,10 +286,20 @@ export function createHttpEngine(
       const assets = options.assets;
       if (assets !== undefined) validateImageAssets(assets);
       const form = fileForm(document);
+      // The ops field is the whole edit, presets included: a `style-tables` op
+      // is an op like any other and rides this one JSON array. A separate form
+      // field for the preset would be a second channel this client would have
+      // to keep in step with the server's, which is how a switch that works on
+      // a desktop host silently stops working here.
       form.append("ops", JSON.stringify(ops));
       if (options.verify) form.append("verify", "true");
       if (options.allowPartial) form.append("allowPartial", "true");
-      if (options.report) form.append("report", "true");
+      // A `style-tables` op's outcome is only visible in the report: whether
+      // the document had an eligible table, and whether anything else in the
+      // batch failed. That makes the report part of this request, not an extra
+      // the caller can forget to ask for.
+      const wantsReport = options.report === true || ops.some((op) => op?.kind === "style-tables");
+      if (wantsReport) form.append("report", "true");
       if (assets !== undefined) {
         for (const asset of assets) form.append("asset", new Blob([asset.data as BlobPart], { type: imageAssetMediaType(asset.data)! }), asset.name);
       }
@@ -297,12 +307,12 @@ export function createHttpEngine(
         method: "POST",
         body: form,
       });
-      // Parsed only when the caller asked for it, and an unreadable answer is
+      // Parsed only when this call needs it, and an unreadable answer is
       // dropped rather than failing an edit whose document was published: the
       // same rule the Tauri engine applies, so both transports answer one
       // shape for one request.
       let report: EditReport | undefined;
-      if (options.report === true && res.report !== undefined) {
+      if (wantsReport && res.report !== undefined) {
         try {
           report = parseEditReport(res.report);
         } catch {

@@ -19,6 +19,7 @@
 
 import { HwpEngineError } from "./errors.js";
 import type { Blocks, Style } from "./generated/document-spec-v2.js";
+import type { StyleTablePreset } from "./styles.js";
 
 export type ParagraphAlignment =
   | "left"
@@ -211,11 +212,20 @@ export interface StyleProps {
  * paragraph kinds only), which is why `styleKind` exists but is not offered by
  * this editor's own controls: a caller that asks for one gets the engine's
  * actionable refusal instead of a silently paragraph-only create.
+ *
+ * `style-tables` is the preset switch as an op rather than as the
+ * `--style-tables` flag, and the difference is load-bearing: the flag and
+ * `--ops` are mutually exclusive, so a preset sent that way cannot travel with
+ * the body-style update and the engine aborts the whole call when the document
+ * has no multi-column table. As an op it shares one batch with the style ops,
+ * so both land in one atomic edit, and a document with nothing to style is one
+ * unapplied op the caller can report instead of a lost edit.
  */
 export type StyleEditOp =
   | ({ kind: "create-style"; name: string; basedOn?: StyleRef; styleKind?: "paragraph" | "character" } & StyleProps)
   | ({ kind: "update-style"; style: StyleRef } & StyleProps)
-  | { kind: "apply-style"; address: ParagraphAddress; style: StyleRef; clearDirect?: boolean };
+  | { kind: "apply-style"; address: ParagraphAddress; style: StyleRef; clearDirect?: boolean }
+  | { kind: "style-tables"; preset: StyleTablePreset };
 
 /**
  * `--flag` spelling for each op kind (cli.rs EditArgs long names).
@@ -600,7 +610,8 @@ function addressedEntry(op: AddressedEditOp): OpsEntry {
 
 /** Named-style ops are JSON-only, and each has its own entry shape. */
 function isStyleOp(op: EditOp): op is StyleEditOp {
-  return op.kind === "create-style" || op.kind === "update-style" || op.kind === "apply-style";
+  return op.kind === "create-style" || op.kind === "update-style" || op.kind === "apply-style" ||
+    op.kind === "style-tables";
 }
 
 /** A colour the edit-ops-v1 schema accepts, or a refusal naming the field. */
@@ -666,6 +677,8 @@ function styleEntry(op: StyleEditOp): OpsEntry {
         style: op.style,
         ...(op.clearDirect === undefined ? {} : { clear_direct: op.clearDirect }),
       };
+    case "style-tables":
+      return { op: "style_tables", preset: op.preset };
   }
 }
 

@@ -17,6 +17,13 @@ import type {
 } from "@hwp-editor/core";
 import type { TFunction } from "./messages.js";
 
+/**
+ * The state of the document's styles read, so a consumer telling the user why
+ * there are no rows can name the right cause: still loading, failed, or a host
+ * with no styles command at all are three different next steps.
+ */
+export type StylesStatus = "idle" | "loading" | "ready" | "failed";
+
 export interface HwpEditorContextValue {
   engine: HwpEngine;
   store: EditorStore;
@@ -46,11 +53,21 @@ export interface HwpEditorContextValue {
   refresh: () => Promise<void>;
   /**
    * The current document's `styles-v1` table, or null when this host has no
-   * styles command or the read failed. Loaded once per document by the
-   * editor, so the Styles panel and the direct-format indicator read one
-   * table rather than two snapshots that can disagree.
+   * styles command, the read is still running, or it failed. Loaded once per
+   * document by the editor, so the Styles panel and the direct-format
+   * indicator read one table rather than two snapshots that can disagree. A
+   * table read for a PREVIOUS document is never handed out: segment ids are
+   * content checksums, so the old table's `used_by` would name paragraphs this
+   * document does not have.
    */
   styles: StyleTable | null;
+  /**
+   * Why `styles` is what it is: `ready` with a table, `loading` while the read
+   * runs, `failed` when it threw, `idle` when this host serves no styles
+   * command. Three empty states need three sentences, so a consumer that
+   * reports one reads this rather than guessing from `styles === null`.
+   */
+  stylesStatus: StylesStatus;
   /**
    * The editor's document generation. It moves when a load starts and when
    * the compose flow hands a document back, so an async flow captures it
@@ -60,6 +77,13 @@ export interface HwpEditorContextValue {
   loadEpoch: () => number;
   /** Open the compose panel (new-document flow). */
   openCompose: () => void;
+  /**
+   * Put one sentence on the editor's notice line. A panel that learns an
+   * outcome the user must hear but that is not an error — a preset whose
+   * document has no table to style — reports it here instead of through
+   * `onError`, which promises something went wrong.
+   */
+  noteNotice: (text: string, error?: unknown) => void;
   /**
    * Message lookup bound to the active locale and host overrides. Every
    * panel localizes through this one channel; a panel that cannot reach `t`

@@ -30,13 +30,22 @@ export interface StyleInfo {
   id: number;
   /** Display name as the document stores it (Korean for a Hancom document). */
   name: string;
-  /** Language-independent name the document also carries. */
+  /** Language-independent name the document also carries; may be empty. */
   english_name: string;
-  /** Paragraph styles are the only kind this editor edits. */
-  kind: "paragraph" | "character";
+  /**
+   * Paragraph styles are the only kind this editor edits. `null` is the
+   * contract's THE DOCUMENT DOES NOT ANSWER — a reserved record value, or an
+   * HWPX `type` that is absent or neither `PARA` nor `CHAR` — and is never
+   * read as "paragraph".
+   */
+  kind: "paragraph" | "character" | null;
   /** Style applied to the paragraph that follows, as a style id. */
   next_style: number;
-  /** Resolved character and paragraph shapes. */
+  /**
+   * Resolved character and paragraph shapes. Either side is absent when its
+   * shape id does not resolve in this document's header table, which the
+   * contract states per side rather than for the row.
+   */
   attrs: ShapeAttrs;
   /** Segment ids using this style, as the v2 envelope publishes them. */
   used_by: string[];
@@ -68,13 +77,23 @@ function index(raw: unknown, field: string): number {
   return raw;
 }
 
+/** `next_style` is a style id the record stores in one byte, 0..255. */
+function byte(raw: unknown, field: string): number {
+  if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0 || raw > 255) invalid(field);
+  return raw;
+}
+
 /** Project and validate the style rows; the one place either shape is read. */
 function projectRows(styles: unknown): StyleInfo[] {
   if (!Array.isArray(styles)) invalid("styles");
   return styles.map((entry, at): StyleInfo => {
     const value = row(entry, `styles[${at}]`);
-    const kind = text(value.kind, `styles[${at}].kind`);
-    if (kind !== "paragraph" && kind !== "character") invalid(`styles[${at}].kind`);
+    // `null` is a published answer, not a malformed row: the document's style
+    // record carries a reserved value, or an HWPX style has no usable `type`.
+    // Refusing it would fail the whole table over one row the document simply
+    // does not describe, and the tab would list nothing at all.
+    const kind = value.kind;
+    if (kind !== null && kind !== "paragraph" && kind !== "character") invalid(`styles[${at}].kind`);
     if (!Array.isArray(value.used_by) || value.used_by.some((id) => typeof id !== "string")) {
       invalid(`styles[${at}].used_by`);
     }
@@ -83,7 +102,7 @@ function projectRows(styles: unknown): StyleInfo[] {
       name: text(value.name, `styles[${at}].name`),
       english_name: text(value.english_name, `styles[${at}].english_name`),
       kind,
-      next_style: index(value.next_style, `styles[${at}].next_style`),
+      next_style: byte(value.next_style, `styles[${at}].next_style`),
       attrs: projectShapeAttrs(value.attrs, `styles[${at}].attrs`),
       used_by: value.used_by as string[],
     };

@@ -31,6 +31,8 @@ function renderPanel(locale: "en" | "ko", panel: "document" | "fields" | "segmen
     replaceDocument: async () => true,
     refresh: async () => undefined,
     styles: null,
+    stylesStatus: "idle" as const,
+    noteNotice: () => undefined,
     openCompose: () => undefined,
     loadEpoch: () => 0,
     t: createT(locale),

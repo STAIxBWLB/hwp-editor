@@ -46,7 +46,6 @@ import type {
   HwpErrorCode,
   PageImageFormat,
   RenderOptions,
-  StyleTablePreset,
 } from "@hwp-editor/core";
 import type {
   ComposeRequest,
@@ -381,17 +380,11 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
 
   async function handleEdit(req: Request, scope: string): Promise<Response> {
     const { form, document } = await formDocument(req);
-    // A preset switch carries no ops: the engine keeps `--style-tables` and
-    // `--ops` mutually exclusive, so this route does too and the client's
-    // preset switch arrives as two calls.
-    const presetField = formString(form, "styleTables");
-    let styleTables: StyleTablePreset | undefined;
-    if (presetField !== undefined) {
-      if (!STYLE_TABLE_PRESETS.includes(presetField as StyleTablePreset)) {
-        throw new HwpCliError("bad_request", `unknown style table preset; choose ${STYLE_TABLE_PRESETS.join(", ")}`);
-      }
-      styleTables = presetField as StyleTablePreset;
-    }
+    // The ops array is the whole edit. A preset is a `style-tables` op inside
+    // it, so a preset switch and the style update it belongs with arrive as one
+    // atomic batch — the engine's `--style-tables` flag is mutually exclusive
+    // with `--ops` and aborts a document that has no table to style, which is
+    // why this route has no preset field of its own.
     const opsField = form.get("ops");
     let ops: EditOp[] = [];
     if (typeof opsField === "string" && opsField !== "") {
@@ -402,11 +395,11 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
       } catch {
         throw new HwpCliError("bad_request", 'multipart field "ops" is not a JSON array');
       }
-    } else if (styleTables === undefined) {
+    } else {
       throw new HwpCliError("bad_request", 'multipart field "ops" (EditOp[] JSON) is required');
     }
-    if (styleTables !== undefined && ops.length > 0) {
-      throw new HwpCliError("bad_request", 'send either "ops" or "styleTables"; a preset switch applies no operations');
+    if (ops.some((op) => op?.kind === "style-tables" && !STYLE_TABLE_PRESETS.includes(op.preset))) {
+      throw new HwpCliError("bad_request", `unknown style table preset; choose ${STYLE_TABLE_PRESETS.join(", ")}`);
     }
     if (ops.some((op) => op?.kind === "seal")) {
       return error(400, "path_traversal", 'the "seal" operation names a server-local path and is not accepted over HTTP; run it through a desktop/local host');
@@ -447,10 +440,10 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
     if (allowPartial !== undefined) options.allowPartial = allowPartial;
     // Opt-in: the report costs an extra file per edit, and only a caller that
     // reorders what it inserted needs the ids. A host that cannot produce one
-    // answers without the field rather than with fabricated ids.
+    // answers without the field rather than with fabricated ids. A batch that
+    // carries a `style-tables` op asks for one regardless, inside the engine.
     const reportFlag = formFlag(form, "report");
     if (reportFlag !== undefined) options.report = reportFlag;
-    if (styleTables !== undefined) options.styleTables = styleTables;
     if (assets.length > 0) options.assets = assets;
 
     // No session is created or written here. The pre-edit copy this path used

@@ -78,6 +78,31 @@ async function base() {
   return composed.document;
 }
 
+/**
+ * The same two body paragraphs with no table at all — the document `hwp edit
+ * --style-tables` aborts on, and the reason the preset travels as an op.
+ */
+const NO_TABLE_SPEC = {
+  version: "2.0",
+  document: {
+    version: "1.0",
+    metadata: { title: "표 없음" },
+    styles: {
+      body: { font_family: "함초롬바탕", font_size_pt: 12, line_height_percent: 160, align: "justify" },
+      heading: { font_family: "함초롬바탕", font_size_pt: 15, bold: true, align: "left" },
+    },
+    sections: [
+      {
+        blocks: [
+          { type: "paragraph", style: "heading", runs: [{ type: "text", text: "1. 표가 없는 문서" }] },
+          { type: "paragraph", style: "body", runs: [{ type: "text", text: "첫 번째 본문" }] },
+          { type: "paragraph", style: "body", runs: [{ type: "text", text: "두 번째 본문" }] },
+        ],
+      },
+    ],
+  },
+} as unknown as DocumentSpecV2;
+
 describeBin("named styles (real hwp)", () => {
   it("advertises styles v1 and reports the table with the segments that use each style", async () => {
     const caps = await engine.capabilities();
@@ -108,7 +133,7 @@ describeBin("named styles (real hwp)", () => {
     const document = await base();
     const before = await engine.styles(document);
     const beforeBody = bodyStyle(before, await engine.read(document))!;
-    const beforeSize = beforeBody.attrs.char.size_pt;
+    const beforeSize = beforeBody.attrs.char?.size_pt ?? 0;
     expect(beforeSize).toBe(12);
     const beforeRender = await engine.render(document, { pages: "1", format: "svg" });
 
@@ -117,7 +142,7 @@ describeBin("named styles (real hwp)", () => {
 
     const after = await engine.styles(updated);
     const afterBody = after.styles.find((row) => row.name === beforeBody.name)!;
-    expect(afterBody.attrs.char.size_pt).toBe(beforeSize + 3);
+    expect(afterBody.attrs.char?.size_pt).toBe(beforeSize + 3);
 
     // Ids are content checksums, so the edit re-keyed every paragraph: the
     // join has to come from the table READ AFTER the edit, never from the one
@@ -128,12 +153,12 @@ describeBin("named styles (real hwp)", () => {
     );
     expect(inheriting).toHaveLength(2);
     // Every paragraph that inherits the style now reports the new size...
-    for (const segment of inheriting) expect(segment.style?.char.size_pt).toBe(beforeSize + 3);
+    for (const segment of inheriting) expect(segment.style?.char?.size_pt).toBe(beforeSize + 3);
     // ...while the run whose size was set directly keeps its own, which is
     // what leaves directly formatted text as it was.
-    const direct = envelope.segments.filter((segment) => segment.direct?.char.size_pt === 20);
+    const direct = envelope.segments.filter((segment) => segment.direct?.char?.size_pt === 20);
     expect(direct).toHaveLength(1);
-    expect(direct[0]!.style?.char.size_pt).toBe(beforeSize + 3);
+    expect(direct[0]!.style?.char?.size_pt).toBe(beforeSize + 3);
 
     // And the render moved with the shapes: the size change is visible.
     const afterRender = await engine.render(updated, { pages: "1", format: "svg" });
@@ -142,14 +167,55 @@ describeBin("named styles (real hwp)", () => {
 
   it("AC7: the same preset twice is byte-identical", async () => {
     const document = await base();
-    const once = await engine.edit(document, [], { styleTables: "official", verify: true });
-    const twice = await engine.edit(once, [], { styleTables: "official", verify: true });
+    const preset: EditOp = { kind: "style-tables", preset: "official" };
+    const once = await engine.edit(document, [preset], { verify: true });
+    const twice = await engine.edit(once, [preset], { verify: true });
     expect(Buffer.from(twice.data).equals(Buffer.from(once.data))).toBe(true);
   });
 
-  it("refuses a preset call that also carries ops", async () => {
+  /**
+   * t12-a2. `hwp edit --style-tables` aborts the whole edit when the document
+   * has no multi-column table, and the style update it was paired with dies
+   * with it. Sent as the `style_tables` op the batch survives: the engine
+   * reports the one op it could not apply and publishes the rest.
+   */
+  it("t12-a2: a document with nothing to style keeps the style update and reports the preset", async () => {
+    const composed = await engine.compose(NO_TABLE_SPEC, "no-table.hwpx");
+    const document = composed.document;
+    const body = bodyStyle(await engine.styles(document), await engine.read(document))!;
+    const beforeSize = body.attrs.char?.size_pt;
+    expect(beforeSize).toBe(12);
+
+    const result = await engine.edit(document, [
+      { kind: "update-style", style: body.name, size: String(beforeSize! + 2) },
+      { kind: "style-tables", preset: "official" },
+    ], { verify: true });
+
+    // The half the user asked for landed...
+    const after = (await engine.styles(result)).styles.find((row) => row.name === body.name)!;
+    expect(after.attrs.char?.size_pt).toBe(beforeSize! + 2);
+    // ...and the preset said so in the report rather than taking the batch
+    // down: this document simply has no eligible table.
+    const outcome = result.report?.ops.find((op) => op.op === "style_tables");
+    expect(outcome?.status).toBe("failed");
+    expect(outcome?.reason).toContain("no styleable table");
+  });
+
+  /**
+   * A preset batch necessarily runs under `--allow-partial`, so the engine
+   * publishes the rest of a partly-applied batch and exits 0. A queued edit
+   * that found no target must be refused here rather than quietly dropped, and
+   * nothing of that batch may reach the caller.
+   */
+  it("t12-a2: refuses a batch another op's failure would otherwise have shrunk", async () => {
     const document = await base();
-    await expect(engine.edit(document, [{ kind: "update-style", style: "body", size: "13" }], { styleTables: "report" }))
-      .rejects.toThrow(/cannot be combined/);
+    await expect(engine.edit(document, [
+      { kind: "style-tables", preset: "report" },
+      // A pattern the document does not hold: the engine pushes it to
+      // "unapplied" and publishes the rest, which is the case that must be
+      // refused. An out-of-range ADDRESS is a parse error instead, so it would
+      // exercise the wrong branch.
+      { kind: "set-align", find: "없는 문자열", alignment: "center" },
+    ], { verify: true })).rejects.toThrow(/unapplied/);
   });
 });

@@ -85,7 +85,7 @@ describe("parseStyleTable", () => {
     ]);
     expect(parsed.styles[0]!.english_name).toBe("Normal");
     expect(parsed.styles[0]!.next_style).toBe(0);
-    expect(parsed.styles[0]!.attrs.char.size_pt).toBe(12);
+    expect(parsed.styles[0]!.attrs.char?.size_pt).toBe(12);
     expect(parsed.styles[0]!.attrs.charShapeId).toBe(0);
   });
 
@@ -97,8 +97,37 @@ describe("parseStyleTable", () => {
     expect(() => parseStyleTable(table([{ ...BODY_ROW, kind: "table" }]))).toThrow(/styles\[0\]\.kind/);
     expect(() => parseStyleTable(table([{ ...BODY_ROW, used_by: [1] }]))).toThrow(/styles\[0\]\.used_by/);
     expect(() => parseStyleTable(table([{ ...BODY_ROW, id: -1 }]))).toThrow(/styles\[0\]\.id/);
-    expect(() => parseStyleTable(table([{ ...BODY_ROW, attrs: { char: null, para: null } }])))
-      .toThrow(/styles\[0\]\.attrs/);
+    expect(() => parseStyleTable(table([{ ...BODY_ROW, next_style: 256 }]))).toThrow(/styles\[0\]\.next_style/);
+  });
+
+  /**
+   * `kind` and each side of `attrs` are independently nullable BY CONTRACT:
+   * a null kind is a reserved record value or an HWPX style with no usable
+   * `type`, and a null side is a shape id that does not resolve in this
+   * document's header table. A table holding either is still a table, so one
+   * such row must not blank the whole tab.
+   */
+  it("accepts the rows the contract states as null instead of failing the whole table", () => {
+    const parsed = parseStyleTable(table([
+      BODY_ROW,
+      { ...HEADING_ROW, kind: null },
+      { ...HEADING_ROW, attrs: { char: null, para: ATTRS.para, char_shape_id: null, para_shape_id: 1 } },
+      { ...HEADING_ROW, attrs: { char: ATTRS.char, para: null, char_shape_id: 0, para_shape_id: null } },
+    ]));
+    expect(parsed.styles).toHaveLength(4);
+    expect(parsed.styles[1]!.kind).toBeNull();
+    // The side that resolved is kept and the side that did not is absent,
+    // never defaulted, so a consumer cannot read a fabricated value.
+    expect(parsed.styles[2]!.attrs.char).toBeUndefined();
+    expect(parsed.styles[2]!.attrs.para?.alignment).toBe(ATTRS.para.alignment);
+    expect(parsed.styles[3]!.attrs.char?.size_pt).toBe(12);
+    expect(parsed.styles[3]!.attrs.para).toBeUndefined();
+  });
+
+  /** A row that answers no kind is not a body style: it is not a paragraph. */
+  it("does not pick a null-kind row as the body style", () => {
+    const parsed = parseStyleTable(table([{ ...BODY_ROW, kind: null }, HEADING_ROW]));
+    expect(bodyStyle(parsed)?.name).toBe("개요 1");
   });
 });
 
@@ -251,8 +280,8 @@ describe("per-level style projection", () => {
 
   it("projects both levels and answers the indicator by comparing them", () => {
     const different = envelope(styleLevel, directLevel).segments[0]!;
-    expect(different.style?.char.size_pt).toBe(12);
-    expect(different.direct?.char.size_pt).toBe(16);
+    expect(different.style?.char?.size_pt).toBe(12);
+    expect(different.direct?.char?.size_pt).toBe(16);
     expect(hasDirectFormatting(different)).toBe(true);
     const same = envelope(styleLevel, styleLevel).segments[0]!;
     expect(hasDirectFormatting(same)).toBe(false);
@@ -267,10 +296,30 @@ describe("per-level style projection", () => {
     expect(hasDirectFormatting(nulls)).toBe(false);
   });
 
+  /**
+   * t12-a3: `style_level` makes `char` and `para` independently nullable, and
+   * the engine emits a null `direct.char` when `char_shape_id_at` is None. A
+   * parser that required both sides rejected the entire envelope, so one
+   * unresolvable character shape cost the whole document read.
+   */
+  it("keeps the side of a level the document did resolve when the other is null", () => {
+    const oneSided = envelope(
+      { char: null, para: ATTRS.para, char_shape_id: null, para_shape_id: 1 },
+      { char: ATTRS.char, para: null, char_shape_id: 0, para_shape_id: null },
+    ).segments[0]!;
+    expect(oneSided.style?.char).toBeUndefined();
+    expect(oneSided.style?.para?.alignment).toBe(ATTRS.para.alignment);
+    expect(oneSided.direct?.char?.size_pt).toBe(ATTRS.char.size_pt);
+    expect(oneSided.direct?.para).toBeUndefined();
+    // One level resolved a side the other did not: that is not the same
+    // formatting, so the indicator is on rather than inconclusive.
+    expect(hasDirectFormatting(oneSided)).toBe(true);
+  });
+
   it("drops shape ids a host does not publish rather than inventing them", () => {
     const attrs = projectShapeAttrs({ char: ATTRS.char, para: ATTRS.para }, "segment.level");
     expect(attrs).not.toHaveProperty("charShapeId");
-    expect(attrs.char.size_pt).toBe(12);
+    expect(attrs.char?.size_pt).toBe(12);
     expect(() => projectShapeAttrs({ char: ATTRS.char, para: ATTRS.para, char_shape_id: -1 }, "segment.level"))
       .toThrow(/malformed shape ids/);
   });

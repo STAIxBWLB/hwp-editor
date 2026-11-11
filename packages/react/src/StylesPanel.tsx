@@ -3,16 +3,20 @@
  *
  * Everything here is an edit-ops-v1 style op queued on the store, so a change
  * lands with the toolbar's Apply and shares one undo entry with the rest of
- * the batch. The one exception is the preset switch: `hwp edit` keeps
- * `--style-tables` and `--ops` mutually exclusive, so the switch runs
- * immediately as two engine calls — the body-style `update_style` first, the
- * preset's table styling second — inside ONE `replaceDocument` transaction,
- * which stages one snapshot and is therefore one undo step (AC6/AC7's
- * grouping clause).
+ * the batch. The preset switch is the one action that runs immediately: it is
+ * a single engine call carrying the body-style update and the `style_tables`
+ * op together, inside one `replaceDocument` transaction, which stages one
+ * snapshot and is therefore one undo step (AC6/AC7's grouping clause).
+ *
+ * The preset travels as an op rather than as `--style-tables` because the flag
+ * and `--ops` are mutually exclusive AND the flag form aborts the whole edit
+ * when the document has no multi-column table. Those two facts together made
+ * the two-call switch lose the style update on any table-less document.
  *
  * Paragraph styles only: the engine refuses character-style creation and
- * application (hwp-cli 1.4.0 T3), so a character row is listed but carries no
- * actions rather than offering a button the engine always refuses.
+ * application (hwp-cli 1.4.0 T3), so a character row, and a row whose kind the
+ * document does not answer, is listed but carries no actions rather than
+ * offering a button the engine always refuses.
  */
 import { useState } from "react";
 import type { JSX } from "react";
@@ -25,12 +29,14 @@ import {
   segmentRef,
   selectSimilar,
   STYLE_TABLE_PRESETS,
+  stylesVersionSupported,
 } from "@hwp-editor/core";
 import type {
   EditOp,
   ParagraphAlignment,
   Segment,
   StyleInfo,
+  StyleProps,
   StyleTablePreset,
 } from "@hwp-editor/core";
 import { isPlainDecimal } from "./unit-input.js";
@@ -43,7 +49,7 @@ const ALIGN_LABEL: Record<ParagraphAlignment, MessageKey> = {
   left: "segment.alignLeft",
   right: "segment.alignRight",
   center: "segment.alignCenter",
-  distribute: "segment.alignJustify",
+  distribute: "segment.alignDistribute",
 };
 const PRESET_LABEL: Record<StyleTablePreset, MessageKey> = {
   official: "presets.official",
@@ -61,11 +67,28 @@ function alignmentOf(value: string): ParagraphAlignment {
 
 /** The first font family a shape carries, in the engine's own spelling. */
 function firstFace(shape: StyleInfo["attrs"]): string | undefined {
-  return shape.char.faces.find((face): face is string => face !== null);
+  return shape.char?.faces.find((face): face is string => face !== null);
+}
+
+/**
+ * The definition the form was seeded from, so a submit sends only what the
+ * user changed. The engine writes a supplied field into the style's whole
+ * definition: a `font` reaches every language slot, so re-sending the seeded
+ * face turns a size change into a font rewrite, and a `bold`/`align` the user
+ * never touched rewrites a value the document had.
+ */
+interface Seed {
+  size: string;
+  font: string;
+  bold: boolean;
+  align: ParagraphAlignment;
 }
 
 export function StylesPanel(): JSX.Element {
-  const { store, engine, state, envelope, editable, capabilities, styles, replaceDocument, t } = useHwpEditorContext();
+  const {
+    store, engine, state, envelope, editable, capabilities,
+    styles, stylesStatus, replaceDocument, noteNotice, t,
+  } = useHwpEditorContext();
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [size, setSize] = useState("");
   const [font, setFont] = useState("");
@@ -74,13 +97,28 @@ export function StylesPanel(): JSX.Element {
   const [spacing, setSpacing] = useState("");
   const [promoteName, setPromoteName] = useState("");
   const [preset, setPreset] = useState<StyleTablePreset>("official");
+  const [seed, setSeed] = useState<Seed>({ size: "", font: "", bold: false, align: "justify" });
 
-  // Before 1.4.0 the command family does not exist, and the tab says which
-  // version is missing rather than showing controls that can only fail.
-  if (capabilities?.styles !== "v1") {
+  // Before 1.4.0 the command family does not exist. Each way of not having it
+  // names its own cause and its own next step: a host still being asked, an
+  // adapter that never learned the command, and a binary below the floor are
+  // three different situations, and one sentence blaming the version is wrong
+  // for two of them.
+  if (capabilities === null) {
     return (
       <div className="hwped-panel" role="region" aria-label={t("tabs.styles")}>
-        <p className="hwped-hint" role="status">{t("styles.unavailable", { version: capabilities?.version ?? "" })}</p>
+        <p className="hwped-hint" role="status">{t("styles.checkingHost")}</p>
+      </div>
+    );
+  }
+  if (capabilities.styles !== "v1") {
+    return (
+      <div className="hwped-panel" role="region" aria-label={t("tabs.styles")}>
+        <p className="hwped-hint" role="status">{
+          stylesVersionSupported(capabilities.version)
+            ? t("styles.unavailableHost")
+            : t("styles.unavailable", { version: capabilities.version })
+        }</p>
       </div>
     );
   }
@@ -88,6 +126,12 @@ export function StylesPanel(): JSX.Element {
   const paragraphs = envelope === null ? [] : selectedParagraphs(envelope, state);
   const rows = styles?.styles ?? [];
   const row = rows.find((item) => item.id === selectedId) ?? null;
+  const paragraphRow = row !== null && row.kind === "paragraph" ? row : null;
+  // A side the document could not resolve (the contract's `null`) is not a
+  // value this form may seed from or write over: it is absent, and the control
+  // says so rather than showing a default the document never stated.
+  const charKnown = paragraphRow?.attrs.char !== undefined;
+  const paraKnown = paragraphRow?.attrs.para !== undefined;
   const busy = state.status === "applying";
   const disabled = !editable || busy || envelope === null;
 
@@ -98,10 +142,19 @@ export function StylesPanel(): JSX.Element {
    */
   const choose = (item: StyleInfo): void => {
     setSelectedId(item.id);
-    setSize(String(item.attrs.char.size_pt));
-    setFont(firstFace(item.attrs) ?? "");
-    setBold(item.attrs.char.bold);
-    setAlign(alignmentOf(item.attrs.para.alignment));
+    const char = item.attrs.char;
+    const para = item.attrs.para;
+    const seeded: Seed = {
+      size: char === undefined ? "" : String(char.size_pt),
+      font: (char === undefined ? undefined : firstFace(item.attrs)) ?? "",
+      bold: char === undefined ? false : char.bold,
+      align: para === undefined ? "justify" : alignmentOf(para.alignment),
+    };
+    setSeed(seeded);
+    setSize(seeded.size);
+    setFont(seeded.font);
+    setBold(seeded.bold);
+    setAlign(seeded.align);
     setSpacing("");
     if (envelope === null || item.used_by.length === 0) return;
     const refs = item.used_by.flatMap((id) => {
@@ -117,30 +170,37 @@ export function StylesPanel(): JSX.Element {
   const sizeValid = size.trim() === "" || (isPlainDecimal(size.trim()) && Number(size.trim()) > 0);
   const spacingValid = spacing.trim() === "" || (isPlainDecimal(spacing.trim()) && Number(spacing.trim()) > 0);
 
+  /**
+   * What the form asks the style to become: only fields that differ from the
+   * definition it was seeded with, and never an empty one. An empty size used
+   * to travel as `size: ""`, which `withUnit` refuses at Apply and takes the
+   * whole pending batch down with it.
+   */
+  const definition: StyleProps = {
+    ...(charKnown && size.trim() !== "" && size.trim() !== seed.size ? { size: size.trim() } : {}),
+    ...(charKnown && font.trim() !== "" && font.trim() !== seed.font ? { font: font.trim() } : {}),
+    ...(charKnown && bold !== seed.bold ? { bold } : {}),
+    ...(paraKnown && align !== seed.align ? { align } : {}),
+    ...(spacing.trim() === "" ? {} : { lineSpacingPct: spacing.trim() }),
+  };
+  const definitionEmpty = Object.keys(definition).length === 0;
+
   const queueDefinition = (): void => {
-    if (row === null || !sizeValid || !spacingValid) return;
+    if (paragraphRow === null || definitionEmpty || !sizeValid || !spacingValid) return;
     store.dispatch({
       type: "queueOp",
-      op: {
-        kind: "update-style",
-        style: row.name,
-        size: size.trim(),
-        ...(font.trim() === "" ? {} : { font: font.trim() }),
-        bold,
-        align,
-        ...(spacing.trim() === "" ? {} : { lineSpacingPct: spacing.trim() }),
-      },
+      op: { kind: "update-style", style: paragraphRow.name, ...definition },
     });
   };
 
   const queueApply = (): void => {
-    if (row === null || paragraphs.length === 0) return;
+    if (paragraphRow === null || paragraphs.length === 0) return;
     store.dispatch({
       type: "queueOps",
       ops: paragraphs.map((paragraph): EditOp => ({
         kind: "apply-style",
         address: paragraphAddress(paragraph),
-        style: row.name,
+        style: paragraphRow.name,
       })),
     });
   };
@@ -169,10 +229,12 @@ export function StylesPanel(): JSX.Element {
         {
           kind: "create-style",
           name,
-          bold: shape.char.bold,
-          size: String(shape.char.size_pt),
-          color: shape.char.color,
-          align: alignmentOf(shape.para.alignment),
+          ...(shape.char === undefined ? {} : {
+            bold: shape.char.bold,
+            size: String(shape.char.size_pt),
+            color: shape.char.color,
+          }),
+          ...(shape.para === undefined ? {} : { align: alignmentOf(shape.para.alignment) }),
           ...(row === null ? {} : { basedOn: row.name }),
           ...(face === undefined ? {} : { font: face }),
         },
@@ -183,30 +245,47 @@ export function StylesPanel(): JSX.Element {
   };
 
   /**
-   * The preset switch. `replaceDocument` is the grouping: it stages one
-   * snapshot and commits one `applySucceeded`, whatever number of engine
-   * calls the producer makes. A refusal (queued edits, a load in flight) is
-   * already reported by the editor, so this awaits rather than repeating it.
+   * The preset switch: ONE engine call carrying the body-style update and the
+   * `style_tables` op, inside one `replaceDocument` transaction — one
+   * snapshot, one `applySucceeded`, therefore one undo entry. A refusal
+   * (queued edits, a load in flight) is already reported by the editor, so
+   * this awaits rather than repeating it.
+   *
+   * The preset's outcome is read from the report the engine returns for a
+   * batch like this one. "No styleable table" is not a failed switch: the
+   * style update landed, the document simply has no multi-column table, and
+   * the user hears it once the replacement has actually been applied.
    */
   const switchPreset = (): void => {
     if (styles === null || envelope === null) return;
     // The envelope is what separates the body paragraphs from table cells when
     // the body style is picked; the table alone cannot tell them apart.
-    const ops = presetStyleOps(styles, preset, envelope);
+    const batch: EditOp[] = [
+      ...presetStyleOps(styles, preset, envelope),
+      { kind: "style-tables", preset },
+    ];
+    let unstyled = false;
     void replaceDocument(async (current) => {
-      const styled = ops.length === 0 ? current : await engine.edit(current, ops, { verify: true });
-      return engine.edit(styled, [], { styleTables: preset });
-    }).catch(() => undefined);
+      const styled = await engine.edit(current, batch, { verify: true });
+      unstyled = styled.report?.ops.some((op) => op.op === "style_tables" && op.status === "failed") ?? false;
+      return styled;
+    })
+      .then((applied) => { if (applied && unstyled) noteNotice(t("styles.noTableToStyle")); })
+      .catch(() => undefined);
   };
 
+  // The styleName contract is one or more characters with no control
+  // characters; braces and punctuation are names like any other.
+  const nameInvalid = promoteName.trim() !== "" && /[\u0000-\u001f\u007f]/.test(promoteName);
   const promoteDisabled = disabled || paragraphs.length === 0 || promoteName.trim() === "";
-  const nameInvalid = promoteName.trim() !== "" && /[{}]/.test(promoteName);
 
   return (
     <div className="hwped-panel" role="region" aria-label={t("tabs.styles")}>
       <div className="hwped-field">
         <span className="hwped-label">{t("styles.definition")}</span>
-        {styles === null && <p className="hwped-hint" role="status">{t("styles.loading")}</p>}
+        {styles === null && <p className="hwped-hint" role="status">{
+          stylesStatus === "failed" ? t("styles.loadFailed") : t("styles.loading")
+        }</p>}
         {styles !== null && rows.length === 0 && <p className="hwped-hint">{t("styles.empty")}</p>}
         {rows.length > 0 && (
           <ul className="hwped-list">
@@ -229,16 +308,20 @@ export function StylesPanel(): JSX.Element {
         {rows.length > 0 && <p className="hwped-hint">{t("styles.selectHint")}</p>}
       </div>
 
-      {row !== null && row.kind === "paragraph" && (
+      {row !== null && row.kind === null && (
+        <p className="hwped-hint">{t("styles.kindUnknown")}</p>
+      )}
+
+      {paragraphRow !== null && (
         <div className="hwped-field">
-          <span className="hwped-label">{row.name}</span>
+          <span className="hwped-label">{paragraphRow.name}</span>
           <div className="hwped-row">
             <input
               className="hwped-input hwped-input-narrow"
               type="text"
               inputMode="decimal"
               value={size}
-              disabled={disabled}
+              disabled={disabled || !charKnown}
               aria-label={t("styles.size")}
               placeholder={t("styles.size")}
               onChange={(e) => setSize(e.target.value)}
@@ -247,13 +330,13 @@ export function StylesPanel(): JSX.Element {
               className="hwped-input hwped-input-narrow"
               type="text"
               value={font}
-              disabled={disabled}
+              disabled={disabled || !charKnown}
               aria-label={t("styles.font")}
               placeholder={t("styles.font")}
               onChange={(e) => setFont(e.target.value)}
             />
             <label className="hwped-check">
-              <input type="checkbox" checked={bold} disabled={disabled} onChange={(e) => setBold(e.target.checked)} />
+              <input type="checkbox" checked={bold} disabled={disabled || !charKnown} onChange={(e) => setBold(e.target.checked)} />
               {t("styles.bold")}
             </label>
           </div>
@@ -261,7 +344,7 @@ export function StylesPanel(): JSX.Element {
             <select
               className="hwped-input"
               value={align}
-              disabled={disabled}
+              disabled={disabled || !paraKnown}
               aria-label={t("segment.alignGroupAria")}
               onChange={(e) => setAlign(alignmentOf(e.target.value))}
             >
@@ -278,11 +361,12 @@ export function StylesPanel(): JSX.Element {
               onChange={(e) => setSpacing(e.target.value)}
             />
           </div>
+          {(!charKnown || !paraKnown) && <p className="hwped-hint">{t("styles.attrsUnresolved")}</p>}
           <div className="hwped-row">
             <button
               type="button"
               className="hwped-btn"
-              disabled={disabled || !sizeValid || !spacingValid}
+              disabled={disabled || definitionEmpty || !sizeValid || !spacingValid}
               onClick={queueDefinition}
             >{t("styles.updateSubmit")}</button>
             <button
@@ -314,7 +398,7 @@ export function StylesPanel(): JSX.Element {
             {t("styles.promoteSubmit")}
           </button>
         </div>
-        {nameInvalid && <p className="hwped-hint" role="alert">{t("segment.placeholderNameInvalid")}</p>}
+        {nameInvalid && <p className="hwped-hint" role="alert">{t("styles.nameInvalid")}</p>}
         {!disabled && paragraphs.length === 0 && <p className="hwped-hint">{t("styles.needsParagraph")}</p>}
       </div>
 

@@ -7,6 +7,7 @@
  */
 import { describe, expect, it } from "vitest";
 
+import { createHttpEngine } from "@hwp-editor/core";
 import type { DocumentHandle, EditOp, EditOptions, HwpEngine, StyleTable } from "@hwp-editor/core";
 
 import { createHwpEditorHandler } from "../src/routes.js";
@@ -115,33 +116,70 @@ describe("styles route", () => {
 });
 
 describe("edit with a preset", () => {
-  it("passes styleTables through and sends no ops", async () => {
-    let seen: { ops: EditOp[]; options: EditOptions | undefined } | undefined;
+  /**
+   * t12-a1. The preset is an op, and this drives the CLIENT the playground
+   * uses against this route: a preset that travelled as its own form field was
+   * dropped by `http-engine`'s edit, so the switch failed on every HTTP host
+   * while the desktop path worked. A hand-built multipart body cannot see
+   * that — only the client's own request can.
+   */
+  it("carries a client's preset op to the engine in the same batch, asking for the report", async () => {
+    let seen: EditOp[] | undefined;
+    let reportFlag: string | null = null;
     const engine = stubEngine({
-      async edit(document, ops, options) {
-        seen = { ops, options };
+      async edit(document, ops) {
+        seen = ops;
         return { name: document.name, data: new Uint8Array([9]) };
       },
     });
     const handler = createHwpEditorHandler({ engine, sessions: false });
-    const res = await handler(multipartRequest(`${BASE}/edit`, { file: DOC, styleTables: "report" }));
-    expect(res.status).toBe(200);
-    expect(seen?.ops).toEqual([]);
-    expect(seen?.options?.styleTables).toBe("report");
+    const client = createHttpEngine(BASE, {
+      // The transport, not the client: the client builds the multipart body,
+      // and this encodes it the way a socket would, because the route refuses
+      // a request that declares no Content-Length. Faking that header over the
+      // client's own FormData keeps the request shape honest.
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        const form = init?.body;
+        if (!(form instanceof FormData)) return handler(new Request(url, init));
+        if (form.has("ops")) reportFlag = form.get("report") as string | null;
+        const encoded = new Response(form);
+        const body = await encoded.arrayBuffer();
+        const headers = new Headers();
+        headers.set("content-type", encoded.headers.get("content-type") ?? "multipart/form-data");
+        headers.set("content-length", String(body.byteLength));
+        return handler(new Request(url, { method: "POST", headers, body }));
+      }) as typeof fetch,
+    });
+
+    await client.edit(DOC, [
+      { kind: "update-style", style: "body", size: "15" },
+      { kind: "style-tables", preset: "official" },
+    ]);
+
+    expect(seen).toEqual([
+      { kind: "update-style", style: "body", size: "15" },
+      { kind: "style-tables", preset: "official" },
+    ]);
+    // The preset's outcome is only visible in the report, so the request has
+    // to ask for one even though this caller did not.
+    expect(reportFlag).toBe("true");
   });
 
-  it("refuses an unknown preset and a preset beside ops", async () => {
+  it("refuses an unknown preset", async () => {
     const handler = createHwpEditorHandler({ engine: stubEngine(), sessions: false });
-    const unknown = await handler(multipartRequest(`${BASE}/edit`, { file: DOC, styleTables: "fancy" }));
+    const unknown = await handler(multipartRequest(`${BASE}/edit`, {
+      file: DOC,
+      ops: JSON.stringify([{ kind: "style-tables", preset: "fancy" }]),
+    }));
     expect(unknown.status).toBe(400);
     expect((await unknown.json()).error.message).toContain("official");
+  });
 
-    const both = await handler(multipartRequest(`${BASE}/edit`, {
-      file: DOC,
-      styleTables: "official",
-      ops: JSON.stringify([{ kind: "update-style", style: "바탕글", size: "13" }]),
-    }));
-    expect(both.status).toBe(400);
-    expect((await both.json()).error.message).toContain("either");
+  it("requires ops: a preset is not a field of its own", async () => {
+    const handler = createHwpEditorHandler({ engine: stubEngine(), sessions: false });
+    const res = await handler(multipartRequest(`${BASE}/edit`, { file: DOC }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.message).toContain("ops");
   });
 });

@@ -27,7 +27,7 @@ import type { AddressedEditOp } from "@hwp-editor/core";
 import { compareSegments, componentStyleMap, createStore, insertedParagraphIds, isSectionDefinitionParagraph, resolveSelection, segmentAtRef, segmentRef, substituteParams, validateImageAssets, HwpEngineError, MAX_IMAGE_ASSETS, MAX_IMAGE_ASSETS_TOTAL_BYTES, STARTER_COMPONENTS } from "@hwp-editor/core";
 import type { EditorError, EditorState, EditorStore } from "@hwp-editor/core";
 import { HwpEditorContext } from "./context.js";
-import type { HwpEditorContextValue } from "./context.js";
+import type { HwpEditorContextValue, StylesStatus } from "./context.js";
 import { PageCanvas } from "./PageCanvas.js";
 import { SegmentInspector } from "./SegmentInspector.js";
 import { StylesPanel } from "./StylesPanel.js";
@@ -293,8 +293,22 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
      * panel and the direct-format indicator both read this one table: two
      * independent reads would let the indicator name a style the panel's list
      * no longer carries.
+     *
+     * The answer is stored WITH the document it describes, and handed out only
+     * while that document is still the one on screen. A read that lands after
+     * the file changed describes paragraphs this document does not have —
+     * segment ids are content checksums — so the pairing is the guard, not the
+     * effect's cancellation flag.
      */
-    const [styles, setStyles] = useState<StyleTable | null>(null);
+    const [stylesLoad, setStylesLoad] = useState<{ document: DocumentHandle; table: StyleTable | null; failed: boolean } | null>(null);
+    const styles = state.document !== null && stylesLoad !== null && stylesLoad.document === state.document
+      ? stylesLoad.table
+      : null;
+    const stylesStatus: StylesStatus =
+      state.document === null || capabilities?.styles !== "v1" ? "idle"
+        : stylesLoad === null || stylesLoad.document !== state.document ? "loading"
+        : stylesLoad.failed ? "failed"
+        : "ready";
     /**
      * Ids one insertion reported, held until the re-read envelope carries them.
      * The paragraphs do not exist in the envelope the op was sent with, so the
@@ -895,17 +909,19 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     useEffect(() => {
       const document = state.document;
       if (document === null || capabilities?.styles !== "v1" || engine.styles === undefined) {
-        setStyles(null);
+        setStylesLoad(null);
         return;
       }
       let cancelled = false;
       engine.styles(document).then(
-        (table) => { if (!cancelled) setStyles(table); },
+        (table) => { if (!cancelled) setStylesLoad({ document, table, failed: false }); },
         (error: unknown) => {
           if (cancelled) return;
           // The document stays editable: what failed is the table the Styles
-          // tab lists, so the tab loses its rows and the notice says why.
-          setStyles(null);
+          // tab lists, so the tab loses its rows and the notice says why. The
+          // failure is recorded against its document, so the tab can name the
+          // cause rather than looking like a read that never finished.
+          setStylesLoad({ document, table: null, failed: true });
           noteNotice(t("styles.loadFailed"), error);
         },
       );
@@ -932,6 +948,8 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         queueImage,
         refresh,
         styles,
+        stylesStatus,
+        noteNotice,
         openCompose,
         loadEpoch,
         t,
@@ -953,6 +971,8 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         queueImage,
         refresh,
         styles,
+        stylesStatus,
+        noteNotice,
         openCompose,
         loadEpoch,
         t,

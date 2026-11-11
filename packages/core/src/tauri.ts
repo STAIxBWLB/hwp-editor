@@ -327,16 +327,17 @@ export function createTauriEngine(
       if (options.assets !== undefined && options.assets.length > 0) {
         throw new HwpEngineError("unavailable", "Image-byte uploads are unsupported by this Tauri client; use an HTTP image-upload adapter or a desktop-local image path without uploaded assets.");
       }
-      // `hwp edit` keeps `--style-tables` and `--ops` mutually exclusive, and
-      // the preset switch is two calls for that reason. Refused here rather
-      // than at the host so both transports answer one rule.
-      if (options.styleTables !== undefined && ops.length > 0) {
-        throw new HwpEngineError("bad_request", "styleTables and ops cannot be combined in one edit; apply the preset and the ops as two calls.");
-      }
       const caps = await capabilities();
       const channel = caps.editOps === "v1"
         ? { ops: JSON.parse(opsToJson(ops)) as unknown[] }
         : { opsArgv: opsToArgv(ops) };
+      // A `style-tables` op travels inside the ops array like every other op,
+      // so nothing here needs a field of its own; its outcome arrives in the
+      // report, which this call therefore asks for whenever the batch carries
+      // one. The report names the segment ids an op created, and a host that
+      // ignores the flag answers without the field rather than with guessed
+      // ids.
+      const wantsReport = options.report === true || ops.some((op) => op?.kind === "style-tables");
       const res = await call<EditResponse>("hwped_edit", {
         document: ref(document),
         ...channel,
@@ -344,18 +345,11 @@ export function createTauriEngine(
         ...(options.allowPartial !== undefined
           ? { allowPartial: options.allowPartial }
           : {}),
-        // The host forwards this to `hwp edit --report`; only that report names
-        // the segment ids an op created, and a host that ignores the flag
-        // answers without the field rather than with guessed ids.
-        ...(options.report === true ? { report: true } : {}),
-        // Likewise for `hwp edit --style-tables <preset>`: a host that cannot
-        // pass it through answers without applying a preset, which the caller
-        // sees as a document whose styles did not move.
-        ...(options.styleTables === undefined ? {} : { styleTables: options.styleTables }),
+        ...(wantsReport ? { report: true } : {}),
         ...scope(),
       });
       let report: EditReport | undefined;
-      if (options.report === true && res.report !== undefined) {
+      if (wantsReport && res.report !== undefined) {
         try {
           report = parseEditReport(res.report);
         } catch {

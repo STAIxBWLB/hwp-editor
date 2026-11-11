@@ -8,8 +8,9 @@
  *   POST {base}/render       multipart: file=<document>,
  *                            fields: pages?, dpi?, format?         -> RenderResponse
  *   POST {base}/edit         multipart: file=<document>,
- *                            field: ops=<EditOp[] JSON> (or styleTables=<preset>),
- *                            fields: verify?, allowPartial?,
+ *                            field: ops=<EditOp[] JSON> (a preset is a
+ *                            `style-tables` op inside it),
+ *                            fields: verify?, allowPartial?, report?,
  *                            repeated asset=<image File filename=asset.name> -> EditResponse
  *   POST {base}/styles       multipart: file=<document>            -> StylesResponse
  *   POST {base}/compose      JSON: ComposeRequest                  -> ComposeResponse

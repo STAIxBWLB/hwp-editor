@@ -83,10 +83,17 @@ export interface Segment {
  * A resolved character/paragraph shape pair: what `styles-v1` publishes as
  * `attrs` and what the segment envelope publishes at its `style` and `direct`
  * levels.
+ *
+ * Either side can be absent, and the omission is information rather than a
+ * gap: both contracts publish `char` and `para` as independently nullable, and
+ * `null` means THAT SIDE'S SHAPE ID DOES NOT RESOLVE in this document's header
+ * table. A level whose character shape is unreachable still states its
+ * paragraph shape, so dropping the whole level would throw away what the
+ * document does answer; a consumer that needs one side checks for it.
  */
 export interface ShapeAttrs {
-  char: DirectChar;
-  para: DirectPara;
+  char?: DirectChar;
+  para?: DirectPara;
   /** Shape ids when this host projects them; hwp-cli 1.4.0 always does. */
   charShapeId?: number;
   paraShapeId?: number;
@@ -199,6 +206,13 @@ function projectShapeLevel(value: unknown, field: string): ShapeAttrs | undefine
  * `styles-v1` calls `attrs` and the segment envelope publishes as `style` and
  * `direct` — reusing the direct-level validators so both levels are held to
  * one rule.
+ *
+ * Each side is projected on its own. Both contracts make `char` and `para`
+ * independently nullable, because one shape id can fail to resolve while the
+ * other does, and the engine emits a null side for exactly that case
+ * (`char_shape_id_at` none ⇒ `char: null`). Requiring both would reject the
+ * whole envelope or the whole style table over one unreachable shape, so a
+ * null side is omitted and the side that did resolve is kept.
  */
 export function projectShapeAttrs(value: unknown, field: string): ShapeAttrs {
   const attrs = value as Record<string, unknown> | null | undefined;
@@ -211,11 +225,14 @@ export function projectShapeAttrs(value: unknown, field: string): ShapeAttrs {
   // this function's own projection writes `charShapeId`, which a `/styles`
   // body carries back through `parseStyleTableResponse`. One reader for one
   // shape, so a projected table round-trips instead of losing its ids.
+  // `null` is the contract's "the level is unreachable" and reads as absent.
   const charShapeId = attrs.char_shape_id ?? attrs.charShapeId;
   const paraShapeId = attrs.para_shape_id ?? attrs.paraShapeId;
-  if (typeof char !== "object" || char === null || Array.isArray(char) ||
-      typeof para !== "object" || para === null || Array.isArray(para)) {
-    throw new Error(`${field}: malformed char or para shape; upgrade the host adapter to project valid v2 metadata.`);
+  if (char !== undefined && char !== null && (typeof char !== "object" || Array.isArray(char))) {
+    throw new Error(`${field}: malformed char shape; upgrade the host adapter to project valid v2 metadata.`);
+  }
+  if (para !== undefined && para !== null && (typeof para !== "object" || Array.isArray(para))) {
+    throw new Error(`${field}: malformed para shape; upgrade the host adapter to project valid v2 metadata.`);
   }
   // The ids are carried by hwp-cli 1.4.0 on every level, but an older
   // projection publishes the attributes without them, and those attributes are
@@ -226,8 +243,8 @@ export function projectShapeAttrs(value: unknown, field: string): ShapeAttrs {
     throw new Error(`${field}: malformed shape ids; upgrade the host adapter to project valid v2 metadata.`);
   }
   return {
-    char: projectDirectChar(char),
-    para: projectDirectPara(para),
+    ...(char === undefined || char === null ? {} : { char: projectDirectChar(char) }),
+    ...(para === undefined || para === null ? {} : { para: projectDirectPara(para) }),
     ...(charShapeId === undefined ? {} : { charShapeId: charShapeId as number }),
     ...(paraShapeId === undefined ? {} : { paraShapeId: paraShapeId as number }),
   };
@@ -246,15 +263,27 @@ export function hasDirectFormatting(segment: Segment): boolean {
   return !(sameAttrs(style, direct));
 }
 
+/**
+ * Compare two levels attribute by attribute, over the sides both publish. A
+ * side the document could not resolve on one level and resolved on the other
+ * is not the same formatting, so the presence itself is compared first.
+ */
 function sameAttrs(a: ShapeAttrs, b: ShapeAttrs): boolean {
-  return a.charShapeId === b.charShapeId && a.paraShapeId === b.paraShapeId &&
+  if (a.charShapeId !== b.charShapeId || a.paraShapeId !== b.paraShapeId) return false;
+  if ((a.char === undefined) !== (b.char === undefined)) return false;
+  if ((a.para === undefined) !== (b.para === undefined)) return false;
+  if (a.char !== undefined && b.char !== undefined && !(
     a.char.bold === b.char.bold && a.char.italic === b.char.italic &&
     a.char.size_pt === b.char.size_pt && a.char.color === b.char.color &&
     a.char.faces.join("\u0000") === b.char.faces.join("\u0000") &&
-    a.char.face_ids.join(",") === b.char.face_ids.join(",") &&
+    a.char.face_ids.join(",") === b.char.face_ids.join(",")
+  )) return false;
+  if (a.para !== undefined && b.para !== undefined && !(
     a.para.alignment === b.para.alignment && a.para.indent === b.para.indent &&
     a.para.line_spacing === b.para.line_spacing &&
-    a.para.line_spacing_type === b.para.line_spacing_type;
+    a.para.line_spacing_type === b.para.line_spacing_type
+  )) return false;
+  return true;
 }
 
 function projectDirectChar(value: unknown): DirectChar {
