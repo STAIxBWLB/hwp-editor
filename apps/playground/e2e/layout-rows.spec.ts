@@ -2,7 +2,15 @@ import { expect, test } from "@playwright/test";
 import type { CatEnvelope, RenderResponse } from "@hwp-editor/core";
 import { en } from "@hwp-editor/react";
 
-test("every measured row on a multi-page fixture selects its source segment", async ({ page }) => {
+/**
+ * #46 AC1: on a multi-page fixture, clicking any rendered row selects the
+ * segment whose layout row contains the click.
+ *
+ * Every measured row is clicked, on both pages, and the selection is checked
+ * against the segment the row names rather than against the click point, so a
+ * row that maps to the wrong segment fails even where two rows overlap.
+ */
+test("AC1: every measured row on a multi-page fixture selects its source segment", async ({ page }) => {
   await page.goto("/editor");
   await expect(page.getByRole("button", { name: en["page.label"]({ page: 1 }), exact: true })).toBeVisible();
   const responsePromise = page.waitForResponse((response) => response.url().endsWith("/api/hwp-editor/render") &&

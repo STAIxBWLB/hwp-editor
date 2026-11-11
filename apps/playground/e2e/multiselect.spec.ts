@@ -83,7 +83,17 @@ test("AC3: five selected paragraphs use one edit request and one undo restores a
   expect(bodies).toHaveLength(1);
 });
 
-test("Inspector range snaps to one whole run without changing a repeated phrase", async ({page}) => {
+/**
+ * #46 AC2: bolding part of a phrase that occurs twice changes only the selected
+ * occurrence.
+ *
+ * The selection here is three characters of the first occurrence, which is
+ * what AC2 asks. Under the 2026-11-09 address decision a sub-run selection
+ * snaps to the whole run it sits in (sub-run characters wait for
+ * hwp-cli#517), so the op carries the run and no `chars`; the assertion that
+ * decides AC2 is the last one: the two occurrences read bold and not bold.
+ */
+test("AC2: a range over a repeated phrase changes only the selected occurrence", async ({page}) => {
   const before = await loadSelectionFixture(page);
   const bodies = await recordEdits(page);
   const list=page.getByRole("listbox",{name:en["segment.paragraphChoices"]});

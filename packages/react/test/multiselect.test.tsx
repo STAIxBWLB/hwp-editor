@@ -61,7 +61,7 @@ describe.each([["en", en], ["ko", ko]] as const)("paragraph multi-selection (%s)
     await waitFor(() => expect(screen.getByText(messages["toolbar.pendingEdits"]({ count: 5 }))).toBeTruthy());
     const pending = screen.getByRole("list", { name: messages["toolbar.pendingList"] });
     expect(pending.querySelectorAll("li")).toHaveLength(5);
-    expect(Array.from(pending.querySelectorAll("li")).every((item) => item.textContent?.includes("set-para"))).toBe(true);
+    expect(Array.from(pending.querySelectorAll("li")).every((item) => item.textContent?.includes(messages["pending.kind.set-para"]))).toBe(true);
     expect((screen.getByLabelText(messages["segment.replaceLabel"]) as HTMLInputElement).disabled).toBe(true);
     expect(screen.getByText(messages["segment.multiTextEditHint"])).toBeTruthy();
   });

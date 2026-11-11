@@ -263,4 +263,23 @@ describe("table parity (I18N-06, I18N-08)", () => {
       expect(typeof ko[key]).toBe(typeof en[key]);
     }
   });
+
+  /**
+   * AC10 asks for every new control's strings in both locales, and the two
+   * checks above cannot see an untranslated paste: a ko entry that is the en
+   * sentence satisfies "same key" and "same shape". Two keys are deliberately
+   * identical, so they are named rather than waved through by a rule.
+   */
+  it("translates every string instead of copying the English text", () => {
+    const deliberate = new Set<keyof MessageTable>([
+      // The fallback for an error kind the engine did not classify.
+      "error.kind.generic",
+      // A URL placeholder: the scheme's own name, not a word to translate.
+      "segment.hyperlinkUrlPlaceholder",
+    ]);
+    const copied = (Object.keys(en) as (keyof MessageTable)[]).filter(
+      (key) => typeof en[key] === "string" && en[key] === ko[key] && !deliberate.has(key),
+    );
+    expect(copied).toEqual([]);
+  });
 });

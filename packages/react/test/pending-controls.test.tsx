@@ -18,7 +18,10 @@ describe.each([["en",en],["ko",ko]] as const)("pending removal (%s)",(locale,mes
     expect((await screen.findByRole("alert")).textContent).toContain("edit refused");
     const list=screen.getByRole("list",{name:messages["toolbar.pendingList"]});
     expect(within(list).getAllByRole("listitem")).toHaveLength(2);
-    expect(list.textContent).toContain("set-meta: title");
+    expect(list.textContent).toContain(`${messages["pending.kind.set-meta"]}: ${messages["document.metaTitle"]}`);
+    // A row is read, not parsed: no identifier and no JSON reaches it.
+    expect(list.textContent).not.toContain("{");
+    expect(list.textContent).not.toContain("set-meta");
     fireEvent.click(screen.getByRole("button",{name:messages["toolbar.removePending"]({index:1})}));
     await waitFor(()=>expect(within(list).getAllByRole("listitem")).toHaveLength(1));
     fireEvent.click(screen.getByRole("button",{name:messages["toolbar.clearPending"]}));

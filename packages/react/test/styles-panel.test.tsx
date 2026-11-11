@@ -305,7 +305,7 @@ describe("styles tab operations (en)", () => {
     fireEvent.click(screen.getByRole("button", { name: en["styles.updateSubmit"] }));
     // One queued op; nothing reaches the engine until Apply.
     const pending = screen.getByRole("list", { name: en["toolbar.pendingList"] });
-    expect(pending.textContent).toContain("update-style: 바탕글");
+    expect(pending.textContent).toContain(`${en["pending.kind.update-style"]}: 바탕글`);
     expect(harness.edits).toHaveLength(0);
   });
 
@@ -353,10 +353,11 @@ describe("styles tab operations (en)", () => {
     fireEvent.click(await screen.findByRole("button", { name: /개요 1/ }));
     fireEvent.click(screen.getByRole("button", { name: en["styles.applyToSelection"] }));
     const pending = screen.getByRole("list", { name: en["toolbar.pendingList"] });
-    // One entry per selected paragraph, addressed the way every addressed op
-    // is printed in the pending list.
-    expect(pending.textContent).toContain("apply-style:");
-    expect(pending.textContent).toContain('{"id":"p1"}');
+    // One entry per selected paragraph, each naming the element it addresses
+    // rather than printing the address as JSON.
+    expect(pending.textContent).toContain(`${en["pending.kind.apply-style"]}:`);
+    expect(pending.textContent).toContain(en["pending.target.id"]({ id: "p1" }));
+    expect(pending.textContent).not.toContain('{"id"');
   });
 
   it("groups a promote into one queue action: create_style then apply-style", async () => {
@@ -369,8 +370,8 @@ describe("styles tab operations (en)", () => {
     // the engine resolves create before apply within a batch, and the whole
     // batch is one engine call and one undo step.
     const text = pending.textContent ?? "";
-    const create = text.indexOf("create-style: 인용");
-    const apply = text.indexOf("apply-style:");
+    const create = text.indexOf(`${en["pending.kind.create-style"]}: 인용`);
+    const apply = text.indexOf(`${en["pending.kind.apply-style"]}:`);
     expect(create).toBeGreaterThanOrEqual(0);
     expect(apply).toBeGreaterThan(create);
   });
