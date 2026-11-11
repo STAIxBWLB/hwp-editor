@@ -9,10 +9,13 @@
  * a token anywhere in stderr: the engine echoes user values (a replace's
  * from/to on progress lines, anchors, urls and names on the unapplied-list
  * line), and a value must never decide the classification. Most values are
- * written with Rust's `{:?}` and cannot span a line; insert_blocks writes a
- * style name with `{name}` (insert_blocks.rs:364/:383), which could, so no
- * matcher here relies on a value never starting a line except through the
- * fixed shapes below, none of which an insert_blocks refusal produces.
+ * written with Rust's `{:?}`, but some with Display (an anchor at
+ * commands/edit.rs:2107, an insert_blocks style name at insert_blocks.rs:372),
+ * so a value CAN carry a newline and forge a line of its own. The matchers
+ * therefore read only the first `Error:` line, plus the conflict list's own
+ * entries below its fixed head. hwp-cli v1.6.1 never wraps the range-tag or
+ * drift refusal in a context chain (runtime.rs:324-331), so neither needs a
+ * `Caused by:` line.
  *
  * Only the marker leaves this module: the engine's prose, its staged paths and
  * the user's values stay in the error's stderr/detail for an operator.
@@ -35,16 +38,14 @@ const CONFLICT_HEAD = /^Error: 주소 지정 편집이 서로 충돌합니다:$/
 const LENGTH_CHANGE_LINE = /^op\[\d+\]이 문단 \S+의 길이를 바꿀 수 있어 op\[\d+\]의 고정된 run 범위가 무효화됩니다$/u;
 /**
  * The apply-time content-drift bail (commands/edit.rs:3553-3563), whose only
- * interpolations are numbers. It may sit on the Error: line or, wrapped in
- * context, on a `Caused by:` line, so the anchor allows either prefix.
+ * interpolations are numbers, on the Error: line itself.
  */
-const CHAIN_PREFIX = String.raw`^(?:Error: |\s+(?:\d+: )?)`;
 const DRIFT_LINE = new RegExp(
-  `${CHAIN_PREFIX}set_format 주소 \\[\\d+, \\d+\\)의 문단은 앞선 연산\\([^)]*\\)으로 글자 수가 \\d+에서 (?:\\d+|알 수 없음)\\(으\\)로 바뀌어 범위가 다른 글자를 가리킵니다\\.`,
+  `^Error: set_format 주소 \\[\\d+, \\d+\\)의 문단은 앞선 연산\\([^)]*\\)으로 글자 수가 \\d+에서 (?:\\d+|알 수 없음)\\(으\\)로 바뀌어 범위가 다른 글자를 가리킵니다\\.`,
   "u",
 );
 /** `RANGE_TAG_SHIFT_REFUSAL` (hwp-convert/src/edit.rs:179), a fixed sentence. */
-const RANGE_TAG_LINE = new RegExp(`${CHAIN_PREFIX}미해석 PARA_RANGE_TAG 구간 표시가 있어 WCHAR 위치가 바뀌거나`, "u");
+const RANGE_TAG_LINE = new RegExp(`^Error: 미해석 PARA_RANGE_TAG 구간 표시가 있어 WCHAR 위치가 바뀌거나`, "u");
 
 /** stderr from its first `Error:` line on, as lines; empty when there is none. */
 function errorLines(stderr: string): string[] {
@@ -54,8 +55,8 @@ function errorLines(stderr: string): string[] {
 }
 
 /**
- * The ops the engine lists as unapplied, or undefined when the Error: line is
- * not that list.
+ * The ops the engine lists as unapplied on its Error: line, or undefined when
+ * that line is not the list.
  *
  * Items follow the marker and are separated by `, `, each opening with its op
  * name: `replace address=0.0 from="NOPE" to="x", set_field name="f"`. Values
@@ -63,9 +64,7 @@ function errorLines(stderr: string): string[] {
  * character an unescaped backslash escapes. The suffix is searched from the
  * end, because a value may carry the same text.
  */
-function unappliedItems(stderr: string): string[] | undefined {
-  const line = errorLines(stderr)[0];
-  if (line === undefined) return undefined;
+function unappliedItems(line: string): string[] | undefined {
   const head = UNAPPLIED_EDIT_LINE.exec(line);
   if (head === null) return undefined;
   const tail = line.slice(head[0].length);
@@ -110,14 +109,14 @@ function unappliedItems(stderr: string): string[] | undefined {
  *   LengthChange. A list that also holds a Removal stays unclassified, since
  *   the run-range next step would clear only part of it. Or the content-drift
  *   line.
- * - `range_tag`: the range-tag sentence on its own line.
+ * - `range_tag`: the range-tag sentence on the Error: line.
  */
 export function classifyEditRefusal(stderr: string): EditRefusalKind | undefined {
   const lines = errorLines(stderr);
   const first = lines[0];
   if (first === undefined) return undefined;
   if (UNAPPLIED_EDIT_LINE.test(first)) {
-    const items = unappliedItems(stderr);
+    const items = unappliedItems(first);
     return items !== undefined && items.length > 0 && items.every(item => /^replace\s/u.test(item))
       ? "unmatched_replace"
       : undefined;
@@ -132,7 +131,7 @@ export function classifyEditRefusal(stderr: string): EditRefusalKind | undefined
       ? "run_range_conflict"
       : undefined;
   }
-  if (lines.some(line => RANGE_TAG_LINE.test(line))) return "range_tag";
-  if (lines.some(line => DRIFT_LINE.test(line))) return "run_range_conflict";
+  if (RANGE_TAG_LINE.test(first)) return "range_tag";
+  if (DRIFT_LINE.test(first)) return "run_range_conflict";
   return undefined;
 }

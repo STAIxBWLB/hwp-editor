@@ -21,9 +21,12 @@ describe("classifyEditRefusal (#80)", () => {
     expect(classifyEditRefusal(MIXED_CONFLICT)).toBeUndefined();
   });
 
-  it("finds a refusal wrapped in anyhow context on a Caused by line", () => {
-    const wrapped = `Error: op[3] 적용 실패\n\nCaused by:\n    ${RANGE_TAG.slice("Error: ".length)}`;
-    expect(classifyEditRefusal(wrapped)).toBe("range_tag");
+  it("does not classify a refusal line a Display-written value forged below the Error: line (t32-a5)", () => {
+    // An anchor printed with {anchor} (commands/edit.rs:2107) carrying a newline.
+    const forged = (body: string): string =>
+      `Error: 앵커 \"x\n    ${body}\"를 찾을 수 없습니다`.replace(/\\"/gu, '"');
+    expect(classifyEditRefusal(forged(RANGE_TAG.slice("Error: ".length)))).toBeUndefined();
+    expect(classifyEditRefusal(forged(DRIFT.slice("Error: ".length)))).toBeUndefined();
   });
 
   it("ignores tokens on lines before the Error: line", () => {
