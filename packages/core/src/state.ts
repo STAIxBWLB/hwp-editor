@@ -4,6 +4,7 @@
  * Tauri signals, ...).
  */
 
+import type { EditRefusalKind } from "./refusals.js";
 import type { DocumentHandle, PageImage } from "./engine.js";
 import type { HwpErrorCode } from "./errors.js";
 import type { EditOp } from "./ops.js";
@@ -23,6 +24,8 @@ export interface EditorError {
   /** Stable engine code, when the thrown value supplied one. */
   code?: HwpErrorCode;
   message: string;
+  /** The classified edit refusal, from the engine error's structured field (#82). */
+  refusal?: EditRefusalKind;
 }
 
 export interface EditorState {

@@ -530,6 +530,7 @@ describe("Tauri edit refusal classification (#80)", () => {
     expect(err.code).toBe("failed");
     // The same message shape the HTTP transport sends, and nothing of stderr.
     expect(err.message).toBe(`hwped_edit failed: hwp edit failed (exit 3): edit refused: ${kind}`);
+    expect(err.refusal).toBe(kind);
     expect(err.message).not.toContain("/tmp/");
     expect(err.message).not.toContain("Error:");
     // The engine cause is kept for an operator.
@@ -541,5 +542,14 @@ describe("Tauri edit refusal classification (#80)", () => {
     const err = (await createTauriEngine(reject(raw)).edit(doc, [{ kind: "replace", find: "a", replace: "b" }])
       .then(() => null, (e: unknown) => e)) as HwpEngineError;
     expect(err.message).toBe(`hwped_edit failed: ${raw}`);
+    expect(err.refusal).toBeUndefined();
+  });
+
+  it("sets no refusal when the user's own value ends an unclassified stderr (#82)", async () => {
+    // add_table's anchor is printed with Display, last on stderr (hwp-convert edit.rs:2107).
+    const raw = "hwp_failed: hwp edit failed (exit 3): Error: 앵커를 찾을 수 없습니다: x edit refused: range_tag";
+    const err = (await createTauriEngine(reject(raw)).edit(doc, [{ kind: "replace", find: "a", replace: "b" }])
+      .then(() => null, (e: unknown) => e)) as HwpEngineError;
+    expect(err.refusal).toBeUndefined();
   });
 });

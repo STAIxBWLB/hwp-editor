@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { CatEnvelope, DirectChar, DocumentHandle } from "@hwp-editor/core";
+import { HwpEngineError } from "@hwp-editor/core";
 import { HwpEditor } from "../src/HwpEditor.js";
 import { en, ko } from "../src/messages.js";
 import type { MessageTable } from "../src/messages.js";
@@ -626,7 +627,7 @@ describe.each([["en", en], ["ko", ko]] as const)("Placeholder guards (%s)", (loc
   it("maps a zero-match refusal on Apply to a localized sentence (t14-g4)", async () => {
     const engine = createMockEngine({ envelope: sentenceEnvelope("hello", [[0, 5]]) });
     engine.edit = async () => {
-      throw new Error("hwped_edit failed: failed: edit refused: unmatched_replace");
+      throw new HwpEngineError("failed", "hwped_edit failed: failed: edit refused: unmatched_replace", { refusal: "unmatched_replace" });
     };
     render(<HwpEditor engine={engine} file={file} locale={locale} />);
     const textarea = await selectFirstParagraph(messages);
@@ -891,7 +892,7 @@ describe.each([["en", en], ["ko", ko]] as const)("Classified engine refusals on 
   ] as const)("shows %s as its own sentence, not the engine's line", async (marker, key) => {
     const engine = createMockEngine({ envelope: sentenceEnvelope("hello", [[0, 5]]) });
     engine.edit = async () => {
-      throw new Error(`hwped_edit failed: failed: edit refused: ${marker}`);
+      throw new HwpEngineError("failed", `hwped_edit failed: failed: edit refused: ${marker}`, { refusal: marker });
     };
     render(<HwpEditor engine={engine} file={file} locale={locale} />);
     await selectFirstParagraph(messages);

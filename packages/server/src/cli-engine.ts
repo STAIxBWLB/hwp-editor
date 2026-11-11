@@ -1,5 +1,5 @@
 import { createTemplateCommands } from "./template-engine.js";
-import { classifyEditRefusal, editRefusalMarker, TEMPLATE_METHODS, templateVersionSupported, parseEditReport, withCallerName, presetBatchOptions, readPresetBatch, type EditReport, type TemplateInputs, type FillResult, type LintReport, type LintProfile, type EmbeddedTemplate, type TemplateSpecV1, type TemplateDataV1 } from "@hwp-editor/core";
+import { classifyEditRefusal, editRefusalMarker, type EditRefusalKind, TEMPLATE_METHODS, templateVersionSupported, parseEditReport, withCallerName, presetBatchOptions, readPresetBatch, type EditReport, type TemplateInputs, type FillResult, type LintReport, type LintProfile, type EmbeddedTemplate, type TemplateSpecV1, type TemplateDataV1 } from "@hwp-editor/core";
 /**
  * CliEngine — HwpEngine implementation that shells out to the hwp-cli binary.
  *
@@ -178,6 +178,8 @@ export class HwpCliError extends Error {
     public readonly stderr?: string,
     /** Operator-facing context: the resolved binary path, CLI output. */
     public readonly detail?: string,
+    /** The classified edit refusal (#82), which routes.ts sends as its own field. */
+    public readonly refusal?: EditRefusalKind,
   ) {
     super(message);
     this.name = "HwpCliError";
@@ -803,7 +805,7 @@ function rethrowUnmatchedEditRefusal(error: unknown): never {
   if (error instanceof HwpCliError && error.reason === "failed" && error.stderr !== undefined) {
     const kind = classifyEditRefusal(error.stderr);
     if (kind !== undefined) {
-      throw new HwpCliError(error.reason, `${error.message}: ${editRefusalMarker(kind)}`, error.stderr, error.detail);
+      throw new HwpCliError(error.reason, `${error.message}: ${editRefusalMarker(kind)}`, error.stderr, error.detail, kind);
     }
   }
   throw error;

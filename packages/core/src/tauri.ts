@@ -1,5 +1,6 @@
 import { parsePageLayout } from "./layout.js";
 import { classifyEditRefusal, editRefusalMarker } from "./refusals.js";
+import type { EditRefusalKind } from "./refusals.js";
 /**
  * HwpEngine client for Tauri hosts (e.g. maru). Calls Rust commands named
  * `hwped_read / hwped_render / hwped_edit / hwped_compose / hwped_validate /
@@ -172,7 +173,9 @@ function toEngineError(cmd: string, error: unknown): HwpEngineError {
   }
   const refusal = editRefusalFor(cmd, code, detail);
   if (refusal !== null) {
-    return new HwpEngineError(code, `${cmd} failed: ${refusal}`, { cause: error });
+    // The kind travels as a field (#82); the marker stays in the message for
+    // hosts that read text, but the client reads only the field.
+    return new HwpEngineError(code, `${cmd} failed: ${refusal.message}`, { cause: error, refusal: refusal.kind });
   }
   return new HwpEngineError(code, `${cmd} failed: ${detail}`, {
     cause: error,
@@ -193,12 +196,16 @@ const MARU_EDIT_FAILURE = /^hwp_failed: (hwp edit failed \(exit -?\d+\)): ([\s\S
  * the server (`classifyEditRefusal`), so the two cannot drift. The raw text
  * stays on the error's `cause`.
  */
-function editRefusalFor(cmd: string, code: HwpErrorCode, detail: string): string | null {
+function editRefusalFor(
+  cmd: string,
+  code: HwpErrorCode,
+  detail: string,
+): { kind: EditRefusalKind; message: string } | null {
   if (code !== "failed" || cmd !== "hwped_edit") return null;
   const failure = MARU_EDIT_FAILURE.exec(detail);
   if (failure === null) return null;
   const kind = classifyEditRefusal(failure[2]!);
-  return kind === undefined ? null : `${failure[1]!}: ${editRefusalMarker(kind)}`;
+  return kind === undefined ? null : { kind, message: `${failure[1]!}: ${editRefusalMarker(kind)}` };
 }
 
 /**

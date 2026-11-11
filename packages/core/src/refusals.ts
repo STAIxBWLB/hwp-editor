@@ -10,7 +10,7 @@
  * from/to on progress lines, anchors, urls and names on the unapplied-list
  * line), and a value must never decide the classification. Most values are
  * written with Rust's `{:?}`, but some with Display (an anchor at
- * hwp-convert/src/edit.rs:2107, add_table, an insert_blocks style name at insert_blocks.rs:372),
+ * hwp-convert/src/edit.rs:2107, add_table; an insert_blocks style name at insert_blocks.rs:370 and :373),
  * so a value CAN carry a newline and forge a line of its own. The matchers
  * therefore read only the first `Error:` line, plus the conflict list's own
  * entries below its fixed head. hwp-cli v1.6.1 never wraps the range-tag or
@@ -22,6 +22,13 @@
  */
 
 export type EditRefusalKind = "unmatched_replace" | "run_range_conflict" | "range_tag";
+
+const KINDS: ReadonlySet<string> = new Set<EditRefusalKind>(["unmatched_replace", "run_range_conflict", "range_tag"]);
+
+/** Narrow an untrusted value (a wire field, a host error) to a refusal kind. */
+export function isEditRefusalKind(value: unknown): value is EditRefusalKind {
+  return typeof value === "string" && KINDS.has(value);
+}
 
 /** The suffix a transport appends to an error message for a classified refusal. */
 export function editRefusalMarker(kind: EditRefusalKind): string {

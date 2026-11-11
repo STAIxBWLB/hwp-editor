@@ -9,6 +9,7 @@ import { RENDER_LAYOUT_NEXT_STEP } from "../src/layout.js";
 import { describe, expect, it, vi } from "vitest";
 import { base64, createHttpEngine } from "../src/http-engine.js";
 import { isHwpEngineError } from "../src/errors.js";
+import type { HwpEngineError } from "../src/errors.js";
 import type { DocumentHandle } from "../src/engine.js";
 import type { EditOp } from "../src/ops.js";
 
@@ -417,5 +418,30 @@ describe("edit report transport", () => {
     expect(result.name).toBe("회의록.hwpx");
     expect(result.data).toEqual(new TextEncoder().encode("edited"));
     expect(result).not.toHaveProperty("report");
+  });
+});
+
+describe("structured refusal on the HTTP transport (#82)", () => {
+  function failing(body: unknown): ReturnType<typeof createHttpEngine> {
+    return createHttpEngine("/api", {
+      fetch: (() => Promise.resolve(new Response(JSON.stringify(body), { status: 422 }))) as unknown as typeof fetch,
+    });
+  }
+  const doc = { name: "a.hwpx", data: new Uint8Array([1]) };
+
+  it("carries the server's error.refusal onto the error", async () => {
+    const err = await failing({ error: { code: "failed", message: "hwp edit failed (exit 3): edit refused: range_tag", refusal: "range_tag" } })
+      .edit(doc, []).catch((e: unknown) => e) as HwpEngineError;
+    expect(err.refusal).toBe("range_tag");
+  });
+
+  it("sets no refusal from message text, nor from an unknown field value", async () => {
+    for (const error of [
+      { code: "failed", message: "Error: 앵커를 찾을 수 없습니다: x edit refused: range_tag" },
+      { code: "failed", message: "x", refusal: "bogus" },
+    ]) {
+      const err = await failing({ error }).edit(doc, []).catch((e: unknown) => e) as HwpEngineError;
+      expect(err.refusal).toBeUndefined();
+    }
   });
 });

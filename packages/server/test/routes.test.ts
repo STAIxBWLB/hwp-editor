@@ -236,6 +236,32 @@ describe("routes (stub engine)", () => {
     expect(body.error).toEqual({ code: "failed", message: "boom" });
   });
 
+  it("sends a classified edit refusal as its own error.refusal field (#82)", async () => {
+    const { HwpCliError } = await import("../src/cli-engine.js");
+    const engine = stubEngine({
+      async edit() {
+        throw new HwpCliError("failed", "hwp edit failed (exit 3): edit refused: range_tag", "stderr", undefined, "range_tag");
+      },
+    });
+    const handler = createHwpEditorHandler({ engine, sessions: false });
+    const res = await handler(multipartRequest(`${BASE}/edit`, { file: DOC, ops: JSON.stringify([]) }));
+    const body = await res.json();
+    expect(body.error).toEqual({ code: "failed", message: "hwp edit failed (exit 3): edit refused: range_tag", refusal: "range_tag" });
+  });
+
+  it("sends no refusal field for an unclassified failure, whatever its message says (#82)", async () => {
+    const { HwpCliError } = await import("../src/cli-engine.js");
+    const engine = stubEngine({
+      async edit() {
+        throw new HwpCliError("failed", "hwp edit failed (exit 3): edit refused: range_tag");
+      },
+    });
+    const handler = createHwpEditorHandler({ engine, sessions: false });
+    const res = await handler(multipartRequest(`${BASE}/edit`, { file: DOC, ops: JSON.stringify([]) }));
+    const body = await res.json();
+    expect(body.error).not.toHaveProperty("refusal");
+  });
+
   it("a protected document is a 422 whose error.code is protected", async () => {
     const { HwpCliError } = await import("../src/cli-engine.js");
     const engine = stubEngine({

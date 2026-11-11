@@ -1,4 +1,4 @@
-import { TEMPLATE_METHODS, templateVersionSupported, parseStyleTableResponse, STYLE_TABLE_PRESETS, parseTemplateInputs, parseFillReport, parseLintReport, parseEmbeddedTemplates, parseTemplateReport, stylesVersionSupported, type TemplateMethod, type LintProfile, type TemplateSpecV1, type TemplateDataV1 } from "@hwp-editor/core";
+import { TEMPLATE_METHODS, templateVersionSupported, parseStyleTableResponse, STYLE_TABLE_PRESETS, parseTemplateInputs, parseFillReport, parseLintReport, parseEmbeddedTemplates, parseTemplateReport, stylesVersionSupported, type EditRefusalKind, type TemplateMethod, type LintProfile, type TemplateSpecV1, type TemplateDataV1 } from "@hwp-editor/core";
 /**
  * Framework-agnostic HTTP handler implementing the wire contract of
  * packages/core/src/protocol.ts as Web Standards `(Request) => Response`.
@@ -146,8 +146,10 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-function error(status: number, code: HwpErrorCode, message: string): Response {
-  const body: ErrorResponse = { error: { code, message } };
+function error(status: number, code: HwpErrorCode, message: string, refusal?: EditRefusalKind): Response {
+  // The refusal kind is its own field (#82): a client must not select a
+  // sentence from message text, which can carry the user's own values.
+  const body: ErrorResponse = { error: { code, message, ...(refusal === undefined ? {} : { refusal }) } };
   return json(body, status);
 }
 
@@ -654,7 +656,7 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
       }
     } catch (err) {
       if (err instanceof HwpCliError) {
-        return error(statusFor(err), err.reason, err.message);
+        return error(statusFor(err), err.reason, err.message, err.refusal);
       }
       if (err instanceof SessionNotFoundError) {
         return error(404, "session_not_found", err.message);

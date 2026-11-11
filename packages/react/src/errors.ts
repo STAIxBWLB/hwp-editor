@@ -16,7 +16,7 @@
  */
 
 import type { EditorError, EditRefusalKind, HwpErrorCode } from "@hwp-editor/core";
-import { isHwpEngineError, isHwpErrorCode } from "@hwp-editor/core";
+import { isEditRefusalKind, isHwpEngineError, isHwpErrorCode } from "@hwp-editor/core";
 
 export type EngineErrorKind = "timeout" | "unavailable" | "protected" | "generic";
 
@@ -29,25 +29,28 @@ export type EngineErrorKind = "timeout" | "unavailable" | "protected" | "generic
  * indistinguishable from a real `internal` (see state.ts in core).
  */
 export function toEditorError(e: unknown): EditorError {
-  return isHwpEngineError(e) && isHwpErrorCode(e.code)
+  const refusal = engineRefusalKind(e);
+  const base: EditorError = isHwpEngineError(e) && isHwpErrorCode(e.code)
     ? { code: e.code, message: e.message }
     : { message: e instanceof Error ? e.message : String(e) };
+  return refusal === undefined ? base : { ...base, refusal };
 }
 
 /** The classified edit refusals a transport marks with `edit refused: <kind>` (core `classifyEditRefusal`). */
 export type EngineRefusalKind = EditRefusalKind;
 
 /**
- * Which classified refusal a failure carries, if any (#76), so nothing was
- * applied. Each transport classifies with core's `classifyEditRefusal`: the
- * engine's own line names staged paths and its Korean wording is not part of
- * the client contract, so only the stable marker travels. This module only
- * classifies; the sentence lives in the table.
+ * Which classified refusal a failure carries, if any, so nothing was applied.
+ * Each transport classifies with core's `classifyEditRefusal` and sets the
+ * error's structured `refusal` field; this reads that field only (#82). The
+ * message is never parsed: on an unclassified failure it can end with text
+ * the user typed, and that must not select a sentence. Duck-typed like
+ * `isHwpEngineError`, and narrowed, so a foreign value cannot pass.
  */
 export function engineRefusalKind(e: unknown): EngineRefusalKind | undefined {
-  const message = e instanceof Error ? e.message : String(e);
-  const match = /edit refused: (unmatched_replace|run_range_conflict|range_tag)$/u.exec(message);
-  return match === null ? undefined : match[1] as EngineRefusalKind;
+  if (typeof e !== "object" || e === null) return undefined;
+  const refusal = (e as { refusal?: unknown }).refusal;
+  return isEditRefusalKind(refusal) ? refusal : undefined;
 }
 
 /**
