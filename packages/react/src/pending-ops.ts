@@ -217,12 +217,14 @@ export function pendingTargetLabel(
     const value = (op as Record<string, unknown>)[prop];
     if (typeof value === "string") return value;
   }
+  // A table is the one target whose row counts from one: the panel a reader is
+  // looking at says "Table 2", so the queued row says the same number and the
+  // two can be matched. The op itself keeps the engine's 0-based index, which
+  // is what the engine reports refusals against.
   const table = (op as Record<string, unknown>).table;
-  // The queue keeps the engine's numbering, as `pendingAddressLabel` does for
-  // paragraphs, and says so: the table panel shows the reader's ordinal.
-  if (typeof table === "number") return t("pending.target.table", { index: table });
+  if (typeof table === "number") return t("pending.target.table", { index: table + 1 });
   const target = (op as Record<string, unknown>).target;
-  if (typeof target === "number") return t("pending.target.table", { index: target });
+  if (typeof target === "number") return t("pending.target.table", { index: target + 1 });
   if (typeof target === "string") return target;
   return t("pending.target.document");
 }

@@ -79,8 +79,10 @@ export function TableGrid(): JSX.Element {
 
   const tableIndex = table.tableIndex;
   // The panel numbers the table the reader is looking at, so it counts from
-  // one like every other label in this editor; the ops below keep the engine's
-  // own index, which is what the row and the refusal report.
+  // one like every other label in this editor, and the queued row for a table
+  // states the same ordinal so the two surfaces can be matched. The ops below
+  // keep the engine's own index, which is what the engine reports refusals
+  // against.
   const tableNumber = tableIndex + 1;
 
   return (

@@ -12,9 +12,11 @@ import {
  * The pending list's own text (issue #46 AC10, deferred here by T1).
  *
  * A queued row is read by a person deciding what to remove, so it names the
- * operation in their language and the target in the engine's own indices. What
- * this suite pins is exactly what T1 left raw: the op kind and the address,
- * neither of which may reach the list as an identifier or as JSON.
+ * operation in their language and the target in the engine's own indices -
+ * except a table, which the row numbers the way the table panel does so the
+ * two surfaces can be matched. What this suite pins is exactly what T1 left
+ * raw: the op kind and the address, neither of which may reach the list as an
+ * identifier or as JSON.
  */
 describe.each([["en", en], ["ko", ko]] as const)("pending row text (%s)", (locale, messages) => {
   const t = createT(locale, {});
@@ -165,14 +167,19 @@ describe.each([["en", en], ["ko", ko]] as const)("pending row text (%s)", (local
     }));
   });
 
-  it("names a table by the engine's index, which the row states as a base", () => {
-    // The table panel shows the reader's ordinal from one; a queued row has to
-    // match the number the op carries and an engine refusal reports, so it
-    // keeps the engine's index and says which base it is counting from. Both
-    // shapes reach it: a `table` coordinate and a `delete-table` target.
+  it("names a table by the ordinal the table panel shows", () => {
+    // The panel a reader is looking at says "Table 3" for the third table, and
+    // a queued row has to match that number or the reader cannot tell which
+    // row removes the table in front of them. The op keeps the engine's
+    // 0-based index; only the row counts from one. Both shapes reach it: a
+    // `table` coordinate and a `delete-table` target.
     expect(pendingTargetLabel({ kind: "delete-table", target: 2 }, t))
-      .toBe(messages["pending.target.table"]({ index: 2 }));
+      .toBe(messages["pending.target.table"]({ index: 3 }));
     expect(pendingTargetLabel({ kind: "delete-row", table: 0, row: 1 }, t))
-      .toBe(messages["pending.target.table"]({ index: 0 }));
+      .toBe(messages["pending.target.table"]({ index: 1 }));
+    // So the row carries no base statement: the number is the panel's, and the
+    // paragraph rows above it in the same queue still state theirs.
+    expect(pendingTargetLabel({ kind: "delete-table", target: 2 }, t))
+      .not.toContain(locale === "en" ? "0-based" : "0 기준");
   });
 });

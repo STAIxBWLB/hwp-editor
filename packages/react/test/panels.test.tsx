@@ -740,6 +740,16 @@ describe("panel edge cases (TEST-03)", () => {
     expect(screen.getByText(en["table.sourceTable"]({ index: 1 }))).toBeTruthy();
     // ...while the op carries the engine's 0-based coordinate (#58 item 13d).
     clickBtn("table.deleteTable");
+    // The queued row a reader decides on has to match the panel in front of
+    // them, so it states the panel's ordinal too: one table reads the same
+    // number on both surfaces, and the engine's 0 stays inside the op. The
+    // panel's number is read off the panel rather than restated here.
+    const panelLabel = screen.getByRole("region", { name: en["table.panelAria"] })
+      .querySelector(".hwped-label")?.textContent ?? "";
+    const panelOrdinal = Number(panelLabel.replace(/\D/g, ""));
+    const queued = screen.getByRole("list", { name: en["toolbar.pendingList"] }).textContent ?? "";
+    expect(queued).toContain(en["pending.target.table"]({ index: panelOrdinal }));
+    expect(queued).not.toContain(en["pending.target.table"]({ index: panelOrdinal - 1 }));
     expect(await applyOps(engine, 1)).toEqual([{ kind: "delete-table", target: 0 }]);
   });
 

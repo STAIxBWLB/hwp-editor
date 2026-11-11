@@ -86,10 +86,14 @@ export const en = {
   "pending.target.wholePiece": (p: { id: string }): string =>
     `the whole piece of element ${p.id}`,
   "pending.target.document": "the whole document",
+  // A table is named by the same ordinal the table panel shows, not by the
+  // engine's 0-based index the op carries, so a reader can match a queued row
+  // to the panel. The paragraph and run targets above state their base instead,
+  // because no panel shows them.
+  "pending.target.table": (p: { index: number }): string => `Table #${p.index}`,
   // The ops with a second target name it in the row: which text a replace
   // looks for, which side of a paragraph blocks land on, and where a move puts
   // the paragraph. Each locale composes the two halves in its own word order.
-  "pending.target.table": (p: { index: number }): string => `table #${p.index} (0-based)`,
   "pending.target.before": (p: { range: string }): string => `before ${p.range}`,
   "pending.target.after": (p: { range: string }): string => `after ${p.range}`,
   "pending.target.moveTo": (p: { range: string; destination: string; before: boolean }): string =>
@@ -646,7 +650,7 @@ export const ko: MessageTable = {
   "pending.target.id": (p) => `요소 ${p.id}`,
   "pending.target.wholeRun": (p) => `요소 ${p.id}의 run 전체`,
   "pending.target.document": "문서 전체",
-  "pending.target.table": (p) => `표 #${p.index} (0 기준)`,
+  "pending.target.table": (p) => `표 #${p.index}`,
   "pending.target.before": (p) => `${p.range} 앞`,
   "pending.target.after": (p) => `${p.range} 뒤`,
   "pending.target.moveTo": (p) => `${p.range} → ${p.destination} ${p.before ? "앞" : "뒤"}`,
