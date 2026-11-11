@@ -29,6 +29,11 @@ Run these passes and tag every finding with its pass:
   retain the original cause or name only the specific command known to have failed
   (`packages/server/src/cli-engine.ts`, `rethrowUploadedImageFailure`); a mixed edit
   batch must not receive an image-only remedy just because it contains uploads.
+- **Engine classifiers match fixed heads and tails only.** A classifier over hwp stderr
+  (`packages/core/src/refusals.ts`, `packages/core/src/insertion-refusals.ts`) matches the fixed
+  head and tail of the engine's own `Error:` line and never searches text where hwp-cli interpolates
+  a user value (anchors, style names, issue paths). Otherwise a crafted value selects a refusal
+  sentence or a measured width.
 
 - **hwp-cli is the only document engine.** The server drives the released `hwp` binary and gates its
   version (`packages/server/src/cli-engine.ts:54` minimum, `:72` exclusive maximum). Wire shapes come
