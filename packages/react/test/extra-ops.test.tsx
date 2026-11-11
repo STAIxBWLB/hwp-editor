@@ -27,6 +27,7 @@ function renderPanel(locale: "en" | "ko", panel: "document" | "fields" | "segmen
     editable: true,
     validation: null,
     applyPendingOps: () => undefined,
+    replaceDocument: async () => undefined,
     queueImage: () => undefined,
     refresh: async () => undefined,
     openCompose: () => undefined,
