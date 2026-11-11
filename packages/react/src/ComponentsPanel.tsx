@@ -63,7 +63,7 @@ export function ComponentsPanel({
   const { t } = useHwpEditorContext();
   const disabled = busy || disabledReason !== "";
   return (
-    <div className="hwped-panel hwped-components" aria-label={t("components.panelAria")}>
+    <div className="hwped-panel hwped-components" role="region" aria-label={t("components.panelAria")}>
       <p className="hwped-hint">{t("components.hint")}</p>
       {disabledReason !== "" && <p className="hwped-hint" role="status">{disabledReason}</p>}
       <ul className="hwped-component-list" aria-label={t("components.catalogueAria")}>

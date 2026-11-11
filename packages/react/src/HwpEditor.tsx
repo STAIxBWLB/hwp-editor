@@ -22,7 +22,7 @@ import type {
   Segment,
   ValidationReport,
 } from "@hwp-editor/core";
-import { createStore, insertedParagraphIds, segmentAtRef, validateImageAssets, HwpEngineError, MAX_IMAGE_ASSETS, MAX_IMAGE_ASSETS_TOTAL_BYTES } from "@hwp-editor/core";
+import { createStore, insertedParagraphIds, segmentAtRef, validateImageAssets, HwpEngineError, MAX_IMAGE_ASSETS, MAX_IMAGE_ASSETS_TOTAL_BYTES, STARTER_COMPONENTS } from "@hwp-editor/core";
 import type { EditorError, EditorStore } from "@hwp-editor/core";
 import { HwpEditorContext } from "./context.js";
 import type { HwpEditorContextValue } from "./context.js";
@@ -69,6 +69,12 @@ export interface HwpEditorProps {
    * document the engine reports as protected.
    */
   readOnly?: boolean;
+  /**
+   * Component catalogue the palette offers and the new-document assembly
+   * composes from. Defaults to the shipped starters; a host with its own
+   * library passes what `loadComponents` returned.
+   */
+  components?: readonly Component[];
   /**
    * Called once per completed document load, after both the read and the
    * render resolve, with the document that was loaded. Fires again on every
@@ -169,6 +175,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       locale = "en",
       messages,
       readOnly = false,
+      components,
       onReady,
       onError,
       onChange,
@@ -176,6 +183,10 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       className,
       style,
     } = props;
+
+    // One catalogue for both surfaces: the palette and the new-document
+    // assembly must offer the same components.
+    const catalogue = components ?? STARTER_COMPONENTS;
 
     /**
      * Host callbacks are deliberately NON-REACTIVE. They live in this one
@@ -843,6 +854,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
               {tab === "templates" && <TemplatePanel />}
               {tab === "components" && (
                 <ComponentsPanel
+                  components={catalogue}
                   inserted={inserted}
                   disabledReason={componentDisabled}
                   busy={!editable || state.status === "applying"}
@@ -859,6 +871,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
 
           {composing && (
             <ComposePanel
+              components={catalogue}
               canCreate={editable && state.status !== "applying"}
               onClose={() => setComposing(false)}
               onComposed={(document) => {

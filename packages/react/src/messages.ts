@@ -132,6 +132,15 @@ export const en = {
   "compose.submitting": "Creating…",
   /** Filename stem used when the compose form has no title. */
   "compose.defaultFileStem": "New document",
+  "compose.componentsTitle": "Or assemble from components",
+  "compose.componentsHint":
+    "Added components become the document in this order. While the list is not empty, the document type, author and body above are not used.",
+  "compose.componentsEmpty": "No components added.",
+  "compose.componentPicker": "Component to add",
+  "compose.addComponent": "Add",
+  "compose.assemblyAria": "Components in this document, in order",
+  "compose.paramAria": (p: { component: string; param: string }): string =>
+    `${p.param} for ${p.component}`,
 
   // Compose preset labels. The preset PROFILES (font names, sizes) are
   // document data and stay in presets.ts, untranslated.
@@ -471,6 +480,14 @@ export const ko: MessageTable = {
   "compose.submit": "문서 생성",
   "compose.submitting": "생성 중...",
   "compose.defaultFileStem": "새 문서",
+  "compose.componentsTitle": "또는 구성 요소로 만들기",
+  "compose.componentsHint":
+    "추가한 구성 요소가 이 순서대로 문서가 됩니다. 목록이 비어 있지 않으면 위의 문서 유형, 작성자, 본문은 사용되지 않습니다.",
+  "compose.componentsEmpty": "추가한 구성 요소가 없습니다.",
+  "compose.componentPicker": "추가할 구성 요소",
+  "compose.addComponent": "추가",
+  "compose.assemblyAria": "이 문서의 구성 요소 순서",
+  "compose.paramAria": (p) => `${p.component}의 ${p.param}`,
 
   "presets.official": "공문",
   "presets.report": "보고서",
