@@ -187,6 +187,33 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
     onError?.(shown);
   };
 
+  /**
+   * The exact "a document is still loading" sentence this dialog last showed,
+   * kept as text rather than re-derived when it is retired: a locale change
+   * while the load runs would otherwise leave the other language's sentence on
+   * screen, which is the class the editor's own notice line already had to fix.
+   */
+  const loadingRefusal = useRef("");
+  /**
+   * Refuse a press because a load is replacing the document, and remember the
+   * sentence so the load that caused it can take it back down.
+   */
+  const refuseLoading = (): void => {
+    const sentence = t("error.loadingReplacement");
+    loadingRefusal.current = sentence;
+    refuse(sentence);
+  };
+  // The load that caused that refusal has landed or failed, so the sentence
+  // names a condition that no longer holds and the press can be made again.
+  // No dependency list: `loadSettled()` compares refs, so the render that
+  // carries the settled load is the only trigger there is.
+  useEffect(() => {
+    const sentence = loadingRefusal.current;
+    if (sentence === "" || !loadSettled()) return;
+    loadingRefusal.current = "";
+    setError((current) => (current !== null && current.message === sentence ? null : current));
+  });
+
   const compose = async (): Promise<void> => {
     if (!canCreate || busy) return;
     // A load in flight would be replaced by what this composes, and it is the
@@ -197,7 +224,7 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
     // is said out loud rather than left as a press that did nothing, and it
     // reaches the host as every other refusal in this editor does.
     if (!loadSettled()) {
-      refuse(t("error.loadingReplacement"));
+      refuseLoading();
       return;
     }
     setBusy(true);
@@ -247,7 +274,7 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
     // Same rule as `compose`: a document created now would replace the file
     // the host has chosen and this editor has not finished reading.
     if (!loadSettled()) {
-      refuse(t("error.loadingReplacement"));
+      refuseLoading();
       return;
     }
     const epoch = loadEpoch();

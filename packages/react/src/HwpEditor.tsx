@@ -1057,6 +1057,10 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         throw refusal;
       }
       const generation = loadGeneration.current;
+      // Both stale cases below are discards rather than failures of the
+      // document on screen, so neither is painted on the load error line;
+      // `discarded` is what keeps the catch from doing so.
+      let discarded = false;
       try {
         const [nextEnvelope, pages, report] = await Promise.all([
           engine.read(snapshot.document),
@@ -1067,7 +1071,23 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         // own envelope replaces whatever this one has to say. Rejected rather
         // than returned quietly, because `await refresh()` would otherwise
         // report a re-read that was thrown away.
-        if (generation !== loadGeneration.current) throw new Error(t("error.staleRefresh"));
+        if (generation !== loadGeneration.current) {
+          discarded = true;
+          throw new Error(t("error.staleRefresh"));
+        }
+        // A load is not the only transition that moves the document inside one
+        // generation. An apply, an undo or a template replacement keeps both
+        // generation refs equal and swaps the document under this read, so the
+        // envelope and pages landing here describe bytes the store no longer
+        // holds - and every op queued afterwards would be addressed by them.
+        // The document alone is what decides: an apply in flight, or one that
+        // failed, moves the snapshot stack without moving the document, and
+        // that re-read is of exactly the bytes the store still holds.
+        const now = store.getState();
+        if (now.document !== snapshot.document) {
+          discarded = true;
+          throw new Error(t("error.staleRefreshEdit"));
+        }
         setEnvelope(nextEnvelope);
         setValidation(report);
         store.dispatch({ type: "setPages", pages });
@@ -1077,10 +1097,12 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         setStylesReload((count) => count + 1);
       } catch (e) {
         // A no-op resolves quietly (above); a FAILURE must be observable to
-        // the awaiting host, so surface it three ways and reject. A reading
-        // that a load superseded is not a failure of the document now on
-        // screen: the load owns the error line, so only the host hears it.
-        if (generation === loadGeneration.current) setLoadError(toEditorError(e));
+        // the awaiting host, so surface it and reject. A discard is not a
+        // failure of the document on screen: when a load superseded this read,
+        // the load owns the error line; when an edit or undo overtook it, that
+        // edit has already installed its own envelope and pages, so nothing
+        // shown is wrong. Either way only the host hears it, through onError.
+        if (!discarded && generation === loadGeneration.current) setLoadError(toEditorError(e));
         emitError(e);
         throw e;
       }

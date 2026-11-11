@@ -89,6 +89,26 @@ function envelopeWithIds(): CatEnvelope {
   };
 }
 
+/**
+ * What an edited document answers with: the same envelope with the heading
+ * changed, in the same number of scalars so every segment range still
+ * addresses the text it did.
+ */
+function editedEnvelope(): CatEnvelope {
+  const base = envelopeWithIds();
+  return { ...base, markdown: base.markdown.replace("1. 회의록", "개정된 안건") };
+}
+
+/**
+ * What a RE-READ of the open document answers with: the same envelope with the
+ * heading changed, again in the same number of scalars, so an install is
+ * visible on the page and no segment range moves.
+ */
+function reReadEnvelope(): CatEnvelope {
+  const base = envelopeWithIds();
+  return { ...base, markdown: base.markdown.replace("1. 회의록", "1. 재조회") };
+}
+
 /** A preset batch the engine measured as changing nothing: already in place. */
 function unchangedReport(): EditReport {
   return {
@@ -123,6 +143,8 @@ interface EngineOptions {
   failWhenReleased?: (document: DocumentHandle, call: number) => boolean;
   /** Hold the engine edit until `releaseEdit()`. */
   holdEdit?: boolean;
+  /** Answer this document's read with its own envelope, so an install is visible. */
+  envelopeFor?: (document: DocumentHandle, call: number) => CatEnvelope | undefined;
 }
 
 /**
@@ -152,7 +174,7 @@ function editorEngine(opts: EngineOptions = {}) {
             : resolve);
         });
       }
-      return base.read(document);
+      return opts.envelopeFor?.(document, call) ?? base.read(document);
     },
     edit: async (document, ops) => {
       if (opts.holdEdit === true) {
@@ -505,6 +527,109 @@ describe("#58 item 21: revert and refresh belong to one load generation", () => 
 });
 
 /**
+ * #58 item 27: a re-read belongs to the document it started from, not only to
+ * the load generation. An apply, an undo or a template replacement keeps both
+ * generation refs where they are and swaps the document under the read, so the
+ * pair cannot see it and a reading of the pre-edit bytes would be installed
+ * over the document that replaced its own subject.
+ */
+describe("#58 item 27: a refresh keeps its reading only for the document it started from", () => {
+  it("drops a re-read an apply overtook inside one generation", async () => {
+    const edited = editedEnvelope();
+    const h = editorEngine({
+      // Only an edited document answers with different text, so installing the
+      // pre-edit reading where it does not belong is visible on the page.
+      envelopeFor: (document) => (document.name.startsWith("edited-") ? edited : undefined),
+      // The first read is the load; the second is the refresh's.
+      holdRead: (document, call) => document.name === file.name && call > 1,
+    });
+    const ref = createRef<HwpEditorHandle>();
+    const onError = vi.fn();
+    render(<HwpEditor ref={ref} engine={h.engine} file={file} onError={onError} />);
+    await screen.findByText(file.name);
+    await selectAndQueueReplace(en);
+
+    let settled: Promise<unknown> = Promise.resolve();
+    act(() => {
+      settled = handle(ref).refresh().then(() => "resolved", (error: unknown) => error);
+    });
+    await vi.waitFor(() => expect(h.readStarted()).toBe(true));
+
+    // The edit lands while the re-read is held, and no generation moves.
+    await applyOne(en);
+    await screen.findByText("edited-1.hwpx");
+
+    await act(async () => { h.releaseRead(); });
+    let outcome: unknown;
+    await act(async () => { outcome = await settled; });
+
+    // Rejected rather than resolved: the host asked for a re-read of what is on
+    // screen and did not get one.
+    expect((outcome as Error).message).toBe(en["error.staleRefreshEdit"]);
+    // The host is told, because it is the only party that asked for the read.
+    expect((onError.mock.calls[0]?.[0] as Error).message).toBe(en["error.staleRefreshEdit"]);
+    // The edit's own envelope is still the one installed: the heading the page
+    // carries is the edited one, not the pre-edit text the held read returned.
+    await selectPara(en, 0);
+    expect(await screen.findByText("개정된 안건")).toBeTruthy();
+    expect(screen.queryByText("1. 회의록")).toBeNull();
+    // The edit that overtook the read landed and installed its own envelope and
+    // pages, so nothing on screen is wrong: no alert line is painted.
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("installs a re-read that spanned an apply which failed, and resolves", async () => {
+    const reRead = reReadEnvelope();
+    const h = editorEngine({
+      // The edit runs, and the READ OF ITS OWN RESULT fails: the store keeps
+      // the document it started from, which is the case this guard must not
+      // refuse. `applyStarted` staged a snapshot and `applyFailed` popped it,
+      // so the stack moved twice and the document never did.
+      failRead: (document) => document.name.startsWith("edited-"),
+      // The apply holds its result until the test opens the gate, so the
+      // re-read can start while the snapshot it staged is still on the stack.
+      holdEdit: true,
+      // The first read is the load; the next one of the open document is the
+      // refresh's, and it is held past the apply's failure.
+      holdRead: (document, call) => document.name === file.name && call > 1,
+      // Only that re-read answers with different text, so its install is
+      // visible on the page.
+      envelopeFor: (document, call) => (document.name === file.name && call > 1 ? reRead : undefined),
+    });
+    const ref = createRef<HwpEditorHandle>();
+    const view = render(<HwpEditor ref={ref} engine={h.engine} file={file} />);
+    await screen.findByText(file.name);
+    await selectAndQueueReplace(en);
+
+    // The apply is in flight - its snapshot is staged, its result read is not
+    // answered yet - when the re-read starts.
+    await applyOne(en);
+    await vi.waitFor(() => expect(h.editStarted()).toBe(true));
+    let settled: Promise<unknown> = Promise.resolve();
+    act(() => {
+      settled = handle(ref).refresh().then(() => "resolved", (error: unknown) => error);
+    });
+    await vi.waitFor(() => expect(h.readStarted()).toBe(true));
+
+    // The apply then fails, and its snapshot is popped: the document on screen
+    // is still the one the re-read started from.
+    await act(async () => { h.releaseEdit(); });
+    await vi.waitFor(() => expect(view.container.firstElementChild?.getAttribute("data-status")).toBe("error"));
+
+    await act(async () => { h.releaseRead(); });
+    let outcome: unknown;
+    await act(async () => { outcome = await settled; });
+
+    // Nothing landed, so the reading describes the document still on screen:
+    // installed, and the caller is told the surface was re-read.
+    expect(outcome).toBe("resolved");
+    await selectPara(en, 0);
+    expect(await screen.findByText("1. 재조회")).toBeTruthy();
+    expect(screen.queryByText("1. 회의록")).toBeNull();
+  });
+});
+
+/**
  * #58 item 24: a created document replaces the open one, and while a load is
  * in flight the open one is the file the host has just left. The dialog is
  * disabled with the reason rather than allowed to compose onto a document that
@@ -594,6 +719,69 @@ describe("#58 item 24: creating a document waits for a load in flight", () => {
     fireEvent.click(submit);
     await vi.waitFor(() => expect(h.engine.calls.compose).toHaveLength(2));
     await vi.waitFor(() => expect(screen.queryByText(composed)).toBeNull());
+  });
+});
+
+/**
+ * #58 item 28: "a document is still loading" describes a window, so it is
+ * retired when that window closes. The dialog kept it until the next press, so
+ * it went on claiming a load was running after the read that caused it had
+ * landed or failed.
+ */
+describe("#58 item 28: the loading refusal is retired when the load settles", () => {
+  /**
+   * Compose once (which starts the held read), then reopen and press again:
+   * the composed read raises no in-flight hint, so the press reaches the
+   * generations and is refused on them.
+   */
+  async function refuseSecondPress(h: ReturnType<typeof editorEngine>): Promise<HTMLElement> {
+    const openDialog = async (title: string): Promise<HTMLElement> => {
+      fireEvent.click(screen.getByRole("button", { name: en["toolbar.newDocument"] }));
+      const dialog = await screen.findByRole("dialog", { name: en["compose.title"] });
+      fireEvent.change(within(dialog).getByLabelText(en["compose.titleLabel"]), {
+        target: { value: title },
+      });
+      fireEvent.click(within(dialog).getByRole("button", { name: en["compose.submit"] }));
+      return dialog;
+    };
+
+    await openDialog("composed");
+    await vi.waitFor(() => expect(h.readStarted()).toBe(true));
+    const dialog = await openDialog("second");
+    const alert = await within(dialog).findByRole("alert");
+    expect(alert.textContent).toContain(en["error.loadingReplacement"]);
+    return dialog;
+  }
+
+  const refusalGone = async (): Promise<void> => {
+    await vi.waitFor(() =>
+      expect(
+        within(screen.getByRole("dialog", { name: en["compose.title"] })).queryByRole("alert"),
+      ).toBeNull(),
+    );
+  };
+
+  it("clears the refusal once the load it named lands", async () => {
+    const h = editorEngine({ holdRead: (document) => document.name === "composed.hwpx" });
+    render(<HwpEditor engine={h.engine} file={file} />);
+    await screen.findByText(file.name);
+
+    await refuseSecondPress(h);
+    await act(async () => { h.releaseRead(); });
+    await refusalGone();
+  });
+
+  it("clears it when that load fails", async () => {
+    const h = editorEngine({
+      holdRead: (document) => document.name === "composed.hwpx",
+      failWhenReleased: (document) => document.name === "composed.hwpx",
+    });
+    render(<HwpEditor engine={h.engine} file={file} />);
+    await screen.findByText(file.name);
+
+    await refuseSecondPress(h);
+    await act(async () => { h.releaseRead(); });
+    await refusalGone();
   });
 });
 
