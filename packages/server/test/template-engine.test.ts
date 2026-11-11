@@ -1,13 +1,16 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { templateVersionSupported } from "@hwp-editor/core";
 import type { DocumentSpecV2, TemplateSpecV1 } from "@hwp-editor/core";
 import { createCliEngine } from "../src/cli-engine.js";
 import { createHwpEditorHandler } from "../src/routes.js";
+import { createFakeBin, disposeFakeBins } from "./fake-bin.js";
 import { BIN, jsonRequest, multipartRequest } from "./helpers.js";
+
+afterEach(disposeFakeBins);
 
 const spec = {version:"2.0",document:{version:"1.0",sections:[{blocks:[
   {type:"paragraph",runs:[{type:"text",text:"제목 {{title}}"}]},
@@ -63,6 +66,28 @@ describeTemplates("template commands (requires real hwp-cli >= 1.4.0)", () => {
     const payload=await fill.json(); expect(payload.report.replaced).toBeGreaterThanOrEqual(2);
     const templates=await handler(new Request("http://test/templates")); expect(templates.status).toBe(200);
     const created=await handler(jsonRequest("http://test/create",{templateId:"gongmun-basic",name:"new.hwpx"})); expect(created.status).toBe(200);
+  });
+});
+
+describe("template CLI failure guidance", () => {
+  const document = { name: "sample.hwpx", data: new Uint8Array([1]) };
+  const cases = [
+    ["slots", (engine: ReturnType<typeof createCliEngine>) => engine.slots(document), "open and save it"],
+    ["fields", (engine: ReturnType<typeof createCliEngine>) => engine.slots(document), "open and save it"],
+    ["fill", (engine: ReturnType<typeof createCliEngine>) => engine.fill(document, { title: "Hello" }), "form values"],
+    ["template", (engine: ReturnType<typeof createCliEngine>) => engine.template(templateSpec, { version: "1.0", values: { title: "Hello" } }, "out.hwpx"), "TemplateSpec"],
+    ["lint", (engine: ReturnType<typeof createCliEngine>) => engine.lint(document), "open and save it"],
+    ["list-templates", (engine: ReturnType<typeof createCliEngine>) => engine.listTemplates(), "hwp new --list-templates"],
+    ["create", (engine: ReturnType<typeof createCliEngine>) => engine.create("gongmun-basic", "out.hwpx"), "hwp new --list-templates"],
+    ["edit", (engine: ReturnType<typeof createCliEngine>) => engine.fill(document, { approval: "ok" }), "field names exist"],
+  ] as const;
+
+  it.each(cases)("gives command-specific guidance when %s fails through createCliEngine", async (failure, invoke, guidance) => {
+    const { bin } = createFakeBin({ version: "1.4.0", failTemplateCommand: failure });
+    const engine = createCliEngine({ bin });
+    const error = await invoke(engine).then(() => null, (reason: unknown) => reason);
+    expect(error).toMatchObject({ message: expect.stringContaining(guidance) });
+    expect((error as Error).message).not.toContain("/private/fake/document.hwpx");
   });
 });
 

@@ -20,6 +20,7 @@ export function LintPanel(): JSX.Element {
     generation.current += 1;
     setReport(null);
     setBusy(false);
+    setError(null);
   }, [document, profile]);
   useEffect(() => () => { generation.current += 1; }, []);
 

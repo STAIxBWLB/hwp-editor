@@ -39,6 +39,8 @@ export interface FakeBinOptions {
   version?: string;
   /** What every subcommand other than `--version`/`edit --help`/`info` does. */
   mode?: FakeBinMode;
+  /** Fail one template command after the version/help handshake. */
+  failTemplateCommand?: "slots" | "fields" | "fill" | "template" | "lint" | "list-templates" | "create" | "edit";
   /** `slow` sleep duration in ms; default 5000. */
   delayMs?: number;
   /** JSON printed for `info`, if the test needs the pre-flight to see one. */
@@ -114,6 +116,9 @@ export function createFakeBin(opts: FakeBinOptions = {}): { bin: string; log: ()
   writeFileSync(logPath, "");
   const bin = path.join(dir, "hwp");
   const help = opts.helpFixture ?? DEFAULT_HELP_FIXTURE;
+  const fail = (command: string) => opts.failTemplateCommand === command
+    ? [`printf '%s' ${JSON.stringify(`${command} failed at /private/fake/document.hwpx`)} >&2`, "exit 3"]
+    : [];
   writeFileSync(
     bin,
     [
@@ -125,11 +130,19 @@ export function createFakeBin(opts: FakeBinOptions = {}): { bin: string; log: ()
       `  --version) echo ${JSON.stringify(`hwp ${opts.version ?? DEFAULT_VERSION}`)}; exit 0 ;;`,
       // `|| exit 1` rather than an unconditional `exit 0`: an unreadable
       // fixture is the only way to give the handshake a failing `edit --help`.
-      `  edit) if [ "$2" = "--help" ]; then cat ${JSON.stringify(help)} || exit 1; exit 0; fi ;;`,
+      `  edit) if [ "$2" = "--help" ]; then cat ${JSON.stringify(help)} || exit 1; exit 0; fi; ${fail("edit").length ? fail("edit").join("; ") : ""} ;;`,
       ...(opts.catStdout === undefined
         ? []
         : [`  cat) printf '%s' ${JSON.stringify(opts.catStdout)}; exit 0 ;;`]),
       ...(opts.info === undefined ? [] : [`  info) printf '%s' ${JSON.stringify(opts.info)}; exit 0 ;;`]),
+      ...(opts.failTemplateCommand === undefined ? [] : [
+        `  slots) ${fail("slots").length ? fail("slots").join("; ") : "printf '%s' '{\"placeholders\":[],\"fields\":[]}'; exit 0"} ;;`,
+        `  fields) ${fail("fields").length ? fail("fields").join("; ") : opts.failTemplateCommand === "edit" ? "printf '%s' '[{\"name\":\"approval\",\"kind\":\"text\",\"ctrl_id\":\"1\",\"value\":\"\"}]'; exit 0" : "printf '%s' '[]'; exit 0"} ;;`,
+        `  fill) ${fail("fill").length ? fail("fill").join("; ") : "printf '%s' '{\"replaced\":0,\"counts\":{}}'; exit 0"} ;;`,
+        `  template) ${fail("template").length ? fail("template").join("; ") : "exit 0"} ;;`,
+        `  lint) ${fail("lint").length ? fail("lint").join("; ") : "printf '%s' '{\"contract\":\"hwp-lint-report-v1\",\"schema_version\":\"1.0\",\"findings\":[]}'; exit 0"} ;;`,
+        `  new) if [ "$2" = "--list-templates" ]; then ${fail("list-templates").length ? fail("list-templates").join("; ") : "printf '%s\\t%s\\n' gongmun-basic 공문; exit 0"}; else ${fail("create").length ? fail("create").join("; ") : "exit 0"}; fi ;;`,
+      ]),
       "esac",
       ...modeScript(opts),
       "",
