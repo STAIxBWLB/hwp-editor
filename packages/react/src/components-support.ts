@@ -12,14 +12,17 @@
  *   width is 46.40 mm"). The width of the destination is not something the
  *   render layout publishes — a paragraph's painted box is the width of its
  *   text, 163.9 pt against a 170 mm column in the playground's own fixture —
- *   so the engine's own `layout_overflow` marker and the width it prints are
- *   the source of both numbers, and a preflight from the rendered box would
- *   refuse insertions the engine accepts.
- * - The same refusal has two other classes the CLI server names — a style the
- *   target document does not define, and a block, style or list definition the
- *   engine rejected — and each gets its own sentence and next step here. Both
- *   arrive already classified, because the raw stderr names the staged input
- *   file and never crosses the HTTP boundary.
+ *   so the engine's own `layout_overflow` diagnostic and the width it prints
+ *   are the source of both numbers, and a preflight from the rendered box
+ *   would refuse insertions the engine accepts.
+ * - The same refusal has two other classes — a style the target document
+ *   does not define, and a block, style or list definition the engine
+ *   rejected — and each gets its own sentence and next step here.
+ *
+ * All three classes arrive as the structured `insertion` field both
+ * transports set from core's `classifyInsertionRefusal` (#88). The message is
+ * never parsed for a class: on an unclassified failure it can carry what the
+ * user typed.
  *
  * Every other refusal — an insertion before a section's definition paragraph,
  * an equation into `.hwp`, a compile failure — is one class: the engine's own
@@ -29,8 +32,8 @@
  * without a round trip at all.
  */
 import type { MessageKey, TFunction } from "./messages.js";
-import { isComponentError, isHwpEngineError, HwpEngineError } from "@hwp-editor/core";
-import type { Blocks, ComponentErrorCode } from "@hwp-editor/core";
+import { isComponentError, isHwpEngineError, isInsertionRefusal, HwpEngineError } from "@hwp-editor/core";
+import type { Blocks, ComponentErrorCode, InsertionRefusal } from "@hwp-editor/core";
 
 /** A width as the localized messages print it, in whole millimetres. */
 function millimetres(value: number): string {
@@ -112,35 +115,29 @@ export function insertionPreflight(
   return "";
 }
 
-/**
- * The insertion width named in a `layout_overflow` refusal, in mm.
- *
- * Three spellings reach here: the server's one-line cause (`insertion point
- * 46.40 mm`, built from cli-engine's refusal summary), the engine's own
- * "body width is 46.40 mm" / "exceeds body width 46.40 mm", and the Korean
- * tail it repeats the figure in. A host wired in process passes the raw engine
- * text, so all three stay.
- */
-export function overflowingBodyMm(message: string): number | undefined {
-  const match = /insertion point ([\d.]+) ?mm/.exec(message) ??
-    /body width (?:is )?([\d.]+) ?mm/.exec(message) ??
-    /폭은 ([\d.]+)mm/.exec(message);
-  if (match === null) return undefined;
-  const value = Number(match[1]);
-  return Number.isFinite(value) ? value : undefined;
+/** The `insert_blocks` class a transport attached to the failure (#88), if any. */
+function insertionOf(error: unknown): InsertionRefusal | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  const value = (error as { insertion?: unknown }).insertion;
+  return isInsertionRefusal(value) ? value : undefined;
 }
 
 /**
- * Whether an engine failure is the width refusal `insert_blocks` answers with.
- *
- * `layout_overflow` is the engine's own diagnostic token: it survives the
- * Korean prose, and the CLI server carries it out of stderr unchanged (it is
- * the only part of an `insert_blocks` refusal that names no file path), so the
- * same marker works over HTTP and in process.
+ * The insertion width a `layout_overflow` refusal measured, in mm, from the
+ * structured field a transport sets (#88). The message is not parsed.
+ */
+export function overflowingBodyMm(error: unknown): number | undefined {
+  const insertion = insertionOf(error);
+  return insertion?.kind === "layout_overflow" ? insertion.insertionMm : undefined;
+}
+
+/**
+ * Whether an engine failure is the width refusal `insert_blocks` answers
+ * with, read from the structured `insertion` field (#88). The message is not
+ * parsed: on an unclassified failure it can carry what the user typed.
  */
 export function isLayoutOverflow(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.includes("layout_overflow");
+  return insertionOf(error)?.kind === "layout_overflow";
 }
 
 /**
@@ -151,32 +148,17 @@ export function isLayoutOverflow(error: unknown): boolean {
  */
 function wrapped(error: unknown, text: string, detail: string): Error {
   if (isHwpEngineError(error)) {
+    const insertion = insertionOf(error);
     return Object.assign(
       new HwpEngineError(error.code, text, {
         ...(error.status === undefined ? {} : { status: error.status }),
         cause: error,
+        ...(insertion === undefined ? {} : { insertion }),
       }),
       { detail },
     );
   }
   return Object.assign(new Error(text), { detail });
-}
-
-/**
- * The style name an `unknown_style` refusal names, or undefined when this
- * message is not one.
- *
- * Two spellings reach here. The CLI server quotes the name last on its own
- * line, because a style name is user text and can hold a `)` or a `'` — the
- * parenthesised form an older server wrote is deliberately not read: that is
- * the form that cut such a name in half. A host wired in process carries the
- * engine's own Korean sentence instead, where the name is between quotes; that
- * capture is greedy, so it is the last quote before 을 that closes it.
- */
-function unknownStyleName(message: string): string | undefined {
-  const server = /insert_blocks refused: unknown_style;\s*([^\n]+)/.exec(message)?.[1]?.trim();
-  if (server !== undefined && server !== "") return server;
-  return /스타일 '(.*)'을 대상 문서에서 찾을 수 없습니다/.exec(message)?.[1];
 }
 
 /**
@@ -210,12 +192,11 @@ function refusalReason(message: string): string {
  * binary, a protected document, an old engine and a staging failure each keep
  * the handling they already have, because calling one of those "the engine
  * refused this insertion" would misname the cause. A failure that carries no
- * error code is judged by the engine's own markers, which is what an
- * in-process transport passes through untouched.
+ * error code counts only when a transport attached an `insertion` class.
  */
-function isInsertionRefusal(error: unknown, message: string): boolean {
-  if (isHwpEngineError(error)) return error.code === "failed" || error.code === "bad_request";
-  return /insert_blocks|layout_overflow|스타일 '(.*)'을 대상 문서에서 찾을 수 없습니다|블록\/스타일\/목록 정의가 유효하지 않습니다/.test(message);
+function isRefusedInsertion(error: unknown): boolean {
+  if (insertionOf(error) !== undefined) return true;
+  return isHwpEngineError(error) && (error.code === "failed" || error.code === "bad_request");
 }
 
 /**
@@ -236,12 +217,15 @@ export function insertionFailure(
   t: TFunction,
 ): unknown {
   const message = error instanceof Error ? error.message : String(error);
-  if (!isInsertionRefusal(error, message)) return error;
-  const style = unknownStyleName(message);
-  if (style !== undefined) return wrapped(error, t("components.unknownStyle", { style }), message);
-  if (isLayoutOverflow(error)) {
+  if (!isRefusedInsertion(error)) return error;
+  // The class comes from the structured field only (#88).
+  const insertion = insertionOf(error);
+  if (insertion?.kind === "unknown_style") {
+    return wrapped(error, t("components.unknownStyle", { style: insertion.style }), message);
+  }
+  if (insertion?.kind === "layout_overflow") {
     const wanted = widestBlockMm(blocks);
-    const available = overflowingBodyMm(message);
+    const available = insertion.insertionMm;
     // Every sentence below names a next step the user can take; none of them
     // leaves a blank where a width would go.
     const text = wanted === undefined
@@ -251,7 +235,7 @@ export function insertionFailure(
         : t("components.tooWide", { width: millimetres(wanted), available: millimetres(available) });
     return wrapped(error, text, message);
   }
-  if (message.includes("insert_blocks refused: invalid_definition")) {
+  if (insertion?.kind === "invalid_definition") {
     return wrapped(error, t("components.invalidDefinition"), message);
   }
   const reason = refusalReason(message);

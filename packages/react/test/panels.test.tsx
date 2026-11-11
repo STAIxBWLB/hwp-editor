@@ -855,9 +855,11 @@ describe("ComponentsPanel (TEST-03)", () => {
     // The engine answers a block wider than its insertion point with its own
     // diagnostic, in Korean in every locale; the palette replaces it.
     const engine = composedEngine();
-    engine.edit = () => Promise.reject(new Error(
-        "Error: insert_blocks 블록 정의가 유효하지 않습니다: layout_overflow at " +
-          "$.sections[0].blocks[0].width_mm: table width exceeds body width 46.40 mm.",
+    // As a transport delivers it (#88): the class in the `insertion` field.
+    engine.edit = () => Promise.reject(new HwpEngineError(
+      "failed",
+      "hwp edit failed (exit 3): insert_blocks refused: layout_overflow (insertion point 46.40 mm)",
+      { status: 422, insertion: { kind: "layout_overflow", insertionMm: 46.4 } },
     ));
     const envelope = await engine.read(file);
     await selectPara(engine, 1, envelope);
@@ -1143,7 +1145,7 @@ describe("ComponentsPanel (TEST-03)", () => {
     engine.edit = () => Promise.reject(new HwpEngineError(
       "failed",
       "hwp edit failed (exit 3): insert_blocks refused: unknown_style; 결재란 셀",
-      { status: 422 },
+      { status: 422, insertion: { kind: "unknown_style", style: "결재란 셀" } },
     ));
     const envelope = await engine.read(file);
     await selectPara(engine, 1, envelope);

@@ -130,5 +130,7 @@ export interface ErrorResponse {
     message: string;
     /** The classified edit refusal (`EditRefusalKind`), when there is one (#82). */
     refusal?: string;
+    /** The `insert_blocks` refusal class (`InsertionRefusal`), when there is one (#88). */
+    insertion?: unknown;
   };
 }

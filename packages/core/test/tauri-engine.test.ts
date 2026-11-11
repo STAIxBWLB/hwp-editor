@@ -11,6 +11,7 @@ import { base64 } from "../src/http-engine.js";
 import type { DocumentHandle, EditOp, HwpErrorCode } from "../src/index.js";
 import { HwpEngineError, isHwpEngineError } from "../src/index.js";
 import { createTauriEngine, type TauriInvoke } from "../src/tauri.js";
+import { STOPPED_WITHOUT_DIAGNOSTIC } from "../src/index.js";
 import { DRIFT, MIXED_CONFLICT, RANGE_TAG, RUN_CONFLICT, UNMATCHED } from "./fixtures/refusal-stderr.js";
 
 interface Call {
@@ -342,6 +343,15 @@ describe("createTauriEngine errors", () => {
     expect(err.cause).toBe(raw);
   });
 
+  it("reads refusal and insertion from a structured rejection through the validators (#88)", async () => {
+    const good = (await rejectionOf({ code: "failed", message: "x", refusal: "range_tag", insertion: { kind: "invalid_definition" } })) as HwpEngineError;
+    expect(good.refusal).toBe("range_tag");
+    expect(good.insertion).toEqual({ kind: "invalid_definition" });
+    const bad = (await rejectionOf({ code: "failed", message: "x", refusal: "bogus", insertion: { kind: "nope" } })) as HwpEngineError;
+    expect(bad.refusal).toBeUndefined();
+    expect(bad.insertion).toBeUndefined();
+  });
+
   it("narrows an unknown structured code to internal instead of casting it in", async () => {
     const err = (await rejectionOf({ code: "not-a-real-code" })) as HwpEngineError;
     expect(err.code).toBe("internal");
@@ -537,11 +547,12 @@ describe("Tauri edit refusal classification (#80)", () => {
     expect(err.cause).toBe(raw);
   });
 
-  it("keeps an unclassified edit failure as it was", async () => {
+  it("words an unclassified edit failure as HTTP does: the exit line, no raw stderr (#88)", async () => {
     const raw = `hwp_failed: hwp edit failed (exit 3): ${MIXED_CONFLICT}`;
     const err = (await createTauriEngine(reject(raw)).edit(doc, [{ kind: "replace", find: "a", replace: "b" }])
       .then(() => null, (e: unknown) => e)) as HwpEngineError;
-    expect(err.message).toBe(`hwped_edit failed: ${raw}`);
+    expect(err.message).toBe("hwped_edit failed: hwp edit failed (exit 3)");
+    expect(err.cause).toBe(raw);
     expect(err.refusal).toBeUndefined();
   });
 
@@ -567,5 +578,31 @@ describe("Tauri edit refusal classification (#80)", () => {
     const err = (await createTauriEngine(reject(raw)).edit(doc, [{ kind: "replace", find: "a", replace: "b" }])
       .then(() => null, (e: unknown) => e)) as HwpEngineError;
     expect(err.refusal).toBeUndefined();
+  });
+});
+
+describe("Tauri insert_blocks parity with HTTP (#88)", () => {
+  const reject = (detail: string): TauriInvoke => <T>(cmd: string): Promise<T> =>
+    cmd === "hwped_capabilities"
+      ? Promise.resolve({ version: "0.20.0", editable: true, formats: ["hwp", "hwpx"], editOps: "v1" } as T)
+      : Promise.reject(detail);
+  const INSERT: EditOp[] = [{
+    kind: "insert-blocks", address: { at: { section: 0, paragraph: 0 } }, position: "after",
+    blocks: [{ type: "paragraph", runs: [{ type: "text", text: "x" }] }],
+  }];
+
+  it("sets insertion and writes the server's cause line, with no raw stderr", async () => {
+    const stderr = "Error: 스타일 '결재란 셀'을 대상 문서에서 찾을 수 없습니다. /tmp/stage/in.hwpx";
+    const err = (await createTauriEngine(reject(`hwp_failed: hwp edit failed (exit 3): ${stderr}`)).edit(doc, INSERT)
+      .then(() => null, (e: unknown) => e)) as HwpEngineError;
+    expect(err.insertion).toEqual({ kind: "unknown_style", style: "결재란 셀" });
+    expect(err.message).toBe("hwped_edit failed: hwp edit failed (exit 3): insert_blocks refused: unknown_style; 결재란 셀");
+    expect(err.message).not.toContain("/tmp/");
+  });
+
+  it("writes the same stopped-without-diagnostic sentence as HTTP for empty stderr", async () => {
+    const err = (await createTauriEngine(reject("hwp_failed: hwp edit failed (exit 1): ")).edit(doc, INSERT)
+      .then(() => null, (e: unknown) => e)) as HwpEngineError;
+    expect(err.message).toBe(`hwped_edit failed: hwp edit failed (exit 1): ${STOPPED_WITHOUT_DIAGNOSTIC}`);
   });
 });

@@ -189,7 +189,15 @@ including any credential in the parent's environment, is stripped.
 
 ## Errors
 
-Every non-2xx response is an `ErrorResponse`: `{ error: { code, message } }`.
+Every non-2xx response is an `ErrorResponse`:
+`{ error: { code, message, refusal?, insertion? } }`. An edit the engine
+refuses for a reason the editor recognises carries `refusal`
+(`unmatched_replace`, `run_range_conflict` or `range_tag`). A refused
+`insert_blocks` carries `insertion`: `{ kind: "layout_overflow", blockMm?,
+insertionMm? }`, `{ kind: "unknown_style", style }` or
+`{ kind: "invalid_definition" }`. Both are set from core's classifiers, the
+same ones the Tauri client uses. Branch on these fields, never on `message`,
+which can contain values the user typed.
 Codes map to statuses as follows: `bad_request`/`path_traversal`/
 `unsupported_format` 400, `forbidden` 403, `not_found`/`session_not_found` 404,
 `method_not_allowed` 405, `output_too_large` 413, `failed`/`protected` 422,

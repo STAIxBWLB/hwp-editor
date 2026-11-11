@@ -183,3 +183,11 @@ export type { EditIdPair, EditOpOutcome, EditReport } from "./edit-report.js";
 export type { Blocks } from "./generated/document-spec-v2.js";
 export { classifyEditRefusal, editRefusalMarker, isEditRefusalKind } from "./refusals.js";
 export type { EditRefusalKind } from "./refusals.js";
+export {
+  classifyInsertionRefusal,
+  insertionRefusalLine,
+  isInsertionRefusal,
+  STOPPED_WITHOUT_DIAGNOSTIC,
+  withoutPaths,
+} from "./insertion-refusals.js";
+export type { InsertionRefusal } from "./insertion-refusals.js";

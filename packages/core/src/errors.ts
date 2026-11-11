@@ -17,6 +17,7 @@
  * vocabulary that must never be folded into this union.
  */
 
+import type { InsertionRefusal } from "./insertion-refusals.js";
 import type { EditRefusalKind } from "./refusals.js";
 
 /** Machine-readable failure code carried by every engine error. */
@@ -92,6 +93,8 @@ export interface HwpEngineErrorOptions {
    * a message can carry text the user typed.
    */
   refusal?: EditRefusalKind;
+  /** The `insert_blocks` refusal class (#88), read the same way as `refusal`. */
+  insertion?: InsertionRefusal;
 }
 
 /** Engine failure carrying a stable `code` alongside its human message. */
@@ -105,6 +108,8 @@ export class HwpEngineError extends Error {
   declare readonly status?: number;
   /** The classified edit refusal, when a transport recognised one (#82). */
   declare readonly refusal?: EditRefusalKind;
+  /** The `insert_blocks` refusal class, when a transport recognised one (#88). */
+  declare readonly insertion?: InsertionRefusal;
 
   constructor(
     public readonly code: HwpErrorCode,
@@ -119,6 +124,7 @@ export class HwpEngineError extends Error {
     if (options.status !== undefined) this.status = options.status;
     if (options.cause !== undefined) this.cause = options.cause;
     if (options.refusal !== undefined) this.refusal = options.refusal;
+    if (options.insertion !== undefined) this.insertion = options.insertion;
   }
 }
 

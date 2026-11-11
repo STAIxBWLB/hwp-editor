@@ -19,6 +19,7 @@ import type {
 } from "./engine.js";
 import { HwpEngineError, toHwpErrorCode } from "./errors.js";
 import { isEditRefusalKind } from "./refusals.js";
+import { isInsertionRefusal } from "./insertion-refusals.js";
 import type { HwpErrorCode } from "./errors.js";
 import type { EditOp } from "./ops.js";
 import type { CatEnvelope } from "./segments.js";
@@ -135,6 +136,7 @@ async function parseError(res: Response): Promise<HwpEngineError> {
         cause: body,
         // Narrowed, never cast; an older server sends no field (#82).
         ...(isEditRefusalKind(body.error.refusal) ? { refusal: body.error.refusal } : {}),
+        ...(isInsertionRefusal(body.error.insertion) ? { insertion: body.error.insertion } : {}),
       },
     );
   } catch {

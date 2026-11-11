@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { CatEnvelope, DirectChar, DocumentHandle } from "@hwp-editor/core";
-import { HwpEngineError } from "@hwp-editor/core";
+import { createHttpEngine, createTauriEngine, HwpEngineError } from "@hwp-editor/core";
 import { HwpEditor } from "../src/HwpEditor.js";
 import { en, ko } from "../src/messages.js";
 import type { MessageTable } from "../src/messages.js";
@@ -961,5 +961,63 @@ describe.each([["en", en], ["ko", ko]] as const)("No or unknown refusal field on
     });
     const shown = screen.queryAllByRole("alert").map(alert => alert.textContent ?? "").join(" ");
     expect(shown).not.toContain(messages["error.rangeTagRefused"]);
+  });
+});
+
+/**
+ * A real transport failure carried all the way to the sentence shown (#88):
+ * the error the UI receives is what `createHttpEngine` (parseError) and
+ * `createTauriEngine` (toEngineError) build, not a hand-made one.
+ */
+describe.each([["en", en], ["ko", ko]] as const)("Transport failures end to end (#88, %s)", (locale, messages) => {
+  const hwpx: DocumentHandle = { name: "a.hwpx", data: new Uint8Array([1]) };
+  async function failureOf(engine: { edit: (d: DocumentHandle, o: never[]) => Promise<unknown> }): Promise<unknown> {
+    return engine.edit(hwpx, []).then(() => { throw new Error("edit succeeded"); }, (e: unknown) => e);
+  }
+  async function shown(failure: unknown): Promise<string> {
+    const engine = createMockEngine({ envelope: sentenceEnvelope("hello", [[0, 5]]) });
+    engine.edit = async () => { throw failure; };
+    render(<HwpEditor engine={engine} file={file} locale={locale} />);
+    await selectFirstParagraph(messages);
+    fireEvent.change(screen.getByLabelText(messages["segment.replaceLabel"]), { target: { value: "x" } });
+    fireEvent.click(screen.getByRole("button", { name: messages["segment.replaceSubmit"] }));
+    fireEvent.click(await screen.findByRole("button", { name: messages["toolbar.applyWithCount"]({ count: 1 }) }));
+    await waitFor(() => expect(screen.queryAllByRole("alert").length).toBeGreaterThan(0));
+    return screen.queryAllByRole("alert").map(alert => alert.textContent ?? "").join(" ");
+  }
+  const http = (error: Record<string, unknown>) => createHttpEngine("/api", {
+    fetch: (() => Promise.resolve(new Response(JSON.stringify({ error }), { status: 422 }))) as unknown as typeof fetch,
+  });
+  const tauri = (rejection: string) => createTauriEngine(<T,>(cmd: string): Promise<T> =>
+    cmd === "hwped_capabilities"
+      ? Promise.resolve({ version: "0.20.0", editable: true, formats: ["hwp", "hwpx"], editOps: "v1" } as T)
+      : Promise.reject(rejection));
+
+  it("HTTP: the server's error.refusal shows the range-tag sentence", async () => {
+    const failure = await failureOf(http({ code: "failed", message: "hwp edit failed (exit 3): edit refused: range_tag", refusal: "range_tag" }));
+    expect(await shown(failure)).toContain(messages["error.rangeTagRefused"]);
+  });
+
+  it("HTTP: message text alone shows no refusal sentence", async () => {
+    const failure = await failureOf(http({ code: "failed", message: "hwp edit failed (exit 3): edit refused: range_tag" }));
+    expect(await shown(failure)).not.toContain(messages["error.rangeTagRefused"]);
+  });
+
+  it("Tauri: an add_table anchor ending in the marker shows no refusal sentence and no raw stderr", async () => {
+    // add_table prints `앵커를 찾을 수 없습니다: {anchor}` (hwp-convert edit.rs:2107).
+    const failure = await failureOf(tauri(
+      "hwp_failed: hwp edit failed (exit 3): Error: 앵커를 찾을 수 없습니다: /tmp/x edit refused: range_tag",
+    ));
+    const text = await shown(failure);
+    expect(text).not.toContain(messages["error.rangeTagRefused"]);
+    expect(text).not.toContain("앵커를 찾을 수 없습니다");
+    expect(text).not.toContain("/tmp/");
+  });
+
+  it("Tauri: a real range-tag stderr shows the range-tag sentence", async () => {
+    const failure = await failureOf(tauri(
+      "hwp_failed: hwp edit failed (exit 3): Error: 미해석 PARA_RANGE_TAG 구간 표시가 있어 WCHAR 위치가 바뀌거나 표시를 잃는 문단 재작성을 지원하지 않습니다.",
+    ));
+    expect(await shown(failure)).toContain(messages["error.rangeTagRefused"]);
   });
 });

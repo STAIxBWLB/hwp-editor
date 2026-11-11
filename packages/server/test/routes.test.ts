@@ -249,6 +249,20 @@ describe("routes (stub engine)", () => {
     expect(body.error).toEqual({ code: "failed", message: "hwp edit failed (exit 3): edit refused: range_tag", refusal: "range_tag" });
   });
 
+  it("sends the insert_blocks class as error.insertion (#88)", async () => {
+    const { HwpCliError } = await import("../src/cli-engine.js");
+    const engine = stubEngine({
+      async edit() {
+        throw new HwpCliError("failed", "hwp edit failed (exit 3): insert_blocks refused: invalid_definition", "e", undefined, undefined, { kind: "invalid_definition" });
+      },
+    });
+    const handler = createHwpEditorHandler({ engine, sessions: false });
+    const res = await handler(multipartRequest(`${BASE}/edit`, { file: DOC, ops: JSON.stringify([]) }));
+    const body = await res.json();
+    expect(body.error.insertion).toEqual({ kind: "invalid_definition" });
+    expect(body.error).not.toHaveProperty("refusal");
+  });
+
   it("sends no refusal field for an unclassified failure, whatever its message says (#82)", async () => {
     const { HwpCliError } = await import("../src/cli-engine.js");
     const engine = stubEngine({

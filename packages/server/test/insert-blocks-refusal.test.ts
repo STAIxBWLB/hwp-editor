@@ -16,6 +16,7 @@
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { STOPPED_WITHOUT_DIAGNOSTIC } from "@hwp-editor/core";
 import type { Blocks, EditOp } from "@hwp-editor/core";
 
 import { createCliEngine, HwpCliError } from "../src/cli-engine.js";
@@ -70,6 +71,7 @@ async function failure(stderr: string | string[], ops: EditOp[]): Promise<HwpCli
 describe("insert_blocks refusal classification", () => {
   it("names layout_overflow and both widths without leaking the staged path", async () => {
     const error = await failure(WIDTH_REFUSAL, INSERT);
+    expect(error.insertion).toEqual({ kind: "layout_overflow", blockMm: 120, insertionMm: 46.4 });
 
     expect(error.message).toBe(
       "hwp edit failed (exit 3): insert_blocks refused: layout_overflow " +
@@ -85,6 +87,8 @@ describe("insert_blocks refusal classification", () => {
 
   it("names unknown_style and the style the document lacks", async () => {
     const error = await failure(STYLE_REFUSAL, INSERT);
+    // The class is a structured field too (#88), which routes.ts serializes.
+    expect(error.insertion).toEqual({ kind: "unknown_style", style: "결재란 셀" });
 
     // The name is printed last on its own line: a style name is user text and
     // can hold a `)` or a `'`, which any bracketed form would cut in half.
@@ -221,5 +225,13 @@ describe("edit report boundary", () => {
     expect(edited.report).toBeUndefined();
     expect(edited.name).toBe("sample.hwpx");
     expect(edited.data).toEqual(document.data);
+  });
+});
+
+describe("an edit failure that wrote no stderr (#88)", () => {
+  it("names the cause and the next step, the sentence the Tauri client prints", async () => {
+    const error = await failure("", INSERT);
+    expect(error.message).toBe(`hwp edit failed (exit 3): ${STOPPED_WITHOUT_DIAGNOSTIC}`);
+    expect(error.insertion).toBeUndefined();
   });
 });
