@@ -495,17 +495,22 @@ function refuseAlt(value: unknown, source: string, field: string): void {
 }
 
 /**
- * Why an image path has to stay inside the component's own folder.
+ * Why an image path has to stay inside the directory the engine reads from.
  *
  * The engine snapshots an asset only when the path holds nothing but normal
- * components relative to the base directory (`asset_snapshot.rs`:
- * `validate_relative_path`), so it refuses an absolute path and a `.` or `..`
- * segment. A Windows drive prefix is left to the engine: whether it is a prefix
- * depends on the host that runs the binary, and this validator has no host.
+ * components relative to its base directory (`asset_snapshot.rs`:
+ * `validate_relative_path`). Rust's `Path::components` normalizes an interior
+ * `.` away but keeps a leading one as `CurDir`, and keeps `..` wherever it
+ * appears, so exactly those three are refused here: an absolute path, a leading
+ * `.`, and a `..` segment. `img/./a.png` is a normal path to the engine and
+ * stays accepted. A Windows drive prefix is left to the engine: whether it is a
+ * prefix depends on the host that runs the binary, and this validator has no
+ * host.
  */
 function validateImagePath(value: string, source: string, field: string): void {
+  const segments = value.split("/");
   const absolute = value.startsWith("/");
-  const leaves = value.split("/").some((segment) => segment === "." || segment === "..");
+  const leaves = segments.includes("..") || segments[0] === ".";
   if (!absolute && !leaves) return;
   refuse(
     source,
@@ -513,10 +518,12 @@ function validateImagePath(value: string, source: string, field: string): void {
     absolute
       ? "must be a relative path: hwp compose reads an image only from relative normal " +
           "components (asset_snapshot.rs:80), so an absolute path is refused; write the path " +
-          "relative to the component's own file, then retry"
-      : "holds a `.` or `..` path segment: hwp compose reads an image only from relative normal " +
-          "components (asset_snapshot.rs:80), so a path that leaves the component's folder is " +
-          "refused; name a file inside that folder, then retry",
+          "relative to the base directory the engine is given (the spec's for compose, the ops " +
+          "file's for an insert), then retry"
+      : "holds a leading `.` or a `..` segment: hwp compose reads an image only from relative " +
+          "normal components (asset_snapshot.rs:80), so a path that leaves the base directory is " +
+          "refused; name a file inside the base directory the engine is given (the spec's or the " +
+          "ops file's), then retry",
   );
 }
 
@@ -644,7 +651,10 @@ function validateTable(
     const value = asObject(column, source, columnField);
     onlyKeys(value, ["width_mm"], source, columnField);
     dimension(value.width_mm, source, at(columnField, "width_mm"));
-    columnSum += value.width_mm as number;
+    // The engine sums in f32 (`let mut column_sum = 0.0_f32`), so the
+    // accumulator is rounded on every addend rather than once at the end: at
+    // the 0.01 mm edge the two arithmetics disagree in both directions.
+    columnSum = Math.fround(columnSum + Math.fround(value.width_mm as number));
   });
   validateTableWidth(block.width_mm, columnSum, source, field);
   const rowsField = at(field, "rows");
@@ -670,9 +680,11 @@ function validateTable(
       if (cellValue.row_span !== undefined) {
         count(cellValue.row_span, source, at(cellField, "row_span"), 1, 65535, true);
       }
-      if (cellValue.blocks !== undefined) {
-        validateBlocks(cellValue.blocks, source, at(cellField, "blocks"), 0, depth + 1);
-      }
+      // A cell's `blocks` is `#[serde(default)]` in the schema and the engine
+      // still descends into it, so the level is checked even when the key is
+      // absent: a table 17 cells deep is refused whether or not the innermost
+      // cell carries content.
+      validateBlocks(cellValue.blocks ?? [], source, at(cellField, "blocks"), 0, depth + 1);
     });
   });
   validateTableGrid(block, source, field);
@@ -682,9 +694,15 @@ function validateTable(
  * Why a table's `width_mm` has to equal the sum of its columns.
  *
  * `hwp compose` refuses the difference above 0.01 mm (`document_spec.rs`:
- * `inconsistent_width`). The same rule's other half — the column sum against
- * the page's body width — needs a page the component cannot know, so it stays
- * with the engine, and with the insertion preflight that measured it.
+ * `inconsistent_width`), and it computes both sides in f32: the sum is a
+ * `f32` accumulator, the difference and the bound are f32 too. The comparison
+ * is therefore done in f32 here as well, because at the edge the two
+ * arithmetics disagree in both directions - 1.01 against a 1 mm column is
+ * accepted by the engine, 10.01 against a 10 mm one is refused.
+ *
+ * The same rule's other half - the column sum against the page's body width -
+ * needs a page the component cannot know, so it stays with the engine, and with
+ * the insertion preflight that measured it.
  */
 function validateTableWidth(
   width: unknown,
@@ -693,8 +711,9 @@ function validateTableWidth(
   field: string,
 ): void {
   if (width === undefined) return;
-  const value = width as number;
-  if (Math.abs(value - columnSum) <= 0.01) return;
+  const value = Math.fround(width as number);
+  const difference = Math.fround(value - columnSum);
+  if (Math.abs(difference) <= Math.fround(0.01)) return;
   refuse(
     source,
     at(field, "width_mm"),
@@ -1448,6 +1467,10 @@ function resolvedStyles(filled: readonly FilledComponent[]): Map<string, Style> 
  * `validate_style_cycles`). A cycle that spans two components reaches the user
  * as a document path instead of naming the two files that make it, so the same
  * walk runs here, over the table both components contribute to.
+ *
+ * The refusal names the style the walk came back to, which is a member of the
+ * cycle. The walk may have started elsewhere: a style that only points into a
+ * cycle is not the field anyone can change.
  */
 function validateStyleCycles(
   resolved: Map<string, Style>,
@@ -1459,8 +1482,8 @@ function validateStyleCycles(
     while (current !== undefined) {
       if (seen.has(current)) {
         refuse(
-          definedBy.get(name) ?? name,
-          `${at("styles", name)}.based_on`,
+          definedBy.get(current) ?? current,
+          `${at("styles", current)}.based_on`,
           `is part of a style inheritance cycle through ${current}; hwp compose refuses a cycle ` +
             "between styles (document_spec.rs:959), so point one based_on in the cycle at a " +
             "style that does not lead back to it, then retry",

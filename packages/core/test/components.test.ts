@@ -809,6 +809,25 @@ describe("engine-refusal mirrors", () => {
     return inner;
   };
 
+  /** The same chain, with the innermost cell carrying no `blocks` key at all. */
+  const nestedTablesWithoutCentre = (levels: number): Record<string, unknown> => {
+    let inner: Record<string, unknown> = {
+      type: "table",
+      width_mm: 100,
+      columns: [{ width_mm: 100 }],
+      rows: [{ cells: [{}] }],
+    };
+    for (let level = 1; level < levels; level += 1) {
+      inner = {
+        type: "table",
+        width_mm: 100,
+        columns: [{ width_mm: 100 }],
+        rows: [{ cells: [{ blocks: [inner] }] }],
+      };
+    }
+    return inner;
+  };
+
   const stylesNamed = (prefix: string, count: number): Record<string, unknown> =>
     Object.fromEntries(
       Array.from({ length: count }, (_, index) => [`${prefix}${index}`, { based_on: "바탕글" }]),
@@ -895,6 +914,12 @@ describe("engine-refusal mirrors", () => {
     expect(
       validateComponent({ ...BASE_COMPONENT, blocks: [nestedTables(16)] }, REFUSAL_SOURCE).blocks,
     ).toEqual([nestedTables(16)]);
+    // A cell's `blocks` is `#[serde(default)]` and the engine descends into it
+    // anyway, so the level is refused whether or not the innermost cell has
+    // content.
+    expect(
+      refusalFor((value) => (value["blocks"] = [nestedTablesWithoutCentre(17)])),
+    ).toMatch(/sits 17 table cells deep/);
   });
 
   it("refuses a based_on cycle between two styles (document_spec.rs:959)", () => {
@@ -924,6 +949,22 @@ describe("engine-refusal mirrors", () => {
       "강조",
       "본문",
     ]);
+    // A style that only points into a cycle is not where the cycle can be
+    // broken, so the walk reports the member it came back to.
+    const entry = validateComponent(
+      {
+        ...BASE_COMPONENT,
+        styles: {
+          들머리: { based_on: "강조" },
+          강조: { based_on: "본문" },
+          본문: { based_on: "강조" },
+        },
+      },
+      REFUSAL_SOURCE,
+    );
+    expect(() => documentSpecFromComponents([entry])).toThrow(
+      /components: 시험: styles\.강조\.based_on: is part of a style inheritance cycle through 강조/,
+    );
   });
 
   it("refuses a table width that differs from its column sum (document_spec.rs:1503)", () => {
@@ -951,6 +992,30 @@ describe("engine-refusal mirrors", () => {
         ).blocks,
       ).toHaveLength(1);
     }
+    // The engine computes both sides in f32, so at the 0.01 mm edge the two
+    // arithmetics disagree in both directions. Measured against the same
+    // expressions (`f32` sum, `(width - sum).abs() > 0.01`):
+    // f32(1.01) - 1.0 is just under the bound, f32(10.01) - 10.0 just over it.
+    const oneColumn = (width: number, column: number): Record<string, unknown> => ({
+      type: "table",
+      width_mm: width,
+      columns: [{ width_mm: column }],
+      rows: [{ cells: [{ blocks: [paragraph()] }] }],
+    });
+    expect(
+      validateComponent(
+        { ...BASE_COMPONENT, blocks: [oneColumn(1.01, 1)] },
+        REFUSAL_SOURCE,
+      ).blocks,
+    ).toHaveLength(1);
+    expect(
+      refusalFor((value) => (value["blocks"] = [oneColumn(10.01, 10)])),
+    ).toBe(
+      `components: ${REFUSAL_SOURCE}: blocks[0].width_mm: is 10.01 mm, but the columns total ` +
+        "10.00 mm; hwp compose refuses a table whose width and column sum differ by more than " +
+        "0.01 mm (document_spec.rs:1503), so set width_mm to the column sum, or change a column " +
+        "width, then retry",
+    );
   });
 
   it("refuses a merged style table past 256 styles (document_spec.rs:668)", () => {
@@ -994,26 +1059,32 @@ describe("engine-refusal mirrors", () => {
     expect(Object.keys(styles)).toContain("바탕글");
   });
 
-  it("refuses an image path the engine cannot read from the folder (asset_snapshot.rs:80)", () => {
+  it("refuses an image path the engine cannot read (asset_snapshot.rs:80)", () => {
+    const absoluteReason =
+      "must be a relative path: hwp compose reads an image only from relative normal components " +
+      "(asset_snapshot.rs:80), so an absolute path is refused; write the path relative to the " +
+      "base directory the engine is given (the spec's for compose, the ops file's for an " +
+      "insert), then retry";
+    const leavingReason =
+      "holds a leading `.` or a `..` segment: hwp compose reads an image only from relative " +
+      "normal components (asset_snapshot.rs:80), so a path that leaves the base directory is " +
+      "refused; name a file inside the base directory the engine is given (the spec's or the ops " +
+      "file's), then retry";
     expect(
       refusalFor((value) => {
         value["blocks"] = [{ type: "image", path: "/tmp/그림.png", width_mm: 10 }];
       }),
-    ).toBe(
-      `components: ${REFUSAL_SOURCE}: blocks[0].path: must be a relative path: hwp compose reads ` +
-        "an image only from relative normal components (asset_snapshot.rs:80), so an absolute " +
-        "path is refused; write the path relative to the component's own file, then retry",
-    );
+    ).toBe(`components: ${REFUSAL_SOURCE}: blocks[0].path: ${absoluteReason}`);
     expect(
       refusalFor((value) => {
         value["blocks"] = [{ type: "image", path: "../그림.png", width_mm: 10 }];
       }),
-    ).toBe(
-      `components: ${REFUSAL_SOURCE}: blocks[0].path: holds a \`.\` or \`..\` path segment: hwp ` +
-        "compose reads an image only from relative normal components (asset_snapshot.rs:80), so " +
-        "a path that leaves the component's folder is refused; name a file inside that folder, " +
-        "then retry",
-    );
+    ).toBe(`components: ${REFUSAL_SOURCE}: blocks[0].path: ${leavingReason}`);
+    expect(
+      refusalFor((value) => {
+        value["blocks"] = [{ type: "image", path: "./그림.png", width_mm: 10 }];
+      }),
+    ).toBe(`components: ${REFUSAL_SOURCE}: blocks[0].path: ${leavingReason}`);
     // The same rule guards the run position, which has a field path of its own.
     expect(
       refusalFor((value) => {
@@ -1024,14 +1095,16 @@ describe("engine-refusal mirrors", () => {
     ).toContain(
       `components: ${REFUSAL_SOURCE}: blocks[0].runs[0].path: must be a relative path:`,
     );
-    // A file inside the folder is what the engine reads, at either position.
+    // A file inside the base directory is what the engine reads, at either
+    // position - and Rust normalizes an interior `.` away, so `img/./a.png` is
+    // a normal path the engine takes.
     expect(
       validateComponent(
         {
           ...BASE_COMPONENT,
           blocks: [
             { type: "image", path: "img/그림.png", width_mm: 10 },
-            { type: "paragraph", runs: [{ type: "image", path: "그림.png", width_mm: 10 }] },
+            { type: "paragraph", runs: [{ type: "image", path: "img/./그림.png", width_mm: 10 }] },
           ],
         },
         REFUSAL_SOURCE,
