@@ -99,6 +99,28 @@ describe("Tauri template transport", () => {
     await expect(engine.capabilities()).resolves.toMatchObject({ templateMethods: [] });
   });
 
+  it("uses normalized template and edit capabilities together on every edit", async () => {
+    const edits: Record<string, unknown>[] = [];
+    let editOps = "v1";
+    const invoke: TauriInvoke = <T>(cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === "hwped_capabilities") return Promise.resolve({
+        version: "1.4.0", editable: true, formats: ["hwpx"], editOps, templateMethods: ["slots"],
+      } as T);
+      edits.push(args ?? {});
+      return Promise.resolve({ name: "out.hwpx", dataBase64: b64 } as T);
+    };
+    const engine = createTauriEngine(invoke);
+    await expect(engine.capabilities()).resolves.toMatchObject({ editOps: "v1", templateMethods: ["slots"] });
+    await engine.edit(doc, [{ kind: "set-field", name: "title", value: "text" }]);
+    expect(edits[0]).toHaveProperty("ops");
+    expect(edits[0]).not.toHaveProperty("opsArgv");
+    editOps = "v2";
+    await expect(engine.capabilities()).resolves.not.toHaveProperty("editOps");
+    await engine.edit(doc, [{ kind: "set-field", name: "title", value: "text" }]);
+    expect(edits[1]).toHaveProperty("opsArgv");
+    expect(edits[1]).not.toHaveProperty("ops");
+  });
+
   it("refuses malformed template reports", async () => {
     const invoke: TauriInvoke = <T>(cmd: string) => Promise.resolve((cmd === "hwped_template"
       ? { name: "x.hwpx", dataBase64: b64, report: { warnings: [] } }

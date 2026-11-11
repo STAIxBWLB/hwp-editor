@@ -45,7 +45,7 @@ function rejectAssetPaths(root: unknown): void {
     const value = pending.pop();
     if (typeof value !== "object" || value === null || seen.has(value)) continue;
     seen.add(value);
-    if (Object.hasOwn(value, "path")) bad("Template assets cannot name host files; use self-contained compose data without local asset paths.");
+    if ((value as Record<string, unknown>).type === "image" && Object.hasOwn(value, "path")) bad("Template assets cannot name host files; use self-contained compose data without local asset paths.");
     for (const child of Object.values(value)) pending.push(child);
   }
 }
@@ -145,8 +145,8 @@ export function createTemplateCommands(deps: Dependencies) {
         bad("Only self-contained compose-mode TemplateSpec v1 is supported; load a spec with source.mode compose instead of a host file reference.");
       }
       if (typeof data !== "object" || data === null || data.version !== "1.0" || typeof data.values !== "object" || data.values === null || Array.isArray(data.values)) bad("TemplateData v1 requires version 1.0 and a values object; supply form values and retry.");
-      rejectAssetPaths(spec.source.document);
-      rejectAssetPaths(data.values);
+      rejectAssetPaths(spec);
+      rejectAssetPaths(data);
       return deps.work(async dir => {
         const specFile = path.join(dir, "template.json"), dataFile = path.join(dir, "data.json");
         const output = path.join(dir, "template.hwpx");

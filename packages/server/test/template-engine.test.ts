@@ -50,6 +50,17 @@ describeTemplates("template commands (requires real hwp-cli >= 1.4.0)", () => {
     expect(rendered.report).toEqual({schema_version:"1.0",mode:"compose",deterministic:true});
     expect((await engine.render(rendered.document,{format:"svg"})).length).toBeGreaterThan(0);
   });
+  it("accepts a scalar template variable named path", async () => {
+    const engine = createCliEngine({ bin: BIN });
+    const pathSpec = {
+      version: "1.0", variables: { path: { type: "string", required: true } },
+      source: { mode: "compose", document: { version: "1.0", sections: [{ blocks: [
+        { type: "paragraph", runs: [{ type: "text", text: { node: "value", pointer: "/values/path" } }] },
+      ] }] } },
+    } as TemplateSpecV1;
+    const rendered = await engine.template(pathSpec, { version: "1.0", values: { path: "Safe scalar text" } }, "path.hwpx");
+    expect((await engine.read(rendered.document)).markdown).toContain("Safe scalar text");
+  });
   it("refuses HWP placeholder fill and host file references with a next step", async () => {
     const engine = createCliEngine({bin:BIN});
     const hwp = (await engine.compose(spec,"inputs.hwp")).document;
@@ -109,6 +120,25 @@ describe("template producer refusal", () => {
     const commands = createTemplateCommands({version:async()=>"1.3.1",work:async fn=>fn("/unused"),stage:async()=>"/unused/input.hwpx",run:async()=>{called=true;return "{}";}});
     await expect(commands.slots({name:"x.hwpx",data:new Uint8Array()})).rejects.toThrow(/1.4.0.*upgrade/i);
     expect(called).toBe(false);
+  });
+  it("refuses image paths in rich_blocks defaults before staging or invoking template", async () => {
+    const { createTemplateCommands } = await import("../src/template-engine.js");
+    let staged = false;
+    const commands = createTemplateCommands({
+      version: async () => "1.4.0",
+      work: async fn => { staged = true; return fn("/unused"); },
+      stage: async () => "/unused/input.hwpx", run: async () => { throw new Error("must not invoke template"); },
+    });
+    const defaultImageSpec = {
+      version: "1.0",
+      variables: { content: { type: "rich_blocks", default: [{ type: "image", path: "/unused/server-image.png" }] } },
+      source: { mode: "compose", document: { version: "1.0", sections: [{ blocks: [
+        { node: "value", pointer: "/values/content", as: "native" },
+      ] }] } },
+    } as TemplateSpecV1;
+    await expect(commands.template(defaultImageSpec, { version: "1.0", values: {} }, "out.hwpx"))
+      .rejects.toThrow(/host files.*self-contained/);
+    expect(staged).toBe(false);
   });
   it("rejects malformed CLI slots rather than publishing guessed inputs", async () => {
     const { createTemplateCommands } = await import("../src/template-engine.js");

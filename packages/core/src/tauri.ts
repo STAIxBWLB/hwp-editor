@@ -239,8 +239,6 @@ export function createTauriEngine(
     return { ...rest, templateMethods: methods, ...(editOps === "v1" ? { editOps: "v1" as const } : {}) };
   }
 
-
-
   return {
     async slots(document) {
       return parseTemplateInputs(await call<unknown>("hwped_slots", { document: ref(document), ...scope() }));
