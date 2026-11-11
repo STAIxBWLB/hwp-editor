@@ -272,7 +272,18 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
      * `onError`. A new document load clears it.
      */
     const [notice, setNotice] = useState<string | null>(null);
+    /**
+     * Bumped when a load starts. A flow that captured it before awaiting can
+     * tell that a newer load superseded its result.
+     */
     const loadGeneration = useRef(0);
+    /**
+     * The generation of the last load that finished, successfully or not.
+     * While it differs from `loadGeneration.current` a load is in flight, and
+     * the store still holds the document the flow started from: replacing the
+     * document then would overwrite the file the host just chose.
+     */
+    const loadedGeneration = useRef(0);
     const [tab, setTab] = useState<SideTab>("para");
     const [composing, setComposing] = useState(false);
     /**
@@ -338,6 +349,9 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         setCapabilities(null);
         setValidation(null);
         setLoadError(null);
+        // Nothing is loading, so a replacement has no stale document to
+        // overwrite. Its own `document === null` check refuses it.
+        loadedGeneration.current = generation;
         return;
       }
       (async () => {
@@ -354,11 +368,16 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           setValidation(report);
           setLoadError(null);
           store.dispatch({ type: "load", document: file, pages });
+          loadedGeneration.current = generation;
           // Once per completed load, from THIS effect only: a second effect
           // keyed on envelope/pages would re-fire after every apply and undo.
           emitReady(file);
         } catch (e) {
           if (cancelled || generation !== loadGeneration.current) return;
+          // A failed load keeps the previous document, and it is the one the
+          // editor still shows: refusing every replacement afterwards would
+          // leave the surface stuck with no way out but a new file.
+          loadedGeneration.current = generation;
           setLoadError(toEditorError(e));
           emitError(e);
         }
@@ -416,10 +435,15 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         snapshot.document === null ||
         snapshot.pendingOps.length === 0 ||
         snapshot.status === "applying" ||
-        !editable
+        !editable ||
+        // The staged ops describe the document in the store, which a load in
+        // flight is about to replace. Starting now would edit a document the
+        // host already left, and the result would land on the new one.
+        loadGeneration.current !== loadedGeneration.current
       ) {
         return Promise.resolve();
       }
+      const generation = loadGeneration.current;
       store.dispatch({ type: "applyStarted" });
       return (async () => {
         try {
@@ -436,11 +460,18 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
             engine.render(next, RENDER_SVG),
             engine.validate(next).catch(() => null),
           ]);
+          // A load or a compose that moved the generation owns the document
+          // now: its own transition replaced the snapshot stack, so this
+          // result is dropped whole rather than applied to the new document.
+          if (generation !== loadGeneration.current) return;
           setEnvelope(nextEnvelope);
           setValidation(report);
           store.dispatch({ type: "applySucceeded", document: next, pages });
           emitChange(next);
         } catch (e) {
+          // As above: a failure belongs to the document this attempt read, so
+          // it is not recorded against the one a load put in its place.
+          if (generation !== loadGeneration.current) return;
           // A find that matched nothing leaves nothing applied, and the engine's
           // own line for it is Korean prose naming staged paths, so the error
           // line carries the localized sentence. The host still hears the
@@ -468,6 +499,15 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           !editableRef.current ||
           snapshot.status === "applying"
         ) return Promise.resolve(false);
+        // The store keeps the previous document until a load resolves, so a
+        // caller that produced a result from it would replace the file the
+        // host has already switched to. Refused, not silently dropped: the
+        // caller's result is worthless, and only the message says why.
+        if (generation !== loadedGeneration.current) {
+          const refusal = new Error(t("error.loadingReplacement"));
+          emitError(refusal);
+          return Promise.reject(refusal);
+        }
         if (snapshot.pendingOps.length > 0) {
           const refusal = new Error(t("error.pendingReplacement"));
           emitError(refusal);
@@ -1045,10 +1085,15 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
                     setLoadError(null);
                     setEnvelope(nextEnvelope);
                     store.dispatch({ type: "load", document, pages });
+                    loadedGeneration.current = generation;
                   } catch (e) {
                     // Covers the render AFTER a successful compose; the
                     // compose call itself fails inside ComposePanel.
                     if (generation !== loadGeneration.current) return;
+                    // The composed file reaches the editor through `file`
+                    // anyway, so a failed read here must not leave every
+                    // replacement refused as if a load were still running.
+                    loadedGeneration.current = generation;
                     setLoadError(toEditorError(e));
                     emitError(e);
                   }

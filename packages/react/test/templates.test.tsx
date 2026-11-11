@@ -170,6 +170,45 @@ it("refuses a template apply whose preview predates the host's file switch (t18-
   expect(onChange).not.toHaveBeenCalled();
 });
 
+it("refuses a template apply made while the switched-to file is still loading (t25)", async () => {
+  // The opposite order of the test above: the preview is requested *after*
+  // the switch, so it carries the new generation and the epoch check cannot
+  // see the problem. The store still holds the old document, though, so the
+  // apply would replace the file the host has already chosen - refused at
+  // the replacement instead.
+  const other: DocumentHandle = { name: "other.hwpx", data: new TextEncoder().encode("other") };
+  let releaseReload: (() => void) | undefined;
+  const engine = templateEngine();
+  const readDocument = engine.read.bind(engine);
+  engine.read = async (document) => {
+    if (document.name === other.name) {
+      await new Promise<void>((resolve) => { releaseReload = resolve; });
+    }
+    return readDocument(document);
+  };
+  const onChange = vi.fn();
+  const onError = vi.fn();
+  const { rerender } = render(<HwpEditor engine={engine} file={original} onChange={onChange} onError={onError} />);
+  fireEvent.click(await screen.findByRole("tab", { name: en["tabs.templates"] }));
+  fireEvent.change(await screen.findByLabelText("문서번호"), { target: { value: "2026-001" } });
+
+  rerender(<HwpEditor engine={engine} file={other} onChange={onChange} onError={onError} />);
+  await waitFor(() => expect(releaseReload).toBeDefined());
+  fireEvent.click(screen.getByRole("button", { name: en["templates.previewFill"] }));
+  const apply = await screen.findByRole("button", { name: en["templates.apply"] });
+  fireEvent.click(apply);
+
+  expect((await screen.findByRole("alert")).textContent).toContain(en["error.loadingReplacement"]);
+  expect(onChange).not.toHaveBeenCalled();
+  // The filled document was never read: the replacement was refused before
+  // the editor touched it.
+  expect(engine.calls.read.some((document) => document.name === filled.name)).toBe(false);
+
+  releaseReload?.();
+  await waitFor(() => expect(engine.calls.read.at(-1)?.name).toBe(other.name));
+  expect(onChange).not.toHaveBeenCalled();
+});
+
 it("clears the previous lint error when the profile or document changes", async () => {
   const engine = templateEngine();
   engine.lint = vi.fn(async () => { throw new Error("lint failed"); });

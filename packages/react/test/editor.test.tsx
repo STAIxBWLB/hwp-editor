@@ -656,3 +656,111 @@ describe("HwpEditor fields flow", () => {
     ]);
   });
 });
+
+describe("HwpEditor refuses work against a document a load is replacing (t25)", () => {
+  /** A file switch whose read never resolves until `release()` is called. */
+  function heldSwitch() {
+    const other: DocumentHandle = { name: "other.hwpx", data: new TextEncoder().encode("other") };
+    const engine = createMockEngine();
+    const readDocument = engine.read.bind(engine);
+    let releaseReload: (() => void) | undefined;
+    engine.read = async (document) => {
+      if (document.name === other.name) {
+        await new Promise<void>((resolve) => { releaseReload = resolve; });
+      }
+      return readDocument(document);
+    };
+    return { other, engine, release: () => releaseReload?.(), started: () => releaseReload !== undefined };
+  }
+
+  it("does not apply queued edits while the switched-to file is still loading", async () => {
+    // The store still holds the old document, and the queued ops were staged
+    // against it. Applying now edits the file the host has already left, and
+    // the result would land on the new one.
+    const { other, engine, release, started } = heldSwitch();
+    const onChange = vi.fn();
+    const { container, rerender } = render(<HwpEditor engine={engine} file={file} onChange={onChange} />);
+    await selectAndQueueReplace(en);
+    await screen.findByText(en["toolbar.pendingEdits"]({ count: 1 }));
+
+    rerender(<HwpEditor engine={engine} file={other} onChange={onChange} />);
+    await vi.waitFor(() => expect(started()).toBe(true));
+
+    // Both doors: the chord and the toolbar button.
+    const root = container.firstElementChild;
+    if (root === null) throw new Error("no root");
+    fireEvent.keyDown(root, { key: "Enter", ctrlKey: true });
+    fireEvent.click(
+      screen.getByRole("button", { name: en["toolbar.applyWithCount"]({ count: 1 }) }),
+    );
+    expect(engine.calls.edit).toHaveLength(0);
+    expect(onChange).not.toHaveBeenCalled();
+    // The ops are still staged: nothing was consumed by the refusal.
+    expect(screen.getByText(en["toolbar.pendingEdits"]({ count: 1 }))).toBeTruthy();
+
+    release();
+    await vi.waitFor(() => expect(engine.calls.read.at(-1)?.name).toBe(other.name));
+    expect(engine.calls.edit).toHaveLength(0);
+  });
+
+  it("drops an apply that a load overtook while the engine was working", async () => {
+    // The check at the head cannot see a load that starts mid-apply: the edit
+    // is in flight against the old document when the host switches file, so
+    // the result must not be dispatched over the newly loaded one.
+    const { other, engine, release, started } = heldSwitch();
+    const onChange = vi.fn();
+    let releaseEdit: (() => void) | undefined;
+    const edit = engine.edit.bind(engine);
+    engine.edit = async (...args) => {
+      await new Promise<void>((resolve) => { releaseEdit = resolve; });
+      return edit(...args);
+    };
+    const { rerender } = render(<HwpEditor engine={engine} file={file} onChange={onChange} />);
+    await selectAndQueueReplace(en);
+    await screen.findByText(en["toolbar.pendingEdits"]({ count: 1 }));
+    fireEvent.click(
+      screen.getByRole("button", { name: en["toolbar.applyWithCount"]({ count: 1 }) }),
+    );
+    await vi.waitFor(() => expect(releaseEdit).toBeDefined());
+
+    rerender(<HwpEditor engine={engine} file={other} onChange={onChange} />);
+    await vi.waitFor(() => expect(started()).toBe(true));
+    releaseEdit?.();
+    // The edit itself ran, but its result belongs to the document the host
+    // left: no change reaches the host, and no error is recorded against the
+    // document that replaced it.
+    await vi.waitFor(() => expect(engine.calls.edit).toHaveLength(1));
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).toBeNull();
+    release();
+    await vi.waitFor(() => expect(engine.calls.read.at(-1)?.name).toBe(other.name));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("does not start an apply from Cmd/Ctrl+Enter inside the compose dialog", async () => {
+    // The chord is handled at the root, so a press inside the modal used to
+    // apply the queued edits: that rewrites the document the compose is about
+    // to replace, and the result lands on the composed file.
+    const engine = createMockEngine();
+    const composed: DocumentHandle = { name: "composed.hwpx", data: new TextEncoder().encode("composed") };
+    engine.compose = async () => ({ document: composed });
+    const onChange = vi.fn();
+    render(<HwpEditor engine={engine} file={file} onChange={onChange} />);
+    await selectAndQueueReplace(en);
+    await screen.findByText(en["toolbar.pendingEdits"]({ count: 1 }));
+
+    fireEvent.click(screen.getByRole("button", { name: en["toolbar.newDocument"] }));
+    const dialog = await screen.findByRole("dialog", { name: en["compose.title"] });
+    const title = within(dialog).getByLabelText(en["compose.titleLabel"]);
+    fireEvent.keyDown(title, { key: "Enter", ctrlKey: true });
+    expect(engine.calls.edit).toHaveLength(0);
+    expect(onChange).not.toHaveBeenCalled();
+
+    // The dialog still composes on its own button, and the composed file is
+    // what reaches the host.
+    fireEvent.change(title, { target: { value: "새 문서" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: en["compose.submit"] }));
+    await vi.waitFor(() => expect(onChange).toHaveBeenLastCalledWith(composed));
+    expect(engine.calls.edit).toHaveLength(0);
+  });
+});
