@@ -3,6 +3,7 @@ export type {
   ComposeResult,
   DocumentHandle,
   EditOptions,
+  ImageAsset,
   HwpEngine,
   PageImage,
   LayoutRow,
@@ -12,6 +13,14 @@ export type {
   ValidationError,
   ValidationReport,
 } from "./engine.js";
+export {
+  imageAssetMediaType,
+  imageAssetsMatchOps,
+  validateImageAssets,
+  MAX_IMAGE_ASSET_BYTES,
+  MAX_IMAGE_ASSETS,
+  MAX_IMAGE_ASSETS_TOTAL_BYTES,
+} from "./assets.js";
 export {
   HwpEngineError,
   isHwpEngineError,

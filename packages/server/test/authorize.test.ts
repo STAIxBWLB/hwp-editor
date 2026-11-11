@@ -498,9 +498,10 @@ describe("sniff", () => {
 
 /**
  * SEC-05. `opValue` in packages/core/src/ops.ts reaches `op.path` in exactly
- * two cases, and both are refused on the HTTP surface (D-10). The Tauri
- * transport is a local application and keeps them, which is why the guard
- * lives here and not in ops.ts.
+ * two cases: HTTP refuses seal and permits insert-image only with matching
+ * uploaded assets (D-10). These tests supply no assets, so both are refused.
+ * Tauri is a local application transport that keeps desktop-local paths;
+ * the HTTP guard therefore lives here rather than in ops.ts.
  */
 describe("op path", () => {
   async function edit(ops: unknown): Promise<{

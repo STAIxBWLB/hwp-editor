@@ -74,6 +74,46 @@ describeBin("cli-engine (real hwp-cli binary)", () => {
     await expect(bad.capabilities()).rejects.toThrow(HwpCliError);
   });
 
+  it("inserts an uploaded PNG from its per-call staged asset path", async () => {
+    const cli = engine();
+    const { document } = await cli.compose(sampleSpec() as unknown as DocumentSpecV2, "image-upload.hwpx");
+    const image = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    const edited = await cli.edit(document, [{
+      kind: "insert-image", anchor: "안녕하세요", path: "figure.png", width: 20, height: 15,
+    }], { assets: [{ name: "figure.png", data: new Uint8Array(image) }], verify: true });
+    expect(edited.data.length).toBeGreaterThan(document.data.length);
+    expect((await cli.validate(edited)).valid).toBe(true);
+    expect((await cli.render(edited, { format: "png", pages: "1" })).length).toBeGreaterThan(0);
+  });
+
+  it("preserves the engine failure for a mixed upload batch whose formatting target is missing", async () => {
+    const cli = engine();
+    const { document } = await cli.compose(sampleSpec() as unknown as DocumentSpecV2, "mixed-upload.hwpx");
+    const image = new Uint8Array(Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==", "base64",
+    ));
+    const failure = await cli.edit(document, [
+      { kind: "insert-image", anchor: "안녕하세요", path: "figure.png", width: 20, height: 15 },
+      { kind: "set-format", find: "missing-format-target", props: { bold: "on" } },
+    ], { assets: [{ name: "figure.png", data: image }] }).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(HwpCliError);
+    expect(failure).toMatchObject({ reason: "failed", message: expect.stringMatching(/hwp edit failed \(exit [0-9]+\).*operation targets and values/) });
+    expect((failure as HwpCliError).message).not.toMatch(/Image insertion failed|re-export/);
+    expect((failure as HwpCliError).stderr).toBeTruthy();
+    expect((failure as HwpCliError).detail).toContain((failure as HwpCliError).stderr!.trim());
+  });
+
+  it("rejects direct API asset references before resolving or spawning the binary", async () => {
+    const missing = createCliEngine({ bin: "/no/such/hwp-binary" });
+    await expect(missing.edit({ name: "doc.hwpx", data: new Uint8Array() }, [
+      { kind: "insert-image", anchor: "x", path: "not-uploaded.png" },
+    ], { assets: [{ name: "figure.png", data: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) }] }))
+      .rejects.toMatchObject({ reason: "bad_request" });
+  });
+
   it("full loop: compose -> read -> edit -> render -> validate -> undo", async () => {
     const cli = engine();
 
@@ -266,6 +306,25 @@ describeBin("routes (real hwp-cli binary)", () => {
     expect((await validateRes.json()).valid).toBe(true);
     const text = await cli.read({ name: editBody.name, data: editedBytes });
     expect(text.markdown).toContain("반갑습니다");
+  });
+
+  it("POST /edit inserts uploaded image bytes through the real route", async () => {
+    const cli=engine();
+    const document=(await cli.compose(sampleSpec() as unknown as DocumentSpecV2,"wire-image.hwpx")).document;
+    const image=new Uint8Array(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==","base64"));
+    const form=new FormData();
+    form.append("file",new Blob([document.data as BlobPart]),document.name);
+    form.append("asset",new Blob([image]),"upload.png");
+    form.append("ops",JSON.stringify([{kind:"insert-image",anchor:"안녕하세요",path:"upload.png",width:20,height:15}]));
+    const url="http://localhost/api/hwp-editor/edit";
+    const uncounted=new Request(url,{method:"POST",body:form}),body=await uncounted.arrayBuffer();
+    const request=new Request(url,{method:"POST",body,headers:{"content-type":uncounted.headers.get("content-type")!,"content-length":String(body.byteLength)}});
+    const response=await createHwpEditorHandler({engine:cli})(request);
+    expect(response.status).toBe(200);
+    const result=await response.json();
+    const edited={name:result.name,data:new Uint8Array(Buffer.from(result.dataBase64,"base64"))};
+    expect((await cli.read(edited)).segments.some(segment=>segment.kind==="image")).toBe(true);
+    expect((await cli.validate(edited)).valid).toBe(true);
   });
 
   it("GET /capabilities over the wire", async () => {

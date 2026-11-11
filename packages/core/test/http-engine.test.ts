@@ -315,6 +315,21 @@ describe("FormData construction", () => {
     expect(partial.body().get("allowPartial")).toBe("true");
     expect(partial.body().get("verify")).toBeNull();
   });
+
+  it("sends uploaded image assets as repeated asset File parts", async () => {
+    const { engine, body } = capturingEngine({
+      name: "회의록.hwpx",
+      dataBase64: base64.encode(new TextEncoder().encode("edited")),
+    });
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    await engine.edit(doc, [{ kind: "insert-image", anchor: "figure", path: "figure.png" }], {
+      assets: [{ name: "figure.png", data: bytes }],
+    });
+    const file = body().get("asset");
+    expect(file).toBeInstanceOf(File);
+    expect((file as File).name).toBe("figure.png");
+    expect(new Uint8Array(await (file as File).arrayBuffer())).toEqual(bytes);
+  });
 });
 
 
@@ -340,5 +355,19 @@ describe("HTTP present layout validation", () => {
     const failure=await engine.render(doc).catch((error:unknown)=>error);
     expect(failure).toMatchObject({code:"failed",message:expect.stringContaining(field)});
     expect((failure as Error).message).toContain(RENDER_LAYOUT_NEXT_STEP);
+  });
+});
+
+
+describe("combined HTTP capabilities", () => {
+  it.each(["v1", "v2", undefined])("normalizes template methods and image assets %s together", async imageAssets => {
+    const engine = createHttpEngine("/api", { fetch: stubFetch(JSON.stringify({
+      version: "1.4.0", editable: true, editOps: "v1", formats: ["hwpx"],
+      templateMethods: ["slots", "template"], imageAssets,
+    }), { status: 200 }) });
+    const caps = await engine.capabilities();
+    expect(caps).toMatchObject({ editOps: "v1", templateMethods: ["slots", "template"] });
+    if (imageAssets === "v1") expect(caps.imageAssets).toBe("v1");
+    else expect(caps).not.toHaveProperty("imageAssets");
   });
 });

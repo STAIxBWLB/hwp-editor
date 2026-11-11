@@ -30,6 +30,9 @@ import {
   parseRenderLayouts,
   RENDER_LAYOUT_NEXT_STEP,
   opsToJson,
+  validateImageAssets,
+  imageAssetsMatchOps,
+  imageAssetMediaType,
   parseCatEnvelope,
   protectedReasonFromDiagnostics,
   type Capabilities,
@@ -116,8 +119,6 @@ export const HANDSHAKE_FLAGS: readonly string[] = [
 /** Hancom binary .hwp is a CFBF (OLE2) container; .hwpx is a zip. */
 const CFBF_SIGNATURE = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
 
-/** The eight-byte PNG file signature (PNG spec 5.2). */
-const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
 /**
  * The engine half of the published `HwpErrorCode` vocabulary. Derived with
@@ -670,6 +671,19 @@ function rethrowProtected(error: unknown): never {
   throw error;
 }
 
+function rethrowUploadedImageFailure(error: unknown, imageOnly: boolean): never {
+  try { return rethrowProtected(error); }
+  catch (failure) {
+    if (failure instanceof HwpCliError && failure.reason === "failed") {
+      const nextStep = imageOnly
+        ? "Image insertion failed; re-export valid PNG/JPEG image bytes and confirm the anchor text exists, then retry."
+        : "Check the edit batch's operation targets and values, then retry.";
+      throw new HwpCliError("failed", `${failure.message}; ${nextStep}`, failure.stderr, failure.detail);
+    }
+    throw failure;
+  }
+}
+
 /**
  * A page dimension is only trustworthy when it is finite and strictly
  * positive. `PageCanvas`'s `aspectRatio` collapses on a zero, and
@@ -693,7 +707,7 @@ function positiveSize(width: number, height: number): { width: number; height: n
  */
 export function pngSize(data: Uint8Array): { width: number; height: number } | null {
   if (data.length < 24) return null;
-  if (PNG_SIGNATURE.some((byte, i) => data[i] !== byte)) return null;
+  if (imageAssetMediaType(data) !== "image/png") return null;
   // ASCII "IHDR" must be the first chunk type, at offsets 12-15.
   if (data[12] !== 0x49 || data[13] !== 0x48 || data[14] !== 0x44 || data[15] !== 0x52) return null;
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
@@ -1164,14 +1178,40 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
     },
 
     async edit(document, ops: EditOp[], options: EditOptions = {}, call?: CliCallOptions) {
-      await ensureVersion();
-      const bin = resolveBin();
       if (!Array.isArray(ops)) {
         throw new HwpCliError("bad_request", "ops must be an array of edit operations");
       }
+      let stagedOps = ops;
+      if (options.assets !== undefined) {
+        try {
+          validateImageAssets(options.assets);
+        } catch (cause) {
+          const reason = cause instanceof Error ? cause.message : "invalid image assets";
+          throw new HwpCliError("bad_request", reason);
+        }
+        if (ops.some(op => op?.kind === "seal")) {
+          throw new HwpCliError("bad_request", "seal cannot be combined with uploaded assets; run seal without uploaded assets through a local host");
+        }
+        if (!imageAssetsMatchOps(ops, options.assets)) {
+          throw new HwpCliError("bad_request", "image upload and insert-image paths do not match; upload matching PNG/JPEG files for the referenced names");
+        }
+      }
+      await ensureVersion();
+      const bin = resolveBin();
       const ext = sniffExtension(document);
       const edited = await withWorkDir(async (dir) => {
         const input = await stage(dir, document);
+        if (options.assets !== undefined) {
+          const rewritten = new Map<string, string>();
+          for (let i = 0; i < options.assets.length; i++) {
+            const asset = options.assets[i]!;
+            const suffix = asset.name.toLowerCase().endsWith(".png") ? ".png" : ".jpg";
+            const stagedName = `asset-${i}${suffix}`;
+            await writeFile(path.join(dir, stagedName), asset.data, { mode: 0o600 });
+            rewritten.set(asset.name, path.join(dir, stagedName));
+          }
+          stagedOps = ops.map((op) => op?.kind === "insert-image" ? { ...op, path: rewritten.get(op.path)! } : op);
+        }
         // Pre-flight: refuse a protected document before spawning `hwp edit`.
         // Reuse the cached inspection when the normal read-then-edit path has
         // already warmed it (routes.ts describes the same pre-edit bytes); on
@@ -1195,11 +1235,13 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         // instead of being parsed as a CLI separator. hwp-cli validates the
         // file against the published schema before applying anything.
         const opsPath = path.join(dir, "ops.json");
-        await writeFile(opsPath, opsToJson(ops), { mode: 0o600 });
+        await writeFile(opsPath, opsToJson(stagedOps), { mode: 0o600 });
         const args = ["edit", input, "-o", output, "--ops", opsPath];
         if (options.verify !== false) args.push("--verify");
         if (options.allowPartial === true) args.push("--allow-partial");
-        await runCliOk(bin, args, timeoutMs, opts.locale, call?.signal).catch(rethrowProtected);
+        await runCliOk(bin, args, timeoutMs, opts.locale, call?.signal).catch(options.assets?.length
+          ? error => rethrowUploadedImageFailure(error, ops.every(op => op.kind === "insert-image"))
+          : rethrowProtected);
         return new Uint8Array(await readFile(output));
       });
       // Pre-edit snapshot keyed by the edited hash SALTED WITH THIS CALL'S
@@ -1282,7 +1324,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
 
     async capabilities(): Promise<Capabilities> {
       const version = await ensureVersion();
-      return { version, editable: true, editOps: "v1", formats: ["hwp", "hwpx"], templateMethods: templateVersionSupported(version) ? [...TEMPLATE_METHODS] : [] };
+      return { version, editable: true, editOps: "v1", imageAssets: "v1", formats: ["hwp", "hwpx"], templateMethods: templateVersionSupported(version) ? [...TEMPLATE_METHODS] : [] };
     },
 
     async binaryInfo() {

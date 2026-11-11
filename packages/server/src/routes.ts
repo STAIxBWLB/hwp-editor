@@ -16,8 +16,9 @@ import { TEMPLATE_METHODS, templateVersionSupported, parseTemplateInputs, parseF
  * Two further checks run after the bytes are in hand, in this order: the
  * magic-byte sniff at the single buffering site (`sniffFormat`, refusing
  * anything that is not an HWP or HWPX document, SEC-07), and the op-path
- * filter in the edit path (refusing `insert-image` and `seal`, which name a
- * file on the server's own disk, SEC-05). Both still precede the engine call.
+ * filter in the edit path (refusing `seal` and allowing `insert-image` only
+ * with matching uploaded PNG/JPEG assets, never server-local paths, SEC-05).
+ * Both still precede the engine call.
  *
  * Archive limits — declared entry sizes, decompressed byte ceilings and
  * compression-ratio caps — are NOT reimplemented here. They are hwp-cli's
@@ -26,6 +27,14 @@ import { TEMPLATE_METHODS, templateVersionSupported, parseTemplateInputs, parseF
  */
 
 import { createHash } from "node:crypto";
+import {
+  MAX_IMAGE_ASSET_BYTES,
+  MAX_IMAGE_ASSETS,
+  MAX_IMAGE_ASSETS_TOTAL_BYTES,
+  validateImageAssets,
+  imageAssetsMatchOps,
+  type ImageAsset,
+} from "@hwp-editor/core";
 
 import type {
   DocumentHandle,
@@ -242,8 +251,10 @@ async function formDocument(req: Request): Promise<{ form: FormData; document: D
   } catch {
     throw new HwpCliError("bad_request", "expected multipart/form-data with a file field");
   }
-  const file = form.get("file");
-  if (file === null || typeof file === "string") {
+  const files = form.getAll("file");
+  if (files.length !== 1) throw new HwpCliError("bad_request", 'multipart field "file" must appear exactly once; attach one document');
+  const file = files[0]!;
+  if (typeof file === "string") {
     throw new HwpCliError("bad_request", 'multipart field "file" is required');
   }
   const blob = file as Blob;
@@ -379,28 +390,44 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
     } catch {
       throw new HwpCliError("bad_request", 'multipart field "ops" is not a JSON array');
     }
-    // `opValue` in packages/core/src/ops.ts hands `op.path` straight to argv
-    // for exactly these two kinds and no others. `execFile` runs without a
-    // shell, which stops command injection but NOT path resolution, so over
-    // HTTP a client could otherwise name any file the server process can read
-    // and have it embedded in the output — which is why refusing, rather than
-    // sanitizing, is the scope-correct fix. Both ops keep working on the
-    // Tauri transport, because that is a local application (D-10). Phase 7
-    // EXT-01 owns the staged-asset upload flow that makes them usable here.
-    // `path_traversal` rather than `bad_request`: D-08 keeps that code in the
-    // union specifically as this reuse site, and both answer 400.
-    if (ops.some((op) => op?.kind === "insert-image" || op?.kind === "seal")) {
-      return error(
-        400,
-        "path_traversal",
-        'ops "insert-image" and "seal" name a server-local path and are not accepted over HTTP; upload the asset with the request instead',
-      );
+    if (ops.some((op) => op?.kind === "seal")) {
+      return error(400, "path_traversal", 'the "seal" operation names a server-local path and is not accepted over HTTP; run it through a desktop/local host');
+    }
+    const uploadFiles = form.getAll("asset");
+    if (uploadFiles.length > MAX_IMAGE_ASSETS) throw new HwpCliError("bad_request", `at most ${MAX_IMAGE_ASSETS} image assets are allowed; remove extra uploads and retry`);
+    const assets: ImageAsset[] = [];
+    let totalAssetBytes = 0;
+    for (const value of uploadFiles) {
+      if (typeof value === "string") throw new HwpCliError("bad_request", 'multipart field "asset" must be a file; attach a PNG/JPEG image');
+      const file = value as File;
+      if (file.size > MAX_IMAGE_ASSET_BYTES) throw new HwpCliError("bad_request", `image asset exceeds ${MAX_IMAGE_ASSET_BYTES} bytes; upload a smaller PNG/JPEG image`);
+      totalAssetBytes += file.size;
+      if (totalAssetBytes > MAX_IMAGE_ASSETS_TOTAL_BYTES) throw new HwpCliError("bad_request", `image assets exceed ${MAX_IMAGE_ASSETS_TOTAL_BYTES} bytes total; reduce upload sizes and retry`);
+      assets.push({ name: file.name, data: new Uint8Array(await file.arrayBuffer()) });
+    }
+    try {
+      validateImageAssets(assets);
+    } catch (cause) {
+      const reason = cause instanceof Error ? cause.message : "invalid image assets";
+      throw new HwpCliError("bad_request", reason);
+    }
+    if (!imageAssetsMatchOps(ops, assets)) {
+      return error(400, "path_traversal", "insert-image paths must name exactly the uploaded assets; attach matching PNG/JPEG files instead of server-local paths");
+    }
+    form.forEach((value, key) => {
+      if (value instanceof Blob && key !== "file" && key !== "asset") {
+        throw new HwpCliError("bad_request", "unexpected file-valued multipart field; send only file and asset parts");
+      }
+    });
+    if (assets.length > 0 && (await engine.capabilities()).imageAssets !== "v1") {
+      throw new HwpCliError("bad_request", "the configured engine does not support image assets v1; configure a host that advertises imageAssets v1");
     }
     const options: EditOptions = {};
     const verify = formFlag(form, "verify");
     if (verify !== undefined) options.verify = verify;
     const allowPartial = formFlag(form, "allowPartial");
     if (allowPartial !== undefined) options.allowPartial = allowPartial;
+    if (assets.length > 0) options.assets = assets;
 
     // No session is created or written here. The pre-edit copy this path used
     // to snapshot was unreadable by anything in the repository (BUG-07, D-05);
@@ -554,7 +581,7 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
         return error(400, "bad_request", "invalid content-length");
       }
       if (bytes > maxRequestBytes) {
-        return error(413, "bad_request", `request exceeds the ${maxRequestBytes} byte limit`);
+        return error(413, "bad_request", `request exceeds the ${maxRequestBytes} byte limit; use a smaller document or fewer image uploads`);
       }
       switch (action) {
         case "slots": case "fill": case "lint": case "template": case "create":

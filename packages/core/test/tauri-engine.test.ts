@@ -374,3 +374,13 @@ describe("Tauri JSON edit channel", () => {
     expect(calls.find(call=>call.cmd==="hwped_edit")!.args).toMatchObject({opsArgv:["--set-field","title=x"]});
   });
 });
+
+it("does not advertise or silently drop unsupported Tauri image bytes", async () => {
+  const {invoke,calls}=mockInvoke({hwped_capabilities:{version:"1.4.0",editable:true,editOps:"v1",imageAssets:"v1",formats:["hwpx"],templateMethods:["slots","template"]}});
+  const engine=createTauriEngine(invoke);
+  const caps = await engine.capabilities();
+  expect(caps).not.toHaveProperty("imageAssets");
+  expect(caps).toMatchObject({editOps:"v1",templateMethods:["slots","template"]});
+  await expect(engine.edit(doc,[{kind:"insert-image",anchor:"x",path:"x.png"}],{assets:[{name:"x.png",data:new Uint8Array([1])}]})).rejects.toThrow(/unsupported.*Tauri.*HTTP/);
+  expect(calls.filter(call=>call.cmd==="hwped_edit")).toEqual([]);
+});

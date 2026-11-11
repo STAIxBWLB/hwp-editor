@@ -298,3 +298,105 @@ describe("routes + sessions (stub engine)", () => {
     expect(sessions.get(sessions.ids()[0]!).inspection?.envelope.markdown).toBe("# described");
   });
 });
+
+describe("HTTP image asset admission", () => {
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0]);
+  function request(parts: Array<{ name: string; data: Uint8Array }>, ops: EditOp[], extra?: (form: FormData) => void): Request {
+    const form = new FormData();
+    form.append("file", new Blob([DOC.data as BlobPart]), DOC.name);
+    form.append("ops", JSON.stringify(ops));
+    for (const part of parts) form.append("asset", new Blob([part.data as BlobPart]), part.name);
+    extra?.(form);
+    return new Request(`${BASE}/edit`, { method: "POST", body: form, headers: { "content-length": "1000" } });
+  }
+
+  it("passes matching uploaded bytes to a v1 engine", async () => {
+    let seen: EditOp[] | undefined;
+    let seenBytes: Uint8Array | undefined;
+    const engine = stubEngine({
+      async capabilities() { return { version: "1.0.0", editable: true, imageAssets: "v1", formats: ["hwp", "hwpx"] }; },
+      async edit(_doc, ops, options) { seen = ops; seenBytes = options?.assets?.[0]?.data; return { name: "out.hwpx", data: png }; },
+    });
+    const handler = createHwpEditorHandler({ engine, sessions: false });
+    const ops: EditOp[] = [{ kind: "insert-image", anchor: "Figure", path: "figure.png" }];
+    const res = await handler(request([{ name: "figure.png", data: png }], ops));
+    expect(res.status).toBe(200);
+    expect(seen).toEqual(ops);
+    expect(seenBytes).toEqual(png);
+  });
+
+  it.each([
+    { assets: [{ name: "../x.png", data: png }], ops: [{ kind: "insert-image", anchor: "x", path: "../x.png" } as EditOp] },
+    { assets: [{ name: "x.png", data: png }, { name: "x.png", data: png }], ops: [{ kind: "insert-image", anchor: "x", path: "x.png" } as EditOp] },
+    { assets: [{ name: "x.png", data: new Uint8Array([1, 2, 3]) }], ops: [{ kind: "insert-image", anchor: "x", path: "x.png" } as EditOp] },
+    { assets: [{ name: "x.png", data: png }], ops: [{ kind: "insert-image", anchor: "x", path: "other.png" } as EditOp] },
+  ])("rejects unsafe, duplicate, unsigned, and unreferenced assets before engine calls", async ({ assets, ops }) => {
+    let calls = 0;
+    const handler = createHwpEditorHandler({ engine: stubEngine({ async edit() { calls++; return { name: "x", data: png }; } }), sessions: false });
+    const res = await handler(request(assets, ops));
+    expect(res.status).toBe(400);
+    expect(calls).toBe(0);
+  });
+
+  it("rejects missing assets, seal, and unsupported engines before edit", async () => {
+    let calls = 0;
+    const handler = createHwpEditorHandler({ engine: stubEngine({ async edit() { calls++; return { name: "x", data: png }; } }), sessions: false });
+    const missing = await handler(request([], [{ kind: "insert-image", anchor: "x", path: "x.png" }]));
+    const seal = await handler(request([], [{ kind: "seal", anchor: "x", path: "x.png", size: 20 }]));
+    expect(missing.status).toBe(400);
+    expect(seal.status).toBe(400);
+    expect(calls).toBe(0);
+    const unsupported = createHwpEditorHandler({ engine: stubEngine(), sessions: false });
+    const res = await unsupported(request([{ name: "x.png", data: png }], [{ kind: "insert-image", anchor: "x", path: "x.png" }]));
+    expect(res.status).toBe(400);
+  });
+
+  it("checks asset count and Blob.size before reading uploaded bytes", async () => {
+    let calls = 0;
+    const handler = createHwpEditorHandler({ engine: stubEngine({ async edit() { calls++; return { name: "x", data: png }; } }), sessions: false });
+    const ops = Array.from({ length: 9 }, (_, i) => ({ kind: "insert-image" as const, anchor: `x${i}`, path: `x${i}.png` }));
+    const tooMany = await handler(request(ops.map((op) => ({ name: op.path, data: png })), ops));
+    expect(tooMany.status).toBe(400);
+    const tooLarge = await handler(request([
+      { name: "large.png", data: new Uint8Array(10 * 1024 * 1024 + 1) },
+    ], [{ kind: "insert-image", anchor: "x", path: "large.png" }]));
+    expect(tooLarge.status).toBe(400);
+    expect(calls).toBe(0);
+  });
+
+  it("rejects other file-valued multipart fields", async () => {
+    let calls = 0;
+    const handler = createHwpEditorHandler({ engine: stubEngine({ async edit() { calls++; return { name: "x", data: png }; } }), sessions: false });
+    const res = await handler(request([], [], (form) => form.append("extra", new Blob([png]), "other.png")));
+    expect(res.status).toBe(400);
+    expect(calls).toBe(0);
+  });
+
+  it("refuses authorization before reading multipart or calling the engine", async () => {
+    let calls = 0;
+    let buffered = false;
+    const denied = new Request(`${BASE}/edit`, { method: "POST", body: "unused", headers: { "content-length": "100" } });
+    Object.defineProperty(denied, "formData", { value: async () => { buffered = true; throw new Error("should not parse"); } });
+    const handler = createHwpEditorHandler({
+      engine: stubEngine({ async edit() { calls++; return { name: "x", data: png }; } }),
+      authorize: async () => null,
+      sessions: false,
+    });
+    expect((await handler(denied)).status).toBe(403);
+    expect(buffered).toBe(false);
+    expect(calls).toBe(0);
+  });
+});
+
+it("permits reuse of one uploaded image by multiple insertions", async () => {
+  const png=new Uint8Array([137,80,78,71,13,10,26,10]);
+  const form=new FormData();
+  form.append("file",new Blob([DOC.data as BlobPart]),DOC.name);
+  form.append("asset",new Blob([png]),"same.png");
+  const ops=[{kind:"insert-image",anchor:"first",path:"same.png"},{kind:"insert-image",anchor:"second",path:"same.png"}];
+  form.append("ops",JSON.stringify(ops));
+  let received:unknown;
+  const handler=createHwpEditorHandler({sessions:false,engine:stubEngine({capabilities:async()=>({version:"1.4.0",editable:true,formats:["hwpx"],imageAssets:"v1"}),edit:async(document,actual)=>{received=actual;return document;}})});
+  const response=await handler(new Request(`${BASE}/edit`,{method:"POST",body:form,headers:{"content-length":"1000"}}));
+  expect(response.status).toBe(200); expect(received).toEqual(ops);
+});
