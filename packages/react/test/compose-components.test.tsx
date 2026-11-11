@@ -171,4 +171,32 @@ describe("ComposePanel component assembly (AC9)", () => {
     const blocks = engine.calls.compose[0]!.spec.document.sections[0]!.blocks;
     expect(blocks.map(paragraphText)).toEqual(["고친 값"]);
   });
+
+  it("moves the picker to the new library when the host swaps it", async () => {
+    // A host that loads its own folder swaps `components` after the dialog is
+    // already open; a picker left on the starters would offer a component the
+    // host no longer provides, and compose it.
+    const first: Component = {
+      name: "첫 묶음",
+      description: "처음 카탈로그",
+      params: {},
+      blocks: [{ type: "paragraph", runs: [{ type: "text", text: "첫" }] }],
+    };
+    const second: Component = {
+      name: "둘째 묶음",
+      description: "바뀐 카탈로그",
+      params: {},
+      blocks: [{ type: "paragraph", runs: [{ type: "text", text: "둘" }] }],
+    };
+    const engine = createMockEngine();
+    const { rerender } = render(<HwpEditor engine={engine} file={null} components={[first]} />);
+    fireEvent.click(screen.getByRole("button", { name: en["canvas.createCta"] }));
+    await screen.findByRole("dialog", { name: en["compose.title"] });
+    expect((screen.getByLabelText(en["compose.componentPicker"]) as HTMLSelectElement).value).toBe("첫 묶음");
+
+    rerender(<HwpEditor engine={engine} file={null} components={[second]} />);
+    const picker = screen.getByLabelText(en["compose.componentPicker"]) as HTMLSelectElement;
+    expect(Array.from(picker.options).map((option) => option.value)).toEqual(["둘째 묶음"]);
+    expect(picker.value).toBe("둘째 묶음");
+  });
 });

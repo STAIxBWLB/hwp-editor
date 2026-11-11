@@ -85,8 +85,17 @@ function array(raw: unknown, field: string): unknown[] {
   return raw;
 }
 
-/** A segment id: 16 hex checksum, then 1..=32 dot-separated indices. */
-const SEGMENT_ID = /^[0-9a-f]{16}(?:\.[0-9]+){1,32}$/;
+/**
+ * A segment id: 16 hex checksum, then a dot-separated index chain, one index
+ * more than the engine's own 32 so an id at that cap is never refused.
+ *
+ * This parser validates what the engine just wrote, not what a caller asked
+ * for: over-accepting one index costs nothing (no shipped document nests past
+ * five), while under-accepting loses the ids of an insertion that succeeded.
+ * What it must reject is a value that is not an id at all, which the 16-hex
+ * prefix and the all-numeric chain still do.
+ */
+const SEGMENT_ID = /^[0-9a-f]{16}(?:\.[0-9]+){1,33}$/;
 
 /** The positional index chain inside a segment id, without its checksum. */
 function segmentPath(id: string): number[] {

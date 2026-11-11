@@ -71,8 +71,14 @@ test("AC8: a component inserted after the selected paragraph is rendered there",
   await page.getByRole("tab", { name: en["tabs.components"], exact: true }).click();
   const panel = page.getByRole("region", { name: en["components.panelAria"], exact: true });
   const name = "결재란";
+  // The palette fills the component's params, so the document gets the value
+  // the user typed and never the `{{param}}` placeholder.
+  await panel
+    .getByLabel(en["components.paramLabel"]({ name, param: "기안자" }), { exact: true })
+    .fill("김기안");
   const reRead = page.waitForResponse((response) => response.url().endsWith("/read"));
-  await panel.getByRole("button", { name: en["components.insert"]({ name }), exact: true }).click();
+  const insert = panel.getByRole("button", { name: en["components.insert"]({ name }), exact: true });
+  await insert.click();
   const edited = (await (await reRead).json()) as { markdown: string };
 
   expect(edits).toHaveLength(1);
@@ -83,23 +89,27 @@ test("AC8: a component inserted after the selected paragraph is rendered there",
   // The heading is paragraph 1, not 0: a section's first paragraph is its
   // definition paragraph, which no insertion may precede.
   expect(op!.address?.id).toMatch(/^[0-9a-f]{16}\.0\.1$/);
-  // The component's own style travels with the op; the target's styles win,
-  // so it is the engine that decides how the box is drawn.
+  // The styles travel with the op: the component's own cell style plus the
+  // profile style it is based on, which a bare target need not define. The
+  // target's definitions win where both name one (#428 contract).
   expect(Object.keys(op!.styles ?? {})).toContain("결재란 셀");
+  expect(Object.keys(op!.styles ?? {})).toContain("바탕글");
   expect(op!.blocks?.[0]?.type).toBe("table");
+  // No placeholder reached the engine, and the value the user typed did.
+  expect(JSON.stringify(op!.blocks)).not.toContain("{{");
+  expect(JSON.stringify(op!.blocks)).toContain("김기안");
 
   const heading = edited.markdown.indexOf("표 편집 데모");
-  const approval = edited.markdown.indexOf("기안자");
+  const approval = edited.markdown.indexOf("김기안");
   const table = edited.markdown.indexOf("사과");
   expect(heading).toBeGreaterThanOrEqual(0);
   expect(approval).toBeGreaterThan(heading);
   expect(table).toBeGreaterThan(approval);
 
-  // The row exists because the report named the paragraph it created.
-  await expect(
-    panel.getByRole("button", { name: en["components.remove"]({ name }), exact: true }),
-  ).toBeVisible();
-  await expect(page.locator(".hwped").getByRole("alert")).toHaveCount(0);
+  // An insertion owns the document until the re-read lands, and the palette's
+  // own button is disabled for exactly that span, so it is the signal that the
+  // paragraphs the report named are the selection now.
+  await expect(insert).toBeEnabled();
 
   // The paragraphs the report named are the selection, so the editor points at
   // what the insertion created instead of the paragraph it was sent. The box is
@@ -107,9 +117,39 @@ test("AC8: a component inserted after the selected paragraph is rendered there",
   // the inserted box and not the heading the click selected.
   await page.getByRole("tab", { name: en["tabs.para"], exact: true }).click();
   const inspected = page.getByRole("region", { name: en["segment.panelAria"], exact: true });
-  await expect(inspected.locator(".hwped-quote")).toContainText("기안자");
+  await expect(inspected.locator(".hwped-quote")).toContainText("김기안");
   await expect(inspected.locator(".hwped-quote")).not.toContainText("표 편집 데모");
   await expect(inspected.locator('[aria-selected="true"]').first()).toBeVisible();
+
+  // Reorder acts on that selection through the addressed control: the inserted
+  // paragraph moves up with `move-para`, addressed to paragraph 2 of section 0
+  // (the slot the insertion filled), so no row list survives it and no id can
+  // go stale.
+  const moved = page.waitForResponse((response) => response.url().endsWith("/read"));
+  await inspected.getByRole("button", { name: en["segment.moveUp"], exact: true }).click();
+  await page.getByRole("button", { name: en["toolbar.applyWithCount"]({ count: 1 }), exact: true }).click();
+  await moved;
+  expect(editOps(edits[1]!)[0]!.kind).toBe("move-para");
+  expect(editOps(edits[1]!)[0]!.address?.id).toMatch(/^[0-9a-f]{16}\.0\.2$/);
+
+  // An applied edit clears the selection, so the paragraph the move wrote is
+  // selected again from the panel's own paragraph list (an empty selection is
+  // how the landed replacement shows), and removed with its own `delete-para`
+  // addressed to that paragraph.
+  await expect(inspected.getByRole("listbox").locator('[aria-selected="true"]')).toHaveCount(0);
+  await inspected.getByRole("option", { name: /기안 \| 검토/ }).click();
+  // The side panel follows a selection to the tab its text belongs to, and a
+  // table's paragraph reads as table markdown, so the paragraph controls that
+  // address it are one tab click away.
+  await expect(page.getByRole("tab", { name: en["tabs.table"], exact: true })).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("tab", { name: en["tabs.para"], exact: true }).click();
+  const removed = page.waitForResponse((response) => response.url().endsWith("/read"));
+  await inspected.getByRole("button", { name: en["segment.deletePara"], exact: true }).click();
+  await page.getByRole("button", { name: en["toolbar.applyWithCount"]({ count: 1 }), exact: true }).click();
+  const afterRemove = (await (await removed).json()) as { markdown: string };
+  expect(editOps(edits[2]!)[0]!.kind).toBe("delete-para");
+  expect(afterRemove.markdown).not.toContain("김기안");
+  await expect(page.locator(".hwped").getByRole("alert")).toHaveCount(0);
 });
 
 test("AC9: a document composed from the assembly keeps its order and params", async ({ page }) => {

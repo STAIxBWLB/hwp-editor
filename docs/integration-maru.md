@@ -33,7 +33,7 @@ Payloads mirror `packages/core/src/protocol.ts`, with two Tauri deltas:
 |---|---|---|
 | `hwped_read` | `{ document, workspaceRoot? }` | `CatEnvelope` |
 | `hwped_render` | `{ document, options?, workspaceRoot? }` | `RenderResponse` |
-| `hwped_edit` | `{ document, ops? / opsArgv?, verify?, allowPartial?, workspaceRoot? }` | `EditResponse` |
+| `hwped_edit` | `{ document, ops? / opsArgv?, verify?, allowPartial?, report?, workspaceRoot? }` | `EditResponse` |
 | `hwped_compose` | `{ spec, name }` | `ComposeResponse` |
 | `hwped_validate` | `{ document, workspaceRoot? }` | `ValidationReport` |
 | `hwped_capabilities` | `{}` | `Capabilities` |
@@ -56,6 +56,13 @@ Payloads mirror `packages/core/src/protocol.ts`, with two Tauri deltas:
   JSON channel. Only that implemented capability is exposed; unknown future
   channel versions are omitted. Older hosts keep legacy argv controls, and
   addressed edits are refused before `hwped_edit` with an upgrade next step.
+- `report` asks for `edit-report-v1` (`hwp edit --report <FILE>`, hwp-cli
+  1.4.0+). Only that report names the segment ids an insert created, so the
+  components palette sends `report: true` and reads `report` back from
+  `EditResponse`; the client parses it with `parseEditReport` and leaves the
+  field absent when the host answers without one or with an unreadable one. A
+  host that ignores the flag therefore disables the palette's inserted-ids
+  path instead of having ids guessed for it.
 
 - Rust errors are prefixed strings: `cli_missing:`, `hwp_timeout:`,
   `hwp_failed:`, `hwp_parse_failed:`, `hwped_bad_request:`. The engine wraps

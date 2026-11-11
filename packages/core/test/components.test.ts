@@ -15,7 +15,9 @@ import { join, sep } from "node:path";
 import { describe, expect, it, afterAll } from "vitest";
 
 import {
+  componentStyleMap,
   documentSpecFromComponents,
+  isComponentError,
   loadComponents,
   STARTER_COMPONENTS,
   substituteParams,
@@ -1527,5 +1529,68 @@ describeBin("compose with the real hwp", () => {
 
   afterAll(() => {
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+/**
+ * The insertion side of the same resolver: `insert_blocks` takes a `styles`
+ * map and refuses a block whose style neither it nor the target defines, so a
+ * palette has to send every profile style its component references.
+ */
+describe("componentStyleMap", () => {
+  it("adds the profile styles a component references, through its based_on chain", () => {
+    const styles = componentStyleMap([substituteParams(starter("결재란"))]);
+    // Its own style, the profile style that style is based on, and nothing else:
+    // the map is what a bare target needs, not the whole profile table.
+    expect(Object.keys(styles).sort()).toEqual(["바탕글", "결재란 셀"].sort());
+    expect(styles["결재란 셀"]?.["based_on"]).toBe("바탕글");
+  });
+
+  it("takes profile values from the table rather than a component's copy", () => {
+    const styles = componentStyleMap([substituteParams(starter("붙임"))]);
+    expect(styles["바탕글"]).toEqual(OFFICIAL_PROFILE["바탕글"]);
+    // A copy, not the module's row: editing what a host gets back cannot reach
+    // the profile table.
+    const official = { ...OFFICIAL_PROFILE["바탕글"] };
+    const row = styles["바탕글"] as Record<string, unknown>;
+    row["font_size_pt"] = 999;
+    expect(row["font_size_pt"]).toBe(999);
+    expect(OFFICIAL_PROFILE["바탕글"]).toEqual(official);
+  });
+
+  it("refuses a profile redefinition with the component and field named", () => {
+    const component = validateComponent({
+      name: "시험",
+      description: "시험용 구성요소",
+      params: {},
+      styles: { "바탕글": { font_size_pt: 30 } },
+      blocks: [{ type: "paragraph", style: "바탕글", runs: [{ type: "text", text: "본문" }] }],
+    }, REFUSAL_SOURCE);
+    expect(() => componentStyleMap([component])).toThrow(/redefines the official profile's 바탕글/);
+    try {
+      componentStyleMap([component]);
+    } catch (error) {
+      expect(isComponentError(error)).toBe(true);
+      if (!isComponentError(error)) throw error;
+      expect(error.code).toBe("component_style");
+      expect(error.source).toBe("시험");
+      expect(error.field).toBe("styles.바탕글");
+    }
+  });
+
+  it("codes a param refusal apart from a shape refusal, so a host can localize it", () => {
+    try {
+      substituteParams(starter("결재란"), { "없는 값": "x" });
+    } catch (error) {
+      expect(isComponentError(error)).toBe(true);
+      if (!isComponentError(error)) throw error;
+      expect(error.code).toBe("component_param");
+      expect(error.field).toBe("params.없는 값");
+      // The one-line form every existing caller logs is unchanged.
+      expect(error.message).toBe(
+        "components: 결재란: params.없는 값: is not a param of this component; use one of its " +
+          "declared params, or add the param to the component, then retry",
+      );
+    }
   });
 });

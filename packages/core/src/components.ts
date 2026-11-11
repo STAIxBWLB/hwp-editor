@@ -69,9 +69,53 @@ const PLACEMENTS = ["inline", "floating"] as const;
 const COLOUR = /^#[0-9A-Fa-f]{6}$/;
 const PLACEHOLDER = /\{\{([^{}]*)\}\}/g;
 
-function refuse(source: string, field: string, reason: string): never {
-  const where = field === "" ? source : `${source}: ${field}`;
-  throw new Error(`components: ${where}: ${reason}`);
+/**
+ * What was refused. The palette and the compose dialog render a refusal from
+ * `code`, `source` and `field` in the user's locale instead of showing an
+ * English sentence a host cannot translate.
+ */
+export type ComponentErrorCode =
+  | "component_invalid"
+  | "component_param"
+  | "component_style"
+  | "component_load";
+
+/**
+ * A component refusal, carrying the parts a host localizes. `message` keeps
+ * the one-line form every existing caller logs, and `reason` is the same text
+ * without the `components:` prefix, so a localized frame can wrap it.
+ */
+export class ComponentError extends Error {
+  readonly code: ComponentErrorCode;
+  /** The component's name, or the file path or URL the JSON came from. */
+  readonly source: string;
+  /** The failing field path inside that file; empty when the source itself is the problem. */
+  readonly field: string;
+  /** The reason alone, without the source and field prefix. */
+  readonly reason: string;
+
+  constructor(code: ComponentErrorCode, source: string, field: string, reason: string) {
+    super(`components: ${field === "" ? source : `${source}: ${field}`}: ${reason}`);
+    this.name = "ComponentError";
+    this.code = code;
+    this.source = source;
+    this.field = field;
+    this.reason = reason;
+  }
+}
+
+/** Narrow an untrusted throw to a component refusal. */
+export function isComponentError(value: unknown): value is ComponentError {
+  return value instanceof ComponentError;
+}
+
+function refuse(
+  source: string,
+  field: string,
+  reason: string,
+  code: ComponentErrorCode = "component_invalid",
+): never {
+  throw new ComponentError(code, source, field, reason);
 }
 
 function at(field: string, key: string | number): string {
@@ -907,6 +951,7 @@ export function substituteParams(
       "",
       "is already substituted, and a second pass would re-scan text a value was inserted into; " +
         "fill the unfilled component, or compose this one as it is, then retry",
+      "component_param",
     );
   }
   const overrides: [string, string][] = [];
@@ -917,10 +962,11 @@ export function substituteParams(
         at("params", name),
         "is not a param of this component; use one of its declared params, or add the param to " +
           "the component, then retry",
+        "component_param",
       );
     }
     if (typeof value !== "string") {
-      refuse(source, at("params", name), "must be a string; pass the value as text, then retry");
+      refuse(source, at("params", name), "must be a string; pass the value as text, then retry", "component_param");
     }
     // Normalized (`\r\n` becomes `\n`) and checked here, so what is stored is
     // what is substituted and what the caller reads back.
@@ -944,6 +990,7 @@ export function substituteParams(
         `substitutes {{${name ?? "param"}}}, whose value holds a line break, and ` +
           "document-spec-v1 allows no control character in a field value; " +
           "keep that param on one line, then retry",
+        "component_param",
       );
     }
     return substituted;
@@ -1060,9 +1107,49 @@ export function documentSpecFromComponents(
     refuse("components", "", "at least one component is needed to compose a document");
   }
   const filled = components.map((input) => fillInput(input));
+  const resolved = resolvedStyles(filled);
+  const blocks: Block[] = [];
+  for (const component of filled) {
+    blocks.push(...(structuredClone(component.blocks) as Block[]));
+  }
+
+  const document: DocumentSpecV2["document"] = {
+    version: "1.0",
+    sections: [options.sectionId === undefined ? { blocks } : { id: options.sectionId, blocks }],
+  };
+  if (options.title !== undefined) document.metadata = { title: options.title };
+  if (resolved.size > 0) document.styles = Object.fromEntries(resolved);
+  return { version: "2.0", document };
+}
+
+/**
+ * The style definitions a component needs beside a destination that may lack
+ * them: its own, plus every official profile style its blocks and its
+ * `based_on` chain reference, resolved exactly as composition resolves them.
+ *
+ * `insert_blocks` takes a `styles` map and refuses a block naming a style
+ * neither it nor the target defines, so an insertion sends this map instead of
+ * `component.styles`: the palette would otherwise need every profile style
+ * pre-defined in the target. A component that redefines a profile style, or
+ * two components that define one name differently, are refused here with the
+ * component and field named, before any op is built.
+ *
+ * The returned map shares nothing with the components or the profile table.
+ */
+export function componentStyleMap(
+  components: readonly (Component | ComponentInput)[],
+): Record<string, Style> {
+  if (components.length === 0) return {};
+  return Object.fromEntries(resolvedStyles(components.map((input) => fillInput(input))));
+}
+
+/**
+ * Merge the components' own styles and resolve every reference against the
+ * profile table, refusing a redefinition or a reference nothing defines.
+ */
+function resolvedStyles(filled: readonly FilledComponent[]): Map<string, Style> {
   const styles = new Map<string, Style>();
   const definedBy = new Map<string, string>();
-  const blocks: Block[] = [];
   for (const component of filled) {
     for (const [name, style] of Object.entries(component.styles ?? {})) {
       const profile = PROFILE_STYLES.get(name);
@@ -1073,6 +1160,7 @@ export function documentSpecFromComponents(
           `redefines the official profile's ${name}, and a component takes profile values from ` +
             `the table rather than replacing them (#54 Decision 2026-11-10); define your style ` +
             `under its own name with based_on ${name}, then retry`,
+          "component_style",
         );
       }
       const previous = styles.get(name);
@@ -1082,12 +1170,12 @@ export function documentSpecFromComponents(
           at("styles", name),
           `is defined differently by ${definedBy.get(name) ?? "an earlier component"} and this ` +
             "component; make the two definitions agree, or rename one of them, then retry",
+          "component_style",
         );
       }
       styles.set(name, style);
       definedBy.set(name, component.name);
     }
-    blocks.push(...(structuredClone(component.blocks) as Block[]));
   }
 
   const unresolved: { source: string; field: string; name: string }[] = [];
@@ -1117,6 +1205,7 @@ export function documentSpecFromComponents(
         item.field,
         `references style ${item.name}, which no component defines and the official profile ` +
           "does not have; name one of the profile styles, or define it in a component, then retry",
+        "component_style",
       );
     }
     if (fromProfile.has(item.name)) continue;
@@ -1135,14 +1224,7 @@ export function documentSpecFromComponents(
     if (fromProfile.has(name)) resolved.set(name, structuredClone(profile));
   }
   for (const [name, style] of styles) resolved.set(name, structuredClone(style));
-
-  const document: DocumentSpecV2["document"] = {
-    version: "1.0",
-    sections: [options.sectionId === undefined ? { blocks } : { id: options.sectionId, blocks }],
-  };
-  if (options.title !== undefined) document.metadata = { title: options.title };
-  if (resolved.size > 0) document.styles = Object.fromEntries(resolved);
-  return { version: "2.0", document };
+  return resolved;
 }
 
 /** Minimal response shape the loader needs; a `fetch` response satisfies it. */
@@ -1194,6 +1276,7 @@ async function readJson(transport: ComponentFetch, url: string): Promise<unknown
       url,
       "",
       `could not be loaded (${failureOf(error)}); check the URL, the network and access permissions, then retry`,
+      "component_load",
     );
   }
   if (!response.ok) {
@@ -1201,6 +1284,7 @@ async function readJson(transport: ComponentFetch, url: string): Promise<unknown
       url,
       "",
       `could not be loaded (HTTP ${response.status}); check the URL and that the server serves the library there, then retry`,
+      "component_load",
     );
   }
   let body: string;
@@ -1208,12 +1292,12 @@ async function readJson(transport: ComponentFetch, url: string): Promise<unknown
     body = await response.text();
   } catch (error) {
     if (isCancellation(error)) throw error;
-    refuse(url, "", `could not be read (${failureOf(error)}); check the connection to that URL, then retry`);
+    refuse(url, "", `could not be read (${failureOf(error)}); check the connection to that URL, then retry`, "component_load");
   }
   try {
     return JSON.parse(body) as unknown;
   } catch (error) {
-    refuse(url, "", `is not valid JSON (${failureOf(error)}); fix the file at that URL, then retry`);
+    refuse(url, "", `is not valid JSON (${failureOf(error)}); fix the file at that URL, then retry`, "component_load");
   }
 }
 
@@ -1265,6 +1349,7 @@ function resolveEntry(field: string, path: string, base: string | undefined): st
         "component index",
         field,
         `cannot be resolved against ${base}; pass LoadComponentsOptions.baseUrl as an absolute URL or a valid path, then retry`,
+        "component_load",
       );
     }
   }
@@ -1273,6 +1358,7 @@ function resolveEntry(field: string, path: string, base: string | undefined): st
     "component index",
     field,
     "is a relative path, and no baseUrl was given to resolve it; pass LoadComponentsOptions.baseUrl (the library folder URL) and retry",
+    "component_load",
   );
 }
 

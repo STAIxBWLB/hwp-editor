@@ -5,6 +5,7 @@ import { STARTER_COMPONENTS, documentSpecFromComponents } from "@hwp-editor/core
 import { ErrorLine } from "./ErrorLine.js";
 import { toEditorError } from "./errors.js";
 import { COMPOSE_PRESETS, buildDocumentSpec } from "./presets.js";
+import { componentFailure } from "./components-support.js";
 import type { ComposePreset } from "./presets.js";
 import type { MessageKey } from "./messages.js";
 import { useHwpEditorContext } from "./context.js";
@@ -118,6 +119,14 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [busy, onClose]);
 
+  // A host that swaps its library must not leave the picker on a component it
+  // no longer offers.
+  useEffect(() => {
+    setCatalogue((current) =>
+      components.some((component) => component.name === current) ? current : components[0]?.name ?? "",
+    );
+  }, [components]);
+
   const addRow = (): void => {
     const component = components.find((candidate) => candidate.name === catalogue);
     if (component === undefined) return;
@@ -167,12 +176,16 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
       const result = await engine.compose(spec, `${stem}.hwpx`);
       props.onComposed(result.document);
     } catch (e) {
+      // A component refusal carries a code, the component and the field, and
+      // is rendered as a localized sentence before it reaches the host: the
+      // assembly is what produced it, so this dialog says where to look.
+      const shown = componentFailure(e, t);
       // Compose is one of the two operations that can refuse with
       // `protected`, so this surface needs the code as much as the editor's.
-      setError(toEditorError(e));
+      setError(toEditorError(shown));
       // This panel owns its own error state, so the context passthrough is
       // the only channel by which a compose failure reaches the host.
-      onError?.(e);
+      onError?.(shown);
     } finally {
       setBusy(false);
     }

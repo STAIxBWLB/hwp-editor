@@ -109,14 +109,18 @@ export { parsePageLayout, parseRenderLayouts, RENDER_LAYOUT_NEXT_STEP } from "./
 export { TEMPLATE_MIN_VERSION, TEMPLATE_METHODS, templateVersionSupported, parseTemplateInputs, parseTemplateReport, parseFillReport, parseLintReport, parseEmbeddedTemplates, parseTemplateMethods, reportObject, reportString, reportSchemaVersion, reportCount, reportArray } from "./templates.js";
 export type { TemplateReport, EmbeddedTemplate, FillReport, FillResult, LintFinding, LintProfile, LintReport, TemplateInput, TemplateInputs, TemplateMethod } from "./templates.js";
 export {
+  componentStyleMap,
   documentSpecFromComponents,
+  isComponentError,
   loadComponents,
   STARTER_COMPONENTS,
   substituteParams,
   validateComponent,
 } from "./components.js";
+export { ComponentError } from "./components.js";
 export type {
   Component,
+  ComponentErrorCode,
   ComponentFetch,
   ComponentFetchResponse,
   ComponentIndex,

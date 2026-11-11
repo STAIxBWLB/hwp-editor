@@ -18,7 +18,7 @@
  */
 
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { CatEnvelope, DocumentHandle, EditOp, EditReport, LayoutRow, PageImage, Segment } from "@hwp-editor/core";
 import tableFixture from "../../core/test/fixtures/cat-segments-table.json";
 import { base64, createTauriEngine, parseCatEnvelope } from "@hwp-editor/core";
@@ -736,8 +736,8 @@ describe("ComponentsPanel (TEST-03)", () => {
   };
 
   /** Mock engine that honours the report opt-in, at a component-capable version. */
-  function composedEngine(): Engine {
-    const engine = createMockEngine({ envelope: addressableEnvelope() });
+  function composedEngine(envelope: CatEnvelope = addressableEnvelope()): Engine {
+    const engine = createMockEngine({ envelope });
     engine.capabilities = async () => ({ version: "1.6.0", editable: true, editOps: "v1", formats: ["hwp", "hwpx"] });
     const baseEdit = engine.edit.bind(engine);
     engine.edit = async (document, ops, options) => ({
@@ -747,23 +747,133 @@ describe("ComponentsPanel (TEST-03)", () => {
     return engine;
   }
 
-  it("inserts beside the selection and lists only the paragraph ids the report named", async () => {
+  it("substitutes the palette's values and sends the profile styles the component needs", async () => {
     const engine = composedEngine();
+    const envelope = await engine.read(file);
+    await selectPara(engine, 1, envelope);
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+    // The palette shows a component's declared defaults; the user changes one.
+    fireEvent.change(
+      await screen.findByLabelText(en["components.paramLabel"]({ name: componentName, param: "기안자" })),
+      { target: { value: "김기안" } },
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) }),
+    );
+
+    expect(engine.calls.edit).toHaveLength(1);
+    const [op] = engine.calls.edit[0]!.ops;
+    expect(op).toMatchObject({
+      kind: "insert-blocks",
+      address: { id: envelope.segments[1]!.id },
+      position: "after",
+    });
+    // The value the user typed reaches the op, and no placeholder survives: a
+    // `{{param}}` in a document is the bug this substitution exists to prevent.
+    const sent = JSON.stringify(op);
+    expect(sent).toContain("김기안");
+    expect(sent).not.toContain("{{");
+    // The styles travel with the op: the component's own cell style and the
+    // profile style it is based on, which the target may not define.
+    expect(Object.keys((op as { styles?: Record<string, unknown> }).styles ?? {}).sort())
+      .toEqual(["바탕글", "결재란 셀"].sort());
+  });
+
+  it("inserts before the paragraph when the palette is set to before", async () => {
+    const engine = composedEngine();
+    const envelope = await engine.read(file);
+    await selectPara(engine, 1, envelope);
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+    fireEvent.click(await screen.findByRole("button", { name: en["components.positionBefore"] }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) }),
+    );
+    expect(engine.calls.edit[0]!.ops[0]).toMatchObject({
+      kind: "insert-blocks",
+      address: { id: envelope.segments[1]!.id },
+      position: "before",
+    });
+  });
+
+  it("names both widths when the engine refuses the insertion as too wide", async () => {
+    // The engine answers a block wider than its insertion point with its own
+    // diagnostic, in Korean in every locale; the palette replaces it.
+    const engine = composedEngine();
+    engine.edit = () => Promise.reject(new Error(
+        "Error: insert_blocks 블록 정의가 유효하지 않습니다: layout_overflow at " +
+          "$.sections[0].blocks[0].width_mm: table width exceeds body width 46.40 mm.",
+    ));
     const envelope = await engine.read(file);
     await selectPara(engine, 1, envelope);
     fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
     fireEvent.click(
       await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) }),
     );
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain(en["components.tooWide"]({ width: "120 mm", available: "46.4 mm" }));
+    // One report, not two: replaceDocument is the only emitter on this path.
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+  });
 
-    // The row exists because the report's ids were read, not guessed.
-    expect(await screen.findByRole("button", { name: en["components.remove"]({ name: componentName }) })).toBeTruthy();
-    expect(engine.calls.edit).toHaveLength(1);
-    expect(engine.calls.edit[0]!.ops).toEqual([
+  it("inserts inside a cell instead of beside the table", async () => {
+    // A cell resolves to its own paragraphs, so the insertion lands in the
+    // cell. The table's host paragraph is a different segment with its own id,
+    // and addressing that one would put the component beside the table.
+    const host: Segment = { id: "cell-host", indices: [2], start: 0, end: 5, kind: "para", section: 0, para: 2 };
+    const table: Segment = { id: "cell-table", indices: [2, 0], start: 0, end: 5, kind: "table", section: 0, para: 2 };
+    const cell: Segment = { id: "cell-two", indices: [2, 0, 0], start: 0, end: 5, kind: "cell", section: 0, para: 2 };
+    const first: Segment = { id: "cell-two-p0", indices: [2, 0, 0, 0], start: 0, end: 1, kind: "para", section: 0, para: 2 };
+    const second: Segment = { id: "cell-two-p1", indices: [2, 0, 0, 1], start: 3, end: 4, kind: "para", section: 0, para: 2 };
+    const envelope: CatEnvelope = { markdown: "가\n\n나\n", segments: [host, table, cell, first, second] };
+    const engine = composedEngine(envelope);
+    engine.render = async () => [pageWithRow(cell)];
+    render(<HwpEditor engine={engine} file={file} />);
+    await screen.findByRole("button", { name: en["page.label"]({ page: 1 }) });
+    clickRow();
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+
+    // No false "no segment ids" reason: the cell is addressable.
+    expect(screen.queryByText(en["components.noAddress"])).toBeNull();
+    fireEvent.click(
+      await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) }),
+    );
+    expect(engine.calls.edit[0]!.ops[0]).toMatchObject({
+      kind: "insert-blocks",
+      address: { id: "cell-two-p1" },
+    });
+  });
+
+  it("names a table as the reason the palette cannot insert", async () => {
+    const host: Segment = { id: "cell-host", indices: [2], start: 0, end: 1, kind: "para", section: 0, para: 2 };
+    const table: Segment = { id: "cell-table", indices: [2, 0], start: 0, end: 1, kind: "table", section: 0, para: 2 };
+    const envelope: CatEnvelope = { markdown: "표\n", segments: [host, table] };
+    const engine = composedEngine(envelope);
+    engine.render = async () => [pageWithRow(table, "table")];
+    render(<HwpEditor engine={engine} file={file} />);
+    await screen.findByRole("button", { name: en["page.label"]({ page: 1 }) });
+    clickRow();
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+    // The reason is the same one a paragraph edit gives for a table, not the
+    // id-less-host sentence that used to appear for every nested selection.
+    expect(await screen.findByText(en["segment.tableSelectionRefused"])).toBeTruthy();
+    expect(
+      (screen.getByRole("button", { name: en["components.insert"]({ name: componentName }) }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
+  it("queues an addressed move for the selected paragraph", async () => {
+    // Reorder acts on the current selection through the paragraph controls, so
+    // the ids an insertion reported never have to be remembered to move it.
+    const envelope = addressableEnvelope();
+    const engine = composedEngine(envelope);
+    await selectPara(engine, 1, envelope);
+    fireEvent.click(await screen.findByRole("button", { name: en["segment.moveUp"] }));
+    const ops = await applyOps(engine, 1);
+    expect(ops).toEqual([
       expect.objectContaining({
-        kind: "insert-blocks",
+        kind: "move-para",
         address: { id: envelope.segments[1]!.id },
-        position: "after",
+        to: { address: { id: envelope.segments[0]!.id }, position: "before" },
       }),
     ]);
   });

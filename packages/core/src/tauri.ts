@@ -37,6 +37,8 @@ import type { DocumentSpecV2 } from "./generated/document-spec-v2.js";
 import type { TemplateDataV1, TemplateSpecV1 } from "./spec.js";
 import type { LintProfile } from "./templates.js";
 import { parseEmbeddedTemplates, parseFillReport, parseLintReport, parseTemplateInputs, parseTemplateMethods, parseTemplateReport, reportObject, reportString } from "./templates.js";
+import { parseEditReport } from "./edit-report.js";
+import type { EditReport } from "./edit-report.js";
 import type {
   ComposeResponse,
   EditResponse,
@@ -311,9 +313,23 @@ export function createTauriEngine(
         ...(options.allowPartial !== undefined
           ? { allowPartial: options.allowPartial }
           : {}),
+        // The host forwards this to `hwp edit --report`; only that report names
+        // the segment ids an op created, and a host that ignores the flag
+        // answers without the field rather than with guessed ids.
+        ...(options.report === true ? { report: true } : {}),
         ...scope(),
       });
-      return { name: res.name, data: base64.decode(res.dataBase64) };
+      let report: EditReport | undefined;
+      if (options.report === true && res.report !== undefined) {
+        try {
+          report = parseEditReport(res.report);
+        } catch {
+          // A host that answers with an unreadable report is a host whose ids
+          // are unknown, not a failed edit: the document itself was published.
+          report = undefined;
+        }
+      }
+      return { name: res.name, data: base64.decode(res.dataBase64), ...(report === undefined ? {} : { report }) };
     },
 
     async compose(spec: DocumentSpecV2, name: string): Promise<ComposeResult> {

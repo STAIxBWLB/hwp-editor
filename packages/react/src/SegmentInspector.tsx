@@ -112,6 +112,20 @@ export function SegmentInspector(): JSX.Element {
 
   const find = currentText;
   const address = singleParagraph === undefined ? undefined : paragraphAddress(singleParagraph);
+  /**
+   * The paragraph's own siblings: same section, same parent path, one nesting
+   * level deep. A move swaps with one of them, so a component inserted into a
+   * cell is reordered among that cell's paragraphs rather than out of the cell.
+   */
+  const siblings = singleParagraph?.indices === undefined
+    ? []
+    : paragraphs.filter(candidate =>
+        candidate.section === singleParagraph.section &&
+        candidate.id !== undefined &&
+        candidate.indices !== undefined &&
+        candidate.indices.length === singleParagraph.indices!.length &&
+        singleParagraph.indices!.slice(0, -1).every((index, at) => candidate.indices![at] === index));
+  const siblingAt = siblings.findIndex(candidate => candidate.id === singleParagraph?.id);
   const addressedUnavailable = capabilities?.editOps !== "v1";
   const disabled = !editable || addressedUnavailable || state.status === "applying";
   const selectedRefs = state.selections?.length ? state.selections : selection === null ? [] : [selection];
@@ -315,6 +329,40 @@ export function SegmentInspector(): JSX.Element {
             }
           >
             {t("segment.insertAfter")}
+          </button>
+          <button
+            type="button"
+            className="hwped-btn"
+            disabled={singleTargetDisabled || siblingAt <= 0}
+            onClick={() =>
+              store.dispatch({
+                type: "queueOp",
+                op: {
+                  kind: "move-para",
+                  address: address!,
+                  to: { address: paragraphAddress(siblings[siblingAt - 1]!), position: "before" },
+                },
+              })
+            }
+          >
+            {t("segment.moveUp")}
+          </button>
+          <button
+            type="button"
+            className="hwped-btn"
+            disabled={singleTargetDisabled || siblingAt < 0 || siblingAt >= siblings.length - 1}
+            onClick={() =>
+              store.dispatch({
+                type: "queueOp",
+                op: {
+                  kind: "move-para",
+                  address: address!,
+                  to: { address: paragraphAddress(siblings[siblingAt + 1]!), position: "after" },
+                },
+              })
+            }
+          >
+            {t("segment.moveDown")}
           </button>
           <button
             type="button"

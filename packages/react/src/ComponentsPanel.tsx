@@ -1,41 +1,39 @@
 /**
- * The components palette: insert a component beside the selected paragraph,
- * then reorder or remove what the insertion reported.
+ * The components palette: fill a component's values and insert it beside the
+ * selected paragraph.
  *
- * The palette holds no document state of its own. Insertion goes through
- * `onInsert`, which the editor runs as one engine call with `report: true` and
- * answers with the ids the report named — the engine assigns them against the
- * document it just wrote, so they cannot be predicted here. Reorder and remove
- * arrive back as the current rows, addressed by those ids.
+ * The panel holds no document state and no list of what it inserted. An
+ * inserted paragraph's id exists only in the engine's edit report and
+ * describes the document as it was written, so a list kept here would carry
+ * the ids of shifted slots after the first move or removal, and two insertions
+ * of one component would collide. The editor selects what the report named
+ * instead, and reorder and removal act on that selection through the paragraph
+ * panel's addressed controls.
+ *
+ * Substitution happens in the editor before the op is built, from the values
+ * rendered here, so a `{{param}}` never reaches the engine.
  *
  * `disabledReason` is a localized sentence rather than a version number: the
  * editor knows why the palette cannot act (an old engine, a host without the
- * typed-ops channel, no selected paragraph) and the panel only renders it.
+ * typed-ops channel, a selection that is a table) and the panel only renders it.
  */
+import { useState } from "react";
 import type { JSX } from "react";
 import type { Component } from "@hwp-editor/core";
 import { EDIT_REPORT_MIN_VERSION, editReportSupported, STARTER_COMPONENTS } from "@hwp-editor/core";
 import { useHwpEditorContext } from "./context.js";
 
-/** One inserted component, keyed by the paragraph id its insertion created. */
-export interface InsertedComponent {
-  id: string;
-  /** The component it came from, for the row's own label. */
-  name: string;
-}
+/** Where a component goes relative to the selected paragraph. */
+export type InsertPosition = "before" | "after";
 
 export interface ComponentsPanelProps {
   /** Catalogue to offer; the shipped starters by default. */
   components?: readonly Component[];
-  /** Rows the editor holds for this document, oldest first. */
-  inserted?: readonly InsertedComponent[];
   /** Localized reason the palette cannot insert; empty when it can. */
   disabledReason?: string;
   /** True while an engine call owns the document. */
   busy?: boolean;
-  onInsert?: (component: Component) => void;
-  onMove?: (id: string, direction: -1 | 1) => void;
-  onRemove?: (id: string) => void;
+  onInsert?: (component: Component, values: Record<string, string>, position: InsertPosition) => void;
 }
 
 /** Why this engine cannot insert components, or "" when it can. */
@@ -53,79 +51,100 @@ export function componentsSupportReason(
 
 export function ComponentsPanel({
   components = STARTER_COMPONENTS,
-  inserted = [],
   disabledReason = "",
   busy = false,
   onInsert,
-  onMove,
-  onRemove,
 }: ComponentsPanelProps): JSX.Element {
   const { t } = useHwpEditorContext();
   const disabled = busy || disabledReason !== "";
+  /**
+   * Values per component name. A param the user has not touched keeps the
+   * component's own default, which is what the input shows and what the
+   * substitution falls back to.
+   */
+  const [values, setValues] = useState<Record<string, Record<string, string>>>({});
+  const [position, setPosition] = useState<InsertPosition>("after");
+
+  const valueOf = (component: Component, param: string): string =>
+    values[component.name]?.[param] ?? component.params[param] ?? "";
+
+  const edit = (component: Component, param: string, value: string): void => {
+    setValues((previous) => ({
+      ...previous,
+      [component.name]: { ...previous[component.name], [param]: value },
+    }));
+  };
+
+  /** Every declared param at its rendered value, so the op carries what is shown. */
+  const filled = (component: Component): Record<string, string> =>
+    Object.fromEntries(
+      Object.keys(component.params).map((param) => [param, valueOf(component, param)]),
+    );
+
   return (
     <div className="hwped-panel hwped-components" role="region" aria-label={t("components.panelAria")}>
       <p className="hwped-hint">{t("components.hint")}</p>
       {disabledReason !== "" && <p className="hwped-hint" role="status">{disabledReason}</p>}
-      <ul className="hwped-component-list" aria-label={t("components.catalogueAria")}>
-        {components.map((component) => (
-          <li key={component.name} className="hwped-component-item">
-            <div>
-              <strong>{component.name}</strong>
-              <p className="hwped-hint">{component.description}</p>
-            </div>
+      <div className="hwped-field">
+        <span className="hwped-label">{t("components.positionLabel")}</span>
+        <div className="hwped-row" role="group" aria-label={t("components.positionAria")}>
+          {(["before", "after"] as const).map((direction) => (
             <button
+              key={direction}
               type="button"
-              className="hwped-btn"
-              disabled={disabled || onInsert === undefined}
-              aria-label={t("components.insert", { name: component.name })}
-              onClick={() => onInsert?.(component)}
+              className={"hwped-btn" + (position === direction ? " hwped-preset-active" : "")}
+              aria-pressed={position === direction}
+              disabled={disabled}
+              onClick={() => setPosition(direction)}
             >
-              {t("components.insert", { name: component.name })}
+              {t(direction === "before" ? "components.positionBefore" : "components.positionAfter")}
             </button>
-          </li>
-        ))}
-      </ul>
-      <h3 className="hwped-label">{t("components.insertedTitle")}</h3>
-      {inserted.length === 0 ? (
-        <p className="hwped-hint">{t("components.insertedEmpty")}</p>
-      ) : (
-        <ol className="hwped-inserted-list">
-          {inserted.map((row, index) => (
-            <li key={row.id} className="hwped-component-item">
-              <span>{row.name}</span>
-              <div>
-                <button
-                  type="button"
-                  className="hwped-btn"
-                  disabled={disabled || index === 0 || onMove === undefined}
-                  aria-label={t("components.moveUp", { name: row.name })}
-                  onClick={() => onMove?.(row.id, -1)}
-                >
-                  ↑
-                </button>
-                <button
-                  type="button"
-                  className="hwped-btn"
-                  disabled={disabled || index === inserted.length - 1 || onMove === undefined}
-                  aria-label={t("components.moveDown", { name: row.name })}
-                  onClick={() => onMove?.(row.id, 1)}
-                >
-                  ↓
-                </button>
-                <button
-                  type="button"
-                  className="hwped-btn"
-                  disabled={disabled || onRemove === undefined}
-                  aria-label={t("components.remove", { name: row.name })}
-                  onClick={() => onRemove?.(row.id)}
-                >
-                  {t("components.remove", { name: row.name })}
-                </button>
-              </div>
-            </li>
           ))}
-        </ol>
-      )}
+        </div>
+      </div>
+      <ul className="hwped-component-list" aria-label={t("components.catalogueAria")}>
+        {components.map((component) => {
+          const params = Object.entries(component.params);
+          return (
+            <li key={component.name} className="hwped-component-item">
+              <div>
+                <strong>{component.name}</strong>
+                <p className="hwped-hint">{component.description}</p>
+              </div>
+              {params.length > 0 && (
+                <div
+                  className="hwped-fields"
+                  role="group"
+                  aria-label={t("components.paramAria", { name: component.name })}
+                >
+                  {params.map(([param]) => (
+                    <label key={param} className="hwped-label">
+                      {param}
+                      <input
+                        className="hwped-input"
+                        type="text"
+                        aria-label={t("components.paramLabel", { name: component.name, param })}
+                        disabled={disabled}
+                        value={valueOf(component, param)}
+                        onChange={(event) => edit(component, param, event.target.value)}
+                      />
+                    </label>
+                  ))}
+                </div>
+              )}
+              <button
+                type="button"
+                className="hwped-btn"
+                disabled={disabled || onInsert === undefined}
+                aria-label={t("components.insert", { name: component.name })}
+                onClick={() => onInsert?.(component, filled(component), position)}
+              >
+                {t("components.insert", { name: component.name })}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

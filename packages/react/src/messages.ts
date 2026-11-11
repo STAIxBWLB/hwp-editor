@@ -85,11 +85,16 @@ export const en = {
   // Component palette
   "components.panelAria": "Component palette",
   "components.catalogueAria": "Components you can insert",
-  "components.hint": "A component is inserted after the selected paragraph.",
+  "components.hint":
+    "A component is inserted beside the selected paragraph, with the values below filled in.",
   "components.insert": (p: { name: string }): string => `Insert ${p.name}`,
-  "components.insertedTitle": "Inserted in this document",
-  "components.insertedEmpty":
-    "Nothing inserted yet. The rows added here are the paragraphs an insertion reported.",
+  "components.positionLabel": "Insert at",
+  "components.positionAria": "Insertion position",
+  "components.positionBefore": "Before the paragraph",
+  "components.positionAfter": "After the paragraph",
+  "components.paramAria": (p: { name: string }): string => `${p.name} values`,
+  "components.paramLabel": (p: { name: string; param: string }): string =>
+    `${p.name}: ${p.param}`,
   "components.moveUp": (p: { name: string }): string => `Move ${p.name} up`,
   "components.moveDown": (p: { name: string }): string => `Move ${p.name} down`,
   "components.remove": (p: { name: string }): string => `Remove ${p.name}`,
@@ -101,7 +106,20 @@ export const en = {
   "components.disabledChannel":
     "This host cannot send typed edit operations, so a component cannot be inserted.",
   "components.noReport":
-    "The engine applied the insertion but reported no ids, so the inserted paragraphs cannot be selected.",
+    "The engine applied the insertion but reported no ids, so the inserted paragraphs cannot be selected; ask the host for the edit report (hwp-cli 1.4.0+) and insert again.",
+  "components.tooWide": (p: { width: string; available: string }): string =>
+    `This component is ${p.width} wide and the insertion point is ${p.available}: the engine refuses ` +
+    "a block wider than where it would go. Insert it in a narrower column of the component, or " +
+    "choose a narrower component.",
+  "components.refused": (p: {
+    code: string;
+    source: string;
+    field: string;
+    reason: string;
+  }): string =>
+    p.field === ""
+      ? `${p.source} was refused (${p.code}): ${p.reason}`
+      : `${p.source}: ${p.field} was refused (${p.code}): ${p.reason}`,
 
   // Error line — the prefix names which operation failed. The `{message}`
   // tail stays engine-authored and is never translated.
@@ -194,6 +212,8 @@ export const en = {
   "segment.insertPlaceholder": "Paragraph text to insert",
   "segment.insertBefore": "Insert before",
   "segment.insertAfter": "Insert after",
+  "segment.moveUp": "Move up",
+  "segment.moveDown": "Move down",
   "segment.deletePara": "Delete paragraph",
   "segment.alignLabel": "Alignment",
   "segment.alignGroupAria": "Paragraph alignment",
@@ -442,10 +462,15 @@ export const ko: MessageTable = {
 
   "components.panelAria": "구성 요소 팔레트",
   "components.catalogueAria": "삽입할 수 있는 구성 요소",
-  "components.hint": "구성 요소는 선택한 문단 뒤에 삽입됩니다.",
+  "components.hint": "구성 요소는 선택한 문단 옆에 삽입되며, 아래에 채운 값이 반영됩니다.",
   "components.insert": (p: { name: string }): string => `${p.name} 삽입`,
-  "components.insertedTitle": "이 문서에 삽입한 항목",
-  "components.insertedEmpty": "아직 삽입한 항목이 없습니다. 여기에는 삽입 결과가 보고한 문단이 추가됩니다.",
+  "components.positionLabel": "삽입 위치",
+  "components.positionAria": "삽입 위치",
+  "components.positionBefore": "문단 앞",
+  "components.positionAfter": "문단 뒤",
+  "components.paramAria": (p: { name: string }): string => `${p.name} 값`,
+  "components.paramLabel": (p: { name: string; param: string }): string =>
+    `${p.name}: ${p.param}`,
   "components.moveUp": (p: { name: string }): string => `${p.name} 위로 이동`,
   "components.moveDown": (p: { name: string }): string => `${p.name} 아래로 이동`,
   "components.remove": (p: { name: string }): string => `${p.name} 삭제`,
@@ -454,7 +479,20 @@ export const ko: MessageTable = {
   "components.disabledVersion": (p: { version: string }): string =>
     `구성 요소 삽입에는 hwp-cli ${p.version} 이상이 필요합니다. 이전 엔진은 삽입한 식별자를 보고하지 않습니다.`,
   "components.disabledChannel": "이 호스트는 형식이 지정된 편집 연산을 보낼 수 없어 구성 요소를 삽입할 수 없습니다.",
-  "components.noReport": "엔진이 삽입을 적용했지만 식별자를 보고하지 않아 삽입한 문단을 선택할 수 없습니다.",
+  "components.noReport":
+    "엔진이 삽입을 적용했지만 식별자를 보고하지 않아 삽입한 문단을 선택할 수 없습니다. 호스트에 편집 보고서(hwp-cli 1.4.0 이상)를 요청한 뒤 다시 삽입하세요.",
+  "components.tooWide": (p: { width: string; available: string }): string =>
+    `이 구성 요소의 너비는 ${p.width}이고 삽입 지점의 너비는 ${p.available}입니다. 엔진은 삽입 지점보다 넓은 블록을 거부합니다. ` +
+    "구성 요소의 더 좁은 열에 삽입하거나 더 좁은 구성 요소를 선택하세요.",
+  "components.refused": (p: {
+    code: string;
+    source: string;
+    field: string;
+    reason: string;
+  }): string =>
+    p.field === ""
+      ? `${p.source}이(가) 거부되었습니다(${p.code}): ${p.reason}`
+      : `${p.source}: ${p.field}이(가) 거부되었습니다(${p.code}): ${p.reason}`,
 
   "error.prefix.load": "문서 열기 실패",
   "error.prefix.apply": "편집 적용 실패",
@@ -535,6 +573,8 @@ export const ko: MessageTable = {
   "segment.insertPlaceholder": "삽입할 문단 텍스트",
   "segment.insertBefore": "앞에 삽입",
   "segment.insertAfter": "뒤에 삽입",
+  "segment.moveUp": "위로 이동",
+  "segment.moveDown": "아래로 이동",
   "segment.deletePara": "문단 삭제",
   "segment.alignLabel": "정렬",
   "segment.alignGroupAria": "문단 정렬",

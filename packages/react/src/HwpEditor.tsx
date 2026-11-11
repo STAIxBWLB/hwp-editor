@@ -22,7 +22,8 @@ import type {
   Segment,
   ValidationReport,
 } from "@hwp-editor/core";
-import { createStore, insertedParagraphIds, segmentAtRef, segmentRef, validateImageAssets, HwpEngineError, MAX_IMAGE_ASSETS, MAX_IMAGE_ASSETS_TOTAL_BYTES, STARTER_COMPONENTS } from "@hwp-editor/core";
+import type { AddressedEditOp } from "@hwp-editor/core";
+import { componentStyleMap, createStore, insertedParagraphIds, resolveSelection, segmentAtRef, segmentRef, substituteParams, validateImageAssets, HwpEngineError, MAX_IMAGE_ASSETS, MAX_IMAGE_ASSETS_TOTAL_BYTES, STARTER_COMPONENTS } from "@hwp-editor/core";
 import type { EditorError, EditorStore } from "@hwp-editor/core";
 import { HwpEditorContext } from "./context.js";
 import type { HwpEditorContextValue } from "./context.js";
@@ -37,7 +38,8 @@ import { ImagePanel } from "./ImagePanel.js";
 import { ComposePanel } from "./ComposePanel.js";
 import { ComponentsPanel } from "./ComponentsPanel.js";
 import { componentsSupportReason } from "./ComponentsPanel.js";
-import type { InsertedComponent } from "./ComponentsPanel.js";
+import type { InsertPosition } from "./ComponentsPanel.js";
+import { componentFailure, insertionFailure } from "./components-support.js";
 import { isTableSlice } from "./tables.js";
 import { ErrorLine } from "./ErrorLine.js";
 import { toEditorError } from "./errors.js";
@@ -127,28 +129,25 @@ export interface HwpEditorHandle {
 type SideTab = "para" | "table" | "fields" | "templates" | "components" | "lint" | "document" | "images";
 
 /**
- * Where a component may be inserted: the selected paragraph's own id.
+ * Where a component goes: the paragraph the same selection resolves to for an
+ * edit, never a guess about the segment's kind.
  *
- * A selection can be a run or a paragraph nested in a table cell, and
- * `insert_blocks` takes a paragraph address. A run resolves to the paragraph
- * that owns it; a nested paragraph keeps its id, whose path carries the whole
- * nesting chain, rather than collapsing to a top-level index that would put
- * the component beside the table instead of in the cell.
+ * `resolveSelection` is what every other addressed control uses, so a run
+ * resolves to the paragraph that owns it and a table, image, field or bookmark
+ * resolves to nothing with a reason. A cell resolves to its own paragraphs:
+ * the last one is where an insertion inside that cell lands, and a cell with
+ * no paragraph is refused rather than walked up to the table's host paragraph,
+ * which would put the component beside the table.
  */
-function insertAddress(envelope: CatEnvelope, segment: Segment | undefined): ParagraphAddress | null {
-  if (segment === undefined) return null;
-  if (segment.kind === "para" && segment.id !== undefined) return { id: segment.id };
-  // A run's id ends with its run index, so the paragraph that owns it is the
-  // segment whose nesting path is the run's minus that last index.
-  const indices = segment.indices;
-  if (indices === undefined) return null;
-  const owner = envelope.segments.find((candidate) =>
-    candidate.kind === "para" &&
-    candidate.section === segment.section &&
-    candidate.indices !== undefined &&
-    candidate.indices.length === indices.length - 1 &&
-    candidate.indices.every((index, at) => index === indices[at]));
-  return owner?.id === undefined ? null : { id: owner.id };
+function insertAnchor(envelope: CatEnvelope, segment: Segment): ParagraphAddress | null {
+  const targets = resolveSelection(envelope, segment);
+  const paragraph = targets.paragraph ?? targets.paragraphs[targets.paragraphs.length - 1];
+  return paragraph?.id === undefined ? null : { id: paragraph.id };
+}
+
+/** Whatever a refusal path threw, as the `Error` the error line renders. */
+function toError(value: unknown): Error {
+  return value instanceof Error ? value : new Error(String(value));
 }
 
 /**
@@ -240,18 +239,15 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     const [tab, setTab] = useState<SideTab>("para");
     const [composing, setComposing] = useState(false);
     /**
-     * Rows for what an insertion reported in THIS document state. The ids come
-     * from `edit-report-v1` alone: the engine assigns them against the
-     * document it just wrote, so a new load invalidates every one of them.
-     */
-    const [inserted, setInserted] = useState<InsertedComponent[]>([]);
-    /**
      * Ids one insertion reported, held until the re-read envelope carries them.
      * The paragraphs do not exist in the envelope the op was sent with, so the
      * selection is built from the envelope that reads them back, in real paths
-     * rather than guessed ones.
+     * rather than guessed ones. They are the only record of an insertion: a
+     * row list would keep ids that describe the document as it was written.
      */
     const [pendingInserted, setPendingInserted] = useState<string[]>([]);
+    /** The envelope an attempt has already been made against, so none repeats. */
+    const insertedTriedFor = useRef<CatEnvelope | null>(null);
     const imageAssets = useRef(new Map<EditOp, ImageAsset>());
     useEffect(() => {
       const active = new Set(state.pendingOps);
@@ -261,14 +257,18 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     // Select the paragraphs an insertion created. `insert_blocks` names them
     // only in the edit report, so a ref for one can be built only against the
     // envelope that reads the new document back, whose paths are the engine's.
+    // One attempt per envelope: a host whose ids no paragraph carries leaves
+    // nothing to select, and the ids are dropped rather than retried forever.
     useEffect(() => {
       if (pendingInserted.length === 0 || envelope === null) return;
+      if (insertedTriedFor.current === envelope) return;
+      insertedTriedFor.current = envelope;
       const paragraphs = pendingInserted.flatMap((id) => {
         const segment = segmentAtRef(envelope, { id, section: 0, para: 0 });
         return segment === undefined || segment.kind !== "para" ? [] : [segment];
       });
-      if (paragraphs.length === 0) return;
       setPendingInserted([]);
+      if (paragraphs.length === 0) return;
       store.dispatch({
         type: "selectMany",
         selections: paragraphs.map(segmentRef),
@@ -398,7 +398,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     const replaceDocument = useCallback(
       (
         produce: (current: DocumentHandle) => Promise<DocumentHandle>,
-      ): Promise<void> => {
+      ): Promise<boolean> => {
         const snapshot = store.getState();
         const current = snapshot.document;
         const generation = loadGeneration.current;
@@ -406,7 +406,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           current === null ||
           !editableRef.current ||
           snapshot.status === "applying"
-        ) return Promise.resolve();
+        ) return Promise.resolve(false);
         if (snapshot.pendingOps.length > 0) {
           const refusal = new Error(t("error.pendingReplacement"));
           emitError(refusal);
@@ -442,12 +442,13 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
                     : t("error.staleReplacement");
                 throw new Error(refusal);
               }
-              return;
+              return false;
             }
             setEnvelope(nextEnvelope);
             setValidation(report);
             store.dispatch({ type: "applySucceeded", document: next, pages });
             emitChange(next);
+            return true;
           } catch (e) {
             const latest = store.getState();
             if (
@@ -458,141 +459,130 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
               emitError(e);
               throw e;
             }
-            return;
+            return false;
           }
         })();
       },
       [emitChange, emitError, engine, store, t],
     );
 
-    // The rows are keyed by ids that only describe the current document state.
+    /** Ids of an insertion belong to one document; a new file retires them. */
     useEffect(() => {
-      setInserted([]);
+      setPendingInserted([]);
+      insertedTriedFor.current = null;
     }, [file]);
 
     /**
-     * The engine reports the paragraphs an insertion created; only their ids
-     * can address them afterwards. A row whose id the engine no longer knows
-     * is refused by its drift check, never applied to a different paragraph.
+     * Insert one component beside the selected paragraph.
+     *
+     * The values the palette shows are substituted here, once, so a
+     * `{{param}}` never reaches the engine, and the styles sent beside the
+     * blocks are the component's own plus every profile style it references
+     * (resolved by the same code compose uses): `insert_blocks` refuses a block
+     * naming a style neither it nor the target defines, and a target document
+     * need not carry 바탕글 or 개요 2 for a component to land in it.
+     *
+     * What the insertion created is read from `edit-report-v1` alone and
+     * becomes the selection; no row list survives it, because those ids
+     * describe the document as it was written and go stale on the next edit.
      */
     const insertComponent = useCallback(
-      (component: Component): void => {
+      (component: Component, values: Record<string, string>, position: InsertPosition): void => {
         const snapshot = store.getState();
         if (!editableRef.current || snapshot.document === null || envelope === null) return;
-        const address = insertAddress(
-          envelope,
-          snapshot.selection === null ? undefined : segmentAtRef(envelope, snapshot.selection),
-        );
+        const segment = snapshot.selection === null ? undefined : segmentAtRef(envelope, snapshot.selection);
+        const address = segment === undefined ? null : insertAnchor(envelope, segment);
         if (address === null) return;
-        let report: EditReport | undefined;
+        let blocks: Component["blocks"];
+        let styles: NonNullable<Extract<AddressedEditOp, { kind: "insert-blocks" }>["styles"]>;
+        try {
+          const filled = substituteParams(component, values, component.name);
+          blocks = filled.blocks;
+          styles = componentStyleMap([filled]);
+        } catch (error) {
+          // A refused param, style reference or redefinition is a sentence for
+          // the user, in their locale, naming the component and the field.
+          emitError(toError(componentFailure(error, t)));
+          return;
+        }
         void (async () => {
+          let report: EditReport | undefined;
+          let applied = false;
           try {
-            await replaceDocument(async (current) => {
-              const result = await engine.edit(
-                current,
-                [{
-                  kind: "insert-blocks",
-                  address,
-                  position: "after",
-                  blocks: component.blocks,
-                  ...(component.styles === undefined ? {} : { styles: component.styles }),
-                }],
-                { report: true },
-              );
-              report = result.report;
-              return { name: result.name, data: result.data };
+            applied = await replaceDocument(async (current) => {
+              try {
+                const result = await engine.edit(
+                  current,
+                  [{
+                    kind: "insert-blocks",
+                    address,
+                    position,
+                    blocks,
+                    ...(Object.keys(styles).length === 0 ? {} : { styles }),
+                  }],
+                  { report: true },
+                );
+                report = result.report;
+                return { name: result.name, data: result.data };
+              } catch (error) {
+                // The width refusal becomes a localized sentence naming both
+                // widths before replaceDocument reports it, so one error is
+                // emitted rather than two.
+                throw toError(insertionFailure(error, blocks, t));
+              }
             });
-          } catch (error) {
-            emitError(error);
+          } catch {
             return;
           }
+          // A replacement the editor discarded (a load or an undo landed
+          // first) created nothing this state may select.
+          if (!applied) return;
           const outcome = report?.ops[0];
           if (outcome === undefined) {
             emitError(new Error(t("components.noReport")));
             return;
           }
           if (outcome.status !== "applied") return;
-          const ids = insertedParagraphIds(outcome);
-          setInserted((previous) => [...previous, ...ids.map((id) => ({ id, name: component.name }))]);
+          let ids: string[];
+          try {
+            ids = insertedParagraphIds(outcome);
+          } catch (error) {
+            emitError(toError(error));
+            return;
+          }
           setPendingInserted(ids);
         })();
       },
       [emitError, engine, envelope, replaceDocument, store, t],
     );
 
-    const moveInserted = useCallback(
-      (id: string, direction: -1 | 1): void => {
-        const at = inserted.findIndex((row) => row.id === id);
-        const neighbour = inserted[at + direction];
-        if (at < 0 || neighbour === undefined) return;
-        let report: EditReport | undefined;
-        void (async () => {
-          try {
-            await replaceDocument(async (current) => {
-              const result = await engine.edit(
-                current,
-                [{
-                  kind: "move-para",
-                  address: { id },
-                  to: { address: { id: neighbour.id }, position: direction === -1 ? "before" : "after" },
-                }],
-                { report: true },
-              );
-              report = result.report;
-              return { name: result.name, data: result.data };
-            });
-          } catch (error) {
-            emitError(error);
-            return;
-          }
-          // A move re-keys its own target; the report lists that pair and no
-          // other, so the rows are re-keyed by what it did report and left
-          // alone otherwise.
-          const pairs = report?.ops[0]?.changed ?? [];
-          setInserted((previous) => {
-            const rekeyed = previous.map((row) => {
-              const pair = pairs.find((entry) => entry.before === row.id);
-              return pair === undefined || pair.after === null ? row : { ...row, id: pair.after };
-            });
-            const next = [...rekeyed];
-            next[at] = rekeyed[at + direction]!;
-            next[at + direction] = rekeyed[at]!;
-            return next;
-          });
-        })();
-      },
-      [emitError, engine, inserted, replaceDocument],
-    );
-
-    const removeInserted = useCallback(
-      (id: string): void => {
-        void (async () => {
-          try {
-            await replaceDocument(async (current) => {
-              const result = await engine.edit(current, [{ kind: "delete-para", address: { id } }], { report: true });
-              return { name: result.name, data: result.data };
-            });
-          } catch (error) {
-            emitError(error);
-            return;
-          }
-          setInserted((previous) => previous.filter((row) => row.id !== id));
-        })();
-      },
-      [emitError, engine, replaceDocument],
-    );
-
+    const selectedTargets =
+      envelope === null || state.selection === null
+        ? undefined
+        : (() => {
+            const segment = segmentAtRef(envelope, state.selection);
+            return segment === undefined ? undefined : resolveSelection(envelope, segment);
+          })();
     const selectedAddress =
       envelope === null || state.selection === null
         ? null
-        : insertAddress(envelope, segmentAtRef(envelope, state.selection));
+        : (() => {
+            const segment = segmentAtRef(envelope, state.selection);
+            return segment === undefined ? null : insertAnchor(envelope, segment);
+          })();
     const componentDisabled =
       componentsSupportReason(capabilities, t) ||
       (state.selection === null
         ? t("components.noSelection")
-        : selectedAddress === null
-          ? t("components.noAddress")
-          : "");
+        : selectedAddress !== null
+          ? ""
+          : selectedTargets?.refusal === "cell"
+            ? t("segment.cellSelectionRefused")
+            : selectedTargets?.refusal === "table"
+              ? t("segment.tableSelectionRefused")
+              : selectedTargets?.refusal === "container"
+                ? t("segment.containerSelectionRefused")
+                : t("components.noAddress"));
 
     const revert = useCallback((): Promise<void> => {
       const snapshot = store.getState();
@@ -884,12 +874,9 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
               {tab === "components" && (
                 <ComponentsPanel
                   components={catalogue}
-                  inserted={inserted}
                   disabledReason={componentDisabled}
                   busy={!editable || state.status === "applying"}
                   onInsert={insertComponent}
-                  onMove={moveInserted}
-                  onRemove={removeInserted}
                 />
               )}
               {tab === "lint" && <LintPanel />}
