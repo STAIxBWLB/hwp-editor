@@ -172,14 +172,23 @@ describe("snapshot bound", () => {
     expect(text(snapshots[snapshots.length - 1]!)).toBe("v51");
   });
 
-  it("applyFailed still rolls back exactly the newest snapshot after overflow", () => {
+  it("applyFailed at the cap rolls back the newest snapshot and keeps the oldest", () => {
     let s = reducer(pushSnapshots(MAX_SNAPSHOTS), { type: "applyStarted" });
-    expect(s.snapshots).toHaveLength(MAX_SNAPSHOTS);
+    expect(s.status).toBe("applying");
     s = reducer(s, { type: "applyFailed", error: { message: "boom" } });
-    expect(s.snapshots).toHaveLength(MAX_SNAPSHOTS - 1);
-    // Tail popped; the oldest-drop from the overflowing push stays dropped.
+    expect(s.snapshots).toHaveLength(MAX_SNAPSHOTS);
     expect(text(s.snapshots[s.snapshots.length - 1]!)).toBe("v50");
-    expect(text(s.snapshots[0]!)).toBe("v2");
+    // The edit never landed, so the oldest undo entry survives.
+    expect(text(s.snapshots[0]!)).toBe("v1");
+  });
+
+  it("a no-op applyUnchanged at the cap does not cost the oldest undo entry", () => {
+    let s = reducer(pushSnapshots(MAX_SNAPSHOTS), { type: "applyStarted" });
+    expect(s.status).toBe("applying");
+    s = reducer(s, { type: "applyUnchanged" });
+    expect(s.snapshots).toHaveLength(MAX_SNAPSHOTS);
+    expect(text(s.snapshots[0]!)).toBe("v1");
+    expect(text(s.snapshots[s.snapshots.length - 1]!)).toBe("v50");
   });
 
   it("undo still returns and pops the newest snapshot after overflow", () => {

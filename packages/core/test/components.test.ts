@@ -920,6 +920,14 @@ describe("engine-refusal mirrors", () => {
     expect(
       refusalFor((value) => (value["blocks"] = [nestedTablesWithoutCentre(17)])),
     ).toMatch(/sits 17 table cells deep/);
+    // ...and accepted at 16 the same way: the absent key is the empty list
+    // one level down, which is the deepest level the engine allows.
+    expect(
+      validateComponent(
+        { ...BASE_COMPONENT, blocks: [nestedTablesWithoutCentre(16)] },
+        REFUSAL_SOURCE,
+      ).blocks,
+    ).toEqual([nestedTablesWithoutCentre(16)]);
     // Serde defaults a missing key only, so `null` is a type error to the
     // engine - and the insertion preflight walks a cell's list whenever the key
     // is present, which throws on null. Refused as the array it is not, never

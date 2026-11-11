@@ -1292,6 +1292,46 @@ describe("ComponentsPanel (TEST-03)", () => {
     expect(notice.getAttribute("role")).toBe("status");
   });
 
+  it("keeps the previous notice while an insertion runs and retires it when it lands", async () => {
+    // Apply, revert and replace clear the notice when they land, so a refused
+    // or still-running attempt leaves the sentence about this document alone.
+    const failed: EditReport = {
+      ...insertReport,
+      ops: [{ ...insertReport.ops[0]!, status: "failed", reason: "layout_overflow", changed: [] }],
+      applied_count: 0,
+      failed_count: 1,
+    };
+    const engine = composedEngine();
+    const baseEdit = engine.edit.bind(engine);
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let call = 0;
+    engine.edit = async (document, ops, options) => {
+      call += 1;
+      const result = await baseEdit(document, ops, options);
+      if (call === 1) return { ...result, report: failed };
+      await held;
+      return result;
+    };
+    const envelope = await engine.read(file);
+    await selectPara(engine, 1, envelope);
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) }),
+    );
+    const sentence = en["components.insertionRefused"]({ reason: "layout_overflow" });
+    expect(await screen.findByText(sentence)).toBeTruthy();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) }),
+    );
+    await waitFor(() => expect(call).toBe(2));
+    // In flight: the document is still the one the notice describes.
+    expect(screen.getByText(sentence)).toBeTruthy();
+    await act(async () => { release(); });
+    await waitFor(() => expect(screen.queryByText(sentence)).toBeNull());
+  });
+
   it("shows a report that lists more paragraphs than it placed", async () => {
     // Not this contract: the ids cannot be trusted, so nothing is selected and
     // the sentence saying so is visible.
