@@ -18,7 +18,7 @@
  * document does not answer, is listed but carries no actions rather than
  * offering a button the engine always refuses.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import type { JSX } from "react";
 import {
   HwpEngineError,
@@ -96,67 +96,191 @@ interface Seed {
   align: ParagraphAlignment;
 }
 
+/**
+ * The row's own values, as the form opens on them. Derived during render and
+ * never stored: the table is re-read after every applied edit, undo and new
+ * document, so a seed taken at one moment goes stale the moment a read lands.
+ * An effect that repairs a stored seed leaves a frame in which the form
+ * compares the user's typing against a value the style no longer has, which is
+ * a race the render cannot lose.
+ */
+function seedOf(row: StyleInfo): Seed {
+  const char = row.attrs.char;
+  const para = row.attrs.para;
+  return {
+    size: char === undefined ? "" : String(char.size_pt),
+    font: (char === undefined ? undefined : firstFace(row.attrs)) ?? "",
+    bold: char === undefined ? false : char.bold,
+    align: para === undefined ? "justify" : alignmentOf(para.alignment),
+  };
+}
+
+/**
+ * The definition form for ONE row, holding only what the user typed. The
+ * caller keys it on the row's id and attribute content, so a re-read that
+ * changed the style re-mounts the form on the new values (after Apply the form
+ * offers nothing, after undo it shows what the restored document carries),
+ * while a re-read that changed nothing (another locale, a host's inline
+ * `messages` object) leaves the typing in place.
+ */
+function DefinitionForm(
+  props: { row: StyleInfo; paragraphs: Segment[]; disabled: boolean },
+): JSX.Element {
+  const { row, paragraphs, disabled } = props;
+  const { store, t } = useHwpEditorContext();
+  const seed = seedOf(row);
+  // A side the document could not resolve (the contract's `null`) is not a
+  // value this form may seed from or write over: it is absent, and the control
+  // says so rather than showing a default the document never stated.
+  const charKnown = row.attrs.char !== undefined;
+  const paraKnown = row.attrs.para !== undefined;
+  const [size, setSize] = useState(seed.size);
+  const [font, setFont] = useState(seed.font);
+  const [bold, setBold] = useState(seed.bold);
+  const [align, setAlign] = useState(seed.align);
+  const [spacing, setSpacing] = useState("");
+
+  const sizeValid = size.trim() === "" || (isPlainDecimal(size.trim()) && Number(size.trim()) > 0);
+  const spacingValid = spacing.trim() === "" || (isPlainDecimal(spacing.trim()) && Number(spacing.trim()) > 0);
+
+  /**
+   * What the form asks the style to become: only fields that differ from the
+   * definition it was opened on, and never an empty one. An empty size used to
+   * travel as `size: ""`, which `withUnit` refuses at Apply and takes the whole
+   * pending batch down with it.
+   */
+  const definition: StyleProps = {
+    ...(charKnown && size.trim() !== "" && size.trim() !== seed.size ? { size: size.trim() } : {}),
+    ...(charKnown && font.trim() !== "" && font.trim() !== seed.font ? { font: font.trim() } : {}),
+    ...(charKnown && bold !== seed.bold ? { bold } : {}),
+    ...(paraKnown && align !== seed.align ? { align } : {}),
+    ...(spacing.trim() === "" ? {} : { lineSpacingPct: spacing.trim() }),
+  };
+  const definitionEmpty = Object.keys(definition).length === 0;
+
+  const queueDefinition = (): void => {
+    if (definitionEmpty || !sizeValid || !spacingValid) return;
+    store.dispatch({
+      type: "queueOp",
+      // The row's own id, not its name: a styles-v1 name can be empty and two
+      // rows can share one, while the id is the row.
+      op: { kind: "update-style", style: row.id, ...definition },
+    });
+  };
+
+  const queueApply = (): void => {
+    if (paragraphs.length === 0) return;
+    store.dispatch({
+      type: "queueOps",
+      ops: paragraphs.map((paragraph): EditOp => ({
+        kind: "apply-style",
+        address: paragraphAddress(paragraph),
+        style: row.id,
+      })),
+    });
+  };
+
+  return (
+    <div className="hwped-field">
+      <span className="hwped-label">{row.name}</span>
+      <div className="hwped-row">
+        <input
+          className="hwped-input hwped-input-narrow"
+          type="text"
+          inputMode="decimal"
+          value={size}
+          disabled={disabled || !charKnown}
+          aria-label={t("styles.size")}
+          placeholder={t("styles.size")}
+          onChange={(e) => setSize(e.target.value)}
+        />
+        <input
+          className="hwped-input hwped-input-narrow"
+          type="text"
+          value={font}
+          disabled={disabled || !charKnown}
+          aria-label={t("styles.font")}
+          placeholder={t("styles.font")}
+          onChange={(e) => setFont(e.target.value)}
+        />
+        <label className="hwped-check">
+          <input type="checkbox" checked={bold} disabled={disabled || !charKnown} onChange={(e) => setBold(e.target.checked)} />
+          {t("styles.bold")}
+        </label>
+      </div>
+      <div className="hwped-row">
+        <select
+          className="hwped-input"
+          value={align}
+          disabled={disabled || !paraKnown}
+          aria-label={t("segment.alignGroupAria")}
+          onChange={(e) => setAlign(alignmentOf(e.target.value))}
+        >
+          {ALIGNMENTS.map((value) => <option key={value} value={value}>{t(ALIGN_LABEL[value])}</option>)}
+        </select>
+        <input
+          className="hwped-input hwped-input-narrow"
+          type="text"
+          inputMode="decimal"
+          value={spacing}
+          disabled={disabled}
+          aria-label={t("styles.lineSpacing")}
+          placeholder={t("styles.lineSpacing")}
+          onChange={(e) => setSpacing(e.target.value)}
+        />
+      </div>
+      {(!charKnown || !paraKnown) && <p className="hwped-hint">{t("styles.attrsUnresolved")}</p>}
+      <div className="hwped-row">
+        <button
+          type="button"
+          className="hwped-btn"
+          disabled={disabled || definitionEmpty || !sizeValid || !spacingValid}
+          onClick={queueDefinition}
+        >{t("styles.updateSubmit")}</button>
+        <button
+          type="button"
+          className="hwped-btn"
+          disabled={disabled || paragraphs.length === 0}
+          onClick={queueApply}
+        >{t("styles.applyToSelection")}</button>
+      </div>
+      {!sizeValid && <p className="hwped-hint" role="alert">{t("unit.positive")}</p>}
+      {!spacingValid && <p className="hwped-hint" role="alert">{t("unit.positive")}</p>}
+      {paragraphs.length === 0 && <p className="hwped-hint">{t("styles.needsParagraph")}</p>}
+    </div>
+  );
+}
+
 export function StylesPanel(): JSX.Element {
   const {
     store, engine, state, envelope, editable, capabilities,
-    styles, stylesStatus, replaceDocument, noteNotice, fileName, t,
+    styles, stylesStatus, replaceDocument, noteNotice, documentOrigin, t,
   } = useHwpEditorContext();
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [size, setSize] = useState("");
-  const [font, setFont] = useState("");
-  const [bold, setBold] = useState(false);
-  const [align, setAlign] = useState<ParagraphAlignment>("justify");
-  const [spacing, setSpacing] = useState("");
   const [promoteName, setPromoteName] = useState("");
   const [preset, setPreset] = useState<StyleTablePreset>("official");
-  const [seed, setSeed] = useState<Seed>({ size: "", font: "", bold: false, align: "justify" });
-
-  /**
-   * Put the definition form back on a row's own values. The table is re-read
-   * after every applied edit, undo and file switch, so a seed taken at click
-   * time describes a style that has since changed: after Apply the form would
-   * offer to re-send the value it just replaced, and undo would leave it
-   * showing a value the document no longer carries.
-   */
-  const seedFrom = useCallback((item: StyleInfo): void => {
-    const char = item.attrs.char;
-    const para = item.attrs.para;
-    const seeded: Seed = {
-      size: char === undefined ? "" : String(char.size_pt),
-      font: (char === undefined ? undefined : firstFace(item.attrs)) ?? "",
-      bold: char === undefined ? false : char.bold,
-      align: para === undefined ? "justify" : alignmentOf(para.alignment),
-    };
-    setSeed(seeded);
-    setSize(seeded.size);
-    setFont(seeded.font);
-    setBold(seeded.bold);
-    setAlign(seeded.align);
-    setSpacing("");
-  }, []);
 
   // Every hook sits above the capability returns: a host that answers its
   // capabilities a beat late would otherwise change the hook count mid-mount.
+  //
+  // A row id is only meaningful inside the document it was read from. While a
+  // read is in flight (`styles === null`) the rows are simply not here yet, so
+  // the highlight stays; once a table has arrived without it, the style is gone
+  // from this document and the choice goes with it.
   useEffect(() => {
-    if (selectedId === null) return;
-    const named = styles?.styles.find((item) => item.id === selectedId);
-    if (named !== undefined) {
-      seedFrom(named);
-      return;
-    }
-    // The highlight names a row this table does not carry. While a read is in
-    // flight (`styles === null`) the rows are simply not here yet, so the
-    // highlight stays; once a table has arrived without it, the style is gone.
-    if (styles !== null) setSelectedId(null);
-  }, [seedFrom, selectedId, styles]);
+    if (selectedId === null || styles === null) return;
+    if (styles.styles.some((item) => item.id === selectedId)) return;
+    setSelectedId(null);
+  }, [selectedId, styles]);
 
-  // Another FILE retires the highlight: an id belongs to the document it was
-  // read from, and the next document's row with the same id is another style.
-  // An edit keeps the host's file, so it keeps the highlight and the re-seed
-  // above follows the values.
+  // A NEW document retires the highlight: the next document's row with the
+  // same id is another style. This is the editor's own counter and not the
+  // host's file name: a compose takes on a document without changing the file,
+  // and two files can share one name. An applied edit or an undo does not move
+  // it, so the choice survives working on the same document.
   useEffect(() => {
     setSelectedId(null);
-  }, [fileName]);
+  }, [documentOrigin]);
 
   // Before 1.4.0 the command family does not exist. Each way of not having it
   // names its own cause and its own next step: a host still being asked, an
@@ -196,22 +320,16 @@ export function StylesPanel(): JSX.Element {
   const rows = styles?.styles ?? [];
   const row = rows.find((item) => item.id === selectedId) ?? null;
   const paragraphRow = row !== null && row.kind === "paragraph" ? row : null;
-  // A side the document could not resolve (the contract's `null`) is not a
-  // value this form may seed from or write over: it is absent, and the control
-  // says so rather than showing a default the document never stated.
-  const charKnown = paragraphRow?.attrs.char !== undefined;
-  const paraKnown = paragraphRow?.attrs.para !== undefined;
   const busy = state.status === "applying";
   const disabled = !editable || busy || envelope === null;
 
   /**
-   * Select a style and highlight the paragraphs that use it, seeding the
-   * definition form from the style itself so an untouched field rewrites the
-   * value it already had instead of inventing one.
+   * Select a style and highlight the paragraphs that use it. The definition
+   * form reads the row's own values when it is keyed, so an untouched field
+   * rewrites the value it already had instead of inventing one.
    */
   const choose = (item: StyleInfo): void => {
     setSelectedId(item.id);
-    seedFrom(item);
     if (envelope === null || item.used_by.length === 0) return;
     const refs = item.used_by.flatMap((id) => {
       // The id is the whole coordinate; `section`/`para` are placeholders the
@@ -221,46 +339,6 @@ export function StylesPanel(): JSX.Element {
     });
     if (refs.length === 0) return;
     store.dispatch({ type: "selectMany", selections: refs, primary: refs[0]!, anchor: refs[0]! });
-  };
-
-  const sizeValid = size.trim() === "" || (isPlainDecimal(size.trim()) && Number(size.trim()) > 0);
-  const spacingValid = spacing.trim() === "" || (isPlainDecimal(spacing.trim()) && Number(spacing.trim()) > 0);
-
-  /**
-   * What the form asks the style to become: only fields that differ from the
-   * definition it was seeded with, and never an empty one. An empty size used
-   * to travel as `size: ""`, which `withUnit` refuses at Apply and takes the
-   * whole pending batch down with it.
-   */
-  const definition: StyleProps = {
-    ...(charKnown && size.trim() !== "" && size.trim() !== seed.size ? { size: size.trim() } : {}),
-    ...(charKnown && font.trim() !== "" && font.trim() !== seed.font ? { font: font.trim() } : {}),
-    ...(charKnown && bold !== seed.bold ? { bold } : {}),
-    ...(paraKnown && align !== seed.align ? { align } : {}),
-    ...(spacing.trim() === "" ? {} : { lineSpacingPct: spacing.trim() }),
-  };
-  const definitionEmpty = Object.keys(definition).length === 0;
-
-  const queueDefinition = (): void => {
-    if (paragraphRow === null || definitionEmpty || !sizeValid || !spacingValid) return;
-    store.dispatch({
-      type: "queueOp",
-      // The row's own id, not its name: a styles-v1 name can be empty and
-      // two rows can share one, while the id is the row.
-      op: { kind: "update-style", style: paragraphRow.id, ...definition },
-    });
-  };
-
-  const queueApply = (): void => {
-    if (paragraphRow === null || paragraphs.length === 0) return;
-    store.dispatch({
-      type: "queueOps",
-      ops: paragraphs.map((paragraph): EditOp => ({
-        kind: "apply-style",
-        address: paragraphAddress(paragraph),
-        style: paragraphRow.id,
-      })),
-    });
   };
 
   /**
@@ -349,9 +427,14 @@ export function StylesPanel(): JSX.Element {
   const switchPreset = (): void => {
     if (styles === null || envelope === null) return;
     // The envelope is what separates the body paragraphs from table cells when
-    // the body style is picked; the table alone cannot tell them apart.
+    // the body style is picked; the table alone cannot tell them apart. A
+    // document that defines no paragraph style sends the preset alone, and the
+    // sentence a quiet outcome gets depends on whether that write was in the
+    // batch at all.
+    const styleOps = presetStyleOps(styles, preset, envelope);
+    const carriedStyleOp = styleOps.length > 0;
     const batch: EditOp[] = [
-      ...presetStyleOps(styles, preset, envelope),
+      ...styleOps,
       { kind: "style-tables", preset },
     ];
     const before = state.document;
@@ -375,14 +458,24 @@ export function StylesPanel(): JSX.Element {
       return reading.unchanged ? current : styled;
     })
       .then((applied) => {
-        if (!unstyled) return;
         // Only when this attempt still owns the document: an unchanged switch
         // leaves the one it started from, and a result a load superseded says
         // nothing about the document now on screen.
         if (!applied && store.getState().document !== before) return;
-        // A switch that changed nothing says so too: a second press on a
-        // table-less document would otherwise look like a dead button.
-        noteNotice(t(changed ? "styles.noTableToStyle" : "styles.noTableToStyleNoChange"));
+        // A switch that did style something, on a document that has a table
+        // to style, is the quiet outcome: the tables moved.
+        if (changed && !unstyled) return;
+        // Every other answer says something, chosen from what the batch
+        // carried: with no paragraph style in the document there was no style
+        // change to apply, so a sentence about the body style already matching
+        // would describe a write the batch never sent.
+        noteNotice(
+          changed
+            ? t("styles.noTableToStyle")
+            : unstyled
+              ? t(carriedStyleOp ? "styles.noTableToStyleNoChange" : "styles.noBodyStyleToUpdate")
+              : t("styles.presetUnchanged"),
+        );
       })
       .catch(() => undefined);
   };
@@ -426,73 +519,12 @@ export function StylesPanel(): JSX.Element {
       )}
 
       {paragraphRow !== null && (
-        <div className="hwped-field">
-          <span className="hwped-label">{paragraphRow.name}</span>
-          <div className="hwped-row">
-            <input
-              className="hwped-input hwped-input-narrow"
-              type="text"
-              inputMode="decimal"
-              value={size}
-              disabled={disabled || !charKnown}
-              aria-label={t("styles.size")}
-              placeholder={t("styles.size")}
-              onChange={(e) => setSize(e.target.value)}
-            />
-            <input
-              className="hwped-input hwped-input-narrow"
-              type="text"
-              value={font}
-              disabled={disabled || !charKnown}
-              aria-label={t("styles.font")}
-              placeholder={t("styles.font")}
-              onChange={(e) => setFont(e.target.value)}
-            />
-            <label className="hwped-check">
-              <input type="checkbox" checked={bold} disabled={disabled || !charKnown} onChange={(e) => setBold(e.target.checked)} />
-              {t("styles.bold")}
-            </label>
-          </div>
-          <div className="hwped-row">
-            <select
-              className="hwped-input"
-              value={align}
-              disabled={disabled || !paraKnown}
-              aria-label={t("segment.alignGroupAria")}
-              onChange={(e) => setAlign(alignmentOf(e.target.value))}
-            >
-              {ALIGNMENTS.map((value) => <option key={value} value={value}>{t(ALIGN_LABEL[value])}</option>)}
-            </select>
-            <input
-              className="hwped-input hwped-input-narrow"
-              type="text"
-              inputMode="decimal"
-              value={spacing}
-              disabled={disabled}
-              aria-label={t("styles.lineSpacing")}
-              placeholder={t("styles.lineSpacing")}
-              onChange={(e) => setSpacing(e.target.value)}
-            />
-          </div>
-          {(!charKnown || !paraKnown) && <p className="hwped-hint">{t("styles.attrsUnresolved")}</p>}
-          <div className="hwped-row">
-            <button
-              type="button"
-              className="hwped-btn"
-              disabled={disabled || definitionEmpty || !sizeValid || !spacingValid}
-              onClick={queueDefinition}
-            >{t("styles.updateSubmit")}</button>
-            <button
-              type="button"
-              className="hwped-btn"
-              disabled={disabled || paragraphs.length === 0}
-              onClick={queueApply}
-            >{t("styles.applyToSelection")}</button>
-          </div>
-          {!sizeValid && <p className="hwped-hint" role="alert">{t("unit.positive")}</p>}
-          {!spacingValid && <p className="hwped-hint" role="alert">{t("unit.positive")}</p>}
-          {paragraphs.length === 0 && <p className="hwped-hint">{t("styles.needsParagraph")}</p>}
-        </div>
+        <DefinitionForm
+          key={`${paragraphRow.id}:${JSON.stringify(paragraphRow.attrs)}`}
+          row={paragraphRow}
+          paragraphs={paragraphs}
+          disabled={disabled}
+        />
       )}
 
       <div className="hwped-field">

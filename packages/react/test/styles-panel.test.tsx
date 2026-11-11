@@ -58,27 +58,32 @@ const TABLE: StyleTable = {
  * A preset batch's report, as the engine writes it. `pieces` is what the engine
  * measured: 0 means the switch was already in place (byte-identical output),
  * which is how the panel knows not to stage an undo entry for it. The batch is
- * the panel's own two ops, so `failed` models the measured table-less answer:
- * the style op lands, `style_tables` is pushed to unapplied.
+ * the panel's own ops, so `failed` models the measured table-less answer: the
+ * style op lands, `style_tables` is pushed to unapplied. `tableOnly` is the
+ * batch a document with no paragraph style sends: the preset and nothing else,
+ * so the report must not carry an op that was never sent.
  */
-function presetReport(status: "applied" | "failed", pieces = 1): EditReport {
+function presetReport(status: "applied" | "failed", pieces = 1, tableOnly = false): EditReport {
+  const tableOp: EditReport["ops"][number] = {
+    index: tableOnly ? 0 : 1,
+    op: "style_tables",
+    status,
+    pieces_touched: status === "failed" ? 0 : pieces,
+    changed: [],
+    reason: status === "failed" ? "style_tables: no styleable table" : null,
+  };
   return {
     schema_version: "1.0",
     contract: "hwp-edit-report-v1",
     output: "x.hwpx",
     dry_run: false,
-    ops: [
-      { index: 0, op: "update_style", status: "applied", pieces_touched: pieces, changed: [], reason: null },
-      {
-        index: 1,
-        op: "style_tables",
-        status,
-        pieces_touched: status === "failed" ? 0 : pieces,
-        changed: [],
-        reason: status === "failed" ? "style_tables: no styleable table" : null,
-      },
-    ],
-    applied_count: status === "applied" ? 2 : 1,
+    ops: tableOnly
+      ? [tableOp]
+      : [
+        { index: 0, op: "update_style", status: "applied", pieces_touched: pieces, changed: [], reason: null },
+        tableOp,
+      ],
+    applied_count: tableOnly ? (status === "applied" ? 1 : 0) : (status === "applied" ? 2 : 1),
     failed_count: status === "failed" ? 1 : 0,
   };
 }
@@ -153,6 +158,16 @@ function styleEngine(
      * re-seeded from has to say what each read answers.
      */
     tables?: StyleTable[];
+    /**
+     * The table to answer with, chosen from the document being read. A panel
+     * re-reads after every applied edit and undo, and each of those hands the
+     * editor a new document, so a sequence of reads cannot say which document
+     * it is answering for: an undo lands back on a document an earlier read
+     * already described.
+     */
+    tableOf?: (document: DocumentHandle) => StyleTable | undefined;
+    /** An error to answer the `call`-th document read with (1-based). */
+    readError?: (document: DocumentHandle, call: number) => Error | undefined;
     report?: EditReport;
     /** The envelope the panel reads, when a test needs shapes the default lacks. */
     envelope?: CatEnvelope;
@@ -173,6 +188,8 @@ function styleEngine(
     ...base,
     read: async (document) => {
       documentReads.push(document);
+      const failure = opts.readError?.(document, documentReads.length);
+      if (failure !== undefined) throw failure;
       return base.read(document);
     },
     capabilities: async () => {
@@ -185,6 +202,8 @@ function styleEngine(
       const at = styleReads.length - 1;
       const held = opts.pending?.[at];
       if (held !== undefined) return await held;
+      const named = opts.tableOf?.(document);
+      if (named !== undefined) return named;
       const tables = opts.tables;
       if (tables !== undefined && tables.length > 0) return tables[Math.min(at, tables.length - 1)]!;
       return opts.table ?? TABLE;
@@ -700,6 +719,28 @@ describe("styles tab operations (en)", () => {
   });
 
   /**
+   * The other side of that rule: the notice goes when the transition LANDS.
+   * A failed undo leaves the document where it was, so the sentence about it
+   * is still true and must not be erased by the attempt.
+   */
+  it("keeps the no-table notice when the undo fails", async () => {
+    // Read 1 is the load, read 2 the replacement the preset produced, read 3
+    // the undo's read of the document being restored.
+    const harness = await openPanel(styleEngine({
+      report: presetReport("failed"),
+      readError: (_document, call) => (call === 3 ? new Error("undo read failed") : undefined),
+    }));
+    fireEvent.click(screen.getByRole("button", { name: en["styles.presetSubmit"] }));
+    expect(await screen.findByText(en["styles.noTableToStyle"])).toBeTruthy();
+
+    const undo = screen.getByRole("button", { name: en["toolbar.revert"] }) as HTMLButtonElement;
+    await waitFor(() => expect(undo.disabled).toBe(false));
+    fireEvent.click(undo);
+    await waitFor(() => expect(harness.documentReads).toHaveLength(3));
+    expect(screen.getByText(en["styles.noTableToStyle"])).toBeTruthy();
+  });
+
+  /**
    * t12-a13. The table is re-read after every applied edit, undo and file
    * switch, so a seed taken at click time describes a style that has since
    * changed. Apply would offer to re-send the value it just replaced, and undo
@@ -712,9 +753,15 @@ describe("styles tab operations (en)", () => {
         ? { ...row, attrs: { ...row.attrs, char: { ...row.attrs.char!, size_pt: sizePt } } }
         : row),
     });
-    // Read 1 is the document as loaded, read 2 the one the edit produced, read
-    // 3 the one undo restored.
-    const harness = await openPanel(styleEngine({ tables: [at(12), at(14), at(12)] }));
+    // Answered by document, not by read order: the second Apply edits the
+    // document the first one produced, and undo lands back on it, so the
+    // undone document is the 14pt one and the table has to say so.
+    const sizes = new Map<string, number>([
+      ["x.hwpx", 12],
+      ["edited-1.hwpx", 14],
+      ["edited-2.hwpx", 12],
+    ]);
+    const harness = await openPanel(styleEngine({ tableOf: (document) => at(sizes.get(document.name) ?? 12) }));
     fireEvent.click(await screen.findByRole("button", { name: /바탕글/ }));
     const size = () => screen.getByLabelText(en["styles.size"]) as HTMLInputElement;
     const button = () => screen.getByRole("button", { name: en["styles.updateSubmit"] }) as HTMLButtonElement;
@@ -727,9 +774,9 @@ describe("styles tab operations (en)", () => {
     await applyQueued(harness, 1);
 
     // After Apply the form is on the row's new value, and an untouched form
-    // offers nothing: with the stale 12 seed this button would still say the
+    // offers nothing: with a stale 12 seed this button would still say the
     // user changed something, and typing 12 back would be a no-op.
-    await waitFor(() => expect(size().value).toBe("14"));
+    expect(size().value).toBe("14");
     expect(button().disabled).toBe(true);
     fireEvent.change(size(), { target: { value: "12" } });
     expect(button().disabled).toBe(false);
@@ -737,12 +784,15 @@ describe("styles tab operations (en)", () => {
     fireEvent.click(await screen.findByRole("button", { name: en["toolbar.applyWithCount"]({ count: 1 }) }));
     await waitFor(() => expect(harness.edits).toHaveLength(2));
     expect(harness.edits[1]!.ops).toEqual([{ kind: "update-style", style: BODY_ID, size: "12" }]);
+    expect(size().value).toBe("12");
+    expect(button().disabled).toBe(true);
 
-    // Undo takes the style back to 12, and the form follows it there.
+    // Undo restores the FIRST edited document, whose style is 14pt: the form
+    // shows the value that document carries, not the value it was last left on.
     const undo = screen.getByRole("button", { name: en["toolbar.revert"] }) as HTMLButtonElement;
     await waitFor(() => expect(undo.disabled).toBe(false));
     fireEvent.click(undo);
-    await waitFor(() => expect(size().value).toBe("12"));
+    await waitFor(() => expect(size().value).toBe("14"));
     expect(button().disabled).toBe(true);
   });
 
@@ -764,6 +814,28 @@ describe("styles tab operations (en)", () => {
 
     // The same id is in the new document's table, and it is another style: the
     // highlight is gone rather than carrying the previous file's seed.
+    await waitFor(() => expect(
+      screen.getByRole("button", { name: /바탕글/ }).getAttribute("aria-pressed"),
+    ).toBe("false"));
+    expect(screen.queryByLabelText(en["styles.size"])).toBeNull();
+  });
+
+  /**
+   * t12-a16: a load takes on a new document even when the file carries the
+   * name of the one it replaces, so the highlight cannot key on that name.
+   */
+  it("clears the highlight when another document arrives under the same name", async () => {
+    const harness = styleEngine({ tables: [TABLE, TABLE] });
+    const view = renderEditor(harness.engine);
+    fireEvent.click(await screen.findByRole("tab", { name: en["tabs.styles"] }));
+    fireEvent.click(await screen.findByRole("button", { name: /바탕글/ }));
+    expect(screen.getByLabelText(en["styles.size"])).toBeTruthy();
+
+    view.rerender(
+      <HwpEditor engine={harness.engine} file={{ name: "x.hwpx", data: new Uint8Array([9]) }} locale="en" />,
+    );
+
+    await waitFor(() => expect(harness.styleReads).toHaveLength(2));
     await waitFor(() => expect(
       screen.getByRole("button", { name: /바탕글/ }).getAttribute("aria-pressed"),
     ).toBe("false"));
@@ -819,11 +891,26 @@ describe("styles tab operations (en)", () => {
         id: 0, name: "강조", english_name: "", kind: "character", next_style: 0, attrs: ATTRS, used_by: ["p2"],
       }],
     };
-    const harness = await openPanel(styleEngine({ table, report: presetReport("failed") }));
+    // The report carries what the batch carried: one op, the preset, because
+    // there is no paragraph style to update.
+    const harness = await openPanel(styleEngine({ table, report: presetReport("failed", 0, true) }));
     fireEvent.click(await screen.findByRole("button", { name: en["styles.presetSubmit"] }));
     await waitFor(() => expect(harness.edits).toHaveLength(1));
     expect(harness.edits[0]!.ops).toEqual([{ kind: "style-tables", preset: "official" }]);
-    expect(await screen.findByText(en["styles.noTableToStyle"])).toBeTruthy();
+    // No style change was in the batch, so the sentence cannot say the body
+    // style already matches: there was no body-style write to report on.
+    expect(await screen.findByText(en["styles.noBodyStyleToUpdate"])).toBeTruthy();
+    expect(screen.queryByText(en["styles.noTableToStyle"])).toBeNull();
+  });
+
+  /**
+   * A document WITH a table says something too when its preset is already in
+   * place: a press that did nothing must not look like a dead button.
+   */
+  it("says the document already matches when a preset is pressed again", async () => {
+    await openPanel(styleEngine({ report: presetReport("applied", 0) }));
+    fireEvent.click(screen.getByRole("button", { name: en["styles.presetSubmit"] }));
+    expect(await screen.findByText(en["styles.presetUnchanged"])).toBeTruthy();
   });
 
   /**
@@ -889,38 +976,6 @@ describe("styles tab operations (en)", () => {
     view.rerender(
       <HwpEditor engine={engine} file={{ name: "y.hwpx", data: new Uint8Array([2]) }} locale="en" />,
     );
-    expect(await screen.findByRole("button", { name: /바탕글/ })).toBeTruthy();
-    await waitFor(() => expect(screen.queryByText(en["styles.loadFailed"])).toBeNull());
-  });
-
-  /**
-   * n9, the case that only the styles read can end: the SAME document's table
-   * is read again - a host that changes the locale or the message overrides
-   * re-runs it - and this time it answers. No load or edit happened, so
-   * nothing else retires the sentence, and it was recorded in the previous
-   * locale's words.
-   */
-  it("retires the failed-read notice when a re-read of the same document works", async () => {
-    const base = createMockEngine({ envelope: envelopeWithIds() });
-    let calls = 0;
-    const engine: HwpEngine = {
-      ...base,
-      capabilities: async () => ({ ...(await base.capabilities()), styles: "v1" as const }),
-      styles: async () => {
-        calls += 1;
-        if (calls === 1) throw new Error("read failed");
-        return TABLE;
-      },
-    };
-    // One file object for both renders: the same document, so no load runs and
-    // the only thing that reads the table again is the locale change.
-    const file = { name: "x.hwpx", data: new Uint8Array([1]) };
-    const view = render(<HwpEditor engine={engine} file={file} locale="en" />);
-    fireEvent.click(await screen.findByRole("tab", { name: en["tabs.styles"] }));
-    await waitFor(() => expect(screen.getAllByText(en["styles.loadFailed"]).length).toBeGreaterThan(0));
-
-    view.rerender(<HwpEditor engine={engine} file={file} locale="ko" />);
-    await waitFor(() => expect(calls).toBe(2));
     expect(await screen.findByRole("button", { name: /바탕글/ })).toBeTruthy();
     await waitFor(() => expect(screen.queryByText(en["styles.loadFailed"])).toBeNull());
   });

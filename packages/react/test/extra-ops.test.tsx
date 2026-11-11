@@ -33,7 +33,7 @@ function renderPanel(locale: "en" | "ko", panel: "document" | "fields" | "segmen
     styles: null,
     stylesStatus: "idle" as const,
     noteNotice: () => undefined,
-    fileName: "test.hwpx",
+    documentOrigin: 0,
     openCompose: () => undefined,
     loadEpoch: () => 0,
     t: createT(locale),

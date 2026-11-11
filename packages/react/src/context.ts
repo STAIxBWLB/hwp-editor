@@ -88,11 +88,15 @@ export interface HwpEditorContextValue {
    */
   noteNotice: (text: string, error?: unknown) => void;
   /**
-   * The file the host handed over, by name. An applied edit replaces the
-   * document handle but keeps this, so a panel can tell the same document after
-   * an edit from another document: a style id means different styles in each.
+   * Moves when the editor takes on a NEW document: a load, or a composed
+   * document handed back. An applied edit and an undo leave it where it is,
+   * because they move within the document the user is working on. A panel that
+   * holds a choice tied to the document (a selected style row, whose id means
+   * another style in the next file) retires it on a change here: the host's
+   * file name cannot answer that, since a compose replaces the document without
+   * changing it and two files can share one name.
    */
-  fileName: string | null;
+  documentOrigin: number;
   /**
    * Message lookup bound to the active locale and host overrides. Every
    * panel localizes through this one channel; a panel that cannot reach `t`

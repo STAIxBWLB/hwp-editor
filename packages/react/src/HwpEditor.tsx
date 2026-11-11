@@ -286,6 +286,17 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
      * document then would overwrite the file the host just chose.
      */
     const loadedGeneration = useRef(0);
+    /**
+     * A counter that moves whenever the editor takes on a NEW document: a load,
+     * or a composed document handed back. An applied edit and an undo keep it,
+     * because they move within the document the user is working on.
+     *
+     * Panels that hold a choice tied to the document read this rather than the
+     * host's file: a compose replaces the document without changing it, and two
+     * different files can share a name, so neither the name nor the document
+     * handle answers "is this still the document I chose in".
+     */
+    const [documentOrigin, setDocumentOrigin] = useState(0);
     const [tab, setTab] = useState<SideTab>("para");
     const [composing, setComposing] = useState(false);
     /**
@@ -397,6 +408,9 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     // Load the document whenever the engine/file pair changes.
     useEffect(() => {
       const generation = ++loadGeneration.current;
+      // Every load is a new document, even one whose file has the name of the
+      // document it replaces: a panel's choice of row belongs to the one before.
+      setDocumentOrigin((count) => count + 1);
       let cancelled = false;
       // A notice describes one attempt against the document that is going
       // away, so a load retires it along with that document's ids.
@@ -511,9 +525,6 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         return Promise.resolve();
       }
       const generation = loadGeneration.current;
-      // A new attempt retires the previous attempt's notice: "this document
-      // has no table to style" describes the document this edit is moving.
-      setNotice(null);
       store.dispatch({ type: "applyStarted" });
       // The stack `applyStarted` staged, so a drop can tell whether this
       // attempt's transaction is still the one the store holds.
@@ -569,6 +580,11 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           setEnvelope(nextEnvelope);
           setValidation(report);
           store.dispatch({ type: "applySucceeded", document: next, pages });
+          // The edit landed, so the previous attempt's notice ("this document
+          // has no table to style") describes a state this document has left.
+          // Cleared here rather than when the attempt starts: a failed apply
+          // leaves the document alone, and the notice is still true of it.
+          setNotice(null);
           emitChange(next);
         } catch (e) {
           // As above: a failure belongs to the document this attempt read, so
@@ -671,6 +687,11 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
             setEnvelope(nextEnvelope);
             setValidation(report);
             store.dispatch({ type: "applySucceeded", document: next, pages });
+            // Same rule as an apply: the replacement landed, so a notice about
+            // the document it replaced describes a state that no longer holds.
+            // A caller that has its own sentence for the new document sets it
+            // after this resolves.
+            setNotice(null);
             emitChange(next);
             return true;
           } catch (e) {
@@ -885,10 +906,6 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       const previous = snapshot.snapshots[snapshot.snapshots.length - 1];
       if (snapshot.status === "applying" || previous === undefined) return Promise.resolve();
       return (async () => {
-        // Undo moves to another document, so the previous attempt's notice
-        // ("this document has no table to style") describes a state that no
-        // longer holds.
-        setNotice(null);
         try {
           // BUG-02: the badge described the document being undone away, so
           // re-validate the restored one. Same shape as applyPendingOps; a
@@ -909,6 +926,11 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           setEnvelope(nextEnvelope);
           if (report !== null) setValidation(report);
           store.dispatch({ type: "setPages", pages });
+          // Undo moved to another document, so the previous attempt's notice
+          // ("this document has no table to style") describes a state that no
+          // longer holds. Cleared after the undo lands: a failed undo leaves
+          // the document where it was, and the notice is still true of it.
+          setNotice(null);
           emitChange(previous);
         } catch (e) {
           // The store was never touched, so store and canvas stay consistent;
@@ -983,7 +1005,12 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         },
       );
       return () => { cancelled = true; };
-    }, [capabilities?.styles, engine, noteNotice, state.document, t]);
+      // `t` is deliberately absent: a locale change (or a host that rebuilds an
+      // inline `messages` object on every render) would otherwise re-read the
+      // table, and with it the rows a panel is holding. The one sentence this
+      // effect writes is captured in `stylesFailureSentence` as it is recorded.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [capabilities?.styles, engine, noteNotice, state.document]);
 
     useImperativeHandle(
       ref,
@@ -1010,10 +1037,11 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         openCompose,
         loadEpoch,
         t,
-        // The host's own file, named: an applied edit replaces the document
-        // handle but not this, so a panel can tell "the same document, edited"
-        // from "another document".
-        fileName: file?.name ?? null,
+        // Moves when the editor takes on a new document (a load or a compose)
+        // and stays put across an applied edit and an undo, so a panel can
+        // retire a choice made in the previous document without retiring it
+        // every time the document is edited.
+        documentOrigin,
         // Always defined now, and stable: a widening, since every consumer
         // already calls it as `onError?.(e)` and it no-ops when the host
         // supplied no callback. The payload is unchanged.
@@ -1037,7 +1065,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         openCompose,
         loadEpoch,
         t,
-        file,
+        documentOrigin,
       ],
     );
 
@@ -1281,6 +1309,12 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
                 if (!editableRef.current) return;
                 setComposing(false);
                 const generation = ++loadGeneration.current;
+                // A composed document is a new document: the host's file did
+                // not change, so nothing else would tell a panel so.
+                setDocumentOrigin((count) => count + 1);
+                // Nor would anything else retire the previous document's
+                // notice: the load effect cannot run when the file is the same.
+                setNotice(null);
                 emitChange(document);
                 // The host passes the composed document back via `file`; load
                 // it directly so the flow also works when the host doesn't.
