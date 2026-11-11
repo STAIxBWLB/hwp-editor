@@ -294,7 +294,7 @@ describeBin("routes (real hwp-cli binary)", () => {
   it("POST /edit inserts uploaded image bytes through the real route", async () => {
     const cli=engine();
     const document=(await cli.compose(sampleSpec() as unknown as DocumentSpecV2,"wire-image.hwpx")).document;
-    const image=new Uint8Array(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFgAI/ScLttAAAAABJRU5ErkJggg==","base64"));
+    const image=new Uint8Array(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==","base64"));
     const form=new FormData();
     form.append("file",new Blob([document.data as BlobPart]),document.name);
     form.append("asset",new Blob([image]),"upload.png");
