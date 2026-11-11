@@ -15,6 +15,7 @@ export function FieldsPanel(): JSX.Element {
   const [anchor, setAnchor] = useState("");
   const [name, setName] = useState("");
   const [initialValue, setInitialValue] = useState("");
+  const [bookmarkAnchor, setBookmarkAnchor] = useState("");
   const [bookmarkName, setBookmarkName] = useState("");
   const [deleteFieldName, setDeleteFieldName] = useState("");
   const [deleteBookmarkName, setDeleteBookmarkName] = useState("");
@@ -88,17 +89,18 @@ export function FieldsPanel(): JSX.Element {
         <span className="hwped-label">{t("fields.createField")}</span>
         <input className="hwped-input" value={anchor} disabled={disabled} placeholder={t("fields.anchorPlaceholder")} aria-label={t("fields.anchorAria")} onChange={(e) => setAnchor(e.target.value)} />
         <input className="hwped-input" value={name} disabled={disabled} placeholder={t("fields.namePlaceholder")} aria-label={t("fields.nameAria")} onChange={(e) => setName(e.target.value)} />
-        <input className="hwped-input" value={initialValue} disabled={disabled} placeholder={t("fields.valuePlaceholder")} aria-label={t("fields.fieldValueAria", { name: name || "" })} onChange={(e) => setInitialValue(e.target.value)} />
+        <input className="hwped-input" value={initialValue} disabled={disabled} placeholder={t("fields.valuePlaceholder")} aria-label={t("fields.initialValueAria")} onChange={(e) => setInitialValue(e.target.value)} />
         <button type="button" className="hwped-btn" disabled={disabled || anchor.trim() === "" || name.trim() === ""} onClick={() => store.dispatch({ type: "queueOp", op: { kind: "create-field", anchor: anchor.trim(), name: name.trim(), ...(initialValue === "" ? {} : { value: initialValue }) } })}>{t("fields.createFieldSubmit")}</button>
       </div>
       <div className="hwped-field">
-        <input className="hwped-input" value={deleteFieldName} disabled={disabled} placeholder={t("fields.namePlaceholder")} aria-label={t("fields.deleteField")} onChange={(e) => setDeleteFieldName(e.target.value)} />
+        <input className="hwped-input" value={deleteFieldName} disabled={disabled} placeholder={t("fields.namePlaceholder")} aria-label={t("fields.deleteFieldNameAria")} onChange={(e) => setDeleteFieldName(e.target.value)} />
         <button type="button" className="hwped-btn hwped-btn-danger" disabled={disabled || deleteFieldName.trim() === ""} onClick={() => store.dispatch({ type: "queueOp", op: { kind: "delete-field", name: deleteFieldName.trim() } })}>{t("fields.deleteField")}</button>
       </div>
       <div className="hwped-field">
+        <input className="hwped-input" value={bookmarkAnchor} disabled={disabled} placeholder={t("fields.anchorPlaceholder")} aria-label={t("fields.bookmarkAnchorAria")} onChange={(e) => setBookmarkAnchor(e.target.value)} />
         <input className="hwped-input" value={bookmarkName} disabled={disabled} placeholder={t("fields.bookmarkNamePlaceholder")} aria-label={t("fields.bookmarkNameAria")} onChange={(e) => setBookmarkName(e.target.value)} />
-        <button type="button" className="hwped-btn" disabled={disabled || anchor.trim() === "" || bookmarkName.trim() === ""} onClick={() => store.dispatch({ type: "queueOp", op: { kind: "create-bookmark", anchor: anchor.trim(), name: bookmarkName.trim() } })}>{t("fields.createBookmark")}</button>
-        <input className="hwped-input" value={deleteBookmarkName} disabled={disabled} placeholder={t("fields.bookmarkNamePlaceholder")} aria-label={t("fields.deleteBookmark")} onChange={(e) => setDeleteBookmarkName(e.target.value)} />
+        <button type="button" className="hwped-btn" disabled={disabled || bookmarkAnchor.trim() === "" || bookmarkName.trim() === ""} onClick={() => store.dispatch({ type: "queueOp", op: { kind: "create-bookmark", anchor: bookmarkAnchor.trim(), name: bookmarkName.trim() } })}>{t("fields.createBookmark")}</button>
+        <input className="hwped-input" value={deleteBookmarkName} disabled={disabled} placeholder={t("fields.bookmarkNamePlaceholder")} aria-label={t("fields.deleteBookmarkNameAria")} onChange={(e) => setDeleteBookmarkName(e.target.value)} />
         <button type="button" className="hwped-btn hwped-btn-danger" disabled={disabled || deleteBookmarkName.trim() === ""} onClick={() => store.dispatch({ type: "queueOp", op: { kind: "delete-bookmark", name: deleteBookmarkName.trim() } })}>{t("fields.deleteBookmark")}</button>
       </div>
     </div>

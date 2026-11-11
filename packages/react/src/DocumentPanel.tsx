@@ -1,3 +1,4 @@
+import { isPlainDecimal } from "./unit-input.js";
 import { useState } from "react";
 import type { JSX } from "react";
 import type { MetaKey, PageSetupKey } from "@hwp-editor/core";
@@ -22,6 +23,7 @@ export function DocumentPanel(): JSX.Element {
   const [meta, setMeta] = useState<Record<MetaKey, string>>({ title: "", author: "", subject: "", keywords: "" });
   const [pageKey, setPageKey] = useState<PageSetupKey>("width");
   const [pageValue, setPageValue] = useState("");
+  const validPage = pageKey === "orientation" || isPlainDecimal(pageValue);
   const disabled = !editable || state.document === null || envelope === null || state.status === "applying";
 
   return <div className="hwped-panel" role="region" aria-label={t("document.panelAria")}>
@@ -44,11 +46,12 @@ export function DocumentPanel(): JSX.Element {
         </select>
         {pageKey === "orientation" ? <select className="hwped-input" value={pageValue || "portrait"} disabled={disabled} aria-label={t("document.pageValueAria")} onChange={(e) => setPageValue(e.target.value)}>
           <option value="portrait">{t("document.orientation.portrait")}</option><option value="landscape">{t("document.orientation.landscape")}</option>
-        </select> : <input className="hwped-input" type="number" min="0" step="0.1" value={pageValue} disabled={disabled}
+        </select> : <input className="hwped-input" type="text" inputMode="decimal" value={pageValue} disabled={disabled}
           placeholder="mm" aria-label={t("document.pageValueAria")} onChange={(e) => setPageValue(e.target.value)} />}
-        <button type="button" className="hwped-btn" disabled={disabled || pageValue === ""}
-          onClick={() => store.dispatch({ type: "queueOp", op: { kind: "set-page", key: pageKey, value: pageValue || "portrait" } })}>{t("document.setPage")}</button>
+        <button type="button" className="hwped-btn" disabled={disabled || !validPage}
+          onClick={() => store.dispatch({ type: "queueOp", op: { kind: "set-page", key: pageKey, value: pageValue.trim() || "portrait" } })}>{t("document.setPage")}</button>
       </div>
+      {!validPage && pageValue !== "" && <p role="alert" className="hwped-hint">{t("unit.invalid")}</p>}
     </div>
   </div>;
 }

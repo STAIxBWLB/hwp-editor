@@ -14,7 +14,7 @@ import { createMockEngine, makeEnvelope } from "./mock-engine.js";
 afterEach(cleanup);
 
 const locales = [["en", en], ["ko", ko]] as const;
-function renderPanel(locale: "en" | "ko", panel: "document" | "fields" | "segment" | "table", selected = true) {
+function renderPanel(locale: "en" | "ko", panel: "document" | "fields" | "segment" | "table", selected = true, addressed = true) {
   const selection = panel === "table" && !selected ? null : { section: 0, para: panel === "table" ? 2 : 0 };
   const store = createStore({ ...initialState, document: { name: "test.hwpx", data: new Uint8Array([1]) }, selection } as EditorState);
   const engine = createMockEngine();
@@ -23,7 +23,7 @@ function renderPanel(locale: "en" | "ko", panel: "document" | "fields" | "segmen
     store,
     state: store.getState(),
     envelope: makeEnvelope(),
-    capabilities: { version: "1.3.1", editable: true, formats: ["hwp", "hwpx"], editOps: "v1" },
+    capabilities: { version: "1.3.1", editable: true, formats: ["hwp", "hwpx"], ...(addressed ? { editOps: "v1" as const } : {}) },
     editable: true,
     validation: null,
     applyPendingOps: () => undefined,
@@ -110,13 +110,14 @@ describe("additional operation controls", () => {
     const store = renderPanel(locale, "fields");
     fireEvent.change(screen.getByLabelText(plain(messages, "fields.anchorAria")), { target: { value: "회의록" } });
     fireEvent.change(screen.getByLabelText(plain(messages, "fields.nameAria")), { target: { value: "department" } });
-    fireEvent.change(screen.getByLabelText(messages["fields.fieldValueAria"]({ name: "department" })), { target: { value: "AI" } });
+    fireEvent.change(screen.getByLabelText(plain(messages, "fields.initialValueAria")), { target: { value: "AI" } });
     fireEvent.click(screen.getAllByRole("button", { name: plain(messages, "fields.createFieldSubmit") }).at(-1)!);
-    fireEvent.change(screen.getByLabelText(plain(messages, "fields.deleteField")), { target: { value: "oldField" } });
+    fireEvent.change(screen.getByLabelText(plain(messages, "fields.deleteFieldNameAria")), { target: { value: "oldField" } });
     fireEvent.click(screen.getByRole("button", { name: plain(messages, "fields.deleteField") }));
+    fireEvent.change(screen.getByLabelText(plain(messages, "fields.bookmarkAnchorAria")), { target: { value: "회의록" } });
     fireEvent.change(screen.getByLabelText(plain(messages, "fields.bookmarkNameAria")), { target: { value: "sectionStart" } });
     fireEvent.click(screen.getByRole("button", { name: plain(messages, "fields.createBookmark") }));
-    fireEvent.change(screen.getByLabelText(plain(messages, "fields.deleteBookmark")), { target: { value: "oldMark" } });
+    fireEvent.change(screen.getByLabelText(plain(messages, "fields.deleteBookmarkNameAria")), { target: { value: "oldMark" } });
     fireEvent.click(screen.getByRole("button", { name: plain(messages, "fields.deleteBookmark") }));
     expect(queued(store)).toEqual([
       { kind: "create-field", anchor: "회의록", name: "department", value: "AI" },
@@ -129,7 +130,7 @@ describe("additional operation controls", () => {
   it.each(locales)("can queue a table before any table is selected (%s)", (locale, messages) => {
     const store = renderPanel(locale, "table", false);
     fireEvent.change(screen.getByLabelText(plain(messages, "table.anchorAria")), { target: { value: "Budget" } });
-    fireEvent.change(screen.getByLabelText(plain(messages, "table.addTableRowsLabel")), { target: { value: "Item\tValue" } });
+    fireEvent.change(screen.getByLabelText(plain(messages, "table.addTableRowsLabel")), { target: { value: "Item|Value" } });
     fireEvent.click(screen.getByRole("button", { name: plain(messages, "table.addTable") }));
     expect(queued(store)).toEqual([{ kind: "add-table", anchor: "Budget", rows: [["Item", "Value"]] }]);
   });
@@ -149,5 +150,46 @@ describe("additional operation controls", () => {
       { kind: "clone-table", sourceTable: 0, anchor: "Appendix copy", mode: "blank" },
       { kind: "clone-table", sourceTable: 0, anchor: "Appendix copy", mode: "keep" },
     ]);
+  });
+});
+
+describe.each(locales)("unit controls (%s)", (locale, messages) => {
+  it("refuses negative, leading-dot and exponent page dimensions before queueing", () => {
+    const store = renderPanel(locale, "document");
+    for (const value of ["-5", ".5", "1e2"]) {
+      fireEvent.change(screen.getByLabelText(plain(messages, "document.pageValueAria")), { target: { value } });
+      const button = screen.getByRole("button", { name: plain(messages, "document.setPage") });
+      expect((button as HTMLButtonElement).disabled).toBe(true);
+      fireEvent.click(button);
+      expect(queued(store)).toEqual([]);
+      expect(screen.getByRole("alert").textContent).toBe(plain(messages, "unit.invalid"));
+    }
+  });
+  it("refuses invalid paragraph and font units before queueing", () => {
+    const store = renderPanel(locale, "segment");
+    fireEvent.change(screen.getByLabelText(plain(messages, "segment.paraShapeKeyAria")), { target: { value: "indent" } });
+    for (const value of ["-5", ".5", "1e2"]) {
+      fireEvent.change(screen.getByLabelText(plain(messages, "segment.paraShapeValueAria")), { target: { value } });
+      const button = screen.getByRole("button", { name: plain(messages, "segment.setPara") });
+      expect((button as HTMLButtonElement).disabled).toBe(true);
+      fireEvent.click(button);
+      expect(queued(store)).toEqual([]);
+    }
+    fireEvent.change(screen.getByLabelText(plain(messages, "segment.paraShapeValueAria")), { target: { value: "" } });
+    for (const value of ["-5", ".5", "1e2"]) {
+      fireEvent.change(screen.getByLabelText(plain(messages, "segment.sizeAria")), { target: { value } });
+      const button = screen.getByRole("button", { name: plain(messages, "segment.formatSubmit") });
+      expect((button as HTMLButtonElement).disabled).toBe(true);
+      fireEvent.click(button);
+      expect(queued(store)).toEqual([]);
+      expect(screen.getByRole("alert").textContent).toBe(plain(messages, "unit.invalid"));
+    }
+  });
+  it("keeps anchored hyperlink controls available without addressed edit support", () => {
+    const store = renderPanel(locale, "segment", true, false);
+    fireEvent.change(screen.getByLabelText(plain(messages, "segment.hyperlinkUrlAria")), { target: { value: "https://example.test" } });
+    fireEvent.click(screen.getByRole("button", { name: plain(messages, "segment.createHyperlink") }));
+    expect(queued(store)).toEqual([{kind:"create-hyperlink",anchor:"1. 회의록",url:"https://example.test"}]);
+    expect(screen.getByText(plain(messages, "segment.hyperlinkHint"))).toBeTruthy();
   });
 });

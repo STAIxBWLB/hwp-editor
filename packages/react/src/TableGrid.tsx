@@ -47,7 +47,7 @@ export function TableGrid(): JSX.Element {
       <label className="hwped-label" htmlFor="hwped-table-rows">{t("table.addTableRowsLabel")}</label>
       <textarea id="hwped-table-rows" className="hwped-textarea" rows={3} value={newRows} disabled={disabled} placeholder={t("table.addTableRowPlaceholder")} onChange={(e) => setNewRows(e.target.value)} />
       <button type="button" className="hwped-btn" disabled={disabled || tableAnchor.trim() === "" || newRows.trim() === ""}
-        onClick={() => queue({ type: "queueOp", op: { kind: "add-table", anchor: tableAnchor.trim(), rows: newRows.split("\n").filter((row) => row.trim() !== "").map((row) => row.split("\t")) } })}>{t("table.addTable")}</button>
+        onClick={() => queue({ type: "queueOp", op: { kind: "add-table", anchor: tableAnchor.trim(), rows: newRows.split("\n").filter((row) => row.trim() !== "").map((row) => row.split(/[\t|]/)) } })}>{t("table.addTable")}</button>
     </div>
   );
 
@@ -280,7 +280,7 @@ export function TableGrid(): JSX.Element {
       </div>
       {addTablePanel}
       <div className="hwped-field">
-        <span className="hwped-label">{t("table.sourceTableAria")}: {tableIndex}</span>
+        <span className="hwped-label">{t("table.sourceTable", { index: tableIndex })}</span>
         <label className="hwped-label" htmlFor="hwped-clone-anchor">{t("table.cloneAnchorAria")}</label>
         <input id="hwped-clone-anchor" className="hwped-input" value={cloneAnchor} disabled={disabled} placeholder={t("table.anchorPlaceholder")} onChange={(e) => setCloneAnchor(e.target.value)} />
         <label className="hwped-label" htmlFor="hwped-clone-mode">{t("table.cloneModeAria")}</label>

@@ -251,8 +251,8 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     const queueImage = useCallback((op: Extract<EditOp, { kind: "insert-image" }>, asset: ImageAsset): void => {
       const snapshot = store.getState();
       if (!editable || envelope === null || snapshot.document === null || snapshot.status === "applying") return;
-      if (capabilities?.imageAssets !== "v1") throw new HwpEngineError("unavailable", "This host does not accept image bytes; configure an image-upload-capable HTTP adapter and retry.");
-      if (op.path !== asset.name) throw new HwpEngineError("bad_request", "Image reference does not match the asset; select the image again and retry.");
+      if (capabilities?.imageAssets !== "v1") throw new HwpEngineError("unavailable", t("image.unsupported"));
+      if (op.path !== asset.name) throw new HwpEngineError("bad_request", t("image.referenceMismatch"));
       const active = snapshot.pendingOps.flatMap(pending => {
         const stored = imageAssets.current.get(pending);
         return stored === undefined ? [] : [stored];
@@ -260,7 +260,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       validateImageAssets([...active, asset]);
       imageAssets.current.set(op, { name: asset.name, data: asset.data.slice() });
       store.dispatch({ type: "queueOp", op });
-    }, [editable, envelope, capabilities, store]);
+    }, [editable, envelope, capabilities, store, t]);
 
     // Follow selection to the relevant tab.
     useEffect(() => {
@@ -594,17 +594,21 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
             </button>
           </header>
 
-          {state.pendingOps.length > 0 && (
+          {state.pendingOps.length > 0 && <>
+            <button type="button" className="hwped-btn" disabled={state.status === "applying"}
+              onClick={() => store.dispatch({ type: "clearOps" })}>{t("toolbar.clearPending")}</button>
             <ol className="hwped-pending-list" aria-label={t("toolbar.pendingList")}>
               {state.pendingOps.map((op, index) => (
                 <li key={index}>
                   {op.kind}: {"address" in op
                     ? JSON.stringify(op.address)
                     : "find" in op ? op.find : "anchor" in op ? op.anchor : op.kind}
+                  {" "}<button type="button" className="hwped-btn" disabled={state.status === "applying"}
+                    onClick={() => store.dispatch({ type: "dequeueOp", index })}>{t("toolbar.removePending", { index: index + 1 })}</button>
                 </li>
               ))}
             </ol>
-          )}
+          </>}
 
           {state.status === "error" && state.error !== null && (
             <ErrorLine prefix={t("error.prefix.apply")} {...state.error} />

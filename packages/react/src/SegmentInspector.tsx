@@ -1,3 +1,4 @@
+import { isPlainDecimal } from "./unit-input.js";
 import { useEffect, useState } from "react";
 import type { JSX } from "react";
 import type { CatEnvelope, EditAddress, ParagraphAlignment, ParaShapeKey, Segment } from "@hwp-editor/core";
@@ -85,6 +86,9 @@ export function SegmentInspector(): JSX.Element {
     : { at: { section: selection.section, paragraph: selection.para } };
   const addressedUnavailable = capabilities?.editOps !== "v1";
   const disabled = !editable || addressedUnavailable || state.status === "applying";
+  const anchorDisabled = !editable || state.status === "applying";
+  const validShape = isPlainDecimal(shapeValue);
+  const validFontSize = fontSize.trim() === "" || isPlainDecimal(fontSize);
   const formatTargets = formatAddresses(envelope!, segment);
 
   return (
@@ -225,25 +229,27 @@ export function SegmentInspector(): JSX.Element {
             onChange={(e) => setShapeKey(e.target.value as ParaShapeKey)}>
             {SHAPE_KEYS.map(({ value, key }) => <option key={value} value={value}>{t(key)}</option>)}
           </select>
-          <input className="hwped-input" type="number" min="0" step="0.1" value={shapeValue} disabled={disabled} placeholder={shapeKey === "line-spacing" ? (lineSpacingUnit === "%" ? "%" : "pt") : "mm"}
+          <input className="hwped-input" type="text" inputMode="decimal" value={shapeValue} disabled={disabled} placeholder={shapeKey === "line-spacing" ? (lineSpacingUnit === "%" ? "%" : "pt") : "mm"}
             aria-label={t("segment.paraShapeValueAria")} onChange={(e) => setShapeValue(e.target.value)} />
           {shapeKey === "line-spacing"
             ? <select className="hwped-input" value={lineSpacingUnit} disabled={disabled} aria-label={t("segment.paraShapeUnitAria")} onChange={(e) => setLineSpacingUnit(e.target.value as "%" | "pt")}>
                 <option value="%">{t("segment.unitPercent")}</option><option value="pt">{t("segment.unitPoints")}</option>
               </select>
             : <span className="hwped-label">mm</span>}
-          <button type="button" className="hwped-btn" disabled={disabled || shapeValue.trim() === ""}
-            onClick={() => store.dispatch({ type: "queueOp", op: { kind: "set-para", address, key: shapeKey, value: `${shapeValue}${shapeKey === "line-spacing" ? lineSpacingUnit : "mm"}` } })}>{t("segment.setPara")}</button>
+          <button type="button" className="hwped-btn" disabled={disabled || !validShape}
+            onClick={() => store.dispatch({ type: "queueOp", op: { kind: "set-para", address, key: shapeKey, value: `${shapeValue.trim()}${shapeKey === "line-spacing" ? lineSpacingUnit : "mm"}` } })}>{t("segment.setPara")}</button>
         </div>
       </div>
 
+      {shapeValue !== "" && !validShape && <p role="alert" className="hwped-hint">{t("unit.invalid")}</p>}
       <div className="hwped-field">
         <span className="hwped-label">{t("segment.hyperlinkLabel")}</span>
-        <input className="hwped-input" type="url" value={linkUrl} disabled={disabled} placeholder={t("segment.hyperlinkUrlPlaceholder")}
+        <p className="hwped-hint">{t("segment.hyperlinkHint")}</p>
+        <input className="hwped-input" type="url" value={linkUrl} disabled={anchorDisabled} placeholder={t("segment.hyperlinkUrlPlaceholder")}
           aria-label={t("segment.hyperlinkUrlAria")} onChange={(e) => setLinkUrl(e.target.value)} />
-        <input className="hwped-input" type="text" value={linkText} disabled={disabled} placeholder={t("segment.hyperlinkTextPlaceholder")}
+        <input className="hwped-input" type="text" value={linkText} disabled={anchorDisabled} placeholder={t("segment.hyperlinkTextPlaceholder")}
           aria-label={t("segment.hyperlinkTextAria")} onChange={(e) => setLinkText(e.target.value)} />
-        <button type="button" className="hwped-btn" disabled={disabled || currentText === "" || linkUrl.trim() === ""}
+        <button type="button" className="hwped-btn" disabled={anchorDisabled || currentText === "" || linkUrl.trim() === ""}
           onClick={() => store.dispatch({ type: "queueOp", op: { kind: "create-hyperlink", anchor: currentText, url: linkUrl.trim(), ...(linkText.trim() === "" ? {} : { text: linkText.trim() }) } })}>{t("segment.createHyperlink")}</button>
       </div>
 
@@ -261,8 +267,8 @@ export function SegmentInspector(): JSX.Element {
           </label>
           <input
             className="hwped-input hwped-input-narrow"
-            type="number"
-            min={1}
+            type="text"
+            inputMode="decimal"
             value={fontSize}
             disabled={disabled}
             onChange={(e) => setFontSize(e.target.value)}
@@ -283,13 +289,13 @@ export function SegmentInspector(): JSX.Element {
             type="button"
             className="hwped-btn"
             disabled={
-              disabled || formatTargets.length === 0 ||
+              disabled || !validFontSize || formatTargets.length === 0 ||
               (!bold && fontSize === "" && color === "")
             }
             onClick={() => {
               const props: Record<string, string> = {};
               if (bold) props["bold"] = "on";
-              if (fontSize !== "") props["size"] = fontSize;
+              if (fontSize.trim() !== "") props["size"] = fontSize.trim();
               if (color !== "") props["color"] = color;
               for (const target of formatTargets) {
                 store.dispatch({ type: "queueOp", op: { kind: "set-format", address: target, props } });
@@ -298,6 +304,7 @@ export function SegmentInspector(): JSX.Element {
           >
             {t("segment.formatSubmit")}
           </button>
+          {!validFontSize && <p role="alert" className="hwped-hint">{t("unit.invalid")}</p>}
         </div>
       </div>
     </div>

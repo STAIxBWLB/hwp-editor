@@ -1,3 +1,4 @@
+import { isPlainDecimal } from "./unit-input.js";
 import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent, JSX } from "react";
 import { imageAssetMediaType, MAX_IMAGE_ASSET_BYTES } from "@hwp-editor/core";
@@ -11,8 +12,8 @@ export function ImagePanel(): JSX.Element {
   const { state, store, envelope, capabilities, editable, queueImage, onError, t } = useHwpEditorContext();
   const [anchor, setAnchor] = useState("");
   const [deleteAnchor, setDeleteAnchor] = useState("");
-  const [width, setWidth] = useState("50");
-  const [height, setHeight] = useState("50");
+  const [width, setWidth] = useState("");
+  const [height, setHeight] = useState("");
   const [chosen, setChosen] = useState<ChosenImage | null>(null);
   const [reading, setReading] = useState(false);
   const [error, setError] = useState<ReturnType<typeof toEditorError> | null>(null);
@@ -21,7 +22,8 @@ export function ImagePanel(): JSX.Element {
   const uploading = capabilities?.imageAssets === "v1";
   const disabled = !editable || state.document === null || envelope === null || state.status === "applying";
   const w = Number(width), h = Number(height);
-  const validSize = Number.isFinite(w) && w > 0 && Number.isFinite(h) && h > 0;
+  const naturalSize = width.trim() === "" && height.trim() === "";
+  const validSize = naturalSize || (isPlainDecimal(width) && w > 0 && isPlainDecimal(height) && h > 0);
 
   useEffect(() => {
     generation.current += 1;
@@ -55,7 +57,7 @@ export function ImagePanel(): JSX.Element {
       // This is a request correlation key, not a credential or filesystem path.
       const id = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const name = `image-${id}.${chosen.extension}`;
-      queueImage({ kind: "insert-image", anchor, path: name, width: w, height: h }, { name, data: chosen.data });
+      queueImage({ kind: "insert-image", anchor: anchor.trim(), path: name, ...(naturalSize ? {} : { width: w, height: h }) }, { name, data: chosen.data });
       setError(null);
     } catch (failure) { setError(toEditorError(failure)); onError?.(failure); }
   };
@@ -69,14 +71,16 @@ export function ImagePanel(): JSX.Element {
       <label className="hwped-label" htmlFor="hwped-image-anchor">{t("image.anchor")}</label>
       <input id="hwped-image-anchor" className="hwped-input" value={anchor} disabled={disabled || !uploading} onChange={event => setAnchor(event.target.value)} />
       <div className="hwped-row">
-        <label>{t("image.width")}<input className="hwped-input" type="number" min="0.1" step="0.1" value={width} disabled={disabled || !uploading} onChange={event => setWidth(event.target.value)} /></label>
-        <label>{t("image.height")}<input className="hwped-input" type="number" min="0.1" step="0.1" value={height} disabled={disabled || !uploading} onChange={event => setHeight(event.target.value)} /></label>
+        <label>{t("image.width")}<input className="hwped-input" type="text" inputMode="decimal" value={width} disabled={disabled || !uploading} onChange={event => setWidth(event.target.value)} /></label>
+        <label>{t("image.height")}<input className="hwped-input" type="text" inputMode="decimal" value={height} disabled={disabled || !uploading} onChange={event => setHeight(event.target.value)} /></label>
       </div>
+      <p className="hwped-hint">{t("image.dimensionsHint")}</p>
+      {!validSize && <p role="alert" className="hwped-hint">{t("image.invalidDimensions")}</p>}
       <button type="button" className="hwped-btn" disabled={disabled || !uploading || reading || chosen === null || !anchor.trim() || !validSize} onClick={insert}>{t("image.insert")}</button>
       <h3>{t("image.delete")}</h3>
       <label className="hwped-label" htmlFor="hwped-image-delete-anchor">{t("image.deleteAnchor")}</label>
       <input id="hwped-image-delete-anchor" className="hwped-input" value={deleteAnchor} disabled={disabled} onChange={event => setDeleteAnchor(event.target.value)} />
-      <button type="button" className="hwped-btn" disabled={disabled || !deleteAnchor.trim()} onClick={() => store.dispatch({ type: "queueOp", op: { kind: "delete-image", anchor: deleteAnchor } })}>{t("image.delete")}</button>
+      <button type="button" className="hwped-btn" disabled={disabled || !deleteAnchor.trim()} onClick={() => store.dispatch({ type: "queueOp", op: { kind: "delete-image", anchor: deleteAnchor.trim() } })}>{t("image.delete")}</button>
       {error !== null && <ErrorLine prefix={t("error.prefix.image")} {...error} />}
     </div>
   );

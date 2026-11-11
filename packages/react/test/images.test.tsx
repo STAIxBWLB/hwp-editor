@@ -41,6 +41,31 @@ describe.each([["en",en],["ko",ko]] as const)("image controls (%s)",(locale,mess
     expect(engine.calls.edit[0]!.ops).toEqual([{kind:"insert-image",anchor:"Anchor",path:"image-fixed-id.png",width:20,height:15}]);
     expect(assets).toEqual([{name:"image-fixed-id.png",data:png}]);
   });
+  it("refuses invalid dimensions and allows natural size with both fields empty", async () => {
+    const engine=imageEngine();
+    render(<HwpEditor engine={engine} file={document} locale={locale} />);
+    fireEvent.click(await screen.findByRole("tab",{name:messages["tabs.images"]}));
+    const {file}=imageFile();
+    fireEvent.change(screen.getByLabelText(messages["image.file"]),{target:{files:[file]}});
+    await screen.findByText(file.name);
+    fireEvent.change(screen.getByLabelText(messages["image.anchor"]),{target:{value:"  Anchor  "}});
+    fireEvent.change(screen.getByLabelText(messages["image.height"]),{target:{value:"15"}});
+    for (const value of ["-5", ".5", "1e2", "1e-7"]) {
+      fireEvent.change(screen.getByLabelText(messages["image.width"]),{target:{value}});
+      const button=screen.getByRole("button",{name:messages["image.insert"]});
+      expect((button as HTMLButtonElement).disabled).toBe(true);
+      fireEvent.click(button);
+      expect(screen.getByRole("alert").textContent).toContain(messages["image.invalidDimensions"]);
+    }
+    fireEvent.change(screen.getByLabelText(messages["image.width"]),{target:{value:""}});
+    fireEvent.change(screen.getByLabelText(messages["image.height"]),{target:{value:""}});
+    fireEvent.click(screen.getByRole("button",{name:messages["image.insert"]}));
+    fireEvent.click(screen.getByRole("button",{name:messages["toolbar.applyWithCount"]({count:1})}));
+    await waitFor(()=>expect(engine.calls.edit).toHaveLength(1));
+    expect(engine.calls.edit[0]!.ops[0]).toMatchObject({kind:"insert-image",anchor:"Anchor"});
+    expect(engine.calls.edit[0]!.ops[0]).not.toHaveProperty("width");
+    expect(engine.calls.edit[0]!.ops[0]).not.toHaveProperty("height");
+  });
   it("keeps deletion available when uploads are unsupported",async()=>{
     const engine=imageEngine(false);
     render(<HwpEditor engine={engine} file={document} locale={locale} />);
