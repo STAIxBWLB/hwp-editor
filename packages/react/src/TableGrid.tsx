@@ -1,27 +1,13 @@
 import { useEffect, useState } from "react";
 import type { JSX } from "react";
 import type { CloneTableMode } from "@hwp-editor/core";
-import { tableAtRef } from "./tables.js";
+import { tableAtRef, tableRows } from "./tables.js";
 import { plainSegmentText } from "./text.js";
 import { useHwpEditorContext } from "./context.js";
 
 interface CellCoord {
   row: number;
   col: number;
-}
-
-const GFM_SEPARATOR_ROW = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/;
-
-function tableRows(text: string): string[][] {
-  return text.split("\n").filter(row => row.trim() !== "").map(row => {
-    if (row.includes("\t")) return row.split("\t");
-    if (GFM_SEPARATOR_ROW.test(row)) return [];
-    if (!row.includes("|")) return [row];
-    const cells = row.split("|").map(cell => cell.trim());
-    if (row.trim().startsWith("|")) cells.shift();
-    if (row.trim().endsWith("|")) cells.pop();
-    return cells;
-  }).filter(row => row.length > 0);
 }
 
 /**
@@ -55,7 +41,7 @@ export function TableGrid(): JSX.Element {
   const legacy = capabilities?.editOps !== "v1";
   const disabled = !editable || state.document === null || envelope === null || state.status === "applying";
   const queue = store.dispatch.bind(store);
-  const rows = tableRows(newRows);
+  const rows = tableRows(newRows).rows;
   const addTablePanel = (
     <div className="hwped-field">
       {legacy && <p className="hwped-hint">{t("table.legacySeparatorHint")}</p>}

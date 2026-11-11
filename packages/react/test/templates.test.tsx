@@ -1,7 +1,7 @@
 import { createRef } from "react";
 import type { HwpEditorHandle } from "../src/HwpEditor.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { Capabilities, DocumentHandle, HwpEngine, TemplateInputs } from "@hwp-editor/core";
 import { TEMPLATE_METHODS } from "@hwp-editor/core";
 import { HwpEditor } from "../src/HwpEditor.js";
@@ -224,6 +224,105 @@ it("clears the previous lint error when the profile or document changes", async 
 
   rerender(<HwpEditor engine={engine} file={filled} />);
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+});
+
+/**
+ * #58 item 3: a lint failure belongs to the request that asked for it. When
+ * the document was switched, the profile was changed or the panel was
+ * unmounted while the lint ran, the answer describes a request nobody is
+ * waiting for: it takes no line, and the host is not told the work failed,
+ * because it was the request's subject and not the request that moved.
+ */
+describe("a lint failure belongs to the request that asked for it (#58 item 3)", () => {
+  /** A lint that answers only when the test releases it. */
+  function heldLint() {
+    const held: Array<(reason: Error) => void> = [];
+    const engine = templateEngine();
+    engine.lint = vi.fn(async () => {
+      await new Promise<never>((_resolve, reject) => { held.push(reject); });
+      throw new Error("a held lint never returns");
+    });
+    return {
+      engine,
+      started: (): number => held.length,
+      /** Fail the in-flight lint, then let the panel's reaction settle. */
+      fail: async (): Promise<void> => {
+        const reject = held.shift();
+        if (reject === undefined) throw new Error("no lint was in flight");
+        await act(async () => {
+          reject(new Error("lint failed"));
+          await new Promise((resolve) => { setTimeout(resolve, 0); });
+        });
+      },
+    };
+  }
+
+  /** Open the lint tab and press Run on the held lint. */
+  async function runHeld(lint: ReturnType<typeof heldLint>): Promise<void> {
+    fireEvent.click(await screen.findByRole("tab", { name: en["tabs.lint"] }));
+    fireEvent.click(screen.getByRole("button", { name: en["lint.run"] }));
+    await waitFor(() => expect(lint.started()).toBe(1));
+  }
+
+  it("paints the line and reaches the host while nothing moved", async () => {
+    // The control: the same harness, with no transition under it, must reach
+    // both destinations, or the three assertions below prove nothing.
+    const lint = heldLint();
+    const onError = vi.fn();
+    render(<HwpEditor engine={lint.engine} file={original} onError={onError} />);
+    await runHeld(lint);
+    await lint.fail();
+
+    const line = await screen.findByRole("alert");
+    expect(line.textContent).toContain(en["error.prefix.lint"]);
+    expect(line.textContent).toContain("lint failed");
+    expect((onError.mock.calls[0]?.[0] as Error).message).toBe("lint failed");
+  });
+
+  it("reaches no onError when the document was switched under it", async () => {
+    const lint = heldLint();
+    const onError = vi.fn();
+    const view = render(<HwpEditor engine={lint.engine} file={original} onError={onError} />);
+    await runHeld(lint);
+
+    view.rerender(<HwpEditor engine={lint.engine} file={filled} onError={onError} />);
+    // The switch has LANDED, so the panel's own effect has already moved its
+    // generation past the held request: the failure is stale, not early.
+    await screen.findByText(filled.name);
+    await lint.fail();
+
+    expect(onError).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("reaches no onError when the profile was changed under it", async () => {
+    const lint = heldLint();
+    const onError = vi.fn();
+    render(<HwpEditor engine={lint.engine} file={original} onError={onError} />);
+    await runHeld(lint);
+
+    fireEvent.change(screen.getByLabelText(en["lint.profile"]), { target: { value: "report" } });
+    await waitFor(() =>
+      expect((screen.getByLabelText(en["lint.profile"]) as HTMLSelectElement).value).toBe("report"));
+    await lint.fail();
+
+    expect(onError).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("reaches no onError when the panel was unmounted under it", async () => {
+    const lint = heldLint();
+    const onError = vi.fn();
+    const view = render(<HwpEditor engine={lint.engine} file={original} onError={onError} />);
+    await runHeld(lint);
+
+    view.unmount();
+    await lint.fail();
+
+    // The line has no surface left to be painted on; the host is the party
+    // that could still be told, and it must not be.
+    expect(onError).not.toHaveBeenCalled();
+  });
 });
 
 it("refuses a malformed list default before rendering list fields", async () => {

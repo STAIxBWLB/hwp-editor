@@ -32,8 +32,15 @@ export function LintPanel(): JSX.Element {
       const result = await engine.lint(document, profile);
       if (generation.current === current && store.getState().document === document) setReport(result);
     } catch (e) {
-      if (generation.current === current) setError(toEditorError(e));
-      onError?.(e);
+      // One guard for both halves of the failure. A lint that answers after
+      // the document was switched, the profile was changed or this panel was
+      // unmounted describes a request nobody is waiting for: the panel's own
+      // line stays empty, and the host must not be told the work failed,
+      // because it was the document and not the request that moved.
+      if (generation.current === current) {
+        setError(toEditorError(e));
+        onError?.(e);
+      }
     } finally { if (generation.current === current) setBusy(false); }
   };
 
