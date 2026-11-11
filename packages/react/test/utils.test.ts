@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Segment } from "@hwp-editor/core";
+import { resolveSelection } from "@hwp-editor/core";
 import { sanitizeSvg } from "../src/sanitize.js";
 import { plainSegmentText } from "../src/text.js";
 import { parseMarkdownTable, findTables, tableAtRef } from "../src/tables.js";
@@ -99,6 +100,10 @@ describe("fields", () => {
     expect(extractFieldSlots({ markdown, segments: [host, table, cell, cellPara] })).toEqual([
       { name: "x", segment: { section: 0, para: 0, id: "cell-p" } },
     ]);
+    // A cell whose paragraph the projection omits is refused, not resolved to
+    // the host paragraph whose range covers the whole table: keeping tables
+    // and cells in the comparison is what makes this a skip.
+    expect(extractFieldSlots({ markdown, segments: [host, table, cell] })).toEqual([]);
   });
 
   it("leaves out a slot whose paragraph names only its host (t18-18)", () => {
@@ -109,6 +114,29 @@ describe("fields", () => {
     const host: Segment = { id: "host-p", indices: [0], start: 0, end: 5, kind: "para", section: 0, para: 0 };
     const nested: Segment = { indices: [0, 1, 0, 0], start: 0, end: 5, kind: "para", section: 0, para: 0 };
     expect(extractFieldSlots({ markdown, segments: [host, nested] })).toEqual([]);
+  });
+
+  it("resolves a slot inside an HWP field through the run that holds it (t18-r4)", () => {
+    // The projection emits a field segment whose range is its display text, at
+    // the same depth as the run holding it, and that run is usually longer -
+    // so depth-and-shorter-range picks the control, which resolveSelection
+    // refuses as a container. The slot then vanished from the panel with no
+    // signal, and these are exactly the slots `--set-field` fills.
+    const markdown = "성명: {{name}} 귀하";
+    const para: Segment = { id: "p", indices: [0], start: 0, end: 15, kind: "para", section: 0, para: 0 };
+    const run: Segment = { id: "r", indices: [0, 0], start: 0, end: 14, kind: "run", section: 0, para: 0 };
+    const field: Segment = { id: "fld", indices: [0, 1], start: 4, end: 12, kind: "field", section: 0, para: 0 };
+    expect(extractFieldSlots({ markdown, segments: [para, run, field] })).toEqual([
+      { name: "name", segment: { section: 0, para: 0, id: "p" } },
+    ]);
+    // Without a run in the projection the paragraph is still the answer: a
+    // control is never the segment a slot belongs to.
+    expect(extractFieldSlots({ markdown, segments: [para, field] })).toEqual([
+      { name: "name", segment: { section: 0, para: 0, id: "p" } },
+    ]);
+    // The control still refuses a click of its own.
+    expect(resolveSelection({ markdown, segments: [para, run, field] },
+      { id: "fld", indices: [0, 1], start: 4, end: 12, kind: "field", section: 0, para: 0 }).refusal).toBe("container");
   });
 });
 

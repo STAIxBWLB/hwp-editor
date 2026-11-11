@@ -163,7 +163,7 @@ it("refuses a template apply whose preview predates the host's file switch (t18-
   expect(onChange).not.toHaveBeenCalled();
   fireEvent.click(apply);
 
-  expect((await screen.findByRole("alert")).textContent).toContain(en["error.staleReplacement"]);
+  expect((await screen.findByRole("alert")).textContent).toContain(en["error.stalePreview"]);
   expect(onChange).not.toHaveBeenCalled();
   releaseReload?.();
   await waitFor(() => expect(engine.calls.read.at(-1)?.name).toBe(other.name));

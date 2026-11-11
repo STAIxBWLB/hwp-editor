@@ -20,6 +20,20 @@ export interface FieldSlot {
 const SLOT_PATTERN = /\{\{\s*([^{}]+?)\s*\}\}/g;
 
 /**
+ * Kinds whose range is a control's own display text or anchor inside a
+ * paragraph, never text that a paragraph sits inside.
+ *
+ * A field segment covers the text it displays (the projection's
+ * `open_control_segment`), at the same depth as the run that holds it, and a
+ * hyperlink or push-button field's display text is usually shorter than that
+ * run - so the depth-and-range comparison favours the control over the run.
+ * Resolving a slot through the control refuses it as a container, which would
+ * drop exactly the `{{slot}}`s that `--set-field` fills. The paragraph or run
+ * that holds the control is what a slot inside it belongs to.
+ */
+const CONTROL_KINDS: ReadonlySet<string> = new Set(["field", "image", "bookmark"]);
+
+/**
  * The innermost segment covering `offset`.
  *
  * A v2 projection lists a table's host paragraph before the cell and the
@@ -28,10 +42,17 @@ const SLOT_PATTERN = /\{\{\s*([^{}]+?)\s*\}\}/g;
  * in `indices` is what says which segment sits inside which. On a tie -
  * including a legacy projection, where every depth is 0 - the shorter range
  * is the inner one.
+ *
+ * Controls are not candidates (see `CONTROL_KINDS`). Tables and cells stay in
+ * the comparison without ever being the answer: they lose to the paragraph
+ * that holds the text, and a slot inside a table whose cell paragraph the
+ * projection omits is then refused rather than resolved to the host paragraph
+ * whose range covers the whole table.
  */
 function innermostAt(envelope: CatEnvelope, offset: number): Segment | undefined {
   let best: Segment | undefined;
   for (const segment of envelope.segments) {
+    if (CONTROL_KINDS.has(segment.kind)) continue;
     if (segment.start > offset || offset >= segment.end) continue;
     if (best === undefined) {
       best = segment;

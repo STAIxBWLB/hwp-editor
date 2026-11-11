@@ -283,7 +283,7 @@ export function TemplatePanel(): JSX.Element {
     // previewed document stale even though the store has not caught up yet.
     if (loadEpoch() !== result.epoch) {
       setPreview(null);
-      setError(toEditorError(new Error(t("error.staleReplacement"))));
+      setError(toEditorError(new Error(t("error.stalePreview"))));
       return;
     }
     setBusy(true); setError(null);
