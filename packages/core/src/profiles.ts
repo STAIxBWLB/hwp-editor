@@ -16,6 +16,20 @@
  */
 import type { Style } from "./generated/document-spec-v2.js";
 
+/**
+ * Freeze a table and everything under it. The tables below and the starter
+ * set are module state that every caller shares, so an edit to one of them
+ * would change what a later compose produces; frozen, the edit throws
+ * instead of leaking into the next document.
+ */
+export function deepFreeze<T>(value: T): T {
+  if (typeof value === "object" && value !== null && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const child of Object.values(value)) deepFreeze(child);
+  }
+  return value;
+}
+
 /** The body row of a profile: font, size, line spacing and footer policy. */
 export interface DocumentProfile {
   /** Body font family, spelled the way hwp-cli spells it. */
@@ -40,11 +54,11 @@ const HCR_BATANG = "함초롬바탕";
  * The official profile's body row, for a caller that builds its own document.
  * `OFFICIAL_PROFILE` is derived from it, so the body values exist once.
  */
-export const OFFICIAL_BODY_PROFILE = {
+export const OFFICIAL_BODY_PROFILE = deepFreeze({
   fontFamily: MALGUN_GOTHIC,
   fontSizePt: 12,
   lineHeightPercent: 160,
-} as const;
+} as const);
 
 /**
  * Paragraph spacing the official preset carries, from `hwp new --preset
@@ -67,7 +81,7 @@ const OUTLINE_SPACING = { spacing_before_pt: 6, spacing_after_pt: 3 } as const;
  * centred 두문 line, a bold table header), always `based_on` an official
  * style, so no starter file restates a profile constant.
  */
-export const OFFICIAL_PROFILE: Readonly<Record<string, Style>> = {
+export const OFFICIAL_PROFILE: Readonly<Record<string, Style>> = deepFreeze({
   "바탕글": {
     font_family: OFFICIAL_BODY_PROFILE.fontFamily,
     font_size_pt: OFFICIAL_BODY_PROFILE.fontSizePt,
@@ -81,15 +95,7 @@ export const OFFICIAL_PROFILE: Readonly<Record<string, Style>> = {
   "개요 4": { based_on: "바탕글", bold: true, font_size_pt: 12, align: "left", ...OUTLINE_SPACING },
   "개요 5": { based_on: "바탕글", bold: true, font_size_pt: 12, align: "left", ...OUTLINE_SPACING },
   "개요 6": { based_on: "바탕글", bold: true, font_size_pt: 12, align: "left", ...OUTLINE_SPACING },
-};
-
-/**
- * The same table as a map. A `Record` lookup answers `constructor` and
- * `toString` from `Object.prototype`, so the resolver reads names here.
- */
-export const OFFICIAL_PROFILE_STYLES: ReadonlyMap<string, Style> = new Map(
-  Object.entries(OFFICIAL_PROFILE),
-);
+});
 
 /** The presets this repo offers; every one but `gaejosik` is an engine preset. */
 export type ProfileName =
@@ -102,7 +108,7 @@ export type ProfileName =
   | "press";
 
 /** `ProfileName` in picker order. */
-export const DOCUMENT_PROFILE_NAMES: readonly ProfileName[] = [
+export const DOCUMENT_PROFILE_NAMES: readonly ProfileName[] = deepFreeze([
   "official",
   "report",
   "plan",
@@ -110,7 +116,7 @@ export const DOCUMENT_PROFILE_NAMES: readonly ProfileName[] = [
   "minutes",
   "gaejosik",
   "press",
-];
+] as const);
 
 /**
  * The body row of each preset, from hwp-convert `official.rs` `profiles()`
@@ -118,7 +124,7 @@ export const DOCUMENT_PROFILE_NAMES: readonly ProfileName[] = [
  * pages). `official` is built from `OFFICIAL_BODY_PROFILE` rather than
  * restated. `gaejosik` has no engine preset, so no drift test can cover it.
  */
-export const DOCUMENT_PROFILES: Readonly<Record<ProfileName, DocumentProfile>> = {
+export const DOCUMENT_PROFILES: Readonly<Record<ProfileName, DocumentProfile>> = deepFreeze({
   official: {
     fontFamily: OFFICIAL_BODY_PROFILE.fontFamily,
     bodySizePt: OFFICIAL_BODY_PROFILE.fontSizePt,
@@ -131,4 +137,4 @@ export const DOCUMENT_PROFILES: Readonly<Record<ProfileName, DocumentProfile>> =
   minutes: { fontFamily: HCR_BATANG, bodySizePt: 14, lineHeightPercent: 130, pageNumber: false },
   gaejosik: { fontFamily: MALGUN_GOTHIC, bodySizePt: 15, lineHeightPercent: 160, pageNumber: true },
   press: { fontFamily: HCR_BATANG, bodySizePt: 14, lineHeightPercent: 160, pageNumber: true },
-};
+});

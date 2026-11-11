@@ -192,6 +192,39 @@ describe("starter components", () => {
       font_size_pt: 22,
     });
   });
+
+  it("writes the 두문 rows the way the engine's own frame does", () => {
+    // hwp-convert `frames.rs` DOC_HEAD is 기관명 / 수신 / 경유, written as
+    // "수신  {v}" and "(경유)  {v}"; 문서번호 is not a 두문 row there.
+    expect(textsOf(starter("두문").blocks)).toEqual([
+      "{{기관명}}",
+      "수신  {{수신}}",
+      "(경유)  {{경유}}",
+    ]);
+  });
+
+  it("gives 결재란 one date per approver, not one date shared by the row", () => {
+    const approval = starter("결재란");
+    expect(Object.keys(approval.params)).toEqual([
+      "기안자",
+      "검토자",
+      "결재자",
+      "기안일자",
+      "검토일자",
+      "결재일자",
+    ]);
+    expect(textsOf(approval.blocks)).toEqual([
+      "기안",
+      "검토",
+      "결재",
+      "{{기안자}}",
+      "{{검토자}}",
+      "{{결재자}}",
+      "{{기안일자}}",
+      "{{검토일자}}",
+      "{{결재일자}}",
+    ]);
+  });
 });
 
 describe("substituteParams", () => {
@@ -292,6 +325,31 @@ describe("substituteParams", () => {
     const filled = substituteParams(starter("요약표"), { "내용2": "2026. 3. ~ 2026. 6." });
     expect(textsOf(filled.blocks)).toContain("2026. 3. ~ 2026. 6.");
   });
+
+  it("keeps an override named __proto__, which a plain assignment would drop", () => {
+    // `filled["__proto__"] = value` sets the prototype instead of a property,
+    // so the merged params are built with `Object.fromEntries`, not spread.
+    const component = validateComponent(
+      {
+        name: "프로토",
+        description: "프로토타입 시험",
+        params: JSON.parse('{"__proto__":"기본"}') as Record<string, string>,
+        blocks: [{ type: "paragraph", runs: [{ type: "text", text: "{{__proto__}}" }] }],
+      },
+      "프로토.json",
+    );
+    const filled = substituteParams(component, JSON.parse('{"__proto__":"값"}'));
+    expect(filled.params["__proto__"]).toBe("값");
+    expect(textsOf(filled.blocks)).toEqual(["값"]);
+  });
+
+  it("refuses a second pass over an already substituted component", () => {
+    const filled = substituteParams(starter("개조식"), { "항목1": "직접 값" });
+    expect(() => substituteParams(filled)).toThrow(
+      "components: 개조식: is already substituted, and a second pass would re-scan text a value " +
+        "was inserted into; fill the unfilled component, or compose this one as it is, then retry",
+    );
+  });
 });
 
 describe("validateComponent refusals", () => {
@@ -327,7 +385,8 @@ describe("validateComponent refusals", () => {
       }),
     ).toBe(
       "components: src/components/broken.json: blocks[0].runs[0].text: " +
-        "uses {{모름}}, which is not a declared param",
+        "uses {{모름}}, which is not a declared param; add it to the component's params with a " +
+        "default, or take it out of the text, then retry",
     );
   });
 
@@ -338,7 +397,7 @@ describe("validateComponent refusals", () => {
       }),
     ).toBe(
       "components: src/components/broken.json: blocks[0].runs[0].text: " +
-        "has an empty {{}} placeholder",
+        "has an empty {{}} placeholder; name the param it meant, or remove the braces, then retry",
     );
   });
 
@@ -666,6 +725,29 @@ describe("validateComponent refusals", () => {
     );
   });
 
+  it("refuses a table grid past the cell count hwp compose allows", () => {
+    // 65535 by 65535 passes both schema axis bounds and would ask the engine
+    // for 4.3 billion slots (`document_spec.rs` MAX_TABLE_CELLS), so the
+    // refusal has to come from the product, before any grid is allocated.
+    const grid = (rows: number, columns: number): Record<string, unknown> => ({
+      type: "table",
+      columns: Array.from({ length: columns }, () => ({ width_mm: 10 })),
+      rows: Array.from({ length: rows }, () => ({
+        cells: Array.from({ length: columns }, () => ({ blocks: [] })),
+      })),
+    });
+    expect(refusalFor((value) => (value["blocks"] = [grid(1001, 101)]))).toBe(
+      "components: src/components/broken.json: blocks[0]: is a 1001-row by 101-column table, " +
+        "101101 cells; hwp compose allows 100000 cells in one table grid; split the table into " +
+        "several, or shrink it, then retry",
+    );
+    // One row under the cap still validates, so the refusal is the product and
+    // not a blanket table size limit.
+    expect(
+      validateComponent({ ...BASE_COMPONENT, blocks: [grid(990, 101)] }, REFUSAL_SOURCE).blocks,
+    ).toHaveLength(1);
+  });
+
   it("keeps a param named like an Object.prototype member", () => {
     const component = validateComponent(
       {
@@ -685,17 +767,21 @@ describe("validateComponent refusals", () => {
 });
 
 describe("documentSpecFromComponents", () => {
-  it("wraps the merged blocks in the v2 envelope, in list order", () => {
+  it("wraps the filled blocks in the v2 envelope, in list order", () => {
     const spec = documentSpecFromComponents(STARTER_COMPONENTS, { title: "시험 문서" });
     expect(spec.version).toBe("2.0");
     expect(spec.document.version).toBe("1.0");
     expect(spec.document.metadata).toEqual({ title: "시험 문서" });
     expect(spec.document.sections).toHaveLength(1);
     const blocks = spec.document.sections[0].blocks;
-    expect(blocks).toEqual(STARTER_COMPONENTS.flatMap((component) => component.blocks));
+    // Composition owns substitution, so the blocks are the starters' own
+    // defaults filled, not the `{{param}}` templates they ship with.
+    const filled = STARTER_COMPONENTS.map((component) => substituteParams(component));
+    expect(blocks).toEqual(filled.flatMap((component) => component.blocks));
     expect(blocks).toHaveLength(
       STARTER_COMPONENTS.reduce((count, component) => count + component.blocks.length, 0),
     );
+    expect(JSON.stringify(blocks)).not.toContain("{{");
   });
 
   it("carries the profile styles the components name, and nothing else", () => {
@@ -714,6 +800,38 @@ describe("documentSpecFromComponents", () => {
   it("refuses an empty component list", () => {
     expect(() => documentSpecFromComponents([])).toThrow(
       /components: at least one component is needed to compose a document/,
+    );
+  });
+
+  it("fills each entry once, from its own values, its defaults, or as it stands", () => {
+    const spec = documentSpecFromComponents([
+      { component: starter("개조식"), values: { "표제": "추진 경과" } },
+      substituteParams(starter("붙임"), { "표제": "붙임 자료" }),
+    ]);
+    const texts = textsOf(spec.document.sections[0].blocks);
+    expect(texts[0]).toBe("추진 경과");
+    expect(texts).toContain("붙임 자료");
+    // A second pass would re-scan text a value was inserted into, so `substituteParams`
+    // refuses one and composition has to accept an already filled component.
+    expect(texts.join("\n")).not.toContain("{{");
+  });
+
+  it("refuses to redefine an official profile style, and accepts the same values", () => {
+    const redefining = validateComponent(
+      { ...BASE_COMPONENT, styles: { "바탕글": { bold: true } } },
+      REFUSAL_SOURCE,
+    );
+    expect(() => documentSpecFromComponents([redefining])).toThrow(
+      "components: 시험: styles.바탕글: redefines the official profile's 바탕글, and a component " +
+        "takes profile values from the table rather than replacing them (#54 Decision " +
+        "2026-11-10); define your style under its own name with based_on 바탕글, then retry",
+    );
+    const restating = validateComponent(
+      { ...BASE_COMPONENT, styles: { "바탕글": { ...OFFICIAL_PROFILE["바탕글"] } } },
+      REFUSAL_SOURCE,
+    );
+    expect(documentSpecFromComponents([restating]).document.styles?.["바탕글"]).toEqual(
+      OFFICIAL_PROFILE["바탕글"],
     );
   });
 
@@ -994,6 +1112,30 @@ describe("loadComponents", () => {
     ]);
   });
 
+  it("makes a relative baseUrl absolute against the document URL before using it", async () => {
+    // `new URL(entry, "/lib/")` throws, so a browser passing the folder as
+    // "/lib/" would lose every entry: the base is resolved first.
+    const requested: string[] = [];
+    const browser = globalThis as { location?: { href: string } };
+    browser.location = { href: "https://example.test/app/index.html" };
+    try {
+      const loaded = await loadComponents(
+        { version: "1.0", components: ["dumo.json"] },
+        {
+          baseUrl: "/lib/",
+          fetch: async (url) => {
+            requested.push(url);
+            return respond(shipped("dumo.json"));
+          },
+        },
+      );
+      expect(loaded[0]?.name).toBe("두문");
+    } finally {
+      delete browser.location;
+    }
+    expect(requested).toEqual(["https://example.test/lib/dumo.json"]);
+  });
+
   it("refuses a transport that rejects, naming the URL and the failure", async () => {
     await expect(
       loadComponents("https://example.test/lib/index.json", {
@@ -1104,6 +1246,33 @@ describe("profile table", () => {
       lineHeightPercent: OFFICIAL_BODY_PROFILE.lineHeightPercent,
       pageNumber: false,
     });
+  });
+
+  it("freezes the tables and the starter set a host shares, so an edit throws", () => {
+    // Module state every caller shares: an edit has to throw here rather than
+    // reach the next document a host composes.
+    for (const value of [
+      OFFICIAL_PROFILE,
+      OFFICIAL_PROFILE["바탕글"],
+      OFFICIAL_BODY_PROFILE,
+      DOCUMENT_PROFILES,
+      DOCUMENT_PROFILES.report,
+      DOCUMENT_PROFILE_NAMES,
+      STARTER_COMPONENTS,
+      STARTER_COMPONENTS[0],
+      STARTER_COMPONENTS[0]?.blocks,
+      STARTER_COMPONENTS[0]?.styles,
+    ]) {
+      expect(Object.isFrozen(value)).toBe(true);
+    }
+    expect(() => {
+      (OFFICIAL_PROFILE["바탕글"] as unknown as Record<string, unknown>)["font_size_pt"] = 99;
+    }).toThrow(TypeError);
+    expect(() => {
+      (STARTER_COMPONENTS[0] as unknown as Record<string, unknown>)["name"] = "다른 이름";
+    }).toThrow(TypeError);
+    expect(OFFICIAL_PROFILE["바탕글"]?.font_size_pt).toBe(12);
+    expect(STARTER_COMPONENTS[0]?.name).toBe("결재란");
   });
 });
 
@@ -1324,11 +1493,12 @@ describeBin("compose with the real hwp", () => {
     expect(runAttrs("font-gyeolmun")[0]).toEqual({ face: "맑은 고딕", size: 22 });
   });
 
-  it("gives the 붙임 body the profile's 12pt on all four lines", () => {
+  it("gives the 붙임 body the profile's 12pt on every line that carries text", () => {
     const index = STARTER_COMPONENTS.findIndex((component) => component.name === "붙임");
     compose(documentSpecFromComponents([STARTER_COMPONENTS[index]!]), "font-attachment");
+    // 붙임's third 항목 defaults to "", so substitution leaves an empty run and
+    // the engine reports no run segment for that line: three lines of text.
     expect(runAttrs("font-attachment")).toEqual([
-      { face: "맑은 고딕", size: 12 },
       { face: "맑은 고딕", size: 12 },
       { face: "맑은 고딕", size: 12 },
       { face: "맑은 고딕", size: 12 },
@@ -1336,11 +1506,14 @@ describeBin("compose with the real hwp", () => {
   });
 
   it("composes all seven in list order, with the params visible in the output", () => {
-    const components = STARTER_COMPONENTS.map((component) => substituteParams(component));
-    const gaejosik = components.findIndex((component) => component.name === "개조식");
-    components[gaejosik] = substituteParams(starter("개조식"), { "표제": "추진 경과" });
+    const gaejosik = STARTER_COMPONENTS.findIndex((component) => component.name === "개조식");
     const report = compose(
-      documentSpecFromComponents(components, { title: "구성요소 조립" }),
+      documentSpecFromComponents(
+        STARTER_COMPONENTS.map((component, index) =>
+          index === gaejosik ? { component, values: { "표제": "추진 경과" } } : component,
+        ),
+        { title: "구성요소 조립" },
+      ),
       "assembly",
     );
     expect(report["warnings"]).toEqual([]);

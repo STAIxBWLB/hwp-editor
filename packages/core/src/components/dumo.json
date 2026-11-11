@@ -1,9 +1,8 @@
 {
   "name": "두문",
-  "description": "공문서 두문: 기관명, 문서번호, 수신·경유 줄",
+  "description": "공문서 두문: 기관명, 수신·경유 줄",
   "params": {
     "기관명": "○○대학교",
-    "문서번호": "제2026-0001호",
     "수신": "수신자 참조",
     "경유": "해당 없음"
   },
@@ -19,17 +18,12 @@
     {
       "type": "paragraph",
       "style": "바탕글",
-      "runs": [{ "type": "text", "text": "{{문서번호}}" }]
+      "runs": [{ "type": "text", "text": "수신  {{수신}}" }]
     },
     {
       "type": "paragraph",
       "style": "바탕글",
-      "runs": [{ "type": "text", "text": "수신: {{수신}}" }]
-    },
-    {
-      "type": "paragraph",
-      "style": "바탕글",
-      "runs": [{ "type": "text", "text": "경유: {{경유}}" }]
+      "runs": [{ "type": "text", "text": "(경유)  {{경유}}" }]
     }
   ]
 }

@@ -114,8 +114,10 @@ export type {
   ComponentFetch,
   ComponentFetchResponse,
   ComponentIndex,
+  ComponentInput,
   ComponentsSource,
   ComposeComponentsOptions,
+  FilledComponent,
   LoadComponentsOptions,
 } from "./components.js";
 export {

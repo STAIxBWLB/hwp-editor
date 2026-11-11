@@ -32,7 +32,7 @@
  */
 import type { Blocks, Style } from "./generated/document-spec-v2.js";
 import type { DocumentSpecV2 } from "./spec.js";
-import { OFFICIAL_PROFILE, OFFICIAL_PROFILE_STYLES } from "./profiles.js";
+import { deepFreeze, OFFICIAL_PROFILE } from "./profiles.js";
 
 import approvalBox from "./components/approval-box.json";
 import attachment from "./components/attachment.json";
@@ -41,6 +41,12 @@ import gaejosik from "./components/gaejosik.json";
 import gyeolmun from "./components/gyeolmun.json";
 import scheduleTable from "./components/schedule-table.json";
 import summaryTable from "./components/summary-table.json";
+
+/**
+ * The profile as a map: a `Record` lookup answers `constructor` and
+ * `toString` from `Object.prototype`, and the resolver reads names here.
+ */
+const PROFILE_STYLES = new Map<string, Style>(Object.entries(OFFICIAL_PROFILE));
 
 /** One component file: identity, declared params with defaults, blocks. */
 export interface Component {
@@ -113,6 +119,12 @@ const MAX_ITEMS = 65535;
 
 /** The v1 schema's `maxProperties` for the style table. */
 const MAX_STYLES = 256;
+
+/**
+ * The engine's cap on one table grid (`document_spec.rs` `MAX_TABLE_CELLS`),
+ * refused before the occupancy walk allocates a slot per cell.
+ */
+const MAX_TABLE_CELLS = 100_000;
 
 /** JSON Schema counts code points, so a surrogate pair is one character there. */
 function exceeds(value: string, maxLength: number): boolean {
@@ -507,6 +519,20 @@ function validateTable(block: Record<string, unknown>, source: string, field: st
 function validateTableGrid(block: Record<string, unknown>, source: string, field: string): void {
   const width = (block.columns as unknown[]).length;
   const height = (block.rows as unknown[]).length;
+  const slots = height * width;
+  // Before the occupancy grid is allocated: 65535 by 65535 passes both axis
+  // bounds and would ask for 4.3 billion slots. The engine refuses the same
+  // product before it allocates (`MAX_TABLE_CELLS`), so this refusal is its
+  // own message, not a guess.
+  if (slots > MAX_TABLE_CELLS) {
+    refuse(
+      source,
+      field,
+      `is a ${height}-row by ${width}-column table, ${slots} cells; hwp compose allows ` +
+        `${MAX_TABLE_CELLS} cells in one table grid; split the table into several, or shrink ` +
+        "it, then retry",
+    );
+  }
   const rowsField = at(field, "rows");
   const covered = Array.from({ length: height }, () => new Array<boolean>(width).fill(false));
   for (const [rowIndex, row] of (block.rows as Record<string, unknown>[]).entries()) {
@@ -792,7 +818,13 @@ function checkPlaceholders(
 ): void {
   for (const site of textSites(blocks, "blocks")) {
     for (const placeholder of placeholderNames(site.text)) {
-      if (placeholder === "") refuse(source, site.field, "has an empty {{}} placeholder");
+      if (placeholder === "") {
+        refuse(
+          source,
+          site.field,
+          "has an empty {{}} placeholder; name the param it meant, or remove the braces, then retry",
+        );
+      }
       if (!site.substituted) {
         refuse(
           source,
@@ -802,7 +834,12 @@ function checkPlaceholders(
         );
       }
       if (!Object.hasOwn(params, placeholder)) {
-        refuse(source, site.field, `uses {{${placeholder}}}, which is not a declared param`);
+        refuse(
+          source,
+          site.field,
+          `uses {{${placeholder}}}, which is not a declared param; add it to the component's ` +
+            "params with a default, or take it out of the text, then retry",
+        );
       }
     }
   }
@@ -830,6 +867,26 @@ export function validateComponent(raw: unknown, source: string): Component {
 }
 
 /**
+ * Marks a component whose placeholders are filled.
+ *
+ * Substitution has to happen exactly once: filled text may legitimately
+ * contain `{{` (a value is inserted literally, never re-scanned), so a second
+ * pass would rewrite content that came from a value. The mark rides on a
+ * symbol, which `JSON.stringify` and `Object.entries` do not see, and
+ * composition fills a component that lacks it.
+ */
+const FILLED: unique symbol = Symbol("hwp-editor.component.filled");
+
+/** A component whose placeholders are filled; only `substituteParams` makes one. */
+export interface FilledComponent extends Component {
+  readonly [FILLED]: true;
+}
+
+function isFilled(component: Component): component is FilledComponent {
+  return (component as Partial<FilledComponent>)[FILLED] === true;
+}
+
+/**
  * Fill a component's `{{name}}` placeholders with `values` over its defaults.
  * Values are literal (no recursive substitution), an undeclared value is
  * refused rather than ignored, and the returned component's `params` are the
@@ -843,18 +900,37 @@ export function substituteParams(
   component: Component,
   values: Record<string, string> = {},
   source = component.name,
-): Component {
-  const filled: Record<string, string> = {};
+): FilledComponent {
+  if (isFilled(component)) {
+    refuse(
+      source,
+      "",
+      "is already substituted, and a second pass would re-scan text a value was inserted into; " +
+        "fill the unfilled component, or compose this one as it is, then retry",
+    );
+  }
+  const overrides: [string, string][] = [];
   for (const [name, value] of Object.entries(values)) {
     if (!Object.hasOwn(component.params, name)) {
-      refuse(source, at("params", name), "is not a param of this component");
+      refuse(
+        source,
+        at("params", name),
+        "is not a param of this component; use one of its declared params, or add the param to " +
+          "the component, then retry",
+      );
     }
-    if (typeof value !== "string") refuse(source, at("params", name), "must be a string");
+    if (typeof value !== "string") {
+      refuse(source, at("params", name), "must be a string; pass the value as text, then retry");
+    }
     // Normalized (`\r\n` becomes `\n`) and checked here, so what is stored is
     // what is substituted and what the caller reads back.
-    filled[name] = paramValue(value, source, at("params", name), MAX_LENGTH.text);
+    overrides.push([name, paramValue(value, source, at("params", name), MAX_LENGTH.text)]);
   }
-  const params = { ...component.params, ...filled };
+  // `fromEntries` defines own properties, so a param named `__proto__` survives.
+  const params = Object.fromEntries([
+    ...Object.entries(component.params),
+    ...overrides,
+  ]) as Record<string, string>;
   checkPlaceholders(component.blocks, params, source);
   const blocks = mapBlocks(component.blocks, "blocks", (template, field, kind) => {
     const substituted = template.replace(PLACEHOLDER, (_match, rawName: string) => {
@@ -875,7 +951,13 @@ export function substituteParams(
   // A value can push a run past a bound the placeholder itself met, so the
   // result is held to the same contract the component was validated against.
   validateBlocks(blocks, source, "blocks", 1);
-  return { ...component, params, blocks: structuredClone(blocks) };
+  const filled: FilledComponent = {
+    ...component,
+    params,
+    blocks: structuredClone(blocks),
+    [FILLED]: true,
+  };
+  return filled;
 }
 
 interface StyleRef {
@@ -933,32 +1015,66 @@ export interface ComposeComponentsOptions {
   sectionId?: string;
 }
 
+/** One component to compose, with the param values it should be filled with. */
+export interface ComponentInput {
+  component: Component;
+  /** Overrides over the component's own defaults. */
+  values?: Record<string, string>;
+}
+
+/**
+ * The component a compose entry stands for, filled exactly once. A component
+ * that already carries the filled mark is used as it is: filling it again
+ * would re-scan text a value was inserted into.
+ */
+function fillInput(input: Component | ComponentInput): FilledComponent {
+  if ("blocks" in input) return isFilled(input) ? input : substituteParams(input);
+  return substituteParams(input.component, input.values ?? {});
+}
+
 /**
  * Assemble an ordered component list into the DocumentSpec v2 `hwp compose`
  * takes. Blocks keep the list order; component styles are merged and a name
  * defined two different ways is refused instead of silently winning.
  *
+ * Substitution happens here, once, so a placeholder can never reach the
+ * engine: an entry may name values (`{component, values}`), an unfilled
+ * component is filled from its own defaults, and an already filled one is
+ * used as it is.
+ *
  * Every style the blocks name, and every `based_on` a component defines, is
  * resolved here: one the components define wins, one only the official
  * profile has is added from `OFFICIAL_PROFILE`, and anything else is refused
  * with the field that named it (hwp compose would refuse the same reference
- * as `unknown_reference`, later and without the field).
+ * as `unknown_reference`, later and without the field). A profile name is
+ * already defined, so a component may reference it but not redefine it.
  *
  * The spec shares no object with the components or with the profile table, so
  * editing the result cannot reach module state or a caller's file.
  */
 export function documentSpecFromComponents(
-  components: readonly Component[],
+  components: readonly (Component | ComponentInput)[],
   options: ComposeComponentsOptions = {},
 ): DocumentSpecV2 {
   if (components.length === 0) {
     refuse("components", "", "at least one component is needed to compose a document");
   }
+  const filled = components.map((input) => fillInput(input));
   const styles = new Map<string, Style>();
   const definedBy = new Map<string, string>();
   const blocks: Block[] = [];
-  for (const component of components) {
+  for (const component of filled) {
     for (const [name, style] of Object.entries(component.styles ?? {})) {
+      const profile = PROFILE_STYLES.get(name);
+      if (profile !== undefined && !sameStyle(profile, style)) {
+        refuse(
+          component.name,
+          at("styles", name),
+          `redefines the official profile's ${name}, and a component takes profile values from ` +
+            `the table rather than replacing them (#54 Decision 2026-11-10); define your style ` +
+            `under its own name with based_on ${name}, then retry`,
+        );
+      }
       const previous = styles.get(name);
       if (previous !== undefined && !sameStyle(previous, style)) {
         refuse(
@@ -975,7 +1091,7 @@ export function documentSpecFromComponents(
   }
 
   const unresolved: { source: string; field: string; name: string }[] = [];
-  for (const component of components) {
+  for (const component of filled) {
     for (const ref of styleRefs(component.blocks, "blocks")) {
       if (!styles.has(ref.name)) {
         unresolved.push({ source: component.name, field: ref.field, name: ref.name });
@@ -994,12 +1110,13 @@ export function documentSpecFromComponents(
   const fromProfile = new Set<string>();
   while (unresolved.length > 0) {
     const item = unresolved.shift() as { source: string; field: string; name: string };
-    const profile = OFFICIAL_PROFILE_STYLES.get(item.name);
+    const profile = PROFILE_STYLES.get(item.name);
     if (profile === undefined) {
       refuse(
         item.source,
         item.field,
-        `references style ${item.name}, which no component defines and the official profile does not have`,
+        `references style ${item.name}, which no component defines and the official profile ` +
+          "does not have; name one of the profile styles, or define it in a component, then retry",
       );
     }
     if (fromProfile.has(item.name)) continue;
@@ -1014,7 +1131,7 @@ export function documentSpecFromComponents(
   }
 
   const resolved = new Map<string, Style>();
-  for (const [name, profile] of OFFICIAL_PROFILE_STYLES) {
+  for (const [name, profile] of PROFILE_STYLES) {
     if (fromProfile.has(name)) resolved.set(name, structuredClone(profile));
   }
   for (const [name, style] of styles) resolved.set(name, structuredClone(style));
@@ -1119,7 +1236,18 @@ function absoluteSource(source: string, baseUrl: string | undefined): string {
   } catch {
     // Not absolute: resolve it against a base below.
   }
-  const base = baseUrl ?? pageHref();
+  const page = pageHref();
+  // `baseUrl` may itself be relative ("/lib/"), and it is only a usable base
+  // once the page URL makes it absolute: `new URL(source, "/lib/")` throws.
+  let base = baseUrl;
+  if (base !== undefined && page !== undefined) {
+    try {
+      base = new URL(base, page).toString();
+    } catch {
+      // Unusable even against the page: `resolveEntry` explains it below.
+    }
+  }
+  base ??= page;
   if (base === undefined) return source;
   try {
     return new URL(source, base).toString();
@@ -1229,21 +1357,28 @@ export async function loadComponents(
     return loaded;
   }
   // An in-memory index is named for what it is: `baseUrl` says where its
-  // entries resolve, not where the index itself lives.
-  await loadIndex(source, "component index", options.baseUrl, transport, add);
+  // entries resolve, not where the index itself lives. A relative `baseUrl`
+  // becomes absolute the same way a relative index URL does.
+  const base =
+    options.baseUrl === undefined ? undefined : absoluteSource(options.baseUrl, undefined);
+  await loadIndex(source, "component index", base, transport, add);
   return loaded;
 }
 
 /**
  * The built-in starter set, validated at import time so a typo in the shipped
  * JSON fails loudly in this package's tests rather than in a host's palette.
+ * Frozen: every host shares these objects, so an edit here would change the
+ * next document instead of failing.
  */
-export const STARTER_COMPONENTS: readonly Component[] = [
-  ["approval-box", approvalBox],
-  ["attachment", attachment],
-  ["dumo", dumo],
-  ["gaejosik", gaejosik],
-  ["gyeolmun", gyeolmun],
-  ["schedule-table", scheduleTable],
-  ["summary-table", summaryTable],
-].map(([slug, raw]) => validateComponent(raw, `src/components/${slug}.json`));
+export const STARTER_COMPONENTS: readonly Component[] = deepFreeze(
+  [
+    ["approval-box", approvalBox],
+    ["attachment", attachment],
+    ["dumo", dumo],
+    ["gaejosik", gaejosik],
+    ["gyeolmun", gyeolmun],
+    ["schedule-table", scheduleTable],
+    ["summary-table", summaryTable],
+  ].map(([slug, raw]) => validateComponent(raw, `src/components/${slug}.json`)),
+);
