@@ -139,10 +139,15 @@ describe("routes (stub engine)", () => {
    * "no segments were created".
    */
   it("POST /edit forwards the report opt-in and returns edit-report-v1", async () => {
+    // `output` is path-shaped on purpose: the engine writes the report for the
+    // `-o` path it was given, and that path is inside a work dir. A name must
+    // come back instead, or the response tells a caller where the server
+    // staged the document.
+    const staged = "/var/folders/tmp/hwp-editor-abc123/out.hwpx";
     const report = {
       schema_version: "1.0",
       contract: "hwp-edit-report-v1" as const,
-      output: "out.hwxp",
+      output: staged,
       dry_run: false,
       ops: [{ index: 0, op: "insert_blocks", status: "applied" as const, pieces_touched: 1,
         changed: [{ before: null, after: "a84ac20e7a012e4a.0.2" }], reason: null,
@@ -161,7 +166,9 @@ describe("routes (stub engine)", () => {
     const res = await handler(multipartRequest(`${BASE}/edit`, { file: DOC, ops: "[]", report: "true" }));
     expect(res.status).toBe(200);
     expect(asked).toBe(true);
-    expect((await res.json()).report).toEqual(report);
+    const answer = (await res.json()) as { report: typeof report };
+    expect(answer.report).toEqual({ ...report, output: "sample.hwpx" });
+    expect(JSON.stringify(answer)).not.toContain("/var/folders/tmp");
 
     const off = createHwpEditorHandler({ engine, sessions: false });
     const without = await off(multipartRequest(`${BASE}/edit`, { file: DOC, ops: "[]" }));

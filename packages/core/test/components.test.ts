@@ -963,6 +963,30 @@ describe("documentSpecFromComponents", () => {
       /components: 시험: styles\.없음\.based_on: references style 없는 바탕, which no component defines/,
     );
   });
+
+  it("carries the missing style's name beside the block path that named it", () => {
+    // The field is the block path, which does not spell the name it failed on,
+    // so the name travels as `value` and a localized sentence can print it
+    // without parsing the reason.
+    const component = validateComponent(
+      {
+        ...BASE_COMPONENT,
+        blocks: [{ type: "paragraph", style: "결재란 셀", runs: [{ type: "text", text: "가" }] }],
+      },
+      "시험",
+    );
+    let refusal: unknown;
+    try {
+      documentSpecFromComponents([component]);
+    } catch (error) {
+      refusal = error;
+    }
+    expect(isComponentError(refusal)).toBe(true);
+    if (!isComponentError(refusal)) throw refusal;
+    expect(refusal.code).toBe("component_style");
+    expect(refusal.field).toBe("blocks[0].style");
+    expect(refusal.value).toBe("결재란 셀");
+  });
 });
 
 describe("loadComponents", () => {
@@ -1579,6 +1603,30 @@ describe("componentStyleMap", () => {
     if (!isComponentError(refusal)) throw refusal;
     expect(refusal.code).toBe("component_style");
     expect(refusal.source).toBe(REFUSAL_SOURCE);
+    expect(refusal.field).toBe("styles.바탕글");
+    expect(refusal.reason).toContain("redefines the official profile's 바탕글");
+  });
+
+  it("refuses a profile redefinition from a component a host assembled in memory", () => {
+    // `componentStyleMap` takes a `Component` a host built itself, which never
+    // passed through `validatedStyle`; the merge applies the same rule, so one
+    // component's copy of a shared profile row cannot reach the engine.
+    let refusal: unknown;
+    try {
+      componentStyleMap([{
+        name: "시험",
+        description: "시험용 구성요소",
+        params: {},
+        styles: { "바탕글": { font_size_pt: 30 } },
+        blocks: [{ type: "paragraph", style: "바탕글", runs: [{ type: "text", text: "본문" }] }],
+      }]);
+    } catch (error) {
+      refusal = error;
+    }
+    expect(isComponentError(refusal)).toBe(true);
+    if (!isComponentError(refusal)) throw refusal;
+    expect(refusal.code).toBe("component_style");
+    expect(refusal.source).toBe("시험");
     expect(refusal.field).toBe("styles.바탕글");
     expect(refusal.reason).toContain("redefines the official profile's 바탕글");
   });

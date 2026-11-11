@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import type { JSX } from "react";
 import type { ParagraphAlignment, ParaShapeKey, SelectionRefusal, Segment } from "@hwp-editor/core";
-import { compareSegments, formatAddresses, paragraphAddress, paragraphRuns, resolveSelection, segmentAtRef, segmentPath, segmentRef, segmentText, selectSimilar, selectedParagraphs, selectionAction } from "@hwp-editor/core";
+import { compareSegments, formatAddresses, isSectionDefinitionParagraph, paragraphAddress, paragraphRuns, resolveSelection, segmentAtRef, segmentPath, segmentRef, segmentText, selectSimilar, selectedParagraphs, selectionAction } from "@hwp-editor/core";
 import { plainSegmentText } from "./text.js";
 import { useHwpEditorContext } from "./context.js";
 import type { MessageKey } from "./messages.js";
@@ -161,9 +161,23 @@ export function SegmentInspector(): JSX.Element {
   // Delete and move serve one paragraph, or a contiguous run of them; every
   // other multi-selection keeps them off and says why.
   const reorderRefused = multiSelection && !runContiguous;
+  /**
+   * A section's definition paragraph is a fixed point: the engine will not move
+   * it, and it will not move anything above it either. Both halves are needed,
+   * because the move of a neighbour is expressed as that neighbour's address —
+   * moving paragraph 1 up addresses paragraph 0, and moving a run at 1..n up
+   * addresses it too.
+   */
+  const definitionLocked = paragraphRun === null
+    ? singleParagraph !== undefined && isSectionDefinitionParagraph(singleParagraph)
+    : paragraphRun.some(isSectionDefinitionParagraph);
+  const moveUpNeighbour = siblings[(paragraphRun === null ? siblingAt : runStart) - 1];
+  const definitionAbove = moveUpNeighbour !== undefined && isSectionDefinitionParagraph(moveUpNeighbour);
   const deleteDisabled = disabled || (paragraphRun === null ? textSelectionRestricted || address === undefined : !runContiguous);
-  const moveUpDisabled = deleteDisabled || (paragraphRun === null ? siblingAt <= 0 : runStart <= 0);
-  const moveDownDisabled = deleteDisabled || (paragraphRun === null ? siblingAt < 0 || siblingAt >= siblings.length - 1 : runEnd >= siblings.length - 1);
+  const moveUpDisabled = deleteDisabled || definitionLocked || definitionAbove ||
+    (paragraphRun === null ? siblingAt <= 0 : runStart <= 0);
+  const moveDownDisabled = deleteDisabled || definitionLocked ||
+    (paragraphRun === null ? siblingAt < 0 || siblingAt >= siblings.length - 1 : runEnd >= siblings.length - 1);
   const anchorDisabled = !editable || state.status === "applying" || textSelectionRestricted;
   const legacyLinkSeparator = capabilities?.editOps !== "v1" && [currentText, linkText, linkUrl].some(value => value.includes("=>"));
   const validShape = isPlainDecimal(shapeValue) && (shapeKey !== "line-spacing" || Number(shapeValue) > 0);
@@ -432,6 +446,9 @@ export function SegmentInspector(): JSX.Element {
           </button>
         </div>
         {reorderRefused && <p className="hwped-hint" role="status">{t("segment.multiReorderRefused")}</p>}
+        {(definitionLocked || definitionAbove) && !reorderRefused && (
+          <p className="hwped-hint" role="status">{t("segment.sectionDefinitionLocked")}</p>
+        )}
       </div>
 
       <div className="hwped-field">

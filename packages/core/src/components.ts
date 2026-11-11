@@ -93,14 +93,22 @@ export class ComponentError extends Error {
   readonly field: string;
   /** The reason alone, without the source and field prefix. */
   readonly reason: string;
+  /**
+   * The offending value, when the field path does not already spell it: a
+   * style the blocks reference but nothing defines is a field such as
+   * `blocks[0].runs[0].style`, and the name it failed on is here so a
+   * localized sentence can print it.
+   */
+  readonly value: string;
 
-  constructor(code: ComponentErrorCode, source: string, field: string, reason: string) {
+  constructor(code: ComponentErrorCode, source: string, field: string, reason: string, value = "") {
     super(`components: ${field === "" ? source : `${source}: ${field}`}: ${reason}`);
     this.name = "ComponentError";
     this.code = code;
     this.source = source;
     this.field = field;
     this.reason = reason;
+    this.value = value;
   }
 }
 
@@ -114,8 +122,9 @@ function refuse(
   field: string,
   reason: string,
   code: ComponentErrorCode = "component_invalid",
+  value = "",
 ): never {
-  throw new ComponentError(code, source, field, reason);
+  throw new ComponentError(code, source, field, reason, value);
 }
 
 function at(field: string, key: string | number): string {
@@ -399,6 +408,20 @@ function validateStyles(raw: unknown, source: string): Record<string, Style> {
 }
 
 /**
+ * Why a component may not carry its own copy of an official profile style.
+ *
+ * Named once because two places refuse it and they must say the same thing:
+ * validation, which still knows the file or URL the component came from, and
+ * `resolvedStyles`, which is the backstop for a component a host assembled
+ * without validating it.
+ */
+function profileRedefinitionReason(name: string): string {
+  return `redefines the official profile's ${name}, and a component takes profile values from ` +
+    `the table rather than replacing them (#54 Decision 2026-11-10); define your style ` +
+    `under its own name with based_on ${name}, then retry`;
+}
+
+/**
  * One style, validated, with the profile rule applied where the source is
  * still known.
  *
@@ -413,14 +436,7 @@ function validatedStyle(name: string, raw: unknown, source: string): Style {
   const style = validateStyle(raw, source, at("styles", name));
   const profile = PROFILE_STYLES.get(name);
   if (profile !== undefined && !sameStyle(profile, style)) {
-    refuse(
-      source,
-      at("styles", name),
-      `redefines the official profile's ${name}, and a component takes profile values from ` +
-        `the table rather than replacing them (#54 Decision 2026-11-10); define your style ` +
-        `under its own name with based_on ${name}, then retry`,
-      "component_style",
-    );
+    refuse(source, at("styles", name), profileRedefinitionReason(name), "component_style");
   }
   return style;
 }
@@ -1175,14 +1191,21 @@ export function componentStyleMap(
  * profile table, refusing a reference nothing defines and a name two
  * components define differently.
  *
- * A profile redefinition never reaches here: `validatedStyle` refuses it where
- * the component's own file or URL is still the source.
+ * The profile rule is applied here again, after validation has already
+ * refused a redefinition: a host that assembles a `Component` in memory hands
+ * it to this function without passing through `validatedStyle`, and a
+ * redefined profile row would then reach the engine as one component's copy
+ * of a shared style.
  */
 function resolvedStyles(filled: readonly FilledComponent[]): Map<string, Style> {
   const styles = new Map<string, Style>();
   const definedBy = new Map<string, string>();
   for (const component of filled) {
     for (const [name, style] of Object.entries(component.styles ?? {})) {
+      const profile = PROFILE_STYLES.get(name);
+      if (profile !== undefined && !sameStyle(profile, style)) {
+        refuse(component.name, at("styles", name), profileRedefinitionReason(name), "component_style");
+      }
       const previous = styles.get(name);
       if (previous !== undefined && !sameStyle(previous, style)) {
         refuse(
@@ -1226,6 +1249,7 @@ function resolvedStyles(filled: readonly FilledComponent[]): Map<string, Style> 
         `references style ${item.name}, which no component defines and the official profile ` +
           "does not have; name one of the profile styles, or define it in a component, then retry",
         "component_style",
+        item.name,
       );
     }
     if (fromProfile.has(item.name)) continue;

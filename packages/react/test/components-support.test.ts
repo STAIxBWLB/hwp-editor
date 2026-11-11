@@ -8,6 +8,10 @@
  *   carries the engine's body width but not the block's, and a refusal with
  *   neither is still a sentence a user can act on. A blank where a width
  *   belongs is the bug this pins against.
+ * - The server's two other `insert_blocks` classes — a style the document
+ *   lacks, and a definition the engine rejected without naming a field — each
+ *   become their own sentence, in both locales, with the engine's classified
+ *   tail left on `detail`.
  * - A `ComponentError` becomes a whole sentence in the user's locale, next
  *   step included, while the engine-side English reason survives on `detail`.
  */
@@ -89,6 +93,37 @@ describe("insertionFailure", () => {
     const error = new HwpEngineError("failed", "hwp edit failed (exit 1)");
     expect(insertionFailure(error, WIDE, en)).toBe(error);
   });
+
+  /**
+   * The two other classes the CLI server names. Its summary is all a caller
+   * receives — the raw stderr names the staged input file — so each class has
+   * to become a whole sentence here, next step included, in both locales.
+   */
+  it("names the style the target document lacks", () => {
+    const error = overflow(
+      "hwp edit failed (exit 1): insert_blocks refused: unknown_style (결재란 셀); provide that " +
+        "style in `styles` or name one the document defines, then retry",
+    );
+    const shown = insertionFailure(error, WIDE, ko) as Error & { detail?: string; code?: string };
+
+    expect(shown.message).toBe(ko("components.unknownStyle", { style: "결재란 셀" }));
+    expect(shown.message).toContain("결재란 셀");
+    // The engine's classified tail stays technical detail, not the sentence.
+    expect(shown.detail).toContain("insert_blocks refused: unknown_style");
+    expect((shown as { code?: string }).code).toBe("failed");
+  });
+
+  it("turns an unclassified definition refusal into a sentence with a next step", () => {
+    const error = overflow(
+      "hwp edit failed (exit 1): insert_blocks refused: invalid_definition; fix the component's " +
+        "blocks, styles or lists, then retry",
+    );
+    const shown = insertionFailure(error, WIDE, en) as Error & { detail?: string };
+
+    expect(shown.message).toBe(en("components.invalidDefinition"));
+    expect(shown.message).toContain("then insert it again");
+    expect(shown.detail).toContain("invalid_definition");
+  });
 });
 
 describe("componentFailure", () => {
@@ -108,6 +143,7 @@ describe("componentFailure", () => {
       code,
       source: "src/components/broken.json",
       field: "params.기안자",
+      value: "",
       step: ko(key),
     }));
     // The step is the localized one, and the parser's English reason is not
@@ -126,8 +162,26 @@ describe("componentFailure", () => {
       code: "component_load",
       source: "https://example.test/c.json",
       field: "",
+      value: "",
       step: ko("components.step.load"),
     }));
+  });
+
+  it("prints the offending value beside the field that named it", () => {
+    // A block's style reference is a field such as `blocks[0].style`, which
+    // does not spell the name it failed on; the name is the value, so the
+    // sentence can print it without parsing the reason.
+    const error = new ComponentError(
+      "component_style",
+      "시험",
+      "blocks[0].style",
+      "references style 결재란 셀, which no component defines",
+      "결재란 셀",
+    );
+    const shown = componentFailure(error, en) as Error;
+
+    expect(shown.message).toContain("blocks[0].style = 결재란 셀");
+    expect(shown.message).toContain(en("components.step.style"));
   });
 
   it("passes a non-component throw through", () => {

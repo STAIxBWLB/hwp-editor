@@ -31,6 +31,12 @@ export interface ComponentsPanelProps {
   components?: readonly Component[];
   /** Localized reason the palette cannot insert; empty when it can. */
   disabledReason?: string;
+  /**
+   * Localized reason the "before" position is unavailable for this selection;
+   * empty when it is. Only before is refused — a section's definition
+   * paragraph takes no insertion ahead of it — so the palette stays usable.
+   */
+  beforeDisabledReason?: string;
   /** True while an engine call owns the document. */
   busy?: boolean;
   onInsert?: (component: Component, values: Record<string, string>, position: InsertPosition) => void;
@@ -52,6 +58,7 @@ export function componentsSupportReason(
 export function ComponentsPanel({
   components = STARTER_COMPONENTS,
   disabledReason = "",
+  beforeDisabledReason = "",
   busy = false,
   onInsert,
 }: ComponentsPanelProps): JSX.Element {
@@ -81,6 +88,15 @@ export function ComponentsPanel({
       Object.keys(component.params).map((param) => [param, valueOf(component, param)]),
     );
 
+  /**
+   * Why this position is unavailable for the current selection, or "". The
+   * engine refuses an insertion before a section's definition paragraph, which
+   * the editor can see coming; that closes one edge only, so the palette stays
+   * usable from the other rather than reporting the whole panel as blocked.
+   */
+  const positionRefused = (direction: InsertPosition): string =>
+    direction === "before" ? beforeDisabledReason : "";
+
   return (
     <div className="hwped-panel hwped-components" role="region" aria-label={t("components.panelAria")}>
       <p className="hwped-hint">{t("components.hint")}</p>
@@ -94,13 +110,16 @@ export function ComponentsPanel({
               type="button"
               className={"hwped-btn" + (position === direction ? " hwped-preset-active" : "")}
               aria-pressed={position === direction}
-              disabled={disabled}
+              disabled={disabled || positionRefused(direction) !== ""}
               onClick={() => setPosition(direction)}
             >
               {t(direction === "before" ? "components.positionBefore" : "components.positionAfter")}
             </button>
           ))}
         </div>
+        {beforeDisabledReason !== "" && (
+          <p className="hwped-hint" role="status">{beforeDisabledReason}</p>
+        )}
       </div>
       <ul className="hwped-component-list" aria-label={t("components.catalogueAria")}>
         {components.map((component) => {
@@ -135,7 +154,7 @@ export function ComponentsPanel({
               <button
                 type="button"
                 className="hwped-btn"
-                disabled={disabled || onInsert === undefined}
+                disabled={disabled || onInsert === undefined || positionRefused(position) !== ""}
                 aria-label={t("components.insert", { name: component.name })}
                 onClick={() => onInsert?.(component, filled(component), position)}
               >

@@ -21,7 +21,7 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { CatEnvelope, DocumentHandle, EditOp, EditReport, LayoutRow, PageImage, Segment } from "@hwp-editor/core";
 import tableFixture from "../../core/test/fixtures/cat-segments-table.json";
-import { base64, createTauriEngine, parseCatEnvelope } from "@hwp-editor/core";
+import { base64, createTauriEngine, HwpEngineError, parseCatEnvelope } from "@hwp-editor/core";
 import { targetsSegment } from "../src/PageCanvas.js";
 import { HwpEditor } from "../src/HwpEditor.js";
 import { en, ko } from "../src/messages.js";
@@ -892,16 +892,26 @@ describe("ComponentsPanel (TEST-03)", () => {
   it("queues an addressed move for the selected paragraph", async () => {
     // Reorder acts on the current selection through the paragraph controls, so
     // the ids an insertion reported never have to be remembered to move it.
-    const envelope = addressableEnvelope();
+    // Paragraph 0 is the section's definition paragraph and cannot move, so the
+    // move is of paragraph 2 up, beside paragraph 1.
+    const blocks = ["# **1. 회의록**", "2026년 8월 정기 회의", "다음 회의 안건"];
+    let markdown = "";
+    const segments: CatEnvelope["segments"] = [];
+    blocks.forEach((block, para) => {
+      const start = markdown.length;
+      markdown += `${block}\n\n`;
+      segments.push({ id: `${"a".repeat(16)}.0.${para}`, indices: [para], start, end: start + block.length, kind: "para", section: 0, para });
+    });
+    const envelope: CatEnvelope = { markdown, segments };
     const engine = composedEngine(envelope);
-    await selectPara(engine, 1, envelope);
+    await selectPara(engine, 2, envelope);
     fireEvent.click(await screen.findByRole("button", { name: en["segment.moveUp"] }));
     const ops = await applyOps(engine, 1);
     expect(ops).toEqual([
       expect.objectContaining({
         kind: "move-para",
-        address: { id: envelope.segments[1]!.id },
-        to: { address: { id: envelope.segments[0]!.id }, position: "before" },
+        address: { id: envelope.segments[2]!.id },
+        to: { address: { id: envelope.segments[1]!.id }, position: "before" },
       }),
     ]);
   });
@@ -941,6 +951,61 @@ describe("ComponentsPanel (TEST-03)", () => {
     const panel = screen.getByRole("region", { name: en["segment.panelAria"] });
     expect(panel.querySelector(".hwped-quote")?.textContent).toContain(text);
     expect(panel.querySelector('[aria-selected="true"]')?.textContent).toContain(text);
+  });
+
+  it("anchors a second insertion below the whole component the first one added", async () => {
+    // After an insertion the selection is the run the report named, and its
+    // primary is the run's first paragraph. Anchoring on the primary puts the
+    // next component between the first one's heading and its items, so "after"
+    // has to address the run's last paragraph.
+    const base = addressableEnvelope();
+    const ids = ["bbbbbbbbbbbbbbbb.0.2", "cccccccccccccccc.0.3"];
+    const twoParagraphs: EditReport = {
+      ...insertReport,
+      ops: [{
+        ...insertReport.ops[0]!,
+        pieces_touched: 2,
+        changed: ids.map((id) => ({ before: null, after: id })),
+      }],
+    };
+    const added = ["결재란 제목", "결재란 항목"];
+    let markdown = base.markdown;
+    const segments = [...base.segments];
+    added.forEach((text, at) => {
+      const para = at + 2;
+      const start = markdown.length;
+      markdown += `${text}\n\n`;
+      segments.push({ id: ids[at]!, indices: [para], start, end: start + text.length, kind: "para", section: 0, para });
+    });
+    const after: CatEnvelope = { markdown, segments };
+    const engine = composedEngine(base);
+    let reads = 0;
+    engine.read = async () => (reads++ === 0 ? base : after);
+    let edits = 0;
+    const baseEdit = engine.edit.bind(engine);
+    engine.edit = async (document, ops, options) => ({
+      ...(await baseEdit(document, ops, options)),
+      ...(options?.report === true ? { report: edits++ === 0 ? twoParagraphs : insertReport } : {}),
+    });
+
+    await selectPara(engine, 1, base);
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+    const insert = await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) });
+    fireEvent.click(insert);
+    await waitFor(() => expect(engine.calls.edit).toHaveLength(1));
+
+    // Both inserted paragraphs are selected, so the palette is still usable and
+    // the second click goes to the run's last paragraph.
+    const again = await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) });
+    await waitFor(() => expect((again as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(again);
+
+    await waitFor(() => expect(engine.calls.edit).toHaveLength(2));
+    expect(engine.calls.edit[1]!.ops[0]).toMatchObject({
+      kind: "insert-blocks",
+      address: { id: ids[1] },
+      position: "after",
+    });
   });
 
   it("refuses to select from a truncated report and says why", async () => {
@@ -986,5 +1051,71 @@ describe("ComponentsPanel (TEST-03)", () => {
     const insert = screen.getByRole("button", { name: en["components.insert"]({ name: componentName }) });
     expect((insert as HTMLButtonElement).disabled).toBe(true);
     expect(engine.calls.edit).toHaveLength(0);
+  });
+
+  it("offers only the after position beside a section's definition paragraph", async () => {
+    // Paragraph 0 carries SectionDef, and the engine refuses an insertion
+    // before it ("구역 정의 문단 앞에는 삽입할 수 없습니다"), so one position is
+    // off with a reason while the other still works.
+    const engine = composedEngine();
+    const envelope = await engine.read(file);
+    await selectPara(engine, 0, envelope);
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+
+    const before = await screen.findByRole("button", { name: en["components.positionBefore"] });
+    const after = screen.getByRole("button", { name: en["components.positionAfter"] });
+    expect((before as HTMLButtonElement).disabled).toBe(true);
+    expect((after as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByText(en["components.positionBeforeLocked"])).toBeTruthy();
+
+    // "After" still inserts, addressed to the definition paragraph itself.
+    fireEvent.click(after);
+    fireEvent.click(screen.getByRole("button", { name: en["components.insert"]({ name: componentName }) }));
+    await waitFor(() => expect(engine.calls.edit).toHaveLength(1));
+    expect(engine.calls.edit[0]!.ops[0]).toMatchObject({
+      kind: "insert-blocks",
+      address: { id: envelope.segments[0]!.id },
+      position: "after",
+    });
+  });
+
+  it("reports a style the document lacks as a localized sentence", async () => {
+    // The server classifies the refusal and the palette turns that class into
+    // a whole sentence: the raw engine text names the staged input file and
+    // never reaches here.
+    const engine = composedEngine();
+    engine.edit = () => Promise.reject(new HwpEngineError(
+      "failed",
+      "hwp edit failed (exit 3): insert_blocks refused: unknown_style (결재란 셀); provide that " +
+        "style in `styles` or name one the document defines, then retry",
+      { status: 422 },
+    ));
+    const envelope = await engine.read(file);
+    await selectPara(engine, 1, envelope);
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) }),
+    );
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain(en["components.unknownStyle"]({ style: "결재란 셀" }));
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+  });
+
+  it("says so when no edit report came back, without calling it a failure", async () => {
+    // A report that cannot be parsed leaves `report` absent by design; what the
+    // user gets is the same notice as a host that answers without one.
+    const engine = composedEngine();
+    engine.edit = async () => ({ name: "edited.hwpx", data: new Uint8Array([9]) });
+    const envelope = await engine.read(file);
+    await selectPara(engine, 1, envelope);
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) }),
+    );
+
+    const notice = await screen.findByText(en["components.noReport"]);
+    expect(notice.getAttribute("role")).toBe("status");
+    expect(screen.queryAllByRole("alert")).toHaveLength(0);
   });
 });

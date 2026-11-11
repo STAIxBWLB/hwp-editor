@@ -92,6 +92,9 @@ export const en = {
   "components.positionAria": "Insertion position",
   "components.positionBefore": "Before the paragraph",
   "components.positionAfter": "After the paragraph",
+  "components.positionBeforeLocked":
+    "The first paragraph of a section holds its page setup, so nothing can be inserted before it. Insert " +
+    "the component after that paragraph, or select another paragraph.",
   "components.paramAria": (p: { name: string }): string => `${p.name} values`,
   "components.paramLabel": (p: { name: string; param: string }): string =>
     `${p.name}: ${p.param}`,
@@ -125,10 +128,20 @@ export const en = {
     code: string;
     source: string;
     field: string;
+    value: string;
     step: string;
   }): string =>
-    (p.field === "" ? `${p.source} was refused (${p.code}). ` : `${p.source}: ${p.field} was refused (${p.code}). `) +
+    (p.field === ""
+      ? `${p.source} was refused (${p.code}). `
+      : `${p.source}: ${p.field}${p.value === "" ? "" : ` = ${p.value}`} was refused (${p.code}). `) +
     p.step,
+  "components.unknownStyle": (p: { style: string }): string =>
+    `The target document has no style named ${p.style}, so the engine refused the component. Define ` +
+    "that style in the component's own styles, or reference one the document already has, then insert " +
+    "it again.",
+  "components.invalidDefinition":
+    "The engine refused the component's block, style or list definitions and reported no field to " +
+    "fix. Check the component's blocks, styles and lists, then insert it again.",
   "components.step.param":
     "Correct that value in the panel, or fix the component's params, then insert it again.",
   "components.step.style":
@@ -234,6 +247,8 @@ export const en = {
   "segment.deletePara": "Delete paragraph",
   "segment.multiReorderRefused":
     "Move and delete act on one paragraph or on paragraphs next to each other in the same place. Select such a run to move or delete it together.",
+  "segment.sectionDefinitionLocked":
+    "The first paragraph of a section holds the section's page setup, so it cannot be moved and no paragraph can be moved above it. Pick another paragraph.",
   "segment.alignLabel": "Alignment",
   "segment.alignGroupAria": "Paragraph alignment",
   "segment.alignLeft": "Left",
@@ -487,6 +502,9 @@ export const ko: MessageTable = {
   "components.positionAria": "삽입 위치",
   "components.positionBefore": "문단 앞",
   "components.positionAfter": "문단 뒤",
+  "components.positionBeforeLocked":
+    "구역의 첫 문단은 구역의 용지 설정을 담고 있어 그 앞에는 아무것도 삽입할 수 없습니다. " +
+    "그 문단 뒤에 삽입하거나 다른 문단을 선택하세요.",
   "components.paramAria": (p: { name: string }): string => `${p.name} 값`,
   "components.paramLabel": (p: { name: string; param: string }): string =>
     `${p.name}: ${p.param}`,
@@ -515,11 +533,18 @@ export const ko: MessageTable = {
     code: string;
     source: string;
     field: string;
+    value: string;
     step: string;
   }): string =>
     (p.field === ""
       ? `${p.source}이(가) 거부되었습니다(${p.code}). `
-      : `${p.source}: ${p.field}이(가) 거부되었습니다(${p.code}). `) + p.step,
+      : `${p.source}: ${p.field}${p.value === "" ? "" : ` = ${p.value}`}이(가) 거부되었습니다(${p.code}). `) + p.step,
+  "components.unknownStyle": (p: { style: string }): string =>
+    `대상 문서에 '${p.style}' 스타일이 없어 엔진이 구성 요소를 거부했습니다. 그 스타일을 구성 요소의 ` +
+    "styles에 정의하거나 문서에 이미 있는 스타일을 참조한 뒤 다시 삽입하세요.",
+  "components.invalidDefinition":
+    "구성 요소의 블록, 스타일, 목록 정의를 엔진이 거부했고 고칠 필드도 알려주지 않았습니다. " +
+    "구성 요소의 blocks, styles, lists를 확인한 뒤 다시 삽입하세요.",
   "components.step.param": "패널에서 그 값을 고치거나 구성 요소의 매개변수를 수정한 뒤 다시 삽입하세요.",
   "components.step.style":
     "프로파일 스타일을 based_on으로 두고 자기 이름으로 스타일을 정의하거나 참조를 고친 뒤 다시 삽입하세요.",
@@ -610,6 +635,8 @@ export const ko: MessageTable = {
   "segment.deletePara": "문단 삭제",
   "segment.multiReorderRefused":
     "이동과 삭제는 문단 하나, 또는 같은 자리에서 연속한 문단들을 대상으로 합니다. 그런 문단들을 함께 선택하면 한 번에 옮기거나 삭제할 수 있습니다.",
+  "segment.sectionDefinitionLocked":
+    "구역의 첫 문단은 구역의 용지 설정을 담고 있어 옮길 수 없고, 그 위로 다른 문단을 옮길 수도 없습니다. 다른 문단을 선택하세요.",
   "segment.alignLabel": "정렬",
   "segment.alignGroupAria": "문단 정렬",
   "segment.alignLeft": "왼쪽",

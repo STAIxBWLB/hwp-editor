@@ -96,6 +96,10 @@ describe.each([["en", en], ["ko", ko]] as const)("paragraph multi-selection (%s)
  * Move and delete therefore have to act on the run — one `move-para` of the
  * neighbouring paragraph across the whole run, or one `delete-para` per
  * paragraph in a single batch — instead of turning the controls off.
+ *
+ * Paragraph 0 is the section's definition paragraph here, as it is in every
+ * document the engine reads: it carries `SectionDef`, so it cannot move and
+ * nothing moves above it. A test that reorders therefore starts at 1.
  */
 describe("paragraph run reorder and delete", () => {
   /** Five paragraphs the engine named, as segment-envelope-v2 addresses them. */
@@ -125,8 +129,10 @@ describe("paragraph run reorder and delete", () => {
     const engine = createMockEngine({ envelope });
     render(<HwpEditor engine={engine} file={file} locale={locale} />);
     const options = await screen.findAllByRole("option");
-    fireEvent.click(options[1]!);
-    fireEvent.click(options[3]!, { shiftKey: true });
+    // Paragraphs 2..4: the neighbour that moves across the run is paragraph 1,
+    // because paragraph 0 is the section's definition paragraph.
+    fireEvent.click(options[2]!);
+    fireEvent.click(options[4]!, { shiftKey: true });
     expect(screen.getByText(messages["segment.selectedCount"]({ count: 3 }))).toBeTruthy();
 
     const up = screen.getByRole("button", { name: messages["segment.moveUp"] }) as HTMLButtonElement;
@@ -135,11 +141,11 @@ describe("paragraph run reorder and delete", () => {
 
     // One op, and the paragraph that moves is the neighbour above the run:
     // placing it after the run's last paragraph is what lifts the block.
-    const [id0, , , id3] = ids(envelope);
+    const [, id1, , , id4] = ids(envelope);
     expect(await apply(messages, 1, engine)).toEqual([{
       kind: "move-para",
-      address: { id: id0 },
-      to: { address: { id: id3 }, position: "after" },
+      address: { id: id1 },
+      to: { address: { id: id4 }, position: "after" },
     }]);
   });
 
@@ -187,12 +193,37 @@ describe("paragraph run reorder and delete", () => {
     const engine = createMockEngine({ envelope });
     render(<HwpEditor engine={engine} file={file} locale="en" />);
     const options = await screen.findAllByRole("option");
-    fireEvent.click(options[0]!);
-    fireEvent.click(options[1]!, { shiftKey: true });
+    fireEvent.click(options[1]!);
+    fireEvent.click(options[2]!, { shiftKey: true });
 
-    // The run starts at the first sibling, so up is refused and down is not.
+    // The run reaches neither end of the section: down is available, and up is
+    // not, because the paragraph that would move across it is the section's
+    // definition paragraph at index 0.
     expect((screen.getByRole("button", { name: en["segment.moveUp"] }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: en["segment.moveDown"] }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByText(en["segment.sectionDefinitionLocked"])).toBeTruthy();
     expect(screen.queryByText(en["segment.multiReorderRefused"])).toBeNull();
+  });
+
+  it("keeps the section definition paragraph and everything above it in place", async () => {
+    // Body paragraph 0 of a section carries SectionDef: `move_paragraph` will
+    // not move it, and moving paragraph 1 up would put it at index 1, so both
+    // controls are off with a reason rather than queuing an op the engine
+    // refuses with no cause a caller can read.
+    const envelope = addressedFive();
+    const engine = createMockEngine({ envelope });
+    render(<HwpEditor engine={engine} file={file} locale="en" />);
+    const options = await screen.findAllByRole("option");
+
+    fireEvent.click(options[1]!);
+    expect((screen.getByRole("button", { name: en["segment.moveUp"] }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: en["segment.moveDown"] }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByText(en["segment.sectionDefinitionLocked"])).toBeTruthy();
+
+    fireEvent.click(options[0]!);
+    for (const name of [en["segment.moveUp"], en["segment.moveDown"]]) {
+      expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(true);
+    }
+    expect(engine.calls.edit).toHaveLength(0);
   });
 });

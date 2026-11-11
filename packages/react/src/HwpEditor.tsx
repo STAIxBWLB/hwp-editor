@@ -23,8 +23,8 @@ import type {
   ValidationReport,
 } from "@hwp-editor/core";
 import type { AddressedEditOp } from "@hwp-editor/core";
-import { compareSegments, componentStyleMap, createStore, insertedParagraphIds, resolveSelection, segmentAtRef, segmentRef, substituteParams, validateImageAssets, HwpEngineError, MAX_IMAGE_ASSETS, MAX_IMAGE_ASSETS_TOTAL_BYTES, STARTER_COMPONENTS } from "@hwp-editor/core";
-import type { EditorError, EditorStore } from "@hwp-editor/core";
+import { compareSegments, componentStyleMap, createStore, insertedParagraphIds, isSectionDefinitionParagraph, resolveSelection, segmentAtRef, segmentRef, substituteParams, validateImageAssets, HwpEngineError, MAX_IMAGE_ASSETS, MAX_IMAGE_ASSETS_TOTAL_BYTES, STARTER_COMPONENTS } from "@hwp-editor/core";
+import type { EditorError, EditorState, EditorStore } from "@hwp-editor/core";
 import { HwpEditorContext } from "./context.js";
 import type { HwpEditorContextValue } from "./context.js";
 import { PageCanvas } from "./PageCanvas.js";
@@ -129,29 +129,48 @@ export interface HwpEditorHandle {
 type SideTab = "para" | "table" | "fields" | "templates" | "components" | "lint" | "document" | "images";
 
 /**
- * Where a component goes: the paragraph the same selection resolves to for an
- * edit, never a guess about the segment's kind.
+ * Every paragraph the current selection covers, in document order.
  *
- * `resolveSelection` is what every other addressed control uses, so a run
- * resolves to the paragraph that owns it and a table, image, field or bookmark
- * resolves to nothing with a reason. A cell resolves to its own paragraphs,
- * and the insertion position picks the edge of that run: "after" addresses the
- * cell's last paragraph and "before" its first, so a box inserted before a
- * cell's text does not land between the cell's own paragraphs. A cell with no
- * paragraph is refused rather than walked up to the table's host paragraph,
- * which would put the component beside the table.
+ * A selection is a list of refs, not one: a component that inserts several
+ * paragraphs leaves its whole run selected, and `state.selection` is only the
+ * primary (first) paragraph of that run. Resolving the primary alone is what
+ * used to make a second insertion land between the first component's heading
+ * and its items.
+ *
+ * Each unit resolves through `resolveSelection`, so a cell contributes the
+ * paragraphs inside it and a table, image, field or bookmark contributes none.
  */
-function insertAnchor(
-  envelope: CatEnvelope,
-  segment: Segment,
-  position: InsertPosition,
-): ParagraphAddress | null {
-  const targets = resolveSelection(envelope, segment);
-  if (targets.paragraph !== undefined) {
-    return targets.paragraph.id === undefined ? null : { id: targets.paragraph.id };
+function selectionParagraphs(envelope: CatEnvelope, state: EditorState): Segment[] {
+  const refs = state.selections !== undefined && state.selections.length > 0
+    ? state.selections
+    : state.selection === null ? [] : [state.selection];
+  const seen = new Set<string>();
+  const paragraphs: Segment[] = [];
+  for (const ref of refs) {
+    const segment = segmentAtRef(envelope, ref);
+    if (segment === undefined) continue;
+    for (const paragraph of resolveSelection(envelope, segment).paragraphs) {
+      const key = paragraph.id ?? `${paragraph.section}:${paragraph.para}:${paragraph.start}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      paragraphs.push(paragraph);
+    }
   }
-  const ordered = [...targets.paragraphs].sort(compareSegments);
-  const paragraph = position === "before" ? ordered[0] : ordered[ordered.length - 1];
+  return paragraphs.sort(compareSegments);
+}
+
+/**
+ * Where a component goes: the edge of the paragraphs the same selection
+ * resolves to for an edit, never a guess about the segment's kind.
+ *
+ * `covered` is in document order, so "after" addresses its last paragraph and
+ * "before" its first: a box inserted before a cell's text does not land between
+ * the cell's own paragraphs, and a component inserted after a run of paragraphs
+ * goes below all of them rather than inside them. With nothing covered there is
+ * no anchor, and a paragraph with no id cannot be addressed at all.
+ */
+function insertAnchor(covered: readonly Segment[], position: InsertPosition): ParagraphAddress | null {
+  const paragraph = position === "before" ? covered[0] : covered[covered.length - 1];
   return paragraph?.id === undefined ? null : { id: paragraph.id };
 }
 
@@ -515,8 +534,15 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         // A new attempt retires the previous attempt's notice.
         setNotice(null);
         const segment = snapshot.selection === null ? undefined : segmentAtRef(envelope, snapshot.selection);
-        const address = segment === undefined ? null : insertAnchor(envelope, segment, position);
+        // The selection, not just its primary: a run of inserted paragraphs
+        // anchors at its far edge, so a second insertion does not split it.
+        const covered = selectionParagraphs(envelope, snapshot);
+        const address = segment === undefined ? null : insertAnchor(covered, position);
         if (address === null) return;
+        // Before a section's first paragraph the engine refuses the insertion
+        // (it holds the section definition); the palette disables it, and this
+        // keeps the rule true for any other caller of this callback.
+        if (position === "before" && covered[0] !== undefined && isSectionDefinitionParagraph(covered[0])) return;
         let blocks: Component["blocks"];
         let styles: NonNullable<Extract<AddressedEditOp, { kind: "insert-blocks" }>["styles"]>;
         try {
@@ -598,16 +624,20 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
             const segment = segmentAtRef(envelope, state.selection);
             return segment === undefined ? undefined : resolveSelection(envelope, segment);
           })();
+    /** The paragraphs the palette would insert beside, in document order. */
+    const componentAnchor =
+      envelope === null || state.selection === null ? [] : selectionParagraphs(envelope, state);
     // Whether the palette can act at all: any position needs an anchor, and the
-    // panel's own before/after choice decides which edge of a cell's paragraph
-    // run is addressed.
-    const selectedAddress =
-      envelope === null || state.selection === null
-        ? null
-        : (() => {
-            const segment = segmentAtRef(envelope, state.selection);
-            return segment === undefined ? null : insertAnchor(envelope, segment, "after");
-          })();
+    // panel's own before/after choice decides which edge of the selection it is.
+    const selectedAddress = insertAnchor(componentAnchor, "after");
+    // Before a section's definition paragraph the engine refuses an insertion
+    // ("구역 정의 문단 앞에는 삽입할 수 없습니다"), so that one position is off
+    // while "after" still works: the palette names the reason rather than
+    // disabling both.
+    const beforeDisabledReason =
+      componentAnchor[0] !== undefined && isSectionDefinitionParagraph(componentAnchor[0])
+        ? t("components.positionBeforeLocked")
+        : "";
     const componentDisabled =
       componentsSupportReason(capabilities, t) ||
       (state.selection === null
@@ -916,6 +946,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
                 <ComponentsPanel
                   components={catalogue}
                   disabledReason={componentDisabled}
+                  beforeDisabledReason={beforeDisabledReason}
                   busy={!editable || state.status === "applying"}
                   onInsert={insertComponent}
                 />

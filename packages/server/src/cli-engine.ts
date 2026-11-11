@@ -700,10 +700,22 @@ function rethrowUploadedImageFailure(error: unknown, imageOnly: boolean): never 
  * localizes clap help text only: the same refusal is byte-identical under
  * `--lang en`, measured on ahwp 1.6.0), so the markers are Korean and
  * permanent, like `PROTECTED_MARKERS` in core.
+ *
+ * The invalid-definition class is keyed on the engine's own schema sentence,
+ * not on the `insert_blocks` token: that token also appears in refusals with
+ * nothing to say about the component (an insertion before a section's
+ * definition paragraph, an address that is not a body paragraph or a cell),
+ * and those keep the bare exit line rather than being blamed on the component.
  */
 function insertBlocksRefusal(stderr: string): string | null {
   const millimetres = (pattern: RegExp): string | undefined => pattern.exec(stderr)?.[1];
-  if (stderr.includes("insert_blocks") && stderr.includes("layout_overflow")) {
+  const style = /스타일 '([^']+)'을 대상 문서에서 찾을 수 없습니다/.exec(stderr)?.[1];
+  if (style !== undefined) {
+    return `insert_blocks refused: unknown_style (${style}); ` +
+      "provide that style in `styles` or name one the document defines, then retry";
+  }
+  if (!stderr.includes("블록/스타일/목록 정의가 유효하지 않습니다")) return null;
+  if (stderr.includes("layout_overflow")) {
     // "column widths total 120.00 mm; body width is 46.40 mm" for a column
     // sum, "exceeds body width 46.40 mm" for the table's own width, and the
     // destination width again in the Korean tail.
@@ -717,16 +729,21 @@ function insertBlocksRefusal(stderr: string): string | null {
     return `insert_blocks refused: layout_overflow${widths.length === 0 ? "" : ` (${widths.join(", ")})`}; ` +
       "insert it where the body is wide enough or use a narrower component, then retry";
   }
-  const style = /스타일 '([^']+)'을 대상 문서에서 찾을 수 없습니다/.exec(stderr)?.[1];
-  if (style !== undefined) {
-    return `insert_blocks refused: unknown_style (${style}); ` +
-      "provide that style in `styles` or name one the document defines, then retry";
-  }
-  if (stderr.includes("insert_blocks")) {
-    return "insert_blocks refused: the block, style or list definition is not valid; " +
-      "fix the component's blocks or styles, then retry";
-  }
-  return null;
+  return "insert_blocks refused: invalid_definition; " +
+    "fix the component's blocks, styles or lists, then retry";
+}
+
+/**
+ * An edit report with its `output` replaced by the caller's own document name.
+ *
+ * The report the engine writes names the `-o` path it was given, which is
+ * inside a server work dir; "no temp path reaches a caller" applies to fields
+ * as much as to messages. Every boundary that serializes a report rewrites this
+ * one — the engine here and the HTTP route — so a caller never learns where the
+ * document was staged.
+ */
+export function withCallerName(report: EditReport, name: string): EditReport {
+  return { ...report, output: name };
 }
 
 /**
@@ -1338,7 +1355,14 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         if (options.report !== true) return { name: document.name, data };
         let report: EditReport | undefined;
         try {
-          report = parseEditReport(JSON.parse(await readFile(reportPath, "utf8")));
+          // The report's `output` is the `-o` path this engine wrote, inside the
+          // work dir. A caller has no business seeing where the document was
+          // staged (the same rule `runCliOk` enforces on stderr), so the
+          // caller's own name replaces it before the report leaves here.
+          report = withCallerName(
+            parseEditReport(JSON.parse(await readFile(reportPath, "utf8"))),
+            document.name,
+          );
         } catch {
           // A host that answers without a readable report is a host whose ids
           // are unknown, not a failed edit: the document itself was published.

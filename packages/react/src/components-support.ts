@@ -15,6 +15,11 @@
  *   so the engine's own `layout_overflow` marker and the width it prints are
  *   the source of both numbers, and a preflight from the rendered box would
  *   refuse insertions the engine accepts.
+ * - The same refusal has two other classes the CLI server names — a style the
+ *   target document does not define, and a block, style or list definition the
+ *   engine rejected without naming a field — and each gets its own sentence
+ *   and next step here. Both arrive already classified, because the raw stderr
+ *   names the staged input file and never crosses the HTTP boundary.
  */
 import type { MessageKey, TFunction } from "./messages.js";
 import { isComponentError, isHwpEngineError, HwpEngineError } from "@hwp-editor/core";
@@ -111,18 +116,41 @@ function wrapped(error: unknown, text: string, detail: string): Error {
 }
 
 /**
- * An error to report for a failed insertion: the width refusal becomes a
- * localized sentence naming the widths it could measure, and anything else is
- * passed through as it came, so a host still sees the engine's own code and
- * detail.
+ * The style name a server-classified `unknown_style` refusal names, or
+ * undefined when this message is not one.
+ *
+ * Only the server writes this form: it is the CLI boundary that pulls the name
+ * out of stderr, because the engine's own sentence also names the staged input
+ * file. A host wired in process therefore never matches here, and its raw
+ * engine text passes through untouched.
+ */
+function unknownStyleName(message: string): string | undefined {
+  return /insert_blocks refused: unknown_style \(([^)]+)\)/.exec(message)?.[1];
+}
+
+/**
+ * An error to report for a failed insertion, in the user's own language and
+ * with a next step they can take.
+ *
+ * The width refusal is the one three transports spell differently. The other
+ * two classes are the server's classification of the engine's refusal, which
+ * is the only form that reaches a caller over HTTP: the raw stderr names the
+ * staged input file, so it never leaves the server. Both keep the engine's own
+ * text on `detail` and nothing else changes — an unclassified failure passes
+ * through as it came.
  */
 export function insertionFailure(
   error: unknown,
   blocks: Blocks,
   t: TFunction,
 ): unknown {
-  if (!isLayoutOverflow(error)) return error;
   const message = error instanceof Error ? error.message : String(error);
+  const style = unknownStyleName(message);
+  if (style !== undefined) return wrapped(error, t("components.unknownStyle", { style }), message);
+  if (message.includes("insert_blocks refused: invalid_definition")) {
+    return wrapped(error, t("components.invalidDefinition"), message);
+  }
+  if (!isLayoutOverflow(error)) return error;
   const wanted = widestBlockMm(blocks);
   const available = overflowingBodyMm(message);
   // Every sentence below names a next step the user can take; none of them
@@ -154,6 +182,7 @@ export function componentRefusalText(error: unknown, t: TFunction): string | nul
     code: error.code,
     source: error.source,
     field: error.field,
+    value: error.value,
     step: t(STEP_KEYS[error.code]),
   });
 }

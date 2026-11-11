@@ -54,7 +54,7 @@ import type {
   RenderResponse,
 } from "@hwp-editor/core";
 
-import { createCliEngine, HwpCliError, type CliEngine } from "./cli-engine.js";
+import { createCliEngine, HwpCliError, withCallerName, type CliEngine } from "./cli-engine.js";
 import { createSessionStore, SessionNotFoundError, type SessionStore } from "./session.js";
 
 /** Supported actions; the runtime guard and `HwpAction` share this list. */
@@ -449,7 +449,10 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
     const body: EditResponse = {
       name: edited.name,
       dataBase64: toBase64(edited.data),
-      ...(edited.report === undefined ? {} : { report: edited.report }),
+      // The report names the path the engine wrote to. Whatever produced it —
+      // the CLI engine here or a host's own engine — the field is rewritten at
+      // this boundary, because this is the response a caller can read.
+      ...(edited.report === undefined ? {} : { report: withCallerName(edited.report, edited.name) }),
     };
     return json(body);
   }

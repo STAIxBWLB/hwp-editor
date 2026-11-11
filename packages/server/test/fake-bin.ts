@@ -63,6 +63,13 @@ export interface FakeBinOptions {
    * `edit --help` exits non-zero.
    */
   helpFixture?: string;
+  /**
+   * JSON text written to the `--report <FILE>` path on a successful `edit`.
+   * The fake publishes the staged input as the output document and exits 0, so
+   * a test can read back the report through the engine exactly as a real run
+   * would — including an `output` the caller never asked for.
+   */
+  editReport?: string;
 }
 
 const dirs: string[] = [];
@@ -119,6 +126,18 @@ export function createFakeBin(opts: FakeBinOptions = {}): { bin: string; log: ()
   const fail = (command: string) => opts.failTemplateCommand === command
     ? [`printf '%s' ${JSON.stringify(`${command} failed at /private/fake/document.hwpx`)} >&2`, "exit 3"]
     : [];
+  /**
+   * A successful `edit` that publishes the staged input and writes the report.
+   * The `-o` and `--report` paths are read from argv rather than assumed, so
+   * the report lands where the engine will look for it.
+   */
+  const reportEdit = opts.editReport === undefined ? null : [
+    'prev=""; out=""; rep="";',
+    'for a in "$@"; do case "$prev" in -o) out="$a" ;; --report) rep="$a" ;; esac; prev="$a"; done;',
+    'cp "$2" "$out";',
+    `printf '%s' ${JSON.stringify(opts.editReport)} > "$rep";`,
+    "exit 0",
+  ];
   writeFileSync(
     bin,
     [
@@ -130,7 +149,7 @@ export function createFakeBin(opts: FakeBinOptions = {}): { bin: string; log: ()
       `  --version) echo ${JSON.stringify(`hwp ${opts.version ?? DEFAULT_VERSION}`)}; exit 0 ;;`,
       // `|| exit 1` rather than an unconditional `exit 0`: an unreadable
       // fixture is the only way to give the handshake a failing `edit --help`.
-      `  edit) if [ "$2" = "--help" ]; then cat ${JSON.stringify(help)} || exit 1; exit 0; fi; ${fail("edit").length ? fail("edit").join("; ") : ""} ;;`,
+      `  edit) if [ "$2" = "--help" ]; then cat ${JSON.stringify(help)} || exit 1; exit 0; fi; ${reportEdit !== null ? reportEdit.join(" ") : fail("edit").join("; ")} ;;`,
       ...(opts.catStdout === undefined
         ? []
         : [`  cat) printf '%s' ${JSON.stringify(opts.catStdout)}; exit 0 ;;`]),

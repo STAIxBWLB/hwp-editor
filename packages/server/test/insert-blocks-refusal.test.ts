@@ -102,8 +102,21 @@ describe("insert_blocks refusal classification", () => {
       INSERT,
     );
 
-    expect(error.message).toContain("insert_blocks refused: the block, style or list definition is not valid");
+    expect(error.message).toContain("insert_blocks refused: invalid_definition");
     expect(error.message).not.toContain(tmpdir());
+  });
+
+  it("leaves a refusal that is not about the definition on the bare exit line", async () => {
+    // The `insert_blocks` token alone is not a class: the engine also says it
+    // when the address is a section's definition paragraph or not a body
+    // paragraph or cell, and those say nothing about the component.
+    const error = await failure(
+      "Error: insert_blocks 구역 정의 문단 앞에는 삽입할 수 없습니다",
+      INSERT,
+    );
+
+    expect(error.message).toBe("hwp edit failed (exit 3)");
+    expect(error.stderr).toContain("구역 정의 문단");
   });
 
   it("leaves a batch with no insertion on the bare exit line", async () => {
@@ -111,5 +124,56 @@ describe("insert_blocks refusal classification", () => {
 
     expect(error.message).toBe("hwp edit failed (exit 3)");
     expect(error.stderr).toBe(WIDTH_REFUSAL);
+  });
+});
+
+/**
+ * The other half of the same boundary: a successful edit's report names the
+ * `-o` path the engine wrote to, which is inside this server's work dir. No
+ * temp path may reach a caller, and that rule covers report fields as much as
+ * messages, so `output` comes back as the caller's own document name.
+ */
+describe("edit report boundary", () => {
+  const staged = "/var/folders/tmp/hwp-editor-abc123/out.hwpx";
+  const report = JSON.stringify({
+    schema_version: "1.0",
+    contract: "hwp-edit-report-v1",
+    output: staged,
+    dry_run: false,
+    ops: [{
+      index: 0,
+      op: "insert_blocks",
+      status: "applied",
+      pieces_touched: 1,
+      changed: [{ before: null, after: "a84ac20e7a012e4a.0.2" }],
+      reason: null,
+    }],
+    applied_count: 1,
+    failed_count: 0,
+  });
+
+  it("returns the caller's document name instead of the staged output path", async () => {
+    const { bin } = createFakeBin({ info: "{}", editReport: report });
+    const edited = await createCliEngine({ bin }).edit(
+      { name: "sample.hwpx", data: new Uint8Array([1, 2, 3]) },
+      INSERT,
+      { report: true },
+    );
+
+    expect(edited.report?.output).toBe("sample.hwpx");
+    expect(JSON.stringify(edited.report)).not.toContain(staged);
+    // The ids the palette keys on are untouched by the rewrite.
+    expect(edited.report?.ops[0]?.changed[0]?.after).toBe("a84ac20e7a012e4a.0.2");
+  });
+
+  it("answers without a report when the file cannot be parsed", async () => {
+    // An unreadable report is a host whose ids are unknown, not a failed edit:
+    // the document itself was published, and the client shows its own notice.
+    const { bin } = createFakeBin({ info: "{}", editReport: "{not json" });
+    const edited = await createCliEngine({ bin }).edit(document, INSERT, { report: true });
+
+    expect(edited.report).toBeUndefined();
+    expect(edited.name).toBe("sample.hwpx");
+    expect(edited.data).toEqual(document.data);
   });
 });

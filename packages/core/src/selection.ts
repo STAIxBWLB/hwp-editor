@@ -80,6 +80,25 @@ export function resolveSelection(envelope: CatEnvelope, segment: Segment): Selec
     candidate.indices.every((index, at) => index === indices[at])));
 }
 
+/**
+ * Whether a paragraph is its section's definition paragraph.
+ *
+ * Body paragraph 0 of every section carries `SectionDef`, and the engine
+ * refuses both halves of that position: `move_paragraph` will not move it
+ * (moving its neighbour up would put the definition at index 1) and
+ * `insert_blocks` refuses an insertion before it ("구역 정의 문단 앞에는
+ * 삽입할 수 없습니다"). It is a real, addressable paragraph — usually empty —
+ * so a control that offers either has to know the position, not the text.
+ *
+ * Only a top-level paragraph qualifies: a cell's first paragraph is nested and
+ * carries no section definition. A legacy projection names no nesting path, so
+ * it is not classified here; those controls are position-addressed and off.
+ */
+export function isSectionDefinitionParagraph(segment: Segment): boolean {
+  return segment.kind === "para" && segment.indices !== undefined &&
+    segment.indices.length === 1 && segment.indices[0] === 0;
+}
+
 /** Full nesting path of a segment, the identity a label must name: `<section>/<indices>`. */
 export function segmentPath(segment: Segment): string {
   return `${segment.section}/${segment.indices?.join(".") ?? segment.para}`;
