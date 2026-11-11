@@ -1,8 +1,9 @@
 import { isPlainDecimal } from "./unit-input.js";
 import { useEffect, useState } from "react";
+import type { KeyboardEvent } from "react";
 import type { JSX } from "react";
-import type { CatEnvelope, EditAddress, ParagraphAlignment, ParaShapeKey, Segment } from "@hwp-editor/core";
-import { segmentAtRef, segmentText } from "@hwp-editor/core";
+import type { ParagraphAlignment, ParaShapeKey, Segment } from "@hwp-editor/core";
+import { formatAddresses, paragraphAddress, paragraphForSegment, segmentAtRef, segmentRef, segmentText, selectSimilar, selectedParagraphs, selectionAction } from "@hwp-editor/core";
 import { plainSegmentText } from "./text.js";
 import { useHwpEditorContext } from "./context.js";
 import type { MessageKey } from "./messages.js";
@@ -36,13 +37,18 @@ export function SegmentInspector(): JSX.Element {
   const { state, store, envelope, editable, capabilities, t } = useHwpEditorContext();
   const { selection } = state;
 
+  const paragraphs = envelope?.segments.filter((candidate) => candidate.kind === "para") ?? [];
+  const selected = envelope === null ? [] : selectedParagraphs(envelope, state);
   const segment =
     envelope !== null && selection !== null
       ? segmentAtRef(envelope, selection)
       : undefined;
+  const paragraph = envelope !== null && segment !== undefined
+    ? paragraphForSegment(envelope, segment)
+    : undefined;
   const currentText =
-    envelope !== null && segment !== undefined
-      ? plainSegmentText(segmentText(envelope, segment))
+    envelope !== null && paragraph !== undefined
+      ? plainSegmentText(segmentText(envelope, paragraph))
       : "";
 
   const [replaceWith, setReplaceWith] = useState("");
@@ -68,29 +74,41 @@ export function SegmentInspector(): JSX.Element {
     setLinkText("");
   }, [selection]);
 
-  if (segment === undefined || selection === null) {
-    return (
-      <div
-        className="hwped-panel"
-        role="region"
-        aria-label={t("segment.panelAria")}
-      >
-        <p className="hwped-hint">{t("segment.hint")}</p>
-      </div>
-    );
-  }
-
   const find = currentText;
-  const address = segment.id !== undefined
-    ? { id: segment.id }
-    : { at: { section: selection.section, paragraph: selection.para } };
+  const address = paragraph === undefined ? undefined : paragraphAddress(paragraph);
   const addressedUnavailable = capabilities?.editOps !== "v1";
   const disabled = !editable || addressedUnavailable || state.status === "applying";
+  const multiSelection = selected.length > 1;
+  const singleTargetDisabled = disabled || multiSelection || address === undefined;
   const anchorDisabled = !editable || state.status === "applying";
   const legacyLinkSeparator = capabilities?.editOps !== "v1" && [currentText, linkText, linkUrl].some(value => value.includes("=>"));
   const validShape = isPlainDecimal(shapeValue) && (shapeKey !== "line-spacing" || Number(shapeValue) > 0);
   const validFontSize = fontSize.trim() === "" || (isPlainDecimal(fontSize) && Number(fontSize) > 0);
-  const formatTargets = formatAddresses(envelope!, segment);
+  const formatTargets = envelope === null ? [] : formatAddresses(envelope, selected);
+
+  const activateSelection = (target: Segment, mode: "single" | "toggle" | "extend"): void => {
+    if (envelope === null) return;
+    store.dispatch(selectionAction(envelope, store.getState(), target, mode));
+  };
+  const handleOptionKeyDown = (event: KeyboardEvent<HTMLButtonElement>, target: Segment): void => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    activateSelection(target, event.shiftKey ? "extend" : event.ctrlKey || event.metaKey ? "toggle" : "single");
+  };
+  const selectLikePrimary = (level: "char" | "para"): void => {
+    if (envelope === null || paragraph === undefined) return;
+    const refs = selectSimilar(envelope, paragraph, level);
+    if (refs.length === 0) return;
+    const primary = segmentRef(paragraph);
+    store.dispatch({
+      type: "selectMany",
+      selections: refs,
+      primary,
+      ...(state.selectionAnchor === null || state.selectionAnchor === undefined
+        ? { anchor: primary }
+        : { anchor: state.selectionAnchor }),
+    });
+  };
 
   return (
     <div
@@ -98,13 +116,45 @@ export function SegmentInspector(): JSX.Element {
       role="region"
       aria-label={t("segment.panelAria")}
     >
+      <div className="hwped-field">
+        <span className="hwped-label">{t("segment.paragraphChoices")}</span>
+        <div
+          role="listbox"
+          aria-label={t("segment.paragraphChoices")}
+          aria-multiselectable="true"
+          style={{ maxHeight: "12rem", overflowY: "auto" }}
+        >
+          {paragraphs.map((candidate) => {
+            const isSelected = selected.some((item) => item === candidate ||
+              (item.id !== undefined && item.id === candidate.id) ||
+              (item.id === undefined && candidate.id === undefined && item.section === candidate.section && item.para === candidate.para));
+            const snippet = plainSegmentText(segmentText(envelope!, candidate)).trim().replace(/\s+/g, " ");
+            const label = snippet.length > 96 ? `${snippet.slice(0, 93)}...` : snippet || t("segment.emptyPara");
+            return (
+              <button
+                key={candidate.id ?? `${candidate.section}:${candidate.para}`}
+                type="button"
+                role="option"
+                aria-selected={isSelected}
+                className="hwped-btn"
+                onClick={(event) => activateSelection(candidate, event.shiftKey ? "extend" : event.ctrlKey || event.metaKey ? "toggle" : "single")}
+                onKeyDown={(event) => handleOptionKeyDown(event, candidate)}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+        <p className="hwped-hint" role="status">{t("segment.selectedCount", { count: selected.length })}</p>
+      </div>
+      {(segment === undefined || paragraph === undefined || selection === null) ? (
+        <p className="hwped-hint">{t("segment.hint")}</p>
+      ) : <>
       {addressedUnavailable && <p className="hwped-hint" role="status">{t("segment.addressedUnavailable")}</p>}
+      {multiSelection && <p className="hwped-hint" role="status">{t("segment.multiTextEditHint")}</p>}
       <div className="hwped-field">
         <span className="hwped-label">
-          {t("segment.selectedPara", {
-            section: selection.section,
-            para: selection.para,
-          })}
+          {t("segment.selectedPara", { section: paragraph.section, para: paragraph.para })}
         </span>
         <div className="hwped-quote">
           {currentText || t("segment.emptyPara")}
@@ -121,18 +171,18 @@ export function SegmentInspector(): JSX.Element {
             className="hwped-input"
             type="text"
             value={replaceWith}
-            disabled={disabled}
+            disabled={singleTargetDisabled}
             onChange={(e) => setReplaceWith(e.target.value)}
             placeholder={t("segment.replacePlaceholder")}
           />
           <button
             type="button"
             className="hwped-btn"
-            disabled={disabled || replaceWith === "" || find === ""}
+            disabled={singleTargetDisabled || replaceWith === "" || find === ""}
             onClick={() =>
               store.dispatch({
                 type: "queueOp",
-                op: { kind: "replace", address, find, replace: replaceWith },
+                op: { kind: "replace", address: address!, find, replace: replaceWith },
               })
             }
           >
@@ -149,7 +199,7 @@ export function SegmentInspector(): JSX.Element {
           id="hwped-insert"
           className="hwped-textarea"
           value={insertText}
-          disabled={disabled}
+          disabled={singleTargetDisabled}
           onChange={(e) => setInsertText(e.target.value)}
           placeholder={t("segment.insertPlaceholder")}
           rows={2}
@@ -158,11 +208,11 @@ export function SegmentInspector(): JSX.Element {
           <button
             type="button"
             className="hwped-btn"
-            disabled={disabled || insertText === ""}
+            disabled={singleTargetDisabled || insertText === ""}
             onClick={() =>
               store.dispatch({
                 type: "queueOp",
-                op: { kind: "insert-para-before", address, text: insertText },
+                op: { kind: "insert-para-before", address: address!, text: insertText },
               })
             }
           >
@@ -171,11 +221,11 @@ export function SegmentInspector(): JSX.Element {
           <button
             type="button"
             className="hwped-btn"
-            disabled={disabled || insertText === ""}
+            disabled={singleTargetDisabled || insertText === ""}
             onClick={() =>
               store.dispatch({
                 type: "queueOp",
-                op: { kind: "insert-para", address, text: insertText },
+                op: { kind: "insert-para", address: address!, text: insertText },
               })
             }
           >
@@ -184,11 +234,11 @@ export function SegmentInspector(): JSX.Element {
           <button
             type="button"
             className="hwped-btn hwped-btn-danger"
-            disabled={disabled}
+            disabled={singleTargetDisabled}
             onClick={() =>
               store.dispatch({
                 type: "queueOp",
-                op: { kind: "delete-para", address },
+                op: { kind: "delete-para", address: address! },
               })
             }
           >
@@ -209,13 +259,11 @@ export function SegmentInspector(): JSX.Element {
               key={align.value}
               type="button"
               className="hwped-btn"
-              disabled={disabled}
-              onClick={() =>
-                store.dispatch({
-                  type: "queueOp",
-                  op: { kind: "set-align", address, alignment: align.value },
-                })
-              }
+              disabled={disabled || selected.length === 0}
+              onClick={() => store.dispatch({
+                type: "queueOps",
+                ops: selected.map((target) => ({ kind: "set-align" as const, address: paragraphAddress(target), alignment: align.value })),
+              })}
             >
               {t(align.key)}
             </button>
@@ -226,23 +274,32 @@ export function SegmentInspector(): JSX.Element {
       <div className="hwped-field">
         <span className="hwped-label">{t("segment.paraShapeLabel")}</span>
         <div className="hwped-row">
-          <select className="hwped-input" value={shapeKey} disabled={disabled} aria-label={t("segment.paraShapeKeyAria")}
+          <select className="hwped-input" value={shapeKey} disabled={disabled || selected.length === 0} aria-label={t("segment.paraShapeKeyAria")}
             onChange={(e) => setShapeKey(e.target.value as ParaShapeKey)}>
             {SHAPE_KEYS.map(({ value, key }) => <option key={value} value={value}>{t(key)}</option>)}
           </select>
-          <input className="hwped-input" type="text" inputMode="decimal" value={shapeValue} disabled={disabled} placeholder={shapeKey === "line-spacing" ? (lineSpacingUnit === "%" ? "%" : "pt") : "mm"}
+          <input className="hwped-input" type="text" inputMode="decimal" value={shapeValue} disabled={disabled || selected.length === 0} placeholder={shapeKey === "line-spacing" ? (lineSpacingUnit === "%" ? "%" : "pt") : "mm"}
             aria-label={t("segment.paraShapeValueAria")} onChange={(e) => setShapeValue(e.target.value)} />
           {shapeKey === "line-spacing"
-            ? <select className="hwped-input" value={lineSpacingUnit} disabled={disabled} aria-label={t("segment.paraShapeUnitAria")} onChange={(e) => setLineSpacingUnit(e.target.value as "%" | "pt")}>
+            ? <select className="hwped-input" value={lineSpacingUnit} disabled={disabled || selected.length === 0} aria-label={t("segment.paraShapeUnitAria")} onChange={(e) => setLineSpacingUnit(e.target.value as "%" | "pt")}>
                 <option value="%">{t("segment.unitPercent")}</option><option value="pt">{t("segment.unitPoints")}</option>
               </select>
             : <span className="hwped-label">mm</span>}
-          <button type="button" className="hwped-btn" disabled={disabled || !validShape}
-            onClick={() => store.dispatch({ type: "queueOp", op: { kind: "set-para", address, key: shapeKey, value: `${shapeValue.trim()}${shapeKey === "line-spacing" ? lineSpacingUnit : "mm"}` } })}>{t("segment.setPara")}</button>
+          <button type="button" className="hwped-btn" disabled={disabled || selected.length === 0 || !validShape}
+            onClick={() => store.dispatch({ type: "queueOps", ops: selected.map((target) => ({ kind: "set-para" as const, address: paragraphAddress(target), key: shapeKey, value: `${shapeValue.trim()}${shapeKey === "line-spacing" ? lineSpacingUnit : "mm"}` })) })}>{t("segment.setPara")}</button>
         </div>
       </div>
 
       {shapeValue !== "" && !validShape && <p role="alert" className="hwped-hint">{t(isPlainDecimal(shapeValue) ? "unit.positive" : "unit.invalid")}</p>}
+      <div className="hwped-field">
+        <span className="hwped-label">{t("segment.selectSimilar")}</span>
+        <div className="hwped-row">
+          <button type="button" className="hwped-btn" disabled={paragraph.directChar === undefined} onClick={() => selectLikePrimary("char")}>{t("segment.similarChar")}</button>
+          <button type="button" className="hwped-btn" disabled={paragraph.directPara === undefined} onClick={() => selectLikePrimary("para")}>{t("segment.similarPara")}</button>
+        </div>
+        {paragraph.directChar === undefined && <p className="hwped-hint">{t("segment.similarCharUnavailable")}</p>}
+        {paragraph.directPara === undefined && <p className="hwped-hint">{t("segment.similarParaUnavailable")}</p>}
+      </div>
       <div className="hwped-field">
         <span className="hwped-label">{t("segment.hyperlinkLabel")}</span>
         <p className="hwped-hint">{t("segment.hyperlinkHint")}</p>
@@ -299,9 +356,7 @@ export function SegmentInspector(): JSX.Element {
               if (bold) props["bold"] = "on";
               if (fontSize.trim() !== "") props["size"] = fontSize.trim();
               if (color !== "") props["color"] = color;
-              for (const target of formatTargets) {
-                store.dispatch({ type: "queueOp", op: { kind: "set-format", address: target, props } });
-              }
+              store.dispatch({ type: "queueOps", ops: formatTargets.map((target) => ({ kind: "set-format" as const, address: target, props })) });
             }}
           >
             {t("segment.formatSubmit")}
@@ -309,22 +364,7 @@ export function SegmentInspector(): JSX.Element {
           {!validFontSize && <p role="alert" className="hwped-hint">{t(isPlainDecimal(fontSize) ? "unit.positive" : "unit.invalid")}</p>}
         </div>
       </div>
+      </>}
     </div>
   );
-}
-
-
-/** set_format addresses runs; paragraph operations keep the paragraph id. */
-function formatAddresses(envelope: CatEnvelope, segment: Segment): EditAddress[] {
-  const runs = envelope.segments.filter((run) => {
-    if (run.kind !== "run" || run.section !== segment.section || run.para !== segment.para) return false;
-    if (run.start < segment.start || run.end > segment.end) return false;
-    if (segment.indices === undefined || run.indices === undefined) return true;
-    return run.indices.length === segment.indices.length + 1 &&
-      segment.indices.every((index, at) => run.indices![at] === index);
-  });
-  const at = { section: segment.section, paragraph: segment.para };
-  return runs.length > 0
-    ? runs.map((run, index) => run.id !== undefined ? { id: run.id } : { at: { ...at, run: index } })
-    : segment.indices === undefined ? [{ at: { ...at, run: 0 } }] : [];
 }

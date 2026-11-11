@@ -124,6 +124,15 @@ export const en = {
   // SegmentInspector
   "segment.panelAria": "Paragraph editor",
   "segment.hint": "Click the page to select a paragraph to edit.",
+  "segment.paragraphChoices": "Paragraph selection",
+  "segment.selectedCount": (p: { count: number }): string =>
+    p.count === 1 ? "1 paragraph selected" : `${p.count} paragraphs selected`,
+  "segment.multiTextEditHint": "Text replacement, insertion, and deletion target one paragraph. Select one paragraph to use these controls.",
+  "segment.selectSimilar": "Select paragraphs with matching direct formatting",
+  "segment.similarChar": "Matching character format",
+  "segment.similarPara": "Matching paragraph format",
+  "segment.similarCharUnavailable": "Character-format metadata is unavailable for this paragraph. Load an envelope that includes direct character properties, then select it again.",
+  "segment.similarParaUnavailable": "Paragraph-format metadata is unavailable for this paragraph. Load an envelope that includes direct paragraph properties, then select it again.",
   "segment.addressedUnavailable": "This host cannot apply addressed edits. Update the host and Tauri client to use the edit-ops-v1 JSON channel, then advertise editOps: v1. See docs/integration-maru.md.",
   "segment.selectedPara": (p: { section: number; para: number }): string =>
     `Selected paragraph (section ${p.section}, paragraph ${p.para})`,
@@ -415,6 +424,14 @@ export const ko: MessageTable = {
 
   "segment.panelAria": "문단 편집",
   "segment.hint": "페이지를 클릭해 편집할 문단을 선택하세요.",
+  "segment.paragraphChoices": "문단 선택",
+  "segment.selectedCount": (p) => `선택한 문단 ${p.count}개`,
+  "segment.multiTextEditHint": "텍스트 교체, 삽입, 삭제는 한 문단을 대상으로 합니다. 이 기능을 사용하려면 문단 하나를 선택하세요.",
+  "segment.selectSimilar": "직접 서식이 같은 문단 선택",
+  "segment.similarChar": "같은 글자 서식",
+  "segment.similarPara": "같은 문단 서식",
+  "segment.similarCharUnavailable": "이 문단의 글자 서식 메타데이터를 사용할 수 없습니다. 직접 글자 속성이 포함된 문서 정보를 불러온 뒤 다시 선택하세요.",
+  "segment.similarParaUnavailable": "이 문단의 문단 서식 메타데이터를 사용할 수 없습니다. 직접 문단 속성이 포함된 문서 정보를 불러온 뒤 다시 선택하세요.",
   "segment.addressedUnavailable": "이 호스트는 주소 기반 편집을 지원하지 않습니다. 호스트와 Tauri 클라이언트를 edit-ops-v1 JSON 채널로 업데이트한 뒤 editOps: v1 지원을 표시하세요. docs/integration-maru.md를 참고하세요.",
   "segment.selectedPara": (p) => `선택 문단 (구역 ${p.section}, 문단 ${p.para})`,
   "segment.emptyPara": "(빈 문단)",
