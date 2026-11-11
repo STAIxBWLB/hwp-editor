@@ -807,12 +807,16 @@ const UNAPPLIED_EDIT_SUFFIX = "(--allow-partial";
  * respects double quotes and skips the character an unescaped backslash
  * escapes, or a value holding `\"` would end "inside" the quote and swallow the
  * following item.
+ *
+ * The suffix is searched from the end: the hint is the last thing on the line,
+ * while a value such as `from="see (--allow-partial in the docs)"` may carry
+ * the same text, and ending the list there would truncate it.
  */
 function unappliedItems(stderr: string): string[] | undefined {
   const markerAt = stderr.indexOf(UNAPPLIED_EDIT_MARKER);
   if (markerAt < 0) return undefined;
   const tail = stderr.slice(markerAt + UNAPPLIED_EDIT_MARKER.length);
-  const suffixAt = tail.indexOf(UNAPPLIED_EDIT_SUFFIX);
+  const suffixAt = tail.lastIndexOf(UNAPPLIED_EDIT_SUFFIX);
   const body = (suffixAt < 0 ? tail : tail.slice(0, suffixAt)).replace(/^:\s*/u, "").trim();
   if (body === "") return undefined;
   const items: string[] = [];
