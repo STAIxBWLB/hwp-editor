@@ -68,9 +68,9 @@ describe("selection helpers", () => {
       { start: 1, end: 4, kind: "run", section: 0, para: 0 },
       { start: 6, end: 9, kind: "run", section: 0, para: 0 },
     ] };
-    expect(formatAddresses(legacy, [legacy.segments[0]!])).toEqual([
-      { at: { section: 0, paragraph: 0, run: 0 } },
-    ]);
+    // A paragraph without nesting indices whose runs carry them is a mixed projection: an ordinal is
+    // not a source run index, so refuse the paragraph instead of formatting the wrong run.
+    expect(formatAddresses(legacy, [legacy.segments[0]!])).toEqual([]);
     expect(formatAddresses({ markdown: "x", segments: [{ start: 0, end: 1, kind: "para", section: 0, para: 0 }] },
       [{ start: 0, end: 1, kind: "para", section: 0, para: 0 }])).toEqual([{ at: { section: 0, paragraph: 0, run: 0 } }]);
   });

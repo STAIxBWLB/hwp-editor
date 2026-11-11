@@ -1,5 +1,5 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it, waitFor } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { CatEnvelope, DocumentHandle, LayoutRow, PageImage } from "@hwp-editor/core";
 import { HwpEditor } from "../src/HwpEditor.js";
 import { en, ko } from "../src/messages.js";
