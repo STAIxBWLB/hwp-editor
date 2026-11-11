@@ -2,6 +2,11 @@ import type { EditOp } from "./ops.js";
 import type { CatEnvelope } from "./segments.js";
 import type { DocumentSpecV2 } from "./generated/document-spec-v2.js";
 
+export interface ImageAsset {
+  name: string;
+  data: Uint8Array;
+}
+
 /** A document passed to or returned from an engine, as raw bytes. */
 export interface DocumentHandle {
   /** File name, including the .hwp/.hwpx extension. */
@@ -54,11 +59,15 @@ export interface EditOptions {
   verify?: boolean;
   /** Publish matched edits even if some found no target (`--allow-partial`). */
   allowPartial?: boolean;
+  /** Image bytes referenced by insert-image operations. */
+  assets?: ImageAsset[];
 }
 
 export interface Capabilities {
   /** JSON edit-ops-v1 supported by both this client and its host. Absent on argv-only hosts. */
   editOps?: "v1";
+  /** Safe uploaded PNG/JPEG image asset staging is supported. */
+  imageAssets?: "v1";
   /** hwp-cli version string, e.g. "0.16.0". */
   version: string;
   /** Whether the engine can apply edits right now. */

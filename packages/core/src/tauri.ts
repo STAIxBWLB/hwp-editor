@@ -218,6 +218,8 @@ export function createTauriEngine(
       throw new HwpEngineError("failed", "hwped_capabilities returned invalid capability metadata; update the host adapter and retry.");
     }
     const { editOps, ...rest } = raw;
+    // This client has no image-byte Tauri command, even if a host claims one.
+    delete rest.imageAssets;
     return { ...rest, ...(editOps === "v1" ? { editOps: "v1" as const } : {}) };
   }
 
@@ -249,6 +251,9 @@ export function createTauriEngine(
     },
 
     async edit(document, ops: EditOp[], options: EditOptions = {}) {
+      if (options.assets !== undefined && options.assets.length > 0) {
+        throw new HwpEngineError("unavailable", "Image-byte uploads are unsupported by this Tauri client; use an HTTP image-upload adapter or a desktop-local image path without uploaded assets.");
+      }
       const caps = await capabilities();
       const channel = caps.editOps === "v1"
         ? { ops: JSON.parse(opsToJson(ops)) as unknown[] }

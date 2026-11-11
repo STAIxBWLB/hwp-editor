@@ -9,7 +9,8 @@
  *                            fields: pages?, dpi?, format?         -> RenderResponse
  *   POST {base}/edit         multipart: file=<document>,
  *                            field: ops=<EditOp[] JSON>,
- *                            fields: verify?, allowPartial?        -> EditResponse
+ *                            fields: verify?, allowPartial?,
+ *                            repeated asset=<image File filename=asset.name> -> EditResponse
  *   POST {base}/compose      JSON: ComposeRequest                  -> ComposeResponse
  *   POST {base}/validate     multipart: file=<document>            -> ValidateResponse
  *   GET  {base}/capabilities                                       -> CapabilitiesResponse
