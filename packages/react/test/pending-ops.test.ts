@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { EditOp } from "@hwp-editor/core";
+import type { CatEnvelope, EditOp } from "@hwp-editor/core";
 import { createT, en, ko } from "../src/messages.js";
 import {
   PENDING_KIND_KEYS,
@@ -74,6 +74,60 @@ describe.each([["en", en], ["ko", ko]] as const)("pending row text (%s)", (local
       .toBe(messages["pending.target.id"]({ id: "p1" }));
     // A legacy set-format names its text to find, which is also no window.
     expect(pendingTargetLabel({ kind: "set-format", find: "굵게", props: { bold: "on" } }, t)).toBe("굵게");
+  });
+
+  it("says a window that is one split piece in full formats the whole piece", () => {
+    // The pieces of a run a block control interrupts share one id and one
+    // path, and an op naming the id alone would format both, so each piece is
+    // addressed by its own source span (the engine's shape: "앞" (0, 1) and
+    // "뒤" (9, 11), with the control's 8 units between them). That window is
+    // the piece, whole, and the row has to say so - the op shape says nothing,
+    // because a window that mapped character for character looks the same.
+    const plain = {
+      bold: false, italic: false, size_pt: 10, color: "#000000",
+      faces: [null, null, null, null, null, null, null], face_ids: [0, 0, 0, 0, 0, 0, 0],
+    };
+    const envelope: CatEnvelope = {
+      markdown: "앞|뒤\n",
+      segments: [
+        { id: "p", indices: [0], start: 0, end: 4, kind: "para", section: 0, para: 0 },
+        { id: "split", indices: [0, 0], start: 0, end: 1, kind: "run", section: 0, para: 0,
+          directChar: plain, sourceChars: { start: 0, end: 1 } },
+        { id: "split", indices: [0, 0], start: 2, end: 3, kind: "run", section: 0, para: 0,
+          directChar: plain, sourceChars: { start: 9, end: 11 } },
+      ],
+    };
+    const wholePiece = { kind: "set-format" as const, address: { id: "split", chars: [9, 11] as [number, number] }, props: { bold: "on" as const } };
+    expect(pendingTargetLabel(wholePiece, t, {}, envelope))
+      .toBe(messages["pending.target.wholePiece"]({ id: "split" }));
+    // A window inside the piece is a window, and says which characters it
+    // edits.
+    expect(pendingTargetLabel({ ...wholePiece, address: { id: "split", chars: [9, 10] } }, t, {}, envelope))
+      .toBe(messages["pending.target.chars"]({
+        range: messages["pending.target.id"]({ id: "split" }), start: 9, end: 10,
+      }));
+    // Without the document a window cannot be told from a whole piece, so the
+    // row shows the window rather than guessing.
+    expect(pendingTargetLabel(wholePiece, t)).toBe(messages["pending.target.chars"]({
+      range: messages["pending.target.id"]({ id: "split" }), start: 9, end: 11,
+    }));
+    // A run nobody split has no pieces, so a window equal to its whole span is
+    // that run's own window and the row reads as a window: the "whole piece"
+    // reading belongs to an id a sibling shares, which is what makes an op
+    // naming the id alone format more than the window.
+    const unsplit: CatEnvelope = {
+      markdown: "굵게\n",
+      segments: [
+        { id: "p2", indices: [1], start: 0, end: 3, kind: "para", section: 0, para: 1 },
+        { id: "solo", indices: [1, 0], start: 0, end: 2, kind: "run", section: 0, para: 1,
+          directChar: plain, sourceChars: { start: 0, end: 2 } },
+      ],
+    };
+    expect(pendingTargetLabel({ kind: "set-format", address: { id: "solo", chars: [0, 2] },
+      props: { bold: "on" } }, t, {}, unsplit))
+      .toBe(messages["pending.target.chars"]({
+        range: messages["pending.target.id"]({ id: "solo" }), start: 0, end: 2,
+      }));
   });
 
   it("resolves a style row and a metadata key through the tables that own them", () => {

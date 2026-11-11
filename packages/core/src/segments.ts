@@ -529,19 +529,72 @@ export function segmentText(envelope: CatEnvelope, segment: Segment): string {
  */
 export type DocumentFormat = "hwp" | "hwpx" | "unknown";
 
+/** CFBF/OLE2 container signature: the first eight bytes of every HWP5 file. */
+const CFBF_SIGNATURE = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1] as const;
+
+/** The OPC media type an HWPX package declares in its first zip entry. */
+const HWPX_MIMETYPE = "application/hwp+zip";
+
 /**
- * The format a document's file name says it is.
+ * Which format these bytes are, from the container header alone, or `null`
+ * when the header names no container this rule knows.
  *
- * `DocumentHandle.name` carries the extension, and it is the only place the
- * format reaches the editor: the envelope does not say which format it was
- * read from. A name with neither extension is `unknown` rather than a default,
- * because the two rules differ by one character.
+ * The two checks mirror the server's admission sniff (`routes.ts:sniffFormat`),
+ * which has to decide whether to accept an upload at all, and they are
+ * deliberately repeated rather than shared: an admission check must stay
+ * strict, while this one answers a much smaller question - does the document
+ * store its paragraph break? - and must not refuse a document the editor can
+ * open. So an unrecognized header is `null` and lets the file name answer,
+ * where the server would refuse.
+ *
+ * An HWPX package declares its media type in a first, STORED `mimetype` entry;
+ * a `PK\x03\x04` header without one is some other zip, not evidence either way.
  */
-export function documentFormat(name: string | undefined): DocumentFormat {
+function sniffDocumentFormat(data: Uint8Array | undefined): "hwp" | "hwpx" | null {
+  if (data === undefined) return null;
+  if (data.length >= CFBF_SIGNATURE.length && CFBF_SIGNATURE.every((byte, at) => data[at] === byte)) {
+    return "hwp";
+  }
+  // 30-byte local file header + the 8-byte `mimetype` name is the floor.
+  if (data.length < 38) return null;
+  if (!(data[0] === 0x50 && data[1] === 0x4b && data[2] === 0x03 && data[3] === 0x04)) return null;
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  if (view.getUint16(8, true) !== 0) return null;
+  if (view.getUint16(26, true) !== 8) return null;
+  if (new TextDecoder().decode(data.subarray(30, 38)) !== "mimetype") return null;
+  const start = 38 + view.getUint16(28, true);
+  const end = start + HWPX_MIMETYPE.length;
+  if (data.length < end) return null;
+  return new TextDecoder().decode(data.subarray(start, end)) === HWPX_MIMETYPE ? "hwpx" : null;
+}
+
+/**
+ * Which format the document is: the bytes decide, the name is only the
+ * fallback, and a disagreement between them is `unknown`.
+ *
+ * The extension is a label a host or a person chose, and hwp-cli reads the
+ * format from the content, so an HWPX file saved as `.hwp` opens fine and then
+ * answered this question wrongly: it was handed the HWP5 allowance for a stored
+ * paragraph break, and every window in it landed one unit early. So the
+ * container header is read first, and the file name only speaks when the
+ * header names no container at all (a host that passes a stub, or a producer
+ * whose package the sniff does not recognize).
+ *
+ * A header that contradicts the name answers `unknown` rather than picking a
+ * side: no allowance is the safe answer when the two disagree, and it costs a
+ * partial selection nothing but the widening it would have been given. A name
+ * with neither extension is `unknown` too, never a default, because the two
+ * rules differ by one character.
+ */
+export function documentFormat(name: string | undefined, data?: Uint8Array): DocumentFormat {
   const lower = name?.toLowerCase() ?? "";
-  if (lower.endsWith(".hwpx")) return "hwpx";
-  if (lower.endsWith(".hwp")) return "hwp";
-  return "unknown";
+  const named: DocumentFormat = lower.endsWith(".hwpx")
+    ? "hwpx"
+    : lower.endsWith(".hwp") ? "hwp" : "unknown";
+  const sniffed = sniffDocumentFormat(data);
+  if (sniffed === null) return named;
+  if (named === "unknown") return sniffed;
+  return sniffed === named ? sniffed : "unknown";
 }
 
 /** What a markdown scalar window inside one run piece can be named as. */

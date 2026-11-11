@@ -1,4 +1,5 @@
 import type {
+  CatEnvelope,
   EditAddress,
   EditOp,
   MetaKey,
@@ -121,26 +122,60 @@ export function pendingAddressLabel(
 }
 
 /**
+ * Whether a `set-format` window covers one piece of a split run in full.
+ *
+ * An op that names only the id of a split run formats every piece of it, so the
+ * editor names the piece's own source span instead - and that window is the
+ * piece, whole. The op shape therefore says nothing: a window that maps
+ * character for character and a window that was widened to the piece look
+ * alike, and only the document tells them apart.
+ *
+ * A run is a piece only when the document publishes a sibling under the same
+ * id: an unsplit run has no pieces, so a window equal to its own span is that
+ * run's window and says nothing about widening.
+ */
+function formatsWholePiece(
+  envelope: CatEnvelope | null,
+  id: string,
+  chars: [number, number],
+): boolean {
+  if (envelope === null) return false;
+  const pieces = envelope.segments.filter((segment) => segment.kind === "run" && segment.id === id);
+  if (pieces.length < 2) return false;
+  return pieces.some((segment) => segment.sourceChars !== undefined &&
+    segment.sourceChars.start === chars[0] && segment.sourceChars.end === chars[1]);
+}
+
+/**
  * The target half of a pending row.
  *
  * An addressed op shows its address; the flag-shaped ops show the value that
  * says which target they name (the text to find, an anchor, a field name). No
  * branch is a `JSON.stringify`: a row is read by a person deciding what to
  * remove from the queue, and `{"at":{"section":0,"paragraph":3}}` is not that.
+ *
+ * `envelope` is what tells a whole-piece window from a mapped one, so a caller
+ * that has the document should pass it; without it a window is shown as a
+ * window.
  */
 export function pendingTargetLabel(
   op: EditOp,
   t: TFunction,
   resolvers: PendingTargetResolvers = {},
+  envelope: CatEnvelope | null = null,
 ): string {
   if ("address" in op) {
     // A `set-format` op that carries an id and no source window formats that
     // whole run, so the row says so: "element <id>" reads like a paragraph
     // target, and a reader deciding what to drop from the queue has to know
     // that characters outside their selection go with it.
-    return op.kind === "set-format" && op.address.id !== undefined && op.address.chars === undefined
-      ? t("pending.target.wholeRun", { id: op.address.id })
-      : pendingAddressLabel(op.address, t);
+    if (op.kind === "set-format" && op.address.id !== undefined) {
+      if (op.address.chars === undefined) return t("pending.target.wholeRun", { id: op.address.id });
+      if (formatsWholePiece(envelope, op.address.id, op.address.chars)) {
+        return t("pending.target.wholePiece", { id: op.address.id });
+      }
+    }
+    return pendingAddressLabel(op.address, t);
   }
   // A style reference is an id (number) or a name this batch creates (string);
   // the row is resolved back to a name the document shows.

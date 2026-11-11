@@ -199,10 +199,17 @@ export function paragraphRuns(envelope: CatEnvelope, paragraph: Segment, range?:
  * target can carry `chars` and still be the whole piece, and a reader that
  * counted missing `chars` would label nothing exactly where the selection was
  * widened.
+ *
+ * `widened` says the range was PARTIAL to this piece and the coverage widened
+ * it anyway, which is the case a reader has to be warned about: the rest of the
+ * piece goes with the op though the selection never covered it. A range that
+ * covers the piece whole is `whole` without being `widened` - nothing was added
+ * to the selection - so the two answers stay apart.
  */
 export interface FormatTarget {
   address: EditAddress;
   whole: boolean;
+  widened: boolean;
 }
 
 export function formatAddresses(
@@ -245,7 +252,7 @@ export function formatTargets(
       const address = addressForSelectedRun(envelope, selected);
       if (address === undefined) continue;
       const key = addressKey(address);
-      if (!targets.has(key)) { targets.add(key); out.push({ address, whole: true }); }
+      if (!targets.has(key)) { targets.add(key); out.push({ address, whole: true, widened: false }); }
       continue;
     }
     if (selected.kind !== "para") continue;
@@ -304,6 +311,7 @@ function addressesForRuns(
     }
     if (address === undefined) continue;
     let whole = true;
+    let widened = false;
     if (range !== undefined && range !== null) {
       const narrow = narrowToRange(envelope, run, range, format);
       // A piece the range overlaps only through a marker or its edge
@@ -312,6 +320,10 @@ function addressesForRuns(
       // selection never touched, including in another occurrence of the run.
       if (narrow === "none") continue;
       if (narrow === "whole") {
+        // The range is partial to this piece and the coverage widened it: the
+        // whole piece goes with the op although the selection stopped inside
+        // it, which is what a reader is warned about.
+        widened = run.start < range.start || run.end > range.end;
         // A split run publishes one id per piece, and an op that names only the
         // id formats the whole run (edit-ops-v1), so a covered piece names its
         // own span instead. The published span is what the resolver accepts,
@@ -330,10 +342,10 @@ function addressesForRuns(
     const key = addressKey(address);
     if (targets.has(key)) continue;
     targets.add(key);
-    out.push({ address, whole });
+    out.push({ address, whole, widened });
   }
   if (allowLegacyFallback && runs.length === 0 && paragraph.indices === undefined) {
-    out.push({ address: { at: { section: paragraph.section, paragraph: paragraph.para, run: 0 } }, whole: true });
+    out.push({ address: { at: { section: paragraph.section, paragraph: paragraph.para, run: 0 } }, whole: true, widened: false });
   }
   return out;
 }

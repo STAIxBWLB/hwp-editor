@@ -414,13 +414,13 @@ describe("selection helpers", () => {
   it("keeps a split run's pieces apart by their source windows", () => {
     const plain = { bold: false, italic: false, size_pt: 10, color: "#000000", faces: Array(7).fill("A"), face_ids: Array(7).fill(0) };
     const p: Segment = { id: "p", indices: [0], start: 0, end: 6, kind: "para", section: 0, para: 0 };
-    // The engine's own spans for a run a table interrupts: "앞" is (0, 1) and
-    // "뒤" (9, 11), the anchor's 8 WCHAR belong to neither piece, and the last
-    // piece carries the paragraph break. Scaled up here to three and two
-    // visible characters.
+    // The engine's own shape for a run a table interrupts: one id, one path,
+    // and "앞" (0, 1) / "뒤" (9, 11) with the anchor's 8 WCHAR belonging to
+    // neither piece, the last piece carrying the paragraph break. Scaled up
+    // here to three and two visible characters.
     const first: Segment = { id: "split", indices: [0, 0], start: 0, end: 3, kind: "run", section: 0, para: 0,
       directChar: plain, sourceChars: { start: 0, end: 3 } };
-    const second: Segment = { id: "split", indices: [0, 1], start: 4, end: 6, kind: "run", section: 0, para: 0,
+    const second: Segment = { id: "split", indices: [0, 0], start: 4, end: 6, kind: "run", section: 0, para: 0,
       directChar: plain, sourceChars: { start: 11, end: 14 } };
     const envelope: CatEnvelope = { markdown: "abc|de\n", segments: [p, first, second] };
     // The last piece carries the stored break, so the format that stores one
@@ -448,7 +448,7 @@ describe("selection helpers", () => {
     const p: Segment = { id: "p", indices: [0], start: 0, end: 6, kind: "para", section: 0, para: 0 };
     const first: Segment = { id: "split", indices: [0, 0], start: 0, end: 3, kind: "run", section: 0, para: 0,
       directChar: plain, sourceChars: { start: 0, end: 3 } };
-    const second: Segment = { id: "split", indices: [0, 1], start: 4, end: 6, kind: "run", section: 0, para: 0,
+    const second: Segment = { id: "split", indices: [0, 0], start: 4, end: 6, kind: "run", section: 0, para: 0,
       directChar: plain, sourceChars: { start: 11, end: 14 } };
     const envelope: CatEnvelope = { markdown: "abc|de\n", segments: [p, first, second] };
     const at = (start: number, end: number) =>
@@ -456,9 +456,13 @@ describe("selection helpers", () => {
     // HWPX publishes no break, so the last piece's span is one unit wider than
     // its text: a partial selection there is widened to the piece, and the op
     // still carries the piece's window.
-    expect(at(4, 5)).toEqual([{ address: { id: "split", chars: [11, 14] }, whole: true }]);
+    expect(at(4, 5)).toEqual([{ address: { id: "split", chars: [11, 14] }, whole: true, widened: true }]);
     // A window the range really maps is not labelled, even with `chars` on it.
-    expect(at(0, 2)).toEqual([{ address: { id: "split", chars: [0, 2] }, whole: false }]);
+    expect(at(0, 2)).toEqual([{ address: { id: "split", chars: [0, 2] }, whole: false, widened: false }]);
+    // A range that covers a piece whole adds nothing to the selection, so the
+    // piece is `whole` without being `widened` - the warning a reader needs is
+    // about characters the selection never reached, and here there are none.
+    expect(at(4, 6)).toEqual([{ address: { id: "split", chars: [11, 14] }, whole: true, widened: false }]);
   });
 
   it("names no target for a piece a drag touches only through its marker", () => {

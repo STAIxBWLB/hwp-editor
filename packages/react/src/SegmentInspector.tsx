@@ -233,7 +233,7 @@ export function SegmentInspector(): JSX.Element {
   // character (an HWP5 paragraph break), so it comes from the document handle
   // and never from the numbers: an HWPX last piece whose edge space was
   // trimmed publishes the same span an HWP5 break does.
-  const formatTargets = envelope === null ? [] : collectFormatTargets(envelope, formatInputs, state.range, documentFormat(state.document?.name));
+  const formatTargets = envelope === null ? [] : collectFormatTargets(envelope, formatInputs, state.range, documentFormat(state.document?.name, state.document?.data));
   const runs = envelope === null || singleParagraph === undefined ? [] : paragraphRuns(envelope, singleParagraph);
   const rangeAvailable = !multiSelection && runs.some(run => run.id !== undefined || (singleParagraph?.indices?.length === 1 && run.indices?.length === 2));
   const charPrimary = segment?.kind === "run" ? segment
@@ -729,10 +729,13 @@ export function SegmentInspector(): JSX.Element {
             <p className="hwped-hint" role="status">{t("segment.rangeRunCount", { count: formatTargets.length })}</p>}
           {/* A target the range was widened to formats the whole run, and the
               coverage answer says so: a split run emits every piece with its
-              own window, so the op shape cannot tell the two apart. */}
-          {formatTargets.some(target => target.whole) &&
+              own window, so the op shape cannot tell the two apart. A range
+              that covers the piece whole widens nothing, so it is not counted
+              here - the reader is warned about characters the selection did
+              not reach, and there are none. */}
+          {formatTargets.some(target => target.widened) &&
             <p className="hwped-hint">{t("segment.rangeWholeRunTargets",
-              { count: formatTargets.filter(target => target.whole).length })}</p>}
+              { count: formatTargets.filter(target => target.widened).length })}</p>}
           <button type="button" className="hwped-btn" onClick={() => {
             setRangeSplit(false); rangeInput.current?.setSelectionRange(0, 0);
             if (hasRunSelection) store.dispatch({ type: "select", selection: segmentRef(singleParagraph) });
