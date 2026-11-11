@@ -360,7 +360,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     const revert = useCallback((): Promise<void> => {
       const snapshot = store.getState();
       const previous = snapshot.snapshots[snapshot.snapshots.length - 1];
-      if (previous === undefined) return Promise.resolve();
+      if (snapshot.status === "applying" || previous === undefined) return Promise.resolve();
       return (async () => {
         try {
           // BUG-02: the badge described the document being undone away, so
@@ -558,7 +558,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
               type="button"
               className="hwped-btn"
               onClick={() => setComposing(true)}
-              disabled={!editable}
+              disabled={!editable || state.status === "applying"}
             >
               {t("toolbar.newDocument")}
             </button>
@@ -596,7 +596,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
                     type="button"
                     className="hwped-btn hwped-btn-primary"
                     onClick={() => setComposing(true)}
-                    disabled={!editable}
+                    disabled={!editable || state.status === "applying"}
                   >
                     {t("canvas.createCta")}
                   </button>
@@ -605,7 +605,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
             ) : (
               <PageCanvas />
             )}
-            <aside className="hwped-side" aria-label={t("side.panelAria")}>
+            <aside className="hwped-side" aria-label={t("side.panelAria")} aria-busy={state.status === "applying"}>
               <div className="hwped-tabs" role="tablist">
                 {(
                   [
@@ -630,6 +630,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
                   </button>
                 ))}
               </div>
+              {state.status === "applying" && <p className="hwped-hint" role="status">{t("toolbar.applying")}</p>}
               {tab === "para" && <SegmentInspector />}
               {tab === "table" && <TableGrid />}
               {tab === "fields" && <FieldsPanel />}
@@ -640,7 +641,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
 
           {composing && (
             <ComposePanel
-              canCreate={editable}
+              canCreate={editable && state.status !== "applying"}
               onClose={() => setComposing(false)}
               onComposed={(document) => {
                 if (!editableRef.current) return;

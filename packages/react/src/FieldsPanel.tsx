@@ -10,7 +10,7 @@ import { useHwpEditorContext } from "./context.js";
  * no native field/bookmark listing; see fields.ts.)
  */
 export function FieldsPanel(): JSX.Element {
-  const { store, envelope, editable, t } = useHwpEditorContext();
+  const { state, store, envelope, editable, t } = useHwpEditorContext();
   const [drafts, setDrafts] = useState<Record<string, string>>({});
 
   const slots = useMemo(
@@ -65,7 +65,7 @@ export function FieldsPanel(): JSX.Element {
                   className="hwped-input"
                   type="text"
                   value={draft}
-                  disabled={!editable}
+                  disabled={!editable || state.status === "applying"}
                   placeholder={t("fields.valuePlaceholder")}
                   aria-label={t("fields.fieldValueAria", { name: slot.name })}
                   onChange={(e) =>
@@ -75,7 +75,7 @@ export function FieldsPanel(): JSX.Element {
                 <button
                   type="button"
                   className="hwped-btn"
-                  disabled={!editable || draft === ""}
+                  disabled={!editable || state.status === "applying" || draft === ""}
                   onClick={() =>
                     store.dispatch({
                       type: "queueOp",

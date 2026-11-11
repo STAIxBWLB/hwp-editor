@@ -68,7 +68,7 @@ export function SegmentInspector(): JSX.Element {
     ? { id: segment.id }
     : { at: { section: selection.section, paragraph: selection.para } };
   const addressedUnavailable = capabilities?.editOps !== "v1";
-  const disabled = !editable || addressedUnavailable;
+  const disabled = !editable || addressedUnavailable || state.status === "applying";
   const formatTargets = formatAddresses(envelope!, segment);
 
   return (

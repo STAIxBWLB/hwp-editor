@@ -45,7 +45,7 @@ export function TableGrid(): JSX.Element {
     );
   }
 
-  const disabled = !editable;
+  const disabled = !editable || state.status === "applying";
   const tableIndex = table.tableIndex;
   const queue = store.dispatch.bind(store);
 

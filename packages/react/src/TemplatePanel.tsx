@@ -23,6 +23,15 @@ function safeSpecKey(key: string): boolean {
   return /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(key) && !["__proto__", "prototype", "constructor"].includes(key);
 }
 
+function initialListRow(fields: ListVariable["fields"], supplied: Record<string, unknown> = {}): Record<string, unknown> {
+  const defaults = Object.fromEntries(Object.entries(fields).flatMap(([key, field]) => {
+    if (field === undefined) return [];
+    if (field.default !== undefined) return [[key, field.default]];
+    return field.type === "bool" ? [[key, false]] : [];
+  }));
+  return { ...defaults, ...supplied };
+}
+
 function pageData(page: PageImage): string {
   const mime = page.format === "svg" ? "image/svg+xml" : `image/${page.format}`;
   return `data:${mime};base64,${base64.encode(page.data)}`;
@@ -120,7 +129,8 @@ export function TemplatePanel(): JSX.Element {
   const [spec, setSpec] = useState<TemplateSpecV1 | null>(null);
   const [specValues, setSpecValues] = useState<Record<string, unknown>>({});
   const [preview, setPreview] = useState<{ source: DocumentHandle; document: DocumentHandle; pages: PageImage[]; kind: "fill" | "spec"; generation: number } | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [previewBusy, setBusy] = useState(false);
+  const busy = previewBusy || state.status === "applying";
   const [error, setError] = useState<ReturnType<typeof toEditorError> | null>(null);
   const request = useRef(0);
   const previewRequest = useRef(0);
@@ -218,7 +228,10 @@ export function TemplatePanel(): JSX.Element {
       const loaded = parsed as TemplateSpecV1;
       const initial: Record<string, unknown> = {};
       for (const [key, variable] of Object.entries(loaded.variables)) {
-        if (variable !== undefined && "default" in variable && variable.default !== undefined) initial[key] = variable.default;
+        if (variable === undefined) continue;
+        if (variable.type === "bool") initial[key] = variable.default === undefined ? false : variable.default;
+        else if (variable.type === "list" && variable.default !== undefined) initial[key] = variable.default.map(row => initialListRow(variable.fields, row));
+        else if (variable.default !== undefined) initial[key] = variable.default;
       }
       setSpec(loaded);
       setSpecValues(initial);
@@ -330,7 +343,7 @@ export function TemplatePanel(): JSX.Element {
                     </div>
                   ))}
                   <button type="button" className="hwped-btn" disabled={!editable || busy} onClick={() => {
-                    const row = Object.fromEntries(Object.entries(variable.fields).flatMap(([fieldKey, field]) => field !== undefined && "default" in field && field.default !== undefined ? [[fieldKey, field.default]] : []));
+                    const row = initialListRow(variable.fields);
                     updateSpecValue(key, [...rows, row]);
                   }}>{t("templates.listAdd")}</button>
                 </div>

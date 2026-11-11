@@ -85,11 +85,3 @@ pnpm --filter playground seed
 pnpm --filter playground exec playwright install chromium
 pnpm --filter playground test:e2e
 ```
-
-## AGENTS.md 해설
-
-사람용 해설본. 에이전트 지시 정본: [REVIEW.md](REVIEW.md). 절 번호는 정본과 같다.
-
-### 변경 이력
-
-- 2026-11-11: Exact minor-version comparisons blocked otherwise compatible engine reports. The report schema policy now uses major-version compatibility alongside field validation.

@@ -39,12 +39,13 @@ export interface ComposePanelProps {
  * markdown-ish sections) → DocumentSpec v2 → engine.compose().
  */
 export function ComposePanel(props: ComposePanelProps): JSX.Element {
-  const { engine, t, onError, store } = useHwpEditorContext();
+  const { engine, t, onError, store, state } = useHwpEditorContext();
   const [preset, setPreset] = useState<ComposePreset>("official");
   const [title, setTitle] = useState("");
   const [author, setAuthor] = useState("");
   const [body, setBody] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [creating, setBusy] = useState(false);
+  const busy = creating || state.status === "applying";
   const [error, setError] = useState<EditorError | null>(null);
   const canCreate = props.canCreate ?? true;
   const mounted = useRef(true);
@@ -88,7 +89,7 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
   }, [busy, onClose]);
 
   const compose = async (): Promise<void> => {
-    if (!canCreate) return;
+    if (!canCreate || busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -110,7 +111,7 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
   };
 
   const createEmbedded = async (): Promise<void> => {
-    if (!canCreate || engine.create === undefined || !createStatus.supported || templateId === "") return;
+    if (!canCreate || busy || engine.create === undefined || !createStatus.supported || templateId === "") return;
     const source = store.getState().document;
     setBusy(true); setError(null);
     try {
