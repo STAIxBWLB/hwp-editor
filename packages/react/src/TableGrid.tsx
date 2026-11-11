@@ -78,12 +78,16 @@ export function TableGrid(): JSX.Element {
   }
 
   const tableIndex = table.tableIndex;
+  // The panel numbers the table the reader is looking at, so it counts from
+  // one like every other label in this editor; the ops below keep the engine's
+  // own index, which is what the row and the refusal report.
+  const tableNumber = tableIndex + 1;
 
   return (
     <div className="hwped-panel" role="region" aria-label={t("table.panelAria")}>
       <div className="hwped-field">
         <span className="hwped-label">
-          {t("table.tableLabel", { index: tableIndex })}
+          {t("table.tableLabel", { index: tableNumber })}
         </span>
         <table className="hwped-grid">
           <tbody>
@@ -297,7 +301,7 @@ export function TableGrid(): JSX.Element {
       </div>
       {addTablePanel}
       <div className="hwped-field">
-        <span className="hwped-label">{t("table.sourceTable", { index: tableIndex })}</span>
+        <span className="hwped-label">{t("table.sourceTable", { index: tableNumber })}</span>
         <label className="hwped-label" htmlFor="hwped-clone-anchor">{t("table.cloneAnchorAria")}</label>
         <input id="hwped-clone-anchor" className="hwped-input" value={cloneAnchor} disabled={disabled} placeholder={t("table.anchorPlaceholder")} onChange={(e) => setCloneAnchor(e.target.value)} />
         <label className="hwped-label" htmlFor="hwped-clone-mode">{t("table.cloneModeAria")}</label>

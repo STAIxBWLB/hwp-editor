@@ -175,6 +175,28 @@ export function pendingTargetLabel(
         return t("pending.target.wholePiece", { id: op.address.id });
       }
     }
+    // Three addressed ops carry a SECOND target beside the address, and a row
+    // that showed only the address would name half of what the op does: which
+    // text a replace looks for, which side of the paragraph blocks land on,
+    // and where a move puts it.
+    if (op.kind === "replace") {
+      return t("pending.target.replaceFind", {
+        find: op.find, range: pendingAddressLabel(op.address, t),
+      });
+    }
+    if (op.kind === "insert-blocks") {
+      return t(
+        op.position === "before" ? "pending.target.before" : "pending.target.after",
+        { range: pendingAddressLabel(op.address, t) },
+      );
+    }
+    if (op.kind === "move-para") {
+      return t("pending.target.moveTo", {
+        range: pendingAddressLabel(op.address, t),
+        destination: pendingAddressLabel(op.to.address, t),
+        before: op.to.position === "before",
+      });
+    }
     return pendingAddressLabel(op.address, t);
   }
   // A style reference is an id (number) or a name this batch creates (string);
@@ -196,9 +218,11 @@ export function pendingTargetLabel(
     if (typeof value === "string") return value;
   }
   const table = (op as Record<string, unknown>).table;
-  if (typeof table === "number") return t("table.tableLabel", { index: table });
+  // The queue keeps the engine's numbering, as `pendingAddressLabel` does for
+  // paragraphs, and says so: the table panel shows the reader's ordinal.
+  if (typeof table === "number") return t("pending.target.table", { index: table });
   const target = (op as Record<string, unknown>).target;
-  if (typeof target === "number") return t("table.tableLabel", { index: target });
+  if (typeof target === "number") return t("pending.target.table", { index: target });
   if (typeof target === "string") return target;
   return t("pending.target.document");
 }

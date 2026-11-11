@@ -621,6 +621,14 @@ export function SegmentInspector(): JSX.Element {
 
       <div className="hwped-field">
         <span className="hwped-label">{t("segment.alignLabel")}</span>
+        {// A run-level selection formats runs, but these two controls act on
+         // the paragraphs that hold them, so the count is the reach of the
+         // press below - not the number of runs the hint above counted.
+        hasRunSelection && (
+          <p className="hwped-hint" role="status">
+            {t("segment.runSelectionParagraphs", { count: selected.length })}
+          </p>
+        )}
         <div
           className="hwped-row"
           role="group"

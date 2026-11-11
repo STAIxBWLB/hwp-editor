@@ -140,8 +140,39 @@ describe.each([["en", en], ["ko", ko]] as const)("pending row text (%s)", (local
       .toBe(messages["document.page.marginLeft"]);
   });
 
-  it("names a table by the number the table panel shows", () => {
+  it("names the second target an op carries beside its address", () => {
+    // A row that showed only the address would name half of what the op does:
+    // which text a replace looks for, which side of the paragraph blocks land
+    // on, and where a move puts the paragraph.
+    expect(pendingTargetLabel(
+      { kind: "replace", address: { id: "p3" }, find: "회의", replace: "미팅" }, t,
+    )).toBe(messages["pending.target.replaceFind"]({
+      find: "회의", range: messages["pending.target.id"]({ id: "p3" }),
+    }));
+    expect(pendingTargetLabel({
+      kind: "insert-blocks", address: { id: "p3" }, position: "after",
+      blocks: [{ type: "paragraph", runs: [{ type: "text", text: "블록" }] }],
+    }, t)).toBe(messages["pending.target.after"]({
+      range: messages["pending.target.id"]({ id: "p3" }),
+    }));
+    expect(pendingTargetLabel({
+      kind: "move-para", address: { id: "p3" },
+      to: { address: { id: "p1" }, position: "before" },
+    }, t)).toBe(messages["pending.target.moveTo"]({
+      range: messages["pending.target.id"]({ id: "p3" }),
+      destination: messages["pending.target.id"]({ id: "p1" }),
+      before: true,
+    }));
+  });
+
+  it("names a table by the engine's index, which the row states as a base", () => {
+    // The table panel shows the reader's ordinal from one; a queued row has to
+    // match the number the op carries and an engine refusal reports, so it
+    // keeps the engine's index and says which base it is counting from. Both
+    // shapes reach it: a `table` coordinate and a `delete-table` target.
     expect(pendingTargetLabel({ kind: "delete-table", target: 2 }, t))
-      .toBe(messages["table.tableLabel"]({ index: 2 }));
+      .toBe(messages["pending.target.table"]({ index: 2 }));
+    expect(pendingTargetLabel({ kind: "delete-row", table: 0, row: 1 }, t))
+      .toBe(messages["pending.target.table"]({ index: 0 }));
   });
 });

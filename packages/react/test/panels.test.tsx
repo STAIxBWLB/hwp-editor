@@ -706,6 +706,43 @@ describe("panel edge cases (TEST-03)", () => {
     expect(engine.calls.edit).toHaveLength(0);
   });
 
+  it("counts the paragraphs a run-level selection reaches, not its runs", async () => {
+    // Three plain runs in two paragraphs: the run count and the paragraph count
+    // differ, so the hint beside the paragraph controls has to name the
+    // paragraphs those controls will format (#58 item 16).
+    const plain = { bold: false, italic: false, size_pt: 10, color: "#000000", faces: Array(7).fill("A"), face_ids: Array(7).fill(0) };
+    const envelope: CatEnvelope = { markdown: "ab\n\ncd\n\n", segments: [
+      { id: "P0", indices: [0], start: 0, end: 2, kind: "para", section: 0, para: 0, directChar: plain },
+      { id: "r00", indices: [0, 0], start: 0, end: 1, kind: "run", section: 0, para: 0, directChar: plain },
+      { id: "r01", indices: [0, 1], start: 1, end: 2, kind: "run", section: 0, para: 0, directChar: plain },
+      { id: "P1", indices: [1], start: 4, end: 6, kind: "para", section: 0, para: 1, directChar: plain },
+      { id: "r10", indices: [1, 0], start: 4, end: 6, kind: "run", section: 0, para: 1, directChar: plain },
+    ] };
+    render(<HwpEditor engine={createMockEngine({ envelope })} file={file} />);
+    fireEvent.click((await screen.findAllByRole("option"))[0]!);
+    clickBtn("segment.similarChar");
+
+    expect(screen.getByText(en["segment.selectedRunCount"]({ count: 3 }))).toBeTruthy();
+    expect(screen.getByText(en["segment.runSelectionParagraphs"]({ count: 2 }))).toBeTruthy();
+    // The reach is paragraphs, so the run count is not what the hint says.
+    expect(screen.queryByText(en["segment.runSelectionParagraphs"]({ count: 3 }))).toBeNull();
+  });
+
+  it("numbers the table the reader sees from one and keeps the engine's index in the op", async () => {
+    // `makeEnvelope`'s third block is a GFM table, the document's first one.
+    const engine = createMockEngine();
+    await selectPara(engine, 2);
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.table"] }));
+
+    // The panel counts from one, like every other row label in the editor...
+    expect(await screen.findByText(en["table.tableLabel"]({ index: 1 }))).toBeTruthy();
+    expect(screen.queryByText(en["table.tableLabel"]({ index: 0 }))).toBeNull();
+    expect(screen.getByText(en["table.sourceTable"]({ index: 1 }))).toBeTruthy();
+    // ...while the op carries the engine's 0-based coordinate (#58 item 13d).
+    clickBtn("table.deleteTable");
+    expect(await applyOps(engine, 1)).toEqual([{ kind: "delete-table", target: 0 }]);
+  });
+
   it("keeps queued ops in click order", async () => {
     const engine = await openInspector();
     clickBtn("segment.alignCenter");

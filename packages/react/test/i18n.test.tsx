@@ -10,6 +10,7 @@
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import type { DocumentHandle } from "@hwp-editor/core";
+import { MAX_IMAGE_ASSET_MIB } from "@hwp-editor/core";
 import { HwpEditor } from "../src/HwpEditor.js";
 import { en, ko } from "../src/messages.js";
 import type { Locale, MessageTable } from "../src/messages.js";
@@ -294,23 +295,59 @@ describe("table parity (I18N-06, I18N-08)", () => {
     expect(copied).toEqual([]);
   });
 
+  it("states the image limit in the unit the byte bound implies", () => {
+    // A printed limit goes stale the moment the bound moves, in both locales
+    // at once, so each table reads the number from the bound rather than
+    // spelling it (#58 item 13c).
+    const mib = String(MAX_IMAGE_ASSET_MIB);
+    for (const table of [en, ko]) {
+      expect(table["image.fileHint"]).toContain(mib);
+      expect(table["image.invalidSize"]).toContain(mib);
+    }
+  });
+
   /**
    * The check above only reads strings, so a template function pasted from en
-   * into ko passes it: the key exists and both values are functions. Both are
-   * called with one sample argument set instead, and a copy renders the same
-   * sentence where a translation renders its own.
+   * into ko passes it: the key exists and both values are functions.
    *
-   * Every parameter is the string "S1" rather than a number, because a
-   * parameter is read as a value in a template and never as a length or an
-   * index, and one shared probe keeps the comparison local to the wording.
+   * A single all-strings probe is not enough either, and #58 item 26 names the
+   * hole: a ko template that translated one branch and kept the other
+   * (`p.count === 1 ? "1 error" : `${p.count} errors``) renders its own
+   * sentence at every count but one, so a probe that never takes the singular
+   * branch calls it translated. The probes therefore carry the numbers a
+   * plural branch switches on - 0, 1 and 2 - plus an all-strings set for the
+   * parameters that are never branches, and every template must differ from
+   * its en twin under EVERY one of them.
    */
-  it("translates every template instead of copying the English one", () => {
-    const probe = new Proxy({}, { get: () => "S1" }) as unknown;
-    const call = (value: unknown): string => (value as (p: unknown) => string)(probe);
-    const copied = (Object.keys(en) as (keyof MessageTable)[]).filter((key) => {
-      if (typeof en[key] !== "function" || typeof ko[key] !== "function") return false;
-      return call(en[key]) === call(ko[key]) && !DELIBERATE_IDENTICAL.has(key);
-    });
+  const PROBES = [0, 1, 2, "S1"].map(
+    (value) => new Proxy({}, { get: () => value }) as unknown,
+  );
+  const call = (value: unknown, probe: unknown): string =>
+    (value as (p: unknown) => string)(probe);
+  const functionKeys = (Object.keys(en) as (keyof MessageTable)[]).filter(
+    (key) => typeof en[key] === "function" && typeof ko[key] === "function",
+  );
+
+  it("translates every template branch instead of copying the English one", () => {
+    const copied = functionKeys.filter(
+      (key) =>
+        !DELIBERATE_IDENTICAL.has(key) &&
+        PROBES.some((probe) => call(en[key], probe) === call(ko[key], probe)),
+    );
     expect(copied).toEqual([]);
+  });
+
+  /**
+   * The allowlist is a decision per key, so each entry has to keep meaning
+   * what it says: the pair is identical under every probe. An entry whose ko
+   * value has since been translated is a stale decision, not a licence.
+   */
+  it("keeps each allowlisted template identical under every probe", () => {
+    const drifted = functionKeys.filter(
+      (key) =>
+        DELIBERATE_IDENTICAL.has(key) &&
+        !PROBES.every((probe) => call(en[key], probe) === call(ko[key], probe)),
+    );
+    expect(drifted).toEqual([]);
   });
 });

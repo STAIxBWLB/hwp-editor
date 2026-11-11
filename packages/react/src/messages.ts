@@ -25,6 +25,10 @@
  * change what hwp-cli receives or rewrite what the engine actually said.
  */
 
+// A limit a sentence states is read from the limit itself: a printed "10 MiB"
+// goes stale the moment the byte bound moves, in both locales at once.
+import { MAX_IMAGE_ASSET_MIB } from "@hwp-editor/core";
+
 export const en = {
   // Toolbar
   "toolbar.toolsAria": "Editing tools",
@@ -82,6 +86,16 @@ export const en = {
   "pending.target.wholePiece": (p: { id: string }): string =>
     `the whole piece of element ${p.id}`,
   "pending.target.document": "the whole document",
+  // The ops with a second target name it in the row: which text a replace
+  // looks for, which side of a paragraph blocks land on, and where a move puts
+  // the paragraph. Each locale composes the two halves in its own word order.
+  "pending.target.table": (p: { index: number }): string => `table #${p.index} (0-based)`,
+  "pending.target.before": (p: { range: string }): string => `before ${p.range}`,
+  "pending.target.after": (p: { range: string }): string => `after ${p.range}`,
+  "pending.target.moveTo": (p: { range: string; destination: string; before: boolean }): string =>
+    `${p.range} ${p.before ? "before" : "after"} ${p.destination}`,
+  "pending.target.replaceFind": (p: { find: string; range: string }): string =>
+    `find "${p.find}" in ${p.range}`,
   "image.deleteAllHint": "Deletes every image in every paragraph containing this text, including matches in other sections, table cells and text boxes. Review the text before applying.",
   "fields.deleteAllHint": "Deletes every field with this name, including repeated fields in templates.",
   "fields.deleteAllBookmarksHint": "Deletes every bookmark with this name.",
@@ -298,8 +312,12 @@ export const en = {
   "segment.selectedRunCount": (p: { count: number }): string =>
     p.count === 1 ? "1 run selected" : `${p.count} runs selected`,
   "segment.multiTextEditHint": "Text replacement and insertion target one paragraph. Select one paragraph to use those controls.",
-  "segment.rangeTextEditHint": "Use whole paragraph to edit text",
-  "segment.runTextEditHint": "Select a paragraph to edit its text",
+  "segment.rangeTextEditHint": "A character range formats text but cannot rewrite it. Use whole paragraph to edit its text.",
+  "segment.runTextEditHint": "A run selection formats runs only, so the text controls are off. Select a paragraph to edit its text.",
+  "segment.runSelectionParagraphs": (p: { count: number }): string =>
+    p.count === 1
+      ? "Alignment and spacing apply to the 1 paragraph containing a selected run."
+      : `Alignment and spacing apply to all ${p.count} paragraphs containing a selected run.`,
   "segment.runSelectionTerminal": "Starts a new paragraph selection",
   "segment.noParagraphSelection": "This selection carries no paragraph the engine can address, so paragraph edits are off. Pick a paragraph from the list above.",
   "segment.cellSelectionRefused": "This selection is a table cell. Alignment and spacing apply to every paragraph in the cell, but replace, insert and delete address exactly one paragraph, and the engine refuses to delete a cell's last one. Pick a paragraph from the list above.",
@@ -508,14 +526,14 @@ export const en = {
   "image.insert": "Insert image",
   "image.delete": "Delete image",
   "image.file": "PNG/JPEG image file",
-  "image.fileHint": "Choose a PNG or JPEG image up to 10 MiB.",
+  "image.fileHint": `Choose a PNG or JPEG image up to ${MAX_IMAGE_ASSET_MIB} MiB.`,
   "image.unsupported": "Image upload is unavailable in this host; ask the administrator to enable image uploads.",
   "image.anchor": "Insert after paragraph text",
   "image.deleteAnchor": "Image anchor text to delete",
   "image.width": "Width (mm)",
   "image.height": "Height (mm)",
   "image.reading": "Reading image...",
-  "image.invalidSize": "The image is empty or exceeds 10 MiB; choose a smaller PNG/JPEG file.",
+  "image.invalidSize": `The image is empty or exceeds ${MAX_IMAGE_ASSET_MIB} MiB; choose a smaller PNG/JPEG file.`,
   "image.invalidType": "The file is not PNG/JPEG image data; choose a supported image.",
   "image.readError": "The image could not be read; select the file again.",
   "error.prefix.image": "Image operation failed",
@@ -610,14 +628,14 @@ export const ko: MessageTable = {
   "pending.kind.merge-cells": "표 셀 병합",
   "pending.kind.move-para": "문단 이동",
   "pending.kind.outdent-para": "문단 내어쓰기",
-  "pending.kind.replace": "텍스트 바꾸기",
+  "pending.kind.replace": "텍스트 교체",
   "pending.kind.seal": "직인 이미지 넣기",
   "pending.kind.set-align": "정렬 지정",
   "pending.kind.set-cell": "표 셀 값 지정",
   "pending.kind.set-field": "필드 값 지정",
   "pending.kind.set-format": "글자 서식 지정",
   "pending.kind.set-meta": "문서 정보 지정",
-  "pending.kind.set-page": "편집 용지 설정",
+  "pending.kind.set-page": "페이지 설정",
   "pending.kind.set-para": "문단 모양 지정",
   "pending.kind.split-cell": "셀 분할",
   "pending.kind.style-tables": "프리셋으로 표 서식 변경",
@@ -628,6 +646,11 @@ export const ko: MessageTable = {
   "pending.target.id": (p) => `요소 ${p.id}`,
   "pending.target.wholeRun": (p) => `요소 ${p.id}의 run 전체`,
   "pending.target.document": "문서 전체",
+  "pending.target.table": (p) => `표 #${p.index} (0 기준)`,
+  "pending.target.before": (p) => `${p.range} 앞`,
+  "pending.target.after": (p) => `${p.range} 뒤`,
+  "pending.target.moveTo": (p) => `${p.range} → ${p.destination} ${p.before ? "앞" : "뒤"}`,
+  "pending.target.replaceFind": (p) => `${p.range}에서 "${p.find}" 찾기`,
   "pending.target.wholePiece": (p) => `요소 ${p.id}의 run 조각 전체`,
   "image.deleteAllHint": "이 텍스트를 포함하는 모든 문단의 모든 이미지를 삭제합니다. 다른 구역, 표 셀, 글상자의 일치 항목도 포함합니다. 적용 전에 텍스트를 확인하세요.",
   "fields.deleteAllHint": "이 이름을 가진 모든 필드를 삭제합니다. 템플릿의 반복 필드도 포함합니다.",
@@ -812,8 +835,9 @@ export const ko: MessageTable = {
   "segment.selectedCount": (p) => `선택한 문단 ${p.count}개`,
   "segment.selectedRunCount": (p) => `선택한 run ${p.count}개`,
   "segment.multiTextEditHint": "텍스트 교체와 삽입은 한 문단을 대상으로 합니다. 이 기능을 사용하려면 문단 하나를 선택하세요.",
-  "segment.rangeTextEditHint": "텍스트를 편집하려면 문단 전체를 사용하세요",
-  "segment.runTextEditHint": "텍스트를 편집하려면 문단을 선택하세요",
+  "segment.rangeTextEditHint": "글자 범위 선택은 서식만 바꿀 수 있고 텍스트는 바꿀 수 없습니다. 텍스트를 편집하려면 문단 전체를 사용하세요.",
+  "segment.runTextEditHint": "run 선택은 서식만 바꿀 수 있어 텍스트 입력란을 쓸 수 없습니다. 텍스트를 편집하려면 문단을 선택하세요.",
+  "segment.runSelectionParagraphs": (p) => `문단 정렬과 간격은 선택한 run이 있는 문단 ${p.count}개 전체에 적용됩니다.`,
   "segment.runSelectionTerminal": "새 문단 선택이 시작됩니다",
   "segment.noParagraphSelection": "이 선택에는 엔진이 주소로 지정할 수 있는 문단이 없어 문단 편집을 사용할 수 없습니다. 위 목록에서 문단을 선택하세요.",
   "segment.cellSelectionRefused": "이 선택은 표의 셀입니다. 정렬과 문단 모양은 셀 안의 모든 문단에 적용되지만, 교체, 삽입, 삭제는 문단 하나만 대상으로 하며, 엔진은 셀의 마지막 문단 삭제도 거부합니다. 위 목록에서 문단을 선택하세요.",
@@ -1016,14 +1040,14 @@ export const ko: MessageTable = {
   "image.insert": "이미지 삽입",
   "image.delete": "이미지 삭제",
   "image.file": "PNG/JPEG 이미지 파일",
-  "image.fileHint": "10 MiB 이하의 PNG 또는 JPEG 이미지를 선택하세요.",
+  "image.fileHint": `${MAX_IMAGE_ASSET_MIB} MiB 이하의 PNG 또는 JPEG 이미지를 선택하세요.`,
   "image.unsupported": "이 호스트는 이미지 업로드를 지원하지 않습니다. 관리자에게 이미지 업로드 지원을 요청하세요.",
   "image.anchor": "이 문단 문자열 뒤에 삽입",
   "image.deleteAnchor": "삭제할 이미지의 위치 문자열",
   "image.width": "너비 (mm)",
   "image.height": "높이 (mm)",
   "image.reading": "이미지 읽는 중...",
-  "image.invalidSize": "이미지가 비어 있거나 10 MiB를 초과합니다. 더 작은 PNG/JPEG 파일을 선택하세요.",
+  "image.invalidSize": `이미지가 비어 있거나 ${MAX_IMAGE_ASSET_MIB} MiB를 초과합니다. 더 작은 PNG/JPEG 파일을 선택하세요.`,
   "image.invalidType": "PNG/JPEG 이미지 데이터가 아닙니다. 지원하는 이미지 파일을 선택하세요.",
   "image.readError": "이미지를 읽을 수 없습니다. 파일을 다시 선택하세요.",
   "error.prefix.image": "이미지 작업 실패",

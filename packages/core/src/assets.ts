@@ -4,6 +4,12 @@ import type { EditOp } from "./ops.js";
 
 export const MAX_IMAGE_ASSETS = 8;
 export const MAX_IMAGE_ASSET_BYTES = 10 * 1024 * 1024;
+/**
+ * The per-image bound in the unit the strings say it in. Derived rather than
+ * written twice: a message table that hardcoded "10 MiB" kept saying ten after
+ * the byte bound moved.
+ */
+export const MAX_IMAGE_ASSET_MIB = MAX_IMAGE_ASSET_BYTES / (1024 * 1024);
 export const MAX_IMAGE_ASSETS_TOTAL_BYTES = 40 * 1024 * 1024;
 
 const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const;
