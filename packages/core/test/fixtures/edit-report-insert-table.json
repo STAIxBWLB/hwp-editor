@@ -1,0 +1,132 @@
+{
+  "schema_version": "1.0",
+  "contract": "hwp-edit-report-v1",
+  "output": "/tmp/t21-table.hwpx",
+  "dry_run": false,
+  "ops": [
+    {
+      "index": 0,
+      "op": "insert_blocks",
+      "status": "applied",
+      "pieces_touched": 2,
+      "changed": [
+        {
+          "before": null,
+          "after": "b760a3bd12d49857.0.2"
+        },
+        {
+          "before": null,
+          "after": "1ca66835893fd921.0.2.0"
+        },
+        {
+          "before": null,
+          "after": "f0ada035b52c38fa.0.3"
+        },
+        {
+          "before": null,
+          "after": "3ad8bf3869577f3f.0.3.0"
+        },
+        {
+          "before": null,
+          "after": "2bb5075555d9a239.0.3.0.0"
+        },
+        {
+          "before": null,
+          "after": "a93f4cb06ccce6ac.0.3.0.0.0"
+        },
+        {
+          "before": null,
+          "after": "2796b5df35346b70.0.3.0.0.0.0"
+        },
+        {
+          "before": null,
+          "after": "85a89ed083c43131.0.3.0.1"
+        },
+        {
+          "before": null,
+          "after": "33aa3851308195f3.0.3.0.1.0"
+        },
+        {
+          "before": null,
+          "after": "1712931d63e08c5f.0.3.0.1.0.0"
+        },
+        {
+          "before": null,
+          "after": "ef52da6a85e6f1cd.0.3.0.2"
+        },
+        {
+          "before": null,
+          "after": "f537ee52f3ab8079.0.3.0.2.0"
+        },
+        {
+          "before": null,
+          "after": "05674dec02454e0d.0.3.0.2.0.0"
+        },
+        {
+          "before": null,
+          "after": "bb014d1a3c85575d.0.3.0.3"
+        },
+        {
+          "before": null,
+          "after": "180d4c4c3fa0e4b0.0.3.0.3.0"
+        },
+        {
+          "before": null,
+          "after": "f0bae62e55602372.0.3.0.3.0.0"
+        },
+        {
+          "before": null,
+          "after": "9f7473d4148771b9.0.3.0.4"
+        },
+        {
+          "before": null,
+          "after": "6eb50430487ca2fb.0.3.0.4.0"
+        },
+        {
+          "before": null,
+          "after": "2dd3fa5c21a691bc.0.3.0.4.0.0"
+        },
+        {
+          "before": null,
+          "after": "9fca0bc194e77dbf.0.3.0.5"
+        },
+        {
+          "before": null,
+          "after": "a745b12ff26f1cd9.0.3.0.5.0"
+        },
+        {
+          "before": null,
+          "after": "e8b72fd95ebab0ec.0.3.0.5.0.0"
+        },
+        {
+          "before": null,
+          "after": "d003378a43c5901e.0.3.0.6"
+        },
+        {
+          "before": null,
+          "after": "ad23d31e572197c8.0.3.0.6.0"
+        },
+        {
+          "before": null,
+          "after": "ea891610ce43a9b4.0.3.0.6.0.0"
+        },
+        {
+          "before": null,
+          "after": "5bf76b85b22a5a28.0.3.0.7"
+        },
+        {
+          "before": null,
+          "after": "576228f0b68964db.0.3.0.7.0"
+        },
+        {
+          "before": null,
+          "after": "00739fd6c3257902.0.3.0.7.0.0"
+        }
+      ],
+      "reason": null,
+      "missing_style": "create"
+    }
+  ],
+  "applied_count": 1,
+  "failed_count": 0
+}

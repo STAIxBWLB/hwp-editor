@@ -32,6 +32,7 @@ import type {
   PageLayout,
   ValidationReport,
 } from "./engine.js";
+import type { EditReport } from "./edit-report.js";
 import type { EditOp } from "./ops.js";
 import type { CatEnvelope } from "./segments.js";
 import type { DocumentSpecV2 } from "./generated/document-spec-v2.js";
@@ -62,6 +63,13 @@ export interface EditResponse {
   name: string;
   /** Base64-encoded document bytes. */
   dataBase64: string;
+  /**
+   * `edit-report-v1` for this batch, when the host threaded
+   * `hwp edit --report`. Absent means the caller learns no ids: an insertion
+   * whose report is missing cannot be selected, reordered or removed, so a
+   * consumer must not substitute positions it guesses from the request.
+   */
+  report?: EditReport;
 }
 
 /** POST /compose request (JSON body). */
@@ -80,10 +88,10 @@ export interface ComposeResponse {
 }
 
 /** New template command wires, introduced by hwp-cli 1.4.0. */
-export interface FillResponse extends EditResponse {
+export interface FillResponse extends Omit<EditResponse, "report"> {
   report: FillReport;
 }
-export interface TemplateResponse extends EditResponse {
+export interface TemplateResponse extends Omit<EditResponse, "report"> {
   report?: TemplateReport;
 }
 export interface TemplateRequest {
