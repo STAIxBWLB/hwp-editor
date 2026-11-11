@@ -32,8 +32,15 @@ export interface ComposePanelProps {
   canCreate?: boolean;
   /** Components the assembly offers; the shipped starters by default. */
   components?: readonly Component[];
-  /** Called with the composed document once engine.compose() succeeds. */
-  onComposed: (document: DocumentHandle) => void;
+  /**
+   * Called with the composed document once engine.compose() succeeds.
+   *
+   * RETURNING a sentence refuses it: the editor did not take the document, the
+   * dialog stays open with the composition, and the sentence is shown there.
+   * The creating surface owns the screen while it is open, so a refusal that
+   * only reached the editor's notice line would be written behind the modal.
+   */
+  onComposed: (document: DocumentHandle) => string | void;
   /** Close without composing. */
   onClose: () => void;
 }
@@ -167,6 +174,19 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
     );
   };
 
+  /**
+   * Refuse a press in the two places this dialog can be answered in: its own
+   * error line, where the user is looking, and the host, which hears every
+   * refusal in this editor so a caller is never left with a press that did
+   * nothing. The sentence is carried as an `Error` when no engine failure
+   * carries it instead, the same shape `noteRefusal` uses.
+   */
+  const refuse = (sentence: string): void => {
+    const shown = new Error(sentence);
+    setError(toEditorError(shown));
+    onError?.(shown);
+  };
+
   const compose = async (): Promise<void> => {
     if (!canCreate || busy) return;
     // A load in flight would be replaced by what this composes, and it is the
@@ -174,9 +194,10 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
     // render behind, so the press itself asks the generations. A composed
     // document's read raises no hint at all — the dialog is open and enabled
     // while this editor is still taking that composition on — so the refusal
-    // is said out loud rather than left as a press that did nothing.
+    // is said out loud rather than left as a press that did nothing, and it
+    // reaches the host as every other refusal in this editor does.
     if (!loadSettled()) {
-      setError(toEditorError(new Error(t("error.loadingReplacement"))));
+      refuse(t("error.loadingReplacement"));
       return;
     }
     setBusy(true);
@@ -200,7 +221,11 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
       if (loadEpoch() !== epoch || store.getState().document !== source) {
         throw new Error(t("error.staleCompose"));
       }
-      props.onComposed(result.document);
+      // The editor may refuse the document it was handed (a load that started
+      // after this press). It answers with the sentence rather than writing it
+      // on the editor's notice line, which sits behind this dialog.
+      const refused = props.onComposed(result.document);
+      if (typeof refused === "string") refuse(refused);
     } catch (e) {
       // A component refusal carries a code, the component and the field, and
       // is rendered as a localized sentence before it reaches the host: the
@@ -222,7 +247,7 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
     // Same rule as `compose`: a document created now would replace the file
     // the host has chosen and this editor has not finished reading.
     if (!loadSettled()) {
-      setError(toEditorError(new Error(t("error.loadingReplacement"))));
+      refuse(t("error.loadingReplacement"));
       return;
     }
     const epoch = loadEpoch();
@@ -235,7 +260,8 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
       // A load in flight leaves the old document in the store until it
       // resolves, so the document identity alone would still match.
       if (loadEpoch() !== epoch || store.getState().document !== source) throw new Error(t("error.staleCompose"));
-      props.onComposed(next);
+      const refused = props.onComposed(next);
+      if (typeof refused === "string") refuse(refused);
     } catch (e) {
       if (mounted.current) { setError(toEditorError(e)); onError?.(e); }
     } finally { if (mounted.current) setBusy(false); }

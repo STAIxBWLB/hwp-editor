@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createStore, initialState } from "@hwp-editor/core";
-import type { EditorState, EditOp } from "@hwp-editor/core";
+import type { DocumentHandle, EditorState, EditOp } from "@hwp-editor/core";
 import { HwpEditorContext } from "../src/context.js";
 import type { HwpEditorContextValue } from "../src/context.js";
+import { ComposePanel } from "../src/ComposePanel.js";
 import { ImagePanel } from "../src/ImagePanel.js";
 import { DocumentPanel } from "../src/DocumentPanel.js";
 import { FieldsPanel } from "../src/FieldsPanel.js";
@@ -343,5 +344,63 @@ describe.each(locales)("table rows and legacy field creation (%s)", (locale, mes
     renderPanel(locale, "segment", true, true, envelopeWithDirectFormatting());
     expect(screen.getByText(plain(messages, "segment.directStyleUnavailable"))).toBeTruthy();
     expect(screen.queryByText(plain(messages, "segment.directStyleUnknown"))).toBeNull();
+  });
+});
+
+/**
+ * The creating dialog is its own surface: while it is open it owns the screen.
+ * A refusal the editor answers with must land in it, not on the notice line
+ * behind the modal, and the host must hear it as every other refusal.
+ */
+describe("ComposePanel refusal channel", () => {
+  function renderCompose(onComposed: (document: DocumentHandle) => string | void, onError?: (error: unknown) => void) {
+    const store = createStore({
+      ...initialState,
+      document: { name: "test.hwpx", data: new Uint8Array([1]) },
+    } as EditorState);
+    const value = {
+      engine: createMockEngine(),
+      store,
+      state: store.getState(),
+      envelope: makeEnvelope(),
+      capabilities: { version: "1.4.0", editable: true, formats: ["hwpx"] },
+      editable: true,
+      validation: null,
+      applyPendingOps: () => undefined,
+      replaceDocument: async () => true,
+      refresh: async () => undefined,
+      styles: null,
+      stylesStatus: "idle" as const,
+      noteNotice: () => undefined,
+      documentOrigin: 0,
+      openCompose: () => undefined,
+      loadEpoch: () => 1,
+      loadSettled: () => true,
+      loadInFlight: false,
+      retryStyles: () => undefined,
+      ...(onError === undefined ? {} : { onError }),
+      t: createT("en"),
+    } as HwpEditorContextValue;
+    render(
+      <HwpEditorContext.Provider value={value}>
+        <ComposePanel canCreate onComposed={onComposed} onClose={() => undefined} />
+      </HwpEditorContext.Provider>,
+    );
+  }
+
+  it("shows a refusal the editor returns in the dialog, and tells the host", async () => {
+    const onError = vi.fn();
+    renderCompose(() => en["error.loadingReplacement"], onError);
+    fireEvent.click(screen.getByRole("button", { name: en["compose.submit"] }));
+
+    // In the dialog, where the user is looking — the notice line it would
+    // otherwise be written on is behind the modal.
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain(en["error.loadingReplacement"]);
+    expect(onError.mock.calls.some(
+      ([error]) => (error as Error).message === en["error.loadingReplacement"],
+    )).toBe(true);
+    // The press is refused, not consumed: the dialog is still here.
+    expect(screen.getByRole("button", { name: en["compose.submit"] })).toBeTruthy();
   });
 });

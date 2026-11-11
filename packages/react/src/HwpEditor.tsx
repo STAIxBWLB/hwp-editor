@@ -380,6 +380,13 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     const loadingSentence = useRef("");
     loadingSentence.current = t("error.loadingReplacement");
     /**
+     * The exact "undo discarded" sentence the last dropped revert put on the
+     * line, caught where it was posted rather than rebuilt here: a locale
+     * change between the drop and the landing would otherwise produce
+     * different text and the clear would miss.
+     */
+    const staleRevertSentence = useRef("");
+    /**
      * The locale's `t` as of the latest render. The styles read must not depend
      * on `t` — that would re-read the table on every locale change — but the
      * sentence it writes when the read fails has to be in the locale the user
@@ -397,6 +404,19 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       loadedGeneration.current = generation;
       setLoadInFlight(false);
       setNotice((current) => (current === loadingSentence.current ? null : current));
+    }, []);
+    /**
+     * Retire the "undo discarded" sentence once a document LANDS: the next
+     * document starts with an empty snapshot stack, so the sentence's own next
+     * step — undo again on the document now open — is a disabled button. It is
+     * left in place when a load fails, because there the document it named is
+     * still the one on screen and undoing again is still possible.
+     */
+    const retireStaleRevert = useCallback((): void => {
+      const sentence = staleRevertSentence.current;
+      if (sentence === "") return;
+      staleRevertSentence.current = "";
+      setNotice((current) => (current === sentence ? null : current));
     }, []);
     /** The envelope an attempt has already been made against, so none repeats. */
     const insertedTriedFor = useRef<CatEnvelope | null>(null);
@@ -475,6 +495,9 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           // the document the user is working on.
           setDocumentOrigin((count) => count + 1);
           markLoaded(generation);
+          // The sentence a dropped undo left on the line described the document
+          // this load has just replaced; its next step is gone with it.
+          retireStaleRevert();
           // Once per completed load, from THIS effect only: a second effect
           // keyed on envelope/pages would re-fire after every apply and undo.
           emitReady(file);
@@ -491,7 +514,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       return () => {
         cancelled = true;
       };
-    }, [engine, file, markLoaded, store]);
+    }, [engine, file, markLoaded, retireStaleRevert, store]);
 
     // Single fan-out point: every panel, both toolbar buttons and the
     // applyPendingOps guard read `editable`, so `readOnly` works everywhere
@@ -969,7 +992,9 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
             // nothing. Once a load (or a compose) has landed it replaced the
             // document, and its own transition is the answer.
             if (store.getState().document === snapshot.document) {
-              noteRefusal(t("error.staleRevert"));
+              const sentence = t("error.staleRevert");
+              staleRevertSentence.current = sentence;
+              noteRefusal(sentence);
             }
             return;
           }
@@ -1419,10 +1444,11 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
                 // user just chose. Refused on the generations rather than on
                 // `loadInFlight`, which is a render hint and can lag a load
                 // that started in the same tick as the press. The dialog stays
-                // open: nothing was taken, so the composition is still there.
+                // open: nothing was taken, so the composition is still there —
+                // and the sentence goes back to it, because the notice line it
+                // would otherwise use sits behind the modal.
                 if (loadGeneration.current !== loadedGeneration.current) {
-                  noteRefusal(t("error.loadingReplacement"));
-                  return;
+                  return t("error.loadingReplacement");
                 }
                 setComposing(false);
                 const generation = ++loadGeneration.current;
@@ -1459,6 +1485,10 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
                     // previous document editable, and a choice made in it
                     // survives — the same rule the file load follows.
                     setDocumentOrigin((count) => count + 1);
+                    // A composed document is a new one, so the "undo
+                    // discarded" sentence describes a stack this store has
+                    // just replaced.
+                    retireStaleRevert();
                   } catch (e) {
                     // Covers the render AFTER a successful compose; the
                     // compose call itself fails inside ComposePanel.

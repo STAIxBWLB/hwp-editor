@@ -348,6 +348,81 @@ describe("#58 item 21: revert and refresh belong to one load generation", () => 
 
     await act(async () => { h.releaseRead(); });
     await vi.waitFor(() => expect(screen.getByText(switched.name)).toBeTruthy());
+    // The document that landed starts with no snapshots, so the sentence's own
+    // next step — undo again on it — is a button this editor has disabled. The
+    // sentence goes with the document it described.
+    await vi.waitFor(() => expect(screen.queryByText(en["error.staleRevert"])).toBeNull());
+    const landed = screen.getByRole("button", { name: en["toolbar.revert"] }) as HTMLButtonElement;
+    expect(landed.disabled).toBe(true);
+  });
+
+  it("retires the discarded-undo sentence when a composed document lands", async () => {
+    // The other landing path. The composed read is held open, so the dropped
+    // undo resolves while the store still holds the old document (which is
+    // what makes the sentence be posted at all), and the composition then
+    // lands over it.
+    const composed = "composed.hwpx";
+    const h = editorEngine({
+      styles: true,
+      holdRead: (document, call) =>
+        document.name === composed || (document.name === file.name && call > 1),
+    });
+    const view = render(<HwpEditor engine={h.engine} file={file} />);
+    await selectAndQueueReplace(en);
+    await applyOne(en);
+    await screen.findByText(pending(en, 0));
+
+    fireEvent.click(screen.getByRole("button", { name: en["toolbar.revert"] }));
+    await vi.waitFor(() => expect(h.readGates).toHaveLength(1));
+    fireEvent.click(screen.getByRole("button", { name: en["toolbar.newDocument"] }));
+    const dialog = await screen.findByRole("dialog", { name: en["compose.title"] });
+    fireEvent.change(within(dialog).getByLabelText(en["compose.titleLabel"]), {
+      target: { value: "composed" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: en["compose.submit"] }));
+    await vi.waitFor(() => expect(h.readGates).toHaveLength(2));
+
+    // The undo answers against the document still in the store.
+    await act(async () => { h.releaseRead(); });
+    expect(await screen.findByText(en["error.staleRevert"])).toBeTruthy();
+
+    await act(async () => { h.releaseRead(); });
+    await vi.waitFor(() => expect(screen.queryByText(file.name)).toBeNull());
+    await vi.waitFor(() => expect(screen.queryByText(en["error.staleRevert"])).toBeNull());
+    expect(view.container.firstElementChild?.getAttribute("data-status")).toBe("clean");
+  });
+
+  it("keeps the discarded-undo sentence when the load that followed it failed", async () => {
+    // The other half of the rule. The sentence is on the line BEFORE the load
+    // ends, so a clear placed where a load ends would take it: both reads are
+    // open at once, and the failing one is released last.
+    const h = editorEngine({
+      holdRead: (document, call) =>
+        document.name === broken.name || (document.name === file.name && call > 1),
+      failWhenReleased: (document) => document.name === broken.name,
+    });
+    const view = render(<HwpEditor engine={h.engine} file={file} />);
+    await selectAndQueueReplace(en);
+    await applyOne(en);
+    await screen.findByText(pending(en, 0));
+
+    fireEvent.click(screen.getByRole("button", { name: en["toolbar.revert"] }));
+    await vi.waitFor(() => expect(h.readGates).toHaveLength(1));
+    view.rerender(<HwpEditor engine={h.engine} file={broken} />);
+    await vi.waitFor(() => expect(h.readGates).toHaveLength(2));
+
+    // The undo answers against the document still in the store, while the
+    // load that took over is still running.
+    await act(async () => { h.releaseRead(); });
+    expect(await screen.findByText(en["error.staleRevert"])).toBeTruthy();
+
+    // The load then fails, which keeps both the document and its snapshots:
+    // undoing again on it is still possible, so the sentence still holds.
+    await act(async () => { h.releaseRead(); });
+    expect((await screen.findByRole("alert")).textContent).toContain(en["error.prefix.load"]);
+    expect(screen.getByText(en["error.staleRevert"])).toBeTruthy();
+    const revert = screen.getByRole("button", { name: en["toolbar.revert"] }) as HTMLButtonElement;
+    expect(revert.disabled).toBe(false);
   });
 
   it("keeps a failed undo off the document a newer load put on screen", async () => {
@@ -476,7 +551,8 @@ describe("#58 item 24: creating a document waits for a load in flight", () => {
     // running.
     const composed = "composed.hwpx";
     const h = editorEngine({ styles: true, holdRead: (document) => document.name === composed });
-    render(<HwpEditor engine={h.engine} file={file} />);
+    const onError = vi.fn();
+    render(<HwpEditor engine={h.engine} file={file} onError={onError} />);
     await screen.findByText(file.name);
 
     fireEvent.click(screen.getByRole("button", { name: en["toolbar.newDocument"] }));
@@ -503,6 +579,11 @@ describe("#58 item 24: creating a document waits for a load in flight", () => {
     // spent against a document this editor is still leaving.
     const alert = await within(dialog).findByRole("alert");
     expect(alert.textContent).toContain(en["error.loadingReplacement"]);
+    // The host hears it too: every refusal in this editor reaches onError, so
+    // a caller is never left with a press that did nothing.
+    expect(onError.mock.calls.some(
+      ([error]) => (error as Error).message === en["error.loadingReplacement"],
+    )).toBe(true);
     expect(h.engine.calls.compose).toHaveLength(1);
     expect(screen.getByText(file.name)).toBeTruthy();
 
