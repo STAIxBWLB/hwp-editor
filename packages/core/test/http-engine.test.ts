@@ -357,3 +357,17 @@ describe("HTTP present layout validation", () => {
     expect((failure as Error).message).toContain(RENDER_LAYOUT_NEXT_STEP);
   });
 });
+
+
+describe("combined HTTP capabilities", () => {
+  it.each(["v1", "v2", undefined])("normalizes template methods and image assets %s together", async imageAssets => {
+    const engine = createHttpEngine("/api", { fetch: stubFetch(JSON.stringify({
+      version: "1.4.0", editable: true, editOps: "v1", formats: ["hwpx"],
+      templateMethods: ["slots", "template"], imageAssets,
+    }), { status: 200 }) });
+    const caps = await engine.capabilities();
+    expect(caps).toMatchObject({ editOps: "v1", templateMethods: ["slots", "template"] });
+    if (imageAssets === "v1") expect(caps.imageAssets).toBe("v1");
+    else expect(caps).not.toHaveProperty("imageAssets");
+  });
+});
