@@ -266,22 +266,24 @@ export function SegmentInspector(): JSX.Element {
     // The runs must tile the paragraph exactly. A gap is text the projection
     // does not show, so a find cut from it would not be the engine's text.
     const ordered = paragraphRuns(envelope, singleParagraph);
-    const texts: string[] = [];
     let cursor = singleParagraph.start;
     for (const run of ordered) {
       if (run.start !== cursor || run.end < run.start || run.end > contentEnd) return undefined;
       cursor = run.end;
-      const runText = wholeRunText(run, points.slice(run.start - singleParagraph.start, run.end - singleParagraph.start).join(""));
-      if (runText === undefined) return undefined;
-      texts.push(runText);
     }
     if (ordered.length === 0 || cursor !== contentEnd) return undefined;
+    const slices = ordered.map(run =>
+      points.slice(run.start - singleParagraph.start, run.end - singleParagraph.start).join(""));
+    const texts = runTexts(ordered, slices);
+    if (texts === undefined) return undefined;
     // (2) Plain text only. The characters below are the ones the projection
     // writes as themselves; everything Markdown gives a second meaning to is
-    // refused, and so is any edge or doubled space, which a trimmed fragment
-    // cannot be told apart from.
+    // refused, and so is a doubled space, which a collapsed fragment cannot be
+    // told apart from. An edge space is allowed: the find is trimmed to the
+    // selection's non-space core (see below), and a match that starts and
+    // ends on a non-space can never span a space the projection trimmed away.
     const text = texts.join("");
-    if (text === "" || text.trim() !== text || text.includes("  ")) return undefined;
+    if (text.trim() === "" || text.includes("  ")) return undefined;
     if (!/^[\p{L}\p{N} .,:;'"!?()\-]*$/u.test(text)) return undefined;
     if (/^(?:[-+]|\d{1,3}[.)])\s/u.test(text)) return undefined;
     return { runs: ordered, texts, text };
@@ -300,16 +302,20 @@ export function SegmentInspector(): JSX.Element {
     rangeRuns.every((item, at) => plainParagraph.runs[firstCoveredAt + at]?.start === item.start);
   // `find` is the engine's text for the selected runs, which (2) has already
   // made identical to their projection.
-  const findText = plainParagraph === undefined || !wholeRuns || !rangeContiguous
+  const coveredText = plainParagraph === undefined || !wholeRuns || !rangeContiguous
     ? ""
     : plainParagraph.texts.slice(firstCoveredAt, firstCoveredAt + rangeRuns.length).join("");
+  // (3) The selection's edge spaces stay in the paragraph: the slot replaces
+  // the non-space core, so the words beside it keep their separator and a
+  // space at the paragraph's edge is not left orphaned inside the find.
+  const findText = coveredText.trim();
+  const leadingSpace = coveredText.length - coveredText.trimStart().length;
   const paragraphText = plainParagraph?.text ?? "";
-  const expectedAt = plainParagraph === undefined || firstCoveredAt <= 0
+  const expectedAt = leadingSpace + (plainParagraph === undefined || firstCoveredAt <= 0
     ? 0
-    : plainParagraph.texts.slice(0, firstCoveredAt).reduce((total, item) => total + item.length, 0);
-  // (3) No edge whitespace of its own, and (4) exactly one match counting
-  // overlaps, starting where the selection starts: a single match elsewhere
-  // would rewrite text never selected.
+    : plainParagraph.texts.slice(0, firstCoveredAt).reduce((total, item) => total + item.length, 0));
+  // (4) Exactly one match counting overlaps, starting where the selection's
+  // core starts: a single match elsewhere would rewrite text never selected.
   const occurrences: number[] = [];
   for (let at = 0; findText !== "" && at + findText.length <= paragraphText.length; at += 1) {
     if (paragraphText.startsWith(findText, at)) occurrences.push(at);
@@ -320,7 +326,7 @@ export function SegmentInspector(): JSX.Element {
   // waits for an empty queue rather than for one class of op.
   const queuedEdits = state.pendingOps.length > 0;
   const placeholderRefused = plainParagraph === undefined || !wholeRuns || !rangeContiguous ||
-    findText === "" || findText.trim() !== findText || !uniqueAtSelection || queuedEdits;
+    findText === "" || !uniqueAtSelection || queuedEdits;
 
   const placeholderNameTrimmed = placeholderName.trim();
   const placeholderNameEmpty = placeholderNameTrimmed === "";
@@ -789,6 +795,72 @@ function scalarAtUtf16(offset: number, supplementaryStarts: readonly number[]): 
   }
   if (supplementaryStarts[low] !== undefined && supplementaryStarts[low]! + 1 === offset) return undefined;
   return offset - low;
+}
+
+/**
+ * The engine text of each run, or undefined when any run's projection cannot
+ * be vouched for.
+ *
+ * hwp-cli opens a span only when the marks change, so every maximal sequence
+ * of runs with the same bold/italic pair (runs that differ only in colour,
+ * size or face) projects under ONE `**...**` or `*...*`, and close_span moves
+ * the span's edge spaces outside the markers. So each such group must read,
+ * as a whole, as optional spaces, the marker, a non-empty core, the marker,
+ * optional spaces; the four marker positions are then cut out of whichever
+ * runs hold them. A plain group carries no markers and each run is read on
+ * its own. Bold and italic together, or a missing directChar, refuse.
+ */
+function runTexts(runs: Segment[], slices: string[]): string[] | undefined {
+  const texts: string[] = [];
+  for (let at = 0; at < runs.length;) {
+    const first = runs[at]!.directChar;
+    if (first === undefined) return undefined;
+    let end = at;
+    while (end + 1 < runs.length) {
+      const next = runs[end + 1]!.directChar;
+      if (next === undefined) return undefined;
+      if (next.bold !== first.bold || next.italic !== first.italic) break;
+      end += 1;
+    }
+    if (!first.bold && !first.italic) {
+      for (let inner = at; inner <= end; inner += 1) {
+        const plain = wholeRunText(runs[inner]!, slices[inner]!);
+        if (plain === undefined) return undefined;
+        texts.push(plain);
+      }
+    } else {
+      if (first.bold && first.italic) return undefined;
+      const marker = first.bold ? "**" : "*";
+      const points = [...slices.slice(at, end + 1).join("")];
+      const joined = points.join("");
+      const lead = joined.length - joined.trimStart().length;
+      const trail = joined.length - joined.trimEnd().length;
+      const core = joined.slice(lead, joined.length - trail);
+      const m = marker.length;
+      if (core.length <= 2 * m || !core.startsWith(marker) || !core.endsWith(marker)) return undefined;
+      // A bold core opening with a third `*` would be read as italic inside
+      // bold, and an italic core opening with `*` as bold: refuse both.
+      const inner = core.slice(m, core.length - m);
+      if (inner.startsWith("*") || inner.endsWith("*") || inner.trim() !== inner) return undefined;
+      // Spaces and markers are ASCII, so code-unit offsets equal point offsets
+      // at the edges; the cut set is in point offsets over `points`.
+      const leadPoints = [...joined.slice(0, lead)].length;
+      const trailPoints = [...joined.slice(joined.length - trail)].length;
+      const cut = new Set<number>();
+      for (let k = 0; k < m; k += 1) {
+        cut.add(leadPoints + k);
+        cut.add(points.length - trailPoints - 1 - k);
+      }
+      let offset = 0;
+      for (let inner = at; inner <= end; inner += 1) {
+        const own = [...slices[inner]!];
+        texts.push(own.filter((_, k) => !cut.has(offset + k)).join(""));
+        offset += own.length;
+      }
+    }
+    at = end + 1;
+  }
+  return texts;
 }
 
 /**

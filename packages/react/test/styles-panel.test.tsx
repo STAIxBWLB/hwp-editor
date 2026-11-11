@@ -287,6 +287,17 @@ describe("styles tab operations (en)", () => {
     return harness;
   }
 
+  /**
+   * Wait until the `count`-th applied edit has landed: the edit returned, the
+   * queue is empty, and the styles table was re-read for the new document.
+   */
+  async function waitForLanded(harness: StyleHarness, count: number): Promise<void> {
+    await waitFor(() => {
+      expect(screen.queryByRole("list", { name: en["toolbar.pendingList"] })).toBeNull();
+      expect(harness.styleReads.filter((read) => read.name === `edited-${count}.hwpx`)).not.toHaveLength(0);
+    });
+  }
+
   /** Apply the queued ops and return the ops the engine was asked to run. */
   async function applyQueued(harness: StyleHarness, count: number): Promise<EditOp[]> {
     fireEvent.click(await screen.findByRole("button", { name: en["toolbar.applyWithCount"]({ count }) }));
@@ -498,6 +509,31 @@ describe("styles tab operations (en)", () => {
     for (const op of ops.filter((candidate) => candidate.kind === "apply-style")) {
       expect(op).toMatchObject({ style: "인용" });
     }
+  });
+
+  /**
+   * #72 WP3: the button itself, not only its op serialization. p1 carries a
+   * direct size that differs from its style, the styles table names 개요 1 as
+   * its paragraph style, so the press queues and applies `apply_style` with
+   * `clear_direct` against that row.
+   */
+  it("clears a paragraph's direct formatting from the button", async () => {
+    const base = envelopeWithIds();
+    const envelope: CatEnvelope = {
+      ...base,
+      segments: base.segments.map((segment) => segment.id !== "p1" || segment.direct === undefined
+        ? segment
+        : { ...segment, direct: { ...segment.direct, char: { ...ATTRS.char, size_pt: 20 }, charShapeId: 7 } }),
+    };
+    const harness = await openPanel(styleEngine({ envelope }));
+    // 개요 1 lists only p1 in `used_by`, so choosing it selects that paragraph.
+    fireEvent.click(await screen.findByRole("button", { name: /개요 1/ }));
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.para"] }));
+    const clear = await screen.findByRole("button", { name: en["segment.clearDirect"] }) as HTMLButtonElement;
+    expect(clear.disabled).toBe(false);
+    fireEvent.click(clear);
+    const ops = await applyQueued(harness, 1);
+    expect(ops).toEqual([{ kind: "apply-style", address: { id: "p1" }, style: 1, clearDirect: true }]);
   });
 
   /**
@@ -773,11 +809,14 @@ describe("styles tab operations (en)", () => {
     expect(button().disabled).toBe(false);
     fireEvent.click(button());
     await applyQueued(harness, 1);
+    // applyQueued returns once engine.edit is CALLED; the re-seed follows the
+    // document the apply installs, so wait for the apply to land first.
+    await waitForLanded(harness, 1);
 
     // After Apply the form is on the row's new value, and an untouched form
     // offers nothing: with a stale 12 seed this button would still say the
     // user changed something, and typing 12 back would be a no-op.
-    expect(size().value).toBe("14");
+    await waitFor(() => expect(size().value).toBe("14"));
     expect(button().disabled).toBe(true);
     fireEvent.change(size(), { target: { value: "12" } });
     expect(button().disabled).toBe(false);
@@ -785,7 +824,8 @@ describe("styles tab operations (en)", () => {
     fireEvent.click(await screen.findByRole("button", { name: en["toolbar.applyWithCount"]({ count: 1 }) }));
     await waitFor(() => expect(harness.edits).toHaveLength(2));
     expect(harness.edits[1]!.ops).toEqual([{ kind: "update-style", style: BODY_ID, size: "12" }]);
-    expect(size().value).toBe("12");
+    await waitForLanded(harness, 2);
+    await waitFor(() => expect(size().value).toBe("12"));
     expect(button().disabled).toBe(true);
 
     // Undo restores the FIRST edited document, whose style is 14pt: the form

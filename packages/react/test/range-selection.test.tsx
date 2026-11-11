@@ -447,19 +447,98 @@ describe.each([["en", en], ["ko", ko]] as const)("Placeholder guards (%s)", (loc
     }
   });
 
-  it("refuses a paragraph whose projected text would have an edge space trimmed (t14-g6)", async () => {
-    // hwp-cli trims each fragment's edges, so the projection cannot show a
-    // space the engine's text still holds: any edge space means the two texts
-    // may already differ, and the find cannot be trusted.
+  it("replaces the non-space core of a paragraph with an edge space (#72 WP2, t14-g6)", async () => {
+    // hwp-cli trims each fragment's edges, so the projection may hide a space
+    // the engine's text holds. A find that starts and ends on a non-space never
+    // spans such a space, so the core is safe to replace; the edge space stays
+    // in the paragraph instead of riding inside the find.
     for (const markdown of [" ab", "ab "]) {
       const end = [...markdown].length;
       const engine = await openRange(markdown, [[0, end]], 0, end);
       typeName("x");
-      expect(make().disabled).toBe(true);
-      expect(screen.getByText(messages["segment.placeholderRefused"])).toBeTruthy();
-      expect(engine.calls.edit).toHaveLength(0);
+      expect(make().disabled).toBe(false);
+      fireEvent.click(make());
+      fireEvent.click(await screen.findByRole("button", { name: messages["toolbar.applyWithCount"]({ count: 1 }) }));
+      await waitFor(() => expect(engine.calls.edit).toHaveLength(1));
+      expect(engine.calls.edit[0]?.ops).toEqual([
+        { kind: "replace", address: { id: "para-one" }, find: "ab", replace: "{{x}}" },
+      ]);
       cleanup();
     }
+  });
+
+  it("keeps a selected run's edge space out of the find (#72 WP2)", async () => {
+    // Run 1 is " bb": selecting it whole must not swallow the separator, or
+    // the slot would glue onto "aa" once filled.
+    const engine = await openRange("aa bb", [[0, 2], [2, 5]], 2, 5);
+    typeName("x");
+    expect(make().disabled).toBe(false);
+    fireEvent.click(make());
+    fireEvent.click(await screen.findByRole("button", { name: messages["toolbar.applyWithCount"]({ count: 1 }) }));
+    await waitFor(() => expect(engine.calls.edit).toHaveLength(1));
+    expect(engine.calls.edit[0]?.ops).toEqual([
+      { kind: "replace", address: { id: "para-one" }, find: "bb", replace: "{{x}}" },
+    ]);
+  });
+
+  it("accepts bold runs that differ only in colour, size or face (#72 WP2)", async () => {
+    // The projection writes one `**...**` over runs that share an emphasis, so
+    // the markers sit in the first and last run of the group.
+    const engine = await openRange("x **ab cd** y", [[0, 2], [2, 6], [6, 11], [11, 13]], 2, 11, [],
+      [{}, { bold: true }, { bold: true }, {}]);
+    typeName("x");
+    expect(make().disabled).toBe(false);
+    fireEvent.click(make());
+    fireEvent.click(await screen.findByRole("button", { name: messages["toolbar.applyWithCount"]({ count: 1 }) }));
+    await waitFor(() => expect(engine.calls.edit).toHaveLength(1));
+    expect(engine.calls.edit[0]?.ops).toEqual([
+      { kind: "replace", address: { id: "para-one" }, find: "ab cd", replace: "{{x}}" },
+    ]);
+  });
+
+  it("accepts a bold or italic run whose edge space hwp-cli moved outside the markers (t28-a1)", async () => {
+    // close_span writes bold "ab " as `**ab** ` and italic " ab" as ` *ab*`:
+    // the space is the run's own engine text, outside the marker pair.
+    const bold = await openRange("x **ab** y", [[0, 2], [2, 9], [9, 10]], 2, 9, [], [{}, { bold: true }, {}]);
+    typeName("x");
+    expect(make().disabled).toBe(false);
+    fireEvent.click(make());
+    fireEvent.click(await screen.findByRole("button", { name: messages["toolbar.applyWithCount"]({ count: 1 }) }));
+    await waitFor(() => expect(bold.calls.edit).toHaveLength(1));
+    expect(bold.calls.edit[0]?.ops).toEqual([
+      { kind: "replace", address: { id: "para-one" }, find: "ab", replace: "{{x}}" },
+    ]);
+    cleanup();
+
+    const italic = await openRange("x *ab*", [[0, 1], [1, 6]], 1, 6, [], [{}, { italic: true }]);
+    typeName("x");
+    expect(make().disabled).toBe(false);
+    fireEvent.click(make());
+    fireEvent.click(await screen.findByRole("button", { name: messages["toolbar.applyWithCount"]({ count: 1 }) }));
+    await waitFor(() => expect(italic.calls.edit).toHaveLength(1));
+    expect(italic.calls.edit[0]?.ops).toEqual([
+      { kind: "replace", address: { id: "para-one" }, find: "ab", replace: "{{x}}" },
+    ]);
+  });
+
+  it("reads a same-emphasis group as one span, not up to the first closing marker (t28-a2)", async () => {
+    // Bold "ab", "c**", "**d" project as `**abc****d**`. Stopping at the
+    // first parse would read "c" for run 1 and leave a literal `**` behind;
+    // the whole span holds `*` the allow list refuses.
+    const engine = await openRange("**abc****d**", [[0, 4], [4, 7], [7, 12]], 4, 7, [],
+      [{ bold: true }, { bold: true }, { bold: true }]);
+    typeName("x");
+    expect(make().disabled).toBe(true);
+    expect(screen.getByText(messages["segment.placeholderRefused"])).toBeTruthy();
+    expect(engine.calls.edit).toHaveLength(0);
+  });
+
+  it("still refuses a marker group whose runs disagree on emphasis (#72 WP2)", async () => {
+    const engine = await openRange("**ab cd**", [[0, 4], [4, 9]], 0, 9, [], [{ bold: true }, {}]);
+    typeName("x");
+    expect(make().disabled).toBe(true);
+    expect(screen.getByText(messages["segment.placeholderRefused"])).toBeTruthy();
+    expect(engine.calls.edit).toHaveLength(0);
   });
 
   it("refuses while a field edit is queued, whichever paragraph it touches (t14-g7)", async () => {

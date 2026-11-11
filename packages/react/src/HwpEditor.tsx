@@ -792,8 +792,6 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       (component: Component, values: Record<string, string>, position: InsertPosition): void => {
         const snapshot = store.getState();
         if (!editableRef.current || snapshot.document === null || envelope === null) return;
-        // A new attempt retires the previous attempt's notice.
-        setNotice(null);
         // An insertion replaces the document, so a queued edit would be lost:
         // the replacement is refused, and the refusal has to be visible rather
         // than reaching only a host that may not be listening. The palette is
@@ -873,6 +871,9 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           }
           // A replacement the editor discarded (a load or an undo landed
           // first) created nothing this state may select.
+          // The landed replacement already cleared the previous notice (in
+          // replaceDocument, as apply and revert do); a refused attempt never
+          // got there, so the earlier notice still describes this document.
           if (!applied) return;
           // The report lists every op it ran, in request order, spelled with
           // the engine's own name (`insert_blocks`, not the client's kind), so

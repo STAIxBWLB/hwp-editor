@@ -68,6 +68,31 @@ test("AC5: a made placeholder round-trips the selected text through a fill", asy
   expect(filled.markdown).not.toContain("{{owner}}");
 });
 
+test("AC5: filling the slot with the selected text restores the paragraph literally (#72 WP2)", async ({ page }) => {
+  const before = await loadSelectionFixture(page);
+  const list = page.getByRole("listbox", { name: en["segment.paragraphChoices"] });
+  await list.getByRole("option").nth(2).click();
+  await selectRunRange(page, 0, 5);
+  await expect(page.getByText(en["segment.rangeRunCount"]({ count: 1 }), { exact: true })).toBeVisible();
+  await page.getByLabel(en["segment.placeholderNameAria"], { exact: true }).fill("owner");
+  await page.getByRole("button", { name: en["segment.placeholderCreate"], exact: true }).click();
+  const applied = page.waitForResponse(readResponse);
+  await page.getByRole("button", { name: en["toolbar.applyWithCount"]({ count: 1 }), exact: true }).click();
+  expect((await (await applied).json() as CatEnvelope).markdown).toContain("{{owner}}");
+
+  await page.getByRole("tab", { name: en["tabs.templates"], exact: true }).click();
+  const panel = page.getByRole("region", { name: en["templates.panelAria"], exact: true });
+  await panel.getByLabel("owner", { exact: true }).fill("셋째 문단");
+  const fillResponse = page.waitForResponse(response => response.url().endsWith("/fill"));
+  await panel.getByRole("button", { name: en["templates.previewFill"], exact: true }).click();
+  expect((await fillResponse).ok()).toBe(true);
+  const filledRead = page.waitForResponse(readResponse);
+  await panel.getByRole("button", { name: en["templates.apply"], exact: true }).click();
+  const filled = await (await filledRead).json() as CatEnvelope;
+  // The round trip is literal: the whole document reads as it did before.
+  expect(filled.markdown).toBe(before.markdown);
+});
+
 test("a paragraph that is not plain text cannot become a placeholder", async ({ page }) => {
   await loadSelectionFixture(page);
   const list = page.getByRole("listbox", { name: en["segment.paragraphChoices"] });

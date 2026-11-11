@@ -183,12 +183,14 @@ export function reducer(state: EditorState, action: EditorAction): EditorState {
       return { ...state, pendingOps: [], status: "clean" };
     case "applyStarted": {
       if (state.document === null) return state;
-      // Snapshot the pre-edit bytes so the edit can be undone. Trim only
-      // here: applyFailed and undo both assume the newest snapshot is the
-      // tail, so trimming on any other action would desync them.
+      // Snapshot the pre-edit bytes so the edit can be undone. Not trimmed
+      // here: an apply that fails or changes nothing pops this snapshot, and
+      // trimming first would already have dropped the oldest undo entry for
+      // an edit that never landed. applySucceeded trims instead; the stack
+      // exceeds MAX_SNAPSHOTS by one only while `applying` holds the lock.
       return {
         ...state,
-        snapshots: [...state.snapshots, state.document].slice(-MAX_SNAPSHOTS),
+        snapshots: [...state.snapshots, state.document],
         status: "applying",
         error: null,
       };
@@ -198,6 +200,7 @@ export function reducer(state: EditorState, action: EditorAction): EditorState {
         ...state,
         document: action.document,
         pages: action.pages ?? state.pages,
+        snapshots: state.snapshots.slice(-MAX_SNAPSHOTS),
         pendingOps: [],
         selection: null,
         selections: [],
