@@ -20,7 +20,7 @@ if(args[0]!=='edit')process.exit(2);
 const opsFile=args[args.indexOf('--ops')+1],dir=path.dirname(opsFile),ops=JSON.parse(fs.readFileSync(opsFile,'utf8'));
 const image=ops[0].path;
 fs.writeFileSync(${JSON.stringify(witness)},JSON.stringify({dir,image,mode:fs.statSync(image).mode&511,ops}));
-if(${JSON.stringify(failure)})process.exit(1);
+if(${JSON.stringify(failure)}){process.stderr.write('Error: 이미지를 삽입할 수 없습니다');process.exit(1);}
 fs.writeFileSync(args[args.indexOf('-o')+1],Buffer.from([2,3]));
 `);
       chmodSync(bin,0o700);

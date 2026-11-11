@@ -505,6 +505,22 @@ describe("no leak: engine messages carry no path and no CLI output", () => {
     expect(error.detail).toContain(bin);
   }, 30_000);
 
+  it("shows the engine's own Error: line, paths removed, and never other CLI output (#88)", async () => {
+    const { bin } = createFakeBin({
+      mode: "fail",
+      info: "{}",
+      editStderrLines: ["progress: /tmp/stage x/in.hwpx", "Error: failed to read /Users/a b/Library/in.hwpx at byte 3"],
+      stdout: "chatter on stdout",
+    });
+    const error = await thrown(createCliEngine({ bin }).edit(DOC, []));
+    expect(error.message).toBe(
+      "hwp edit failed (exit 3): failed to read <path> at byte 3. Fix or remove the pending edit it names, then apply again.",
+    );
+    expect(error.message).not.toContain("progress");
+    expect(error.message).not.toContain("chatter");
+    expect(error.stderr).toContain("/Users/a b/Library/in.hwpx");
+  }, 30_000);
+
   it("reports a missing binary without naming the path it tried", async () => {
     const error = await thrown(createCliEngine({ bin: "/nonexistent/hwp" }).capabilities());
     expect(error.reason).toBe("unavailable");

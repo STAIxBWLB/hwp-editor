@@ -1,5 +1,7 @@
 import { parsePageLayout } from "./layout.js";
-import { classifyEditRefusal, editRefusalMarker } from "./refusals.js";
+import { classifyEditRefusal, editRefusalMarker, isEditRefusalKind } from "./refusals.js";
+import { classifyInsertionRefusal, insertionRefusalLine, isInsertionRefusal, STOPPED_WITHOUT_DIAGNOSTIC, unclassifiedEditLine } from "./insertion-refusals.js";
+import type { InsertionRefusal } from "./insertion-refusals.js";
 import type { EditRefusalKind } from "./refusals.js";
 /**
  * HwpEngine client for Tauri hosts (e.g. maru). Calls Rust commands named
@@ -145,12 +147,12 @@ function prefixToCode(detail: string): HwpErrorCode {
  * No `status` is set: there is no HTTP status on this bridge, and
  * synthesizing one would invent information.
  */
-function toEngineError(cmd: string, error: unknown): HwpEngineError {
+function toEngineError(cmd: string, error: unknown, insertion = false): HwpEngineError {
   // Forward compatibility (Phase 7 / EXT-04): every hwped_* command is
   // `-> Result<T, String>` today, so this branch is dead now and goes live
   // for free when the Rust side moves to a structured Err.
   if (typeof error === "object" && error !== null && !(error instanceof Error)) {
-    const rec = error as { code?: unknown; message?: unknown };
+    const rec = error as { code?: unknown; message?: unknown; refusal?: unknown; insertion?: unknown };
     if (typeof rec.code === "string") {
       const detail =
         typeof rec.message === "string" ? rec.message : String(error);
@@ -159,7 +161,12 @@ function toEngineError(cmd: string, error: unknown): HwpEngineError {
         // cannot inject a value outside the union into a typed field.
         toHwpErrorCode(rec.code),
         `${cmd} failed: ${detail}`,
-        { cause: error },
+        {
+          cause: error,
+          // The same fields the HTTP body carries, narrowed the same way (#88).
+          ...(isEditRefusalKind(rec.refusal) ? { refusal: rec.refusal } : {}),
+          ...(isInsertionRefusal(rec.insertion) ? { insertion: rec.insertion } : {}),
+        },
       );
     }
   }
@@ -171,15 +178,9 @@ function toEngineError(cmd: string, error: unknown): HwpEngineError {
       cause: error,
     });
   }
-  const refusal = editRefusalFor(cmd, code, detail);
-  if (refusal !== null) {
-    // The kind travels as a field (#82); the marker stays in the message for
-    // hosts that read text, but the client reads only the field.
-    return new HwpEngineError(code, `${cmd} failed: ${refusal.message}`, { cause: error, refusal: refusal.kind });
-  }
-  const silent = silentEditFailure(cmd, code, detail);
-  if (silent !== null) {
-    return new HwpEngineError(code, `${cmd} failed: ${silent}`, { cause: error });
+  const edit = editFailure(cmd, code, detail, insertion);
+  if (edit !== null) {
+    return new HwpEngineError(code, `${cmd} failed: ${edit.message}`, { cause: error, ...edit.fields });
   }
   return new HwpEngineError(code, `${cmd} failed: ${detail}`, {
     cause: error,
@@ -194,38 +195,40 @@ function toEngineError(cmd: string, error: unknown): HwpEngineError {
 const MARU_EDIT_FAILURE = /^hwp_failed: (hwp edit failed \(exit -?\d+\)): ([\s\S]*)$/u;
 
 /**
- * The classified refusal for an edit failure, as the message the HTTP
- * transport sends for the same stderr (#80): the exit line plus the stable
- * marker, and no engine prose, staged path or user value. Same classifier as
- * the server (`classifyEditRefusal`), so the two cannot drift. The raw text
- * stays on the error's `cause`.
+ * An edit failure as the HTTP transport words the same stderr (#88), so the
+ * two transports cannot drift:
+ * - a classified refusal: the exit line plus its marker, and `refusal`;
+ * - empty stderr: the exit line plus STOPPED_WITHOUT_DIAGNOSTIC;
+ * - a batch carrying an insertion: the exit line plus the insert_blocks
+ *   cause line, and `insertion` when the class is known;
+ * - anything else: the engine's first Error: line with paths removed, then
+ *   the step (`unclassifiedEditLine`).
+ * The raw rejection stays on the error's `cause` for a log.
  */
-function editRefusalFor(
+function editFailure(
   cmd: string,
   code: HwpErrorCode,
   detail: string,
-): { kind: EditRefusalKind; message: string } | null {
+  insertion: boolean,
+): { message: string; fields: { refusal?: EditRefusalKind; insertion?: InsertionRefusal } } | null {
   if (code !== "failed" || cmd !== "hwped_edit") return null;
   const failure = MARU_EDIT_FAILURE.exec(detail);
   if (failure === null) return null;
-  const kind = classifyEditRefusal(failure[2]!);
-  return kind === undefined ? null : { kind, message: `${failure[1]!}: ${editRefusalMarker(kind)}` };
-}
-
-/**
- * An edit failure whose stderr is empty. `hwp edit` always writes to stderr
- * when it fails (anyhow prints `Error: ...`, a panic prints its message), so
- * empty stderr means the process was stopped from outside: killed, out of
- * memory, or a crash with no output (maru reports a signal death as exit 1,
- * hwped.rs:222). Name that cause and a step the user can take, instead of a
- * bare exit line; the raw rejection stays on `cause`.
- */
-function silentEditFailure(cmd: string, code: HwpErrorCode, detail: string): string | null {
-  if (code !== "failed" || cmd !== "hwped_edit") return null;
-  const failure = MARU_EDIT_FAILURE.exec(detail);
-  if (failure === null || failure[2]!.trim() !== "") return null;
-  return `${failure[1]!}: the engine stopped without writing a diagnostic (most likely it was killed or ran out of memory), ` +
-    "so nothing was applied. Apply again; if it fails the same way, report it with the host log.";
+  const head = failure[1]!;
+  const stderr = failure[2]!;
+  const kind = classifyEditRefusal(stderr);
+  if (kind !== undefined) return { message: `${head}: ${editRefusalMarker(kind)}`, fields: { refusal: kind } };
+  if (stderr.trim() === "") return { message: `${head}: ${STOPPED_WITHOUT_DIAGNOSTIC}`, fields: {} };
+  if (insertion) {
+    const cls = classifyInsertionRefusal(stderr);
+    return {
+      message: `${head}: ${insertionRefusalLine(stderr)}`,
+      fields: cls === undefined ? {} : { insertion: cls },
+    };
+  }
+  // The engine's own first Error: line, paths removed, then the step: the
+  // same display line HTTP prints. Nothing classifies from it.
+  return { message: `${head}: ${unclassifiedEditLine(stderr)}`, fields: {} };
 }
 
 /**
@@ -282,7 +285,7 @@ export function createTauriEngine(
       : {};
   }
 
-  async function call<T>(cmd: string, args: Record<string, unknown>): Promise<T> {
+  async function call<T>(cmd: string, args: Record<string, unknown>, insertion = false): Promise<T> {
     try {
       return await invoke<T>(cmd, args);
     } catch (error) {
@@ -300,7 +303,7 @@ export function createTauriEngine(
           { cause: error },
         );
       }
-      throw toEngineError(cmd, error);
+      throw toEngineError(cmd, error, insertion);
     }
   }
 
@@ -404,7 +407,7 @@ export function createTauriEngine(
           : {}),
         ...(wantsReport ? { report: true } : {}),
         ...scope(),
-      });
+      }, ops.some(op => op.kind === "insert-blocks"));
       let report: EditReport | undefined;
       if (wantsReport && res.report !== undefined) {
         try {

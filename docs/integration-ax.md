@@ -183,8 +183,10 @@ route in health checks.
 
 An edit the engine refuses for a reason the editor recognises also carries
 `error.refusal` (`unmatched_replace`, `run_range_conflict` or `range_tag`),
-and `HwpEngineError.refusal` holds it on the client. Branch on that field,
-never on the message text, which can contain values the user typed.
+and `HwpEngineError.refusal` holds it on the client. A refused `insert_blocks`
+carries `error.insertion` (`HwpEngineError.insertion`) the same way. Branch on
+those fields, never on the message text, which can contain values the user
+typed.
 
 ## 4. Client
 

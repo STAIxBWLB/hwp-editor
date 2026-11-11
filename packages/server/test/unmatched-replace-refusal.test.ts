@@ -66,7 +66,9 @@ describe("unmatched replace refusal classification", () => {
     // refusal keeps the exit line it had before this classifier existed.
     const error = await failure('Error: replace address=0.1 (boom)');
 
-    expect(error.message).toBe("hwp edit failed (exit 3)");
+    // Unclassified (#88): the engine's own Error: line and the step, no marker.
+    expect(error.message).toMatch(/^hwp edit failed \(exit 3\): .+\. Fix or remove the pending edit it names, then apply again\.$/u);
+    expect(error.message).not.toContain("edit refused:");
   });
 
   it("does not call a mixed unapplied list an unmatched replace (t14-g8)", async () => {
@@ -80,7 +82,9 @@ describe("unmatched replace refusal classification", () => {
       "(--allow-partial로 일치한 요청만 적용 가능)",
     );
 
-    expect(error.message).toBe("hwp edit failed (exit 3)");
+    // Unclassified (#88): the engine's own Error: line and the step, no marker.
+    expect(error.message).toMatch(/^hwp edit failed \(exit 3\): .+\. Fix or remove the pending edit it names, then apply again\.$/u);
+    expect(error.message).not.toContain("edit refused:");
     expect(error.message).not.toContain("unmatched_replace");
   });
 
@@ -97,7 +101,9 @@ describe("unmatched replace refusal classification", () => {
       "(--allow-partial로 일치한 요청만 적용 가능)",
     );
 
-    expect(error.message).toBe("hwp edit failed (exit 3)");
+    // Unclassified (#88): the engine's own Error: line and the step, no marker.
+    expect(error.message).toMatch(/^hwp edit failed \(exit 3\): .+\. Fix or remove the pending edit it names, then apply again\.$/u);
+    expect(error.message).not.toContain("edit refused:");
     expect(error.message).not.toContain("unmatched_replace");
   });
 
@@ -124,7 +130,9 @@ describe("unmatched replace refusal classification", () => {
       "(--allow-partial로 일치한 요청만 적용 가능)",
     );
 
-    expect(error.message).toBe("hwp edit failed (exit 3)");
+    // Unclassified (#88): the engine's own Error: line and the step, no marker.
+    expect(error.message).toMatch(/^hwp edit failed \(exit 3\): .+\. Fix or remove the pending edit it names, then apply again\.$/u);
+    expect(error.message).not.toContain("edit refused:");
     expect(error.message).not.toContain("unmatched_replace");
   });
 });
