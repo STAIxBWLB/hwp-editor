@@ -15,12 +15,24 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createCliEngine, HANDSHAKE_FLAGS, HwpCliError } from "../src/cli-engine.js";
 import { createHwpEditorHandler } from "../src/routes.js";
 import { createFakeBin, disposeFakeBins } from "./fake-bin.js";
 import { hwpxBytes, multipartRequest } from "./helpers.js";
+
+// Cleanup assertions observe only this suite's calls, not another worker's
+// live image upload directory in the shared system temporary directory.
+let lifecycleRoot: string;
+beforeAll(() => {
+  lifecycleRoot = mkdtempSync(path.join(tmpdir(), "hwp-lifecycle-root-"));
+  for (const name of ["TMPDIR", "TMP", "TEMP"]) vi.stubEnv(name, lifecycleRoot);
+});
+afterAll(() => {
+  vi.unstubAllEnvs();
+  rmSync(lifecycleRoot, { recursive: true, force: true });
+});
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
