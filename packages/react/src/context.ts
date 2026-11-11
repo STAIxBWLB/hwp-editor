@@ -50,7 +50,12 @@ export interface HwpEditorContextValue {
   replaceDocument: (
     produce: (current: DocumentHandle) => Promise<DocumentHandle>,
   ) => Promise<boolean>;
-  /** Re-read + re-render the current document after an external change. */
+  /**
+   * Re-read + re-render the current document after an external change. A load
+   * in flight, or one that starts while the read runs, makes this reject with
+   * the sentence saying so: the document it read is not the one on screen, so
+   * resolving would report a re-read that never landed.
+   */
   refresh: () => Promise<void>;
   /**
    * The current document's `styles-v1` table, or null when this host has no
@@ -78,6 +83,22 @@ export interface HwpEditorContextValue {
    * compose must not replace the file the host selected meanwhile.
    */
   loadEpoch: () => number;
+  /**
+   * Whether a load that will read bytes is running. A RENDER HINT, for
+   * controls that are better disabled than refused: it is one render behind
+   * the generations above, so a panel disables on it and never decides from it
+   * whether an action is legal — every refusal compares `loadEpoch` (or the
+   * store's document), which is what makes the refusal correct even when this
+   * flag is stale.
+   */
+  loadInFlight: boolean;
+  /**
+   * Re-read the current document's `styles-v1` table without leaving the
+   * document: the failed Styles tab's own retry. The editor also re-reads the
+   * table after a successful `refresh`, because the bytes the table describes
+   * were just re-read.
+   */
+  retryStyles: () => void;
   /** Open the compose panel (new-document flow). */
   openCompose: () => void;
   /**

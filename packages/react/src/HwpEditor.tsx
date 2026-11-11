@@ -298,6 +298,12 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
      * handle answers "is this still the document I chose in".
      */
     const [documentOrigin, setDocumentOrigin] = useState(0);
+    /**
+     * Whether a load that will read bytes is running. A render hint for the
+     * controls that are better disabled than refused: it is one render behind
+     * the refs it describes, so every refusal still compares the generations.
+     */
+    const [loadInFlight, setLoadInFlight] = useState(false);
     const [tab, setTab] = useState<SideTab>("para");
     const [composing, setComposing] = useState(false);
     /**
@@ -313,6 +319,13 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
      * effect's cancellation flag.
      */
     const [stylesLoad, setStylesLoad] = useState<{ document: DocumentHandle; table: StyleTable | null; failed: boolean } | null>(null);
+    /**
+     * Bumped by a read of the document that finished — the Styles tab's retry,
+     * and every refresh, which re-reads bytes the table was derived from. A
+     * counter rather than a callback so the effect below keeps one dependency
+     * list, and one press is exactly one read.
+     */
+    const [stylesReload, setStylesReload] = useState(0);
     const styles = state.document !== null && stylesLoad !== null && stylesLoad.document === state.document
       ? stylesLoad.table
       : null;
@@ -367,12 +380,14 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     const loadingSentence = useRef("");
     loadingSentence.current = t("error.loadingReplacement");
     /**
-     * Mark a load complete, which opens the replacement guard, and drop the
-     * "still loading" sentence it has just made untrue: that notice is set
-     * while a load runs, so nothing else would ever take it down.
+     * Mark a load complete, which opens the replacement guard, closes the
+     * in-flight hint, and drops the "still loading" sentence it has just made
+     * untrue: that notice is set while a load runs, so nothing else would ever
+     * take it down.
      */
     const markLoaded = useCallback((generation: number): void => {
       loadedGeneration.current = generation;
+      setLoadInFlight(false);
       setNotice((current) => (current === loadingSentence.current ? null : current));
     }, []);
     /** The envelope an attempt has already been made against, so none repeats. */
@@ -409,9 +424,6 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     // Load the document whenever the engine/file pair changes.
     useEffect(() => {
       const generation = ++loadGeneration.current;
-      // Every load is a new document, even one whose file has the name of the
-      // document it replaces: a panel's choice of row belongs to the one before.
-      setDocumentOrigin((count) => count + 1);
       let cancelled = false;
       // A notice describes one attempt against the document that is going
       // away, so a load retires it along with that document's ids.
@@ -421,12 +433,18 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         setCapabilities(null);
         setValidation(null);
         setLoadError(null);
-        // Nothing loads here, and no store transition follows: the store keeps
-        // the previous document, so marking complete only opens the replacement
-        // guard. Resetting the store on a null file is a separate gap.
+        // The host chose no document, so nothing may keep acting on the one
+        // that closed: an empty store is what makes Apply, the template panel
+        // and Styles no-ops, and it is also the only way out of "applying" for
+        // a document closed mid-apply. The generation still ends here, because
+        // no load is coming to end it.
+        store.dispatch({ type: "unload" });
         markLoaded(generation);
         return;
       }
+      // A load that will read bytes runs until `markLoaded` records its
+      // outcome; the null-file branch above never starts one.
+      setLoadInFlight(true);
       (async () => {
         try {
           const caps = await engine.capabilities();
@@ -441,6 +459,13 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           setValidation(report);
           setLoadError(null);
           store.dispatch({ type: "load", document: file, pages });
+          // Every load is a new document, even one whose file has the name of
+          // the document it replaces: a panel's choice of row belongs to the
+          // one before. Bumped where the load LANDS, not where it starts: a
+          // load that fails leaves the previous document on screen and keeps
+          // editing it, so a choice made in that document is still a choice in
+          // the document the user is working on.
+          setDocumentOrigin((count) => count + 1);
           markLoaded(generation);
           // Once per completed load, from THIS effect only: a second effect
           // keyed on envelope/pages would re-fire after every apply and undo.
@@ -906,6 +931,16 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       const snapshot = store.getState();
       const previous = snapshot.snapshots[snapshot.snapshots.length - 1];
       if (snapshot.status === "applying" || previous === undefined) return Promise.resolve();
+      // Every snapshot was taken from the document the store holds, and a load
+      // in flight is about to replace it: the undo would restore bytes the host
+      // has already left. Same pair `replaceDocument` and `applyPendingOps`
+      // read, and said out loud because the toolbar's Revert stays enabled
+      // while the load runs.
+      if (loadGeneration.current !== loadedGeneration.current) {
+        noteRefusal(t("error.loadingReplacement"));
+        return Promise.resolve();
+      }
+      const generation = loadGeneration.current;
       return (async () => {
         try {
           // BUG-02: the badge described the document being undone away, so
@@ -916,6 +951,10 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
             engine.render(previous, RENDER_SVG),
             engine.validate(previous).catch(() => null),
           ]);
+          // A load or a compose that moved the generation owns the document
+          // now; its own transition replaced the snapshot stack too, so this
+          // result is dropped whole rather than installed over the new one.
+          if (generation !== loadGeneration.current) return;
           // Dispatch only after the engine succeeds: popping the snapshot
           // first and failing mid-undo left the canvas showing the pre-undo
           // envelope while the store claimed the previous document. A second
@@ -940,31 +979,59 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           emitError(e);
         }
       })();
-    }, [engine, store]);
+    }, [engine, noteRefusal, store, t]);
 
     const refresh = useCallback(async () => {
       const snapshot = store.getState();
       if (snapshot.document === null) return;
+      // The bytes read here are the ones the store holds, and a load in flight
+      // is about to replace them: this re-read would install an envelope for a
+      // document the host has already left. Refused like `replaceDocument`,
+      // because a host that passes no callback would otherwise see the call
+      // resolve and believe the surface was re-read.
+      if (loadGeneration.current !== loadedGeneration.current) {
+        const refusal = new Error(t("error.loadingReplacement"));
+        noteRefusal(refusal.message, refusal);
+        throw refusal;
+      }
+      const generation = loadGeneration.current;
       try {
         const [nextEnvelope, pages, report] = await Promise.all([
           engine.read(snapshot.document),
           engine.render(snapshot.document, RENDER_SVG),
           engine.validate(snapshot.document).catch(() => null),
         ]);
+        // A load that started while this read ran owns the document now: its
+        // own envelope replaces whatever this one has to say. Rejected rather
+        // than returned quietly, because `await refresh()` would otherwise
+        // report a re-read that was thrown away.
+        if (generation !== loadGeneration.current) throw new Error(t("error.staleRefresh"));
         setEnvelope(nextEnvelope);
         setValidation(report);
         store.dispatch({ type: "setPages", pages });
+        // The bytes were re-read, so the table derived from them is stale too;
+        // this is also the failed Styles tab's retry that does not need a new
+        // file.
+        setStylesReload((count) => count + 1);
       } catch (e) {
         // A no-op resolves quietly (above); a FAILURE must be observable to
-        // the awaiting host, so surface it three ways and reject.
-        setLoadError(toEditorError(e));
+        // the awaiting host, so surface it three ways and reject. A reading
+        // that a load superseded is not a failure of the document now on
+        // screen: the load owns the error line, so only the host hears it.
+        if (generation === loadGeneration.current) setLoadError(toEditorError(e));
         emitError(e);
         throw e;
       }
-    }, [engine, store]);
+    }, [engine, noteRefusal, store, t]);
 
     const openCompose = useCallback(() => setComposing(true), []);
     const loadEpoch = useCallback(() => loadGeneration.current, []);
+    /**
+     * Re-read the styles table without leaving the document: the failed
+     * Styles tab's own way back, and the reason its sentence no longer asks
+     * for a reload of the file.
+     */
+    const retryStyles = useCallback((): void => setStylesReload((count) => count + 1), []);
 
     /**
      * The sentence a failed table read put on the notice line, captured as it
@@ -974,8 +1041,9 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
      */
     const stylesFailureSentence = useRef("");
     /**
-     * Read the named styles once per document. Every applied edit, undo and
-     * new file replaces `state.document`, which is the only signal that makes
+     * Read the named styles once per document, and again whenever that
+     * document's bytes are re-read (`stylesReload`). Every applied edit, undo
+     * and new file replaces `state.document`, which is the signal that makes
      * the table stale; a host without `styles` (or an engine below 1.4.0,
      * which is the same advertisement) keeps it null and the tab says why.
      */
@@ -1006,12 +1074,13 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         },
       );
       return () => { cancelled = true; };
-      // `t` is deliberately absent: a locale change (or a host that rebuilds an
-      // inline `messages` object on every render) would otherwise re-read the
-      // table, and with it the rows a panel is holding. The one sentence this
-      // effect writes is captured in `stylesFailureSentence` as it is recorded.
+      // `t` is deliberately absent: the one sentence this effect writes is
+      // captured in `stylesFailureSentence` as it is recorded, so a locale
+      // change retires that exact text without re-reading the table (and the
+      // rows a panel is holding). `stylesReload` is the explicit way back from
+      // a failed read, which is what the tab's Retry presses.
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [capabilities?.styles, engine, noteNotice, state.document]);
+    }, [capabilities?.styles, engine, noteNotice, state.document, stylesReload]);
 
     useImperativeHandle(
       ref,
@@ -1043,6 +1112,11 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         // retire a choice made in the previous document without retiring it
         // every time the document is edited.
         documentOrigin,
+        // A hint for controls that are better disabled than refused, and one
+        // render behind the refs: every refusal compares those, so a panel
+        // that reads this never decides whether an action is legal.
+        loadInFlight,
+        retryStyles,
         // Always defined now, and stable: a widening, since every consumer
         // already calls it as `onError?.(e)` and it no-ops when the host
         // supplied no callback. The payload is unchanged.
@@ -1067,6 +1141,8 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         loadEpoch,
         t,
         documentOrigin,
+        loadInFlight,
+        retryStyles,
       ],
     );
 

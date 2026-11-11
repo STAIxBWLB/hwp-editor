@@ -91,6 +91,12 @@ export const initialState: EditorState = {
 
 export type EditorAction =
   | { type: "load"; document: DocumentHandle; pages?: PageImage[] }
+  /**
+   * The host chose no document. Deliberately outside the `applying` lock: a
+   * store whose document was closed mid-apply has no other way back to clean,
+   * and the lock exists to protect a document, not to outlive it.
+   */
+  | { type: "unload" }
   | { type: "setPages"; pages: PageImage[] }
   | { type: "select"; selection: SegmentRef | null }
   | { type: "selectMany"; selections: SegmentRef[]; primary?: SegmentRef; anchor?: SegmentRef }
@@ -120,6 +126,12 @@ export function reducer(state: EditorState, action: EditorAction): EditorState {
         document: action.document,
         pages: action.pages ?? [],
       };
+    case "unload":
+      // Nothing survives a closed document: not the ops staged against it,
+      // not the snapshots that would restore it, not a selection addressing
+      // its paragraphs. Apply, the template panel and Styles read this store,
+      // so an empty one is what makes them act on nothing.
+      return initialState;
     case "setPages":
       return { ...state, pages: action.pages };
     case "select":

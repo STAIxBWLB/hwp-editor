@@ -242,6 +242,7 @@ export const en = {
   "compose.cancel": "Cancel",
   "compose.submit": "Create document",
   "compose.submitting": "Creating…",
+  "compose.loadingInFlight": "A document is still loading. Creating one now would replace the file you just chose, so this waits for the load to finish.",
   /** Filename stem used when the compose form has no title. */
   "compose.defaultFileStem": "New document",
   "compose.componentsTitle": "Or assemble from components",
@@ -427,6 +428,7 @@ export const en = {
   "error.pendingReplacement": "Pending edits would be lost; apply or clear them before replacing this document.",
   "error.loadingReplacement": "A new document is still loading; wait for it to finish, then retry.",
   "error.staleApply": "The document changed while this edit was running, so its result was discarded; apply again.",
+  "error.staleRefresh": "The document changed while it was being re-read, so that reading was discarded; refresh again on the document now open.",
   "document.panelAria": "Document settings",
   "document.metadata": "Metadata",
   "document.metaTitle": "Title",
@@ -515,7 +517,8 @@ export const en = {
   "styles.unavailableHost": "This host does not serve the styles command; update the engine adapter on the host, then retry.",
   "styles.checkingHost": "Checking whether this host supports named styles...",
   "styles.loading": "Reading styles...",
-  "styles.loadFailed": "The style table could not be read; reload the document and retry.",
+  "styles.loadFailed": "The style table could not be read; retry here to read it again.",
+  "styles.retry": "Retry reading styles",
   "styles.empty": "This document defines no paragraph styles.",
   "styles.kindUnknown": "The document does not record this style's kind, so it cannot be edited here. Edit the paragraph directly, or rebuild the document so the style carries its kind.",
   "styles.attrsUnresolved": "Some of this style's shapes do not resolve in this document, so those fields are unavailable rather than filled with a default. Set what resolves here, or edit the paragraph directly.",
@@ -547,7 +550,7 @@ export const en = {
   "segment.clearDirect": "Clear direct formatting",
   "segment.directStyleUnknown": "The document's style table does not list this paragraph, so its style name is unknown here and the overrides cannot be cleared safely. Reload the document; if it stays unlisted, the host's styles command does not name it.",
   "segment.directStyleLoading": "The style table is still loading, so this paragraph's style name is not known yet.",
-  "segment.directStyleFailed": "The style table could not be read, so this paragraph's style name is unknown and the overrides cannot be cleared safely. Reload the document to read it again.",
+  "segment.directStyleFailed": "The style table could not be read, so this paragraph's style name is unknown and the overrides cannot be cleared safely. Read it again in the Styles tab.",
   "segment.directStyleUnavailable": "This engine does not publish style names: the styles command needs hwp-cli 1.4.0 or newer, so the overrides cannot be cleared safely here.",
 
 };
@@ -752,6 +755,7 @@ export const ko: MessageTable = {
   "compose.cancel": "취소",
   "compose.submit": "문서 생성",
   "compose.submitting": "생성 중...",
+  "compose.loadingInFlight": "문서를 아직 불러오는 중입니다. 지금 새 문서를 만들면 방금 고른 파일을 덮어쓰게 되므로, 불러오기가 끝난 뒤에 만들 수 있습니다.",
   "compose.defaultFileStem": "새 문서",
   "compose.componentsTitle": "또는 구성 요소로 만들기",
   "compose.componentsHint":
@@ -924,6 +928,7 @@ export const ko: MessageTable = {
   "error.pendingReplacement": "대기 중인 편집이 사라질 수 있습니다. 문서를 바꾸기 전에 편집을 적용하거나 지우세요.",
   "error.loadingReplacement": "새 문서를 아직 불러오는 중입니다. 불러오기가 끝난 뒤에 다시 시도하세요.",
   "error.staleApply": "편집이 실행되는 동안 문서가 바뀌어 그 결과를 적용하지 않았습니다. 다시 적용하세요.",
+  "error.staleRefresh": "다시 읽는 동안 문서가 바뀌어 그 결과를 버렸습니다. 지금 열린 문서에서 다시 새로 고치세요.",
   "document.panelAria": "문서 설정",
   "document.metadata": "문서 정보",
   "document.metaTitle": "제목",
@@ -1012,7 +1017,8 @@ export const ko: MessageTable = {
   "styles.unavailableHost": "이 호스트는 스타일 명령을 제공하지 않습니다. 호스트의 엔진 어댑터를 업데이트한 뒤 다시 시도하세요.",
   "styles.checkingHost": "이 호스트가 스타일을 지원하는지 확인하는 중...",
   "styles.loading": "스타일 읽는 중...",
-  "styles.loadFailed": "스타일 표를 읽을 수 없습니다. 문서를 다시 불러온 뒤 재시도하세요.",
+  "styles.loadFailed": "스타일 표를 읽지 못했습니다. 여기서 다시 시도하면 표를 다시 읽습니다.",
+  "styles.retry": "스타일 다시 읽기",
   "styles.empty": "이 문서에는 문단 스타일이 없습니다.",
   "styles.kindUnknown": "문서가 이 스타일의 종류를 기록하지 않아 여기서 편집할 수 없습니다. 문단을 직접 서식하거나, 스타일이 종류를 담고 있도록 문서를 다시 만드세요.",
   "styles.attrsUnresolved": "이 스타일의 서식 중 일부가 문서에서 확인되지 않아, 기본값으로 채우지 않고 해당 항목을 비활성화했습니다. 확인되는 항목만 설정하거나 문단을 직접 서식하세요.",
@@ -1043,7 +1049,7 @@ export const ko: MessageTable = {
   "segment.clearDirect": "직접 서식 지우기",
   "segment.directStyleUnknown": "문서의 스타일 표에 이 문단이 없어 스타일 이름을 알 수 없습니다. 덮어쓴 값을 안전하게 지울 수 없습니다. 문서를 다시 불러오고, 그래도 없으면 호스트의 스타일 명령이 이 문단을 알려주지 않는 것입니다.",
   "segment.directStyleLoading": "스타일 표를 아직 읽는 중이라 이 문단의 스타일 이름을 알 수 없습니다.",
-  "segment.directStyleFailed": "스타일 표를 읽지 못해 이 문단의 스타일 이름을 알 수 없습니다. 덮어쓴 값을 안전하게 지울 수 없습니다. 문서를 다시 불러와 표를 다시 읽으세요.",
+  "segment.directStyleFailed": "스타일 표를 읽지 못해 이 문단의 스타일 이름을 알 수 없습니다. 덮어쓴 값을 안전하게 지울 수 없습니다. 스타일 탭에서 표를 다시 읽으세요.",
   "segment.directStyleUnavailable": "이 엔진은 스타일 이름을 알려주지 않습니다. 스타일 명령에는 hwp-cli 1.4.0 이상이 필요하므로 여기서는 덮어쓴 값을 안전하게 지울 수 없습니다.",
 
 };

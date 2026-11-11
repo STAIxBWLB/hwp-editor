@@ -980,4 +980,34 @@ describe("styles tab operations (en)", () => {
     expect(await screen.findByRole("button", { name: /바탕글/ })).toBeTruthy();
     await waitFor(() => expect(screen.queryByText(en["styles.loadFailed"])).toBeNull());
   });
+
+  /**
+   * #53 follow-up 3: the read is the tab's own, so the way back from it must
+   * not cost the user a reload of the file. One press re-reads the table, and
+   * the sentence that described the failure goes with the read that works.
+   */
+  it("retries a failed read from the tab, without reloading the document", async () => {
+    const base = createMockEngine({ envelope: envelopeWithIds() });
+    let calls = 0;
+    const engine: HwpEngine = {
+      ...base,
+      capabilities: async () => ({ ...(await base.capabilities()), styles: "v1" as const }),
+      styles: async () => {
+        calls += 1;
+        if (calls === 1) throw new Error("read failed");
+        return TABLE;
+      },
+    };
+    renderEditor(engine);
+    fireEvent.click(await screen.findByRole("tab", { name: en["tabs.styles"] }));
+
+    // The cause, and the next step the tab itself can carry out.
+    expect(screen.getAllByText(en["styles.loadFailed"]).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: /바탕글/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: en["styles.retry"] }));
+
+    expect(await screen.findByRole("button", { name: /바탕글/ })).toBeTruthy();
+    expect(calls).toBe(2);
+    await waitFor(() => expect(screen.queryByText(en["styles.loadFailed"])).toBeNull());
+  });
 });

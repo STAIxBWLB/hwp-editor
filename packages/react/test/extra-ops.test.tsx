@@ -36,6 +36,8 @@ function renderPanel(locale: "en" | "ko", panel: "document" | "fields" | "segmen
     documentOrigin: 0,
     openCompose: () => undefined,
     loadEpoch: () => 0,
+    loadInFlight: false,
+    retryStyles: () => undefined,
     t: createT(locale),
   } as HwpEditorContextValue;
   const component = panel === "document" ? <DocumentPanel />

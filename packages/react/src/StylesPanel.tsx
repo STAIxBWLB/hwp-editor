@@ -255,7 +255,8 @@ function DefinitionForm(
 export function StylesPanel(): JSX.Element {
   const {
     store, engine, state, envelope, editable, capabilities,
-    styles, stylesStatus, replaceDocument, noteNotice, documentOrigin, t,
+    styles, stylesStatus, replaceDocument, noteNotice, documentOrigin, loadEpoch,
+    retryStyles, t,
   } = useHwpEditorContext();
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [promoteName, setPromoteName] = useState("");
@@ -427,6 +428,10 @@ export function StylesPanel(): JSX.Element {
    */
   const switchPreset = (): void => {
     if (styles === null || envelope === null) return;
+    // The generation this press belongs to. A load the host starts while the
+    // batch runs owns the document now, and a sentence about what this preset
+    // did to the previous one would describe a document the user has left.
+    const epoch = loadEpoch();
     // The envelope is what separates the body paragraphs from table cells when
     // the body style is picked; the table alone cannot tell them apart. A
     // document that defines no paragraph style sends the preset alone, and the
@@ -459,9 +464,15 @@ export function StylesPanel(): JSX.Element {
       return reading.unchanged ? current : styled;
     })
       .then((applied) => {
-        // Only when this attempt still owns the document: an unchanged switch
-        // leaves the one it started from, and a result a load superseded says
-        // nothing about the document now on screen.
+        // The press's own document only. A load that started while the batch
+        // ran has taken the surface over, so the preset's outcome is not news
+        // about the document now on screen — its own load ended the condition
+        // this sentence would describe.
+        if (loadEpoch() !== epoch) return;
+        // A replacement the editor discarded inside this generation (an undo,
+        // a newer replace) leaves a document that is not the one this press
+        // read, so its outcome describes nothing on screen. An unchanged
+        // switch leaves `before` in place, and does have news.
         if (!applied && store.getState().document !== before) return;
         // A switch that did style something, on a document that has a table
         // to style, is the quiet outcome: the tables moved.
@@ -490,9 +501,20 @@ export function StylesPanel(): JSX.Element {
     <div className="hwped-panel" role="region" aria-label={t("tabs.styles")}>
       <div className="hwped-field">
         <span className="hwped-label">{t("styles.definition")}</span>
-        {styles === null && <p className="hwped-hint" role="status">{
-          stylesStatus === "failed" ? t("styles.loadFailed") : t("styles.loading")
-        }</p>}
+        {styles === null && stylesStatus !== "failed" && (
+          <p className="hwped-hint" role="status">{t("styles.loading")}</p>
+        )}
+        {styles === null && stylesStatus === "failed" && (
+          <div className="hwped-row">
+            {/* The retry lives here, inside the tab that needs the table: the
+                read is this panel's own, so the way back from it must not cost
+                the user a reload of the file. */}
+            <p className="hwped-hint" role="status">{t("styles.loadFailed")}</p>
+            <button type="button" className="hwped-btn" onClick={retryStyles}>
+              {t("styles.retry")}
+            </button>
+          </div>
+        )}
         {styles !== null && rows.length === 0 && <p className="hwped-hint">{t("styles.empty")}</p>}
         {rows.length > 0 && (
           <ul className="hwped-list">

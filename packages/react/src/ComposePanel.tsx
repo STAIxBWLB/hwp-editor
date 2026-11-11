@@ -64,7 +64,7 @@ interface AssemblyRow {
  * name and the document metadata in both sources.
  */
 export function ComposePanel(props: ComposePanelProps): JSX.Element {
-  const { engine, t, onError, store, state, loadEpoch } = useHwpEditorContext();
+  const { engine, t, onError, store, state, loadEpoch, loadInFlight } = useHwpEditorContext();
   const components = props.components ?? STARTER_COMPONENTS;
   const [preset, setPreset] = useState<ComposePreset>("official");
   const [title, setTitle] = useState("");
@@ -78,7 +78,14 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
   const assembling = assembly.length > 0;
   const [error, setError] = useState<EditorError | null>(null);
   const canCreate = props.canCreate ?? true;
-  const locked = !canCreate || busy;
+  /**
+   * A load in flight is the one state `canCreate` cannot see: the store still
+   * holds the old document until the load resolves, so a created document
+   * would replace the file the host has just chosen. Disabled here, with the
+   * sentence that says why; the flow's own guards still compare the captured
+   * epoch, because this flag is a render hint and can lag a started load.
+   */
+  const locked = !canCreate || busy || loadInFlight;
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
@@ -235,10 +242,10 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
             <p className="hwped-hint">{t("templates.disabled", { reason: !embeddedStatus.supported ? templateStatusReason(t, embeddedStatus, "listTemplates") : templateStatusReason(t, createStatus, "create"), remedy: t("templates.remedy") })}</p>
           ) : (
             <div className="hwped-row">
-              <select className="hwped-input" aria-label={t("templates.embeddedPicker")} value={templateId} onChange={(e) => setTemplateId(e.target.value)} disabled={busy || !canCreate || templates.length === 0}>
+              <select className="hwped-input" aria-label={t("templates.embeddedPicker")} value={templateId} onChange={(e) => setTemplateId(e.target.value)} disabled={locked || templates.length === 0}>
                 {templates.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
               </select>
-              <button type="button" className="hwped-btn" disabled={busy || !canCreate || templateId === ""} onClick={() => void createEmbedded()}>{t("templates.createEmbedded")}</button>
+              <button type="button" className="hwped-btn" disabled={locked || templateId === ""} onClick={() => void createEmbedded()}>{t("templates.createEmbedded")}</button>
             </div>
           )}
         </section>
@@ -277,7 +284,7 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
             id="hwped-compose-title"
             className="hwped-input"
             type="text"
-            disabled={!canCreate || busy}
+            disabled={locked}
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder={t("compose.titlePlaceholder")}
@@ -395,6 +402,8 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
           )}
         </section>
 
+        {loadInFlight && <p className="hwped-hint" role="status">{t("compose.loadingInFlight")}</p>}
+
         {error !== null && (
           <ErrorLine prefix={t("error.prefix.compose")} {...error} />
         )}
@@ -412,7 +421,7 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
             type="button"
             className="hwped-btn hwped-btn-primary"
             onClick={() => void compose()}
-            disabled={busy || !canCreate}
+            disabled={locked}
           >
             {busy ? t("compose.submitting") : t("compose.submit")}
           </button>
