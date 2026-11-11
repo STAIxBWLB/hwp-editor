@@ -36,11 +36,14 @@ async function loadSelectionFixture(page: Page): Promise<CatEnvelope> {
 
 test("AC5: a made placeholder round-trips the selected text through a fill", async ({ page }) => {
   await loadSelectionFixture(page);
-  // Paragraph 1 is one run ("둘째 😀문단"), so the whole run is the selection and
-  // the placeholder replaces exactly the text the user picked.
+  // Paragraph 2 is one run of plain text ("셋째 문단"), which is what the guard
+  // accepts: the whole run is the selection, so the placeholder replaces
+  // exactly the text the user picked.
   const list = page.getByRole("listbox", { name: en["segment.paragraphChoices"] });
-  await list.getByRole("option").nth(1).click();
-  await selectRunRange(page, 0, 7);
+  await list.getByRole("option").nth(2).click();
+  // "셋째 문단" is five scalars; the field's value also carries the paragraph's
+  // trailing separator, so the whole run is 0..5 and not the whole value.
+  await selectRunRange(page, 0, 5);
   await expect(page.getByText(en["segment.rangeRunCount"]({ count: 1 }), { exact: true })).toBeVisible();
   await page.getByLabel(en["segment.placeholderNameAria"], { exact: true }).fill("owner");
   await page.getByRole("button", { name: en["segment.placeholderCreate"], exact: true }).click();
@@ -48,7 +51,7 @@ test("AC5: a made placeholder round-trips the selected text through a fill", asy
   await page.getByRole("button", { name: en["toolbar.applyWithCount"]({ count: 1 }), exact: true }).click();
   const slotted = await (await applied).json() as CatEnvelope;
   expect(slotted.markdown).toContain("{{owner}}");
-  expect(slotted.markdown).not.toContain("둘째 😀문단");
+  expect(slotted.markdown).not.toContain("셋째 문단");
 
   // The new slot is what the Template panel offers without a reload path of
   // its own: it reads slots from the document the apply installed.
@@ -65,15 +68,16 @@ test("AC5: a made placeholder round-trips the selected text through a fill", asy
   expect(filled.markdown).not.toContain("{{owner}}");
 });
 
-test("a range whose text repeats in the paragraph cannot become a placeholder", async ({ page }) => {
+test("a paragraph that is not plain text cannot become a placeholder", async ({ page }) => {
   await loadSelectionFixture(page);
   const list = page.getByRole("listbox", { name: en["segment.paragraphChoices"] });
   await list.getByRole("option").nth(0).click();
-  // Run 0 reads 동일문, which the paragraph carries twice: the addressed
-  // replace would rewrite both, so the control has to stay off.
+  // This paragraph's runs carry bold and italic markers, so the projection is
+  // not the text the engine matches: the control stays off rather than cutting
+  // a find out of a rendering it cannot vouch for.
   await selectRunRange(page, 0, 3);
   await expect(page.getByText(en["segment.rangeRunCount"]({ count: 1 }), { exact: true })).toBeVisible();
   await page.getByLabel(en["segment.placeholderNameAria"], { exact: true }).fill("owner");
-  await expect(page.getByText(en["segment.placeholderAmbiguous"], { exact: true })).toBeVisible();
+  await expect(page.getByText(en["segment.placeholderRefused"], { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: en["segment.placeholderCreate"], exact: true })).toBeDisabled();
 });

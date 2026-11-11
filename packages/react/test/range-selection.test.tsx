@@ -66,6 +66,41 @@ function noRunEnvelope(): CatEnvelope {
   };
 }
 
+/** A plain body paragraph beside one that holds an `{{owner}}` slot. */
+function slotEnvelope(): CatEnvelope {
+  const body = "Bold text";
+  const slot = "Owner: {{owner}}";
+  const slotStart = [...body].length + 2;
+  return {
+    markdown: `${body}\n\n${slot}\n\n`,
+    segments: [
+      { id: "para-body", indices: [0], start: 0, end: body.length, kind: "para", section: 0, para: 0 },
+      { id: "run-body", indices: [0, 0], start: 0, end: body.length, kind: "run", section: 0, para: 0 },
+      { id: "para-slot", indices: [1], start: slotStart, end: slotStart + slot.length, kind: "para", section: 0, para: 1 },
+      { id: "run-slot", indices: [1, 0], start: slotStart, end: slotStart + slot.length, kind: "run", section: 0, para: 1 },
+    ],
+  };
+}
+
+/** A table cell's own paragraph, nested four indices deep inside the table. */
+function cellEnvelope(): CatEnvelope {
+  const table = "| ab |\n| --- |";
+  const tableStart = 6;
+  const cellStart = tableStart + 2;
+  return {
+    markdown: `body\n\n${table}\n\n`,
+    segments: [
+      { id: "para-body", indices: [1], start: 0, end: 4, kind: "para", section: 0, para: 0 },
+      { id: "run-body", indices: [1, 0], start: 0, end: 4, kind: "run", section: 0, para: 0 },
+      { id: "para-table", indices: [2], start: tableStart, end: tableStart + table.length, kind: "para", section: 0, para: 1 },
+      { id: "table", indices: [2, 0], start: tableStart, end: tableStart + table.length, kind: "table", section: 0, para: 1 },
+      { id: "cell", indices: [2, 0, 0], start: cellStart, end: cellStart + 2, kind: "cell", section: 0, para: 1 },
+      { id: "para-cell", indices: [2, 0, 0, 0], start: cellStart, end: cellStart + 2, kind: "para", section: 0, para: 1 },
+      { id: "run-cell", indices: [2, 0, 0, 0, 0], start: cellStart, end: cellStart + 2, kind: "run", section: 0, para: 1 },
+    ],
+  };
+}
+
 function unaddressableRunEnvelope(): CatEnvelope {
   // A nested paragraph whose run carries no id: the range exists, but this
   // client has no address for it, which is the metadata case, not an empty one.
@@ -176,33 +211,45 @@ describe.each([["en", en], ["ko", ko]] as const)("Markdown run range selection (
 
 describe.each([["en", en], ["ko", ko]] as const)("Making a placeholder from a range (%s)", (locale, messages) => {
   it("queues one addressed replace of the covered runs, with plain text as the find", async () => {
-    const engine = createMockEngine({ envelope: rangeEnvelope() });
+    const engine = createMockEngine({ envelope: sentenceEnvelope("Bold text", [[0, 4], [4, 9]]) });
     render(<HwpEditor engine={engine} file={file} locale={locale} />);
     const textarea = await selectFirstParagraph(messages);
-    await selectRange(textarea, 0, markdown.length);
+    await selectRange(textarea, 0, 4);
     fireEvent.change(screen.getByLabelText(messages["segment.placeholderNameAria"]), { target: { value: "owner" } });
     const make = screen.getByRole("button", { name: messages["segment.placeholderCreate"] }) as HTMLButtonElement;
     expect(make.disabled).toBe(false);
     fireEvent.click(make);
     fireEvent.click(await screen.findByRole("button", { name: messages["toolbar.applyWithCount"]({ count: 1 }) }));
     await waitFor(() => expect(engine.calls.edit).toHaveLength(1));
-    // The find is the paragraph's TEXT, not its Markdown: `hwp edit` matches
-    // document text, so the markers around the selected runs are stripped.
     expect(engine.calls.edit[0]?.ops).toEqual([
-      { kind: "replace", address: { id: "para-first" }, find: "Bold😀!", replace: "{{owner}}" },
+      { kind: "replace", address: { id: "para-one" }, find: "Bold", replace: "{{owner}}" },
+    ]);
+  });
+
+  it("joins the covered runs into one find, so a two-run selection is one replace", async () => {
+    const engine = createMockEngine({ envelope: sentenceEnvelope("Bold text", [[0, 4], [4, 9]]) });
+    render(<HwpEditor engine={engine} file={file} locale={locale} />);
+    const textarea = await selectFirstParagraph(messages);
+    await selectRange(textarea, 0, 9);
+    fireEvent.change(screen.getByLabelText(messages["segment.placeholderNameAria"]), { target: { value: "owner" } });
+    fireEvent.click(screen.getByRole("button", { name: messages["segment.placeholderCreate"] }));
+    fireEvent.click(await screen.findByRole("button", { name: messages["toolbar.applyWithCount"]({ count: 1 }) }));
+    await waitFor(() => expect(engine.calls.edit).toHaveLength(1));
+    expect(engine.calls.edit[0]?.ops).toEqual([
+      { kind: "replace", address: { id: "para-one" }, find: "Bold text", replace: "{{owner}}" },
     ]);
   });
 
   it("refuses a range that starts or ends inside a run instead of replacing the rest of it", async () => {
-    const engine = createMockEngine({ envelope: rangeEnvelope() });
+    const engine = createMockEngine({ envelope: sentenceEnvelope("Bold text", [[0, 4], [4, 9]]) });
     render(<HwpEditor engine={engine} file={file} locale={locale} />);
     const textarea = await selectFirstParagraph(messages);
-    // Scalars 0..4 end inside run-bold (0..8), so the op would replace text
-    // the user did not select.
-    await selectRange(textarea, 0, 4);
+    // 0..2 ends inside run-0 (0..4), so the op would replace text the user did
+    // not select.
+    await selectRange(textarea, 0, 2);
     fireEvent.change(screen.getByLabelText(messages["segment.placeholderNameAria"]), { target: { value: "owner" } });
     expect((screen.getByRole("button", { name: messages["segment.placeholderCreate"] }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText(messages["segment.placeholderWholeRuns"])).toBeTruthy();
+    expect(screen.getByText(messages["segment.placeholderRefused"])).toBeTruthy();
     expect(engine.calls.edit).toHaveLength(0);
   });
 
@@ -216,7 +263,7 @@ describe.each([["en", en], ["ko", ko]] as const)("Making a placeholder from a ra
     await selectRange(textarea, 0, 2);
     fireEvent.change(screen.getByLabelText(messages["segment.placeholderNameAria"]), { target: { value: "owner" } });
     expect((screen.getByRole("button", { name: messages["segment.placeholderCreate"] }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText(messages["segment.placeholderAmbiguous"])).toBeTruthy();
+    expect(screen.getByText(messages["segment.placeholderRefused"])).toBeTruthy();
     expect(engine.calls.edit).toHaveLength(0);
   });
 
@@ -224,7 +271,7 @@ describe.each([["en", en], ["ko", ko]] as const)("Making a placeholder from a ra
     render(<HwpEditor engine={createMockEngine({ envelope: rangeEnvelope() })} file={file} locale={locale} />);
     await selectFirstParagraph(messages);
     expect((screen.getByRole("button", { name: messages["segment.placeholderCreate"] }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText(messages["segment.placeholderNoRange"])).toBeTruthy();
+    expect(screen.getByText(messages["segment.placeholderRefused"])).toBeTruthy();
   });
 });
 
@@ -265,7 +312,7 @@ describe.each([["en", en], ["ko", ko]] as const)("Placeholder guards (%s)", (loc
       const engine = await openRange(markdown, [[0, end]], 0, end);
       typeName("x");
       expect(make().disabled).toBe(true);
-      expect(screen.getByText(messages["segment.placeholderRiskyMarkup"])).toBeTruthy();
+      expect(screen.getByText(messages["segment.placeholderRefused"])).toBeTruthy();
       expect(engine.calls.edit).toHaveLength(0);
       cleanup();
     }
@@ -279,7 +326,7 @@ describe.each([["en", en], ["ko", ko]] as const)("Placeholder guards (%s)", (loc
       const engine = await openRange(markdown, [[0, end]], 0, end);
       typeName("x");
       expect(make().disabled).toBe(true);
-      expect(screen.getByText(messages["segment.placeholderRiskyMarkup"])).toBeTruthy();
+      expect(screen.getByText(messages["segment.placeholderRefused"])).toBeTruthy();
       expect(engine.calls.edit).toHaveLength(0);
       cleanup();
     }
@@ -291,7 +338,7 @@ describe.each([["en", en], ["ko", ko]] as const)("Placeholder guards (%s)", (loc
     const engine = await openRange("1000", [[0, 2], [2, 4]], 2, 4);
     typeName("x");
     expect(make().disabled).toBe(true);
-    expect(screen.getByText(messages["segment.placeholderAmbiguous"])).toBeTruthy();
+    expect(screen.getByText(messages["segment.placeholderRefused"])).toBeTruthy();
     expect(engine.calls.edit).toHaveLength(0);
   });
 
@@ -303,7 +350,7 @@ describe.each([["en", en], ["ko", ko]] as const)("Placeholder guards (%s)", (loc
     ]);
     typeName("x");
     expect(make().disabled).toBe(true);
-    expect(screen.getByText(messages["segment.placeholderGap"])).toBeTruthy();
+    expect(screen.getByText(messages["segment.placeholderRefused"])).toBeTruthy();
     expect(engine.calls.edit).toHaveLength(0);
   });
 
@@ -341,7 +388,7 @@ describe.each([["en", en], ["ko", ko]] as const)("Placeholder guards (%s)", (loc
     await selectRange(textarea, 0, 4);
     typeName("x");
     expect(make().disabled).toBe(true);
-    expect(screen.getByText(messages["segment.placeholderPendingEdits"])).toBeTruthy();
+    expect(screen.getByText(messages["segment.placeholderRefused"])).toBeTruthy();
     expect(engine.calls.edit).toHaveLength(0);
   });
 
@@ -351,7 +398,7 @@ describe.each([["en", en], ["ko", ko]] as const)("Placeholder guards (%s)", (loc
     const engine = await openRange("aa bb", [[0, 2], [2, 3], [3, 5]], 2, 3);
     typeName("x");
     expect(make().disabled).toBe(true);
-    expect(screen.getByText(messages["segment.placeholderEmptySelection"])).toBeTruthy();
+    expect(screen.getByText(messages["segment.placeholderRefused"])).toBeTruthy();
     expect(engine.calls.edit).toHaveLength(0);
   });
 
@@ -360,7 +407,7 @@ describe.each([["en", en], ["ko", ko]] as const)("Placeholder guards (%s)", (loc
     expect(make().disabled).toBe(true);
     expect(screen.getByText(messages["segment.placeholderNameEmpty"])).toBeTruthy();
     expect(screen.queryByText(messages["segment.placeholderNameInvalid"])).toBeNull();
-    expect(screen.queryByText(messages["segment.placeholderRiskyMarkup"])).toBeNull();
+    expect(screen.queryByText(messages["segment.placeholderRefused"])).toBeNull();
     expect(engine.calls.edit).toHaveLength(0);
   });
 
@@ -369,6 +416,92 @@ describe.each([["en", en], ["ko", ko]] as const)("Placeholder guards (%s)", (loc
     typeName("own\ter");
     expect(make().disabled).toBe(true);
     expect(screen.getByText(messages["segment.placeholderNameInvalid"])).toBeTruthy();
+    expect(engine.calls.edit).toHaveLength(0);
+  });
+
+  it("refuses a paragraph whose projected text would have an edge space trimmed (t14-g6)", async () => {
+    // hwp-cli trims each fragment's edges, so the projection cannot show a
+    // space the engine's text still holds: any edge space means the two texts
+    // may already differ, and the find cannot be trusted.
+    for (const markdown of [" ab", "ab "]) {
+      const end = [...markdown].length;
+      const engine = await openRange(markdown, [[0, end]], 0, end);
+      typeName("x");
+      expect(make().disabled).toBe(true);
+      expect(screen.getByText(messages["segment.placeholderRefused"])).toBeTruthy();
+      expect(engine.calls.edit).toHaveLength(0);
+      cleanup();
+    }
+  });
+
+  it("refuses while a field edit is queued, whichever paragraph it touches (t14-g7)", async () => {
+    const engine = createMockEngine({ envelope: slotEnvelope() });
+    render(<HwpEditor engine={engine} file={file} locale={locale} />);
+    // A `set-field` writes its value into a paragraph's text, so the queue has
+    // to be empty — not merely free of `replace` and its siblings.
+    fireEvent.click(await screen.findByRole("tab", { name: messages["tabs.fields"] }));
+    fireEvent.change(await screen.findByLabelText(messages["fields.fieldValueAria"]({ name: "owner" })), { target: { value: "Kim" } });
+    fireEvent.click(screen.getByRole("button", { name: messages["fields.setValue"] }));
+    fireEvent.click(await screen.findByRole("tab", { name: messages["tabs.para"] }));
+    const options = await screen.findAllByRole("option");
+    fireEvent.click(options[0]!);
+    const textarea = await screen.findByRole("textbox", { name: messages["segment.rangeTextAria"] }) as HTMLTextAreaElement;
+    await waitFor(() => expect(textarea.disabled).toBe(false));
+    // The whole run, so the only thing left that can hold the control off is
+    // the queued field edit.
+    await selectRange(textarea, 0, 9);
+    typeName("x");
+    expect(make().disabled).toBe(true);
+    expect(screen.getByText(messages["segment.placeholderRefused"])).toBeTruthy();
+    expect(engine.calls.edit).toHaveLength(0);
+  });
+
+  it("refuses link syntax but accepts a whole-run bold marker (t14-g9)", async () => {
+    // `[b](a)` is stripped to its label, so a find of "a" would match the target
+    // the projection never shows. A whole-run `**...**` is the one marker the
+    // guard strips, and what it wraps is exactly the engine's run.
+    const linked = await openRange("[b](a)", [[0, 6]], 0, 6);
+    typeName("x");
+    expect(make().disabled).toBe(true);
+    expect(linked.calls.edit).toHaveLength(0);
+    cleanup();
+
+    const bold = await openRange("2**3**4", [[0, 1], [1, 6], [6, 7]], 1, 6);
+    typeName("x");
+    expect(make().disabled).toBe(false);
+    fireEvent.click(make());
+    fireEvent.click(await screen.findByRole("button", { name: messages["toolbar.applyWithCount"]({ count: 1 }) }));
+    await waitFor(() => expect(bold.calls.edit).toHaveLength(1));
+    expect(bold.calls.edit[0]?.ops).toEqual([
+      { kind: "replace", address: { id: "para-one" }, find: "3", replace: "{{x}}" },
+    ]);
+  });
+
+  it("refuses a table cell's own paragraph (t14-g10)", async () => {
+    // A cell's projection escapes `&` and `<`, and its path is four levels
+    // deep: the paragraph is not body text, so the control stays off.
+    const engine = createMockEngine({ envelope: cellEnvelope() });
+    render(<HwpEditor engine={engine} file={file} locale={locale} />);
+    const options = await screen.findAllByRole("option");
+    fireEvent.click(options[2]!);
+    const textarea = await screen.findByRole("textbox", { name: messages["segment.rangeTextAria"] }) as HTMLTextAreaElement;
+    await waitFor(() => expect(textarea.disabled).toBe(false));
+    await selectRange(textarea, 0, 2);
+    typeName("x");
+    expect(make().disabled).toBe(true);
+    expect(screen.getByText(messages["segment.placeholderRefused"])).toBeTruthy();
+    expect(engine.calls.edit).toHaveLength(0);
+  });
+
+  it("offers one reason that names only what it checks (t14-g11)", async () => {
+    // Every refusal shows the same sentence, so it cannot name a cause the
+    // guard does not test: it states the precondition and the two next steps.
+    const engine = await openRange("a ~~b~~ c", [[0, 9]], 0, 9);
+    typeName("x");
+    const reason = screen.getByText(messages["segment.placeholderRefused"]);
+    expect(reason.textContent).toBe(messages["segment.placeholderRefused"]);
+    expect(reason.textContent).not.toContain("link");
+    expect(reason.textContent).not.toContain("underline");
     expect(engine.calls.edit).toHaveLength(0);
   });
 });

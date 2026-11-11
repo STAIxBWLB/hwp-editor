@@ -783,12 +783,55 @@ function rethrowInsertBlocksRefusal(error: unknown, insertion: boolean, workDir:
  * client has no such text to classify, so the one stable cause travels instead:
  * `unmatched_replace`, which the editor renders as its own localized sentence.
  */
-const UNMATCHED_EDIT_MARKER = "적용되지 않은 편집 요청이 있습니다";
+const UNAPPLIED_EDIT_MARKER = "적용되지 않은 편집 요청이 있습니다";
+/** The engine closes the list with this hint; it is not part of any item. */
+const UNAPPLIED_EDIT_SUFFIX = "(--allow-partial";
 
+/**
+ * The ops the engine lists as unapplied, or undefined when its line is absent.
+ *
+ * Measured on ahwp 1.6.0: the items follow the marker after a colon and are
+ * separated by `, `, each opening with its op name — `replace address=0.0
+ * from="NOPE" to="x", set_field name="missing_field"`. A `from="..."` value may
+ * hold a comma of its own, so the split respects double quotes.
+ */
+function unappliedItems(stderr: string): string[] | undefined {
+  const markerAt = stderr.indexOf(UNAPPLIED_EDIT_MARKER);
+  if (markerAt < 0) return undefined;
+  const tail = stderr.slice(markerAt + UNAPPLIED_EDIT_MARKER.length);
+  const suffixAt = tail.indexOf(UNAPPLIED_EDIT_SUFFIX);
+  const body = (suffixAt < 0 ? tail : tail.slice(0, suffixAt)).replace(/^:\s*/u, "").trim();
+  if (body === "") return undefined;
+  const items: string[] = [];
+  let current = "";
+  let quoted = false;
+  for (const character of body) {
+    if (character === "\"") quoted = !quoted;
+    if (character === "," && !quoted) {
+      items.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += character;
+  }
+  items.push(current.trim());
+  return items.filter(item => item !== "");
+}
+
+/**
+ * Report an unapplied-edit refusal as the zero-match replace cause — but only
+ * when every op the engine lists is a replace. The same line carries
+ * set_field, create_field, delete_image and the rest, and telling a user whose
+ * field edit missed to "select the text again" would be a wrong remedy.
+ */
 function rethrowUnmatchedEditRefusal(error: unknown): never {
-  if (error instanceof HwpCliError && error.reason === "failed" &&
-      error.stderr !== undefined && error.stderr.includes(UNMATCHED_EDIT_MARKER)) {
-    throw new HwpCliError("failed", `${error.message}: edit refused: unmatched_replace`, error.stderr, error.detail);
+  if (error instanceof HwpCliError && error.reason === "failed" && error.stderr !== undefined) {
+    const items = unappliedItems(error.stderr);
+    if (items !== undefined && items.length > 0 && items.every(item => /^replace\s/u.test(item))) {
+      // The wrapper keeps the original reason: it is what `routes.ts` turns
+      // into the wire code, and this classifier only refines the message.
+      throw new HwpCliError(error.reason, `${error.message}: edit refused: unmatched_replace`, error.stderr, error.detail);
+    }
   }
   throw error;
 }

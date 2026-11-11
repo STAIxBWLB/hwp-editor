@@ -23,7 +23,7 @@ afterEach(disposeFakeBins);
 
 const UNMATCHED =
   "Error: 적용되지 않은 편집 요청이 있습니다: " +
-  'replace address={"at":{"section":0,"paragraph":1}} from="없는 텍스트" to="{{owner}}" ' +
+  'replace address=0.1 from="없는 텍스트" to="{{owner}}" ' +
   "(--allow-partial로 일치한 요청만 적용 가능)";
 
 const REPLACE: EditOp[] = [{
@@ -63,8 +63,35 @@ describe("unmatched replace refusal classification", () => {
   it("leaves a failure that is not the zero-match one on the bare exit line", async () => {
     // The marker is one sentence, not the whole `failed` class: any other
     // refusal keeps the exit line it had before this classifier existed.
-    const error = await failure('Error: replace address={"at":{"section":0,"paragraph":1}} (boom)');
+    const error = await failure('Error: replace address=0.1 (boom)');
 
     expect(error.message).toBe("hwp edit failed (exit 3)");
+  });
+
+  it("does not call a mixed unapplied list an unmatched replace (t14-g8)", async () => {
+    // The same line carries every unapplied op: set_field, create_field,
+    // delete_image and the rest. Measured on ahwp 1.6.0 with one missing
+    // `from` and one unknown field name in a verified batch. Telling a user
+    // whose field edit missed to select the text again is a wrong remedy.
+    const error = await failure(
+      "Error: 적용되지 않은 편집 요청이 있습니다: " +
+      'replace address=0.0 from="NOPE" to="x", set_field name="missing_field" ' +
+      "(--allow-partial로 일치한 요청만 적용 가능)",
+    );
+
+    expect(error.message).toBe("hwp edit failed (exit 3)");
+    expect(error.message).not.toContain("unmatched_replace");
+  });
+
+  it("still classifies a find text that carries a comma of its own", async () => {
+    // Items are comma separated and a quoted value may hold one, so the split
+    // respects double quotes rather than counting separators.
+    const error = await failure(
+      "Error: 적용되지 않은 편집 요청이 있습니다: " +
+      'replace address=0.1 from="Kim, Lee" to="{{owner}}" ' +
+      "(--allow-partial로 일치한 요청만 적용 가능)",
+    );
+
+    expect(error.message).toBe("hwp edit failed (exit 3): edit refused: unmatched_replace");
   });
 });

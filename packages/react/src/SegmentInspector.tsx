@@ -2,7 +2,7 @@ import { isPlainDecimal } from "./unit-input.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import type { JSX } from "react";
-import type { EditOp, ParagraphAlignment, ParaShapeKey, SelectionRefusal, Segment } from "@hwp-editor/core";
+import type { ParagraphAlignment, ParaShapeKey, SelectionRefusal, Segment } from "@hwp-editor/core";
 import { compareSegments, formatAddresses, isSectionDefinitionParagraph, paragraphAddress, paragraphRuns, resolveSelection, segmentAtRef, segmentPath, segmentRef, segmentText, selectSimilar, selectedParagraphs, selectionAction } from "@hwp-editor/core";
 import { plainSegmentText } from "./text.js";
 import { useHwpEditorContext } from "./context.js";
@@ -199,17 +199,58 @@ export function SegmentInspector(): JSX.Element {
   /**
    * Whether the selected runs can become a `{{name}}` placeholder.
    *
-   * `replace` is matched against the paragraph's own DOCUMENT text and rewrites
-   * every match there, and edit-ops-v1 gives it a paragraph address only, so it
-   * cannot be scoped to a run. The client cannot rebuild that text in general
-   * (Markdown renders underline, strikethrough, footnotes and media differently
-   * from the text hwp-cli sees), so the control stays off unless nothing about
-   * this paragraph can make the two disagree. Every refusal names its cause and
-   * the way round it; none of them widens or trims the selection to fit.
+   * `replace` matches the paragraph's own DOCUMENT text and rewrites every
+   * match there, and edit-ops-v1 addresses it by paragraph alone, so the find
+   * string is the only selector it has. The client cannot rebuild that text
+   * from Markdown in general: the projection trims each fragment, joins what a
+   * control held, escapes `&` and `<` inside a cell, and renders emphasis,
+   * links and fields to something other than the text the engine matches. So
+   * this is an ALLOW list. A paragraph qualifies only when the projection is
+   * the identity on it and nothing in it can hide or move a match; refusing a
+   * paragraph that would have worked is the accepted cost of never rewriting
+   * text the user did not select.
    */
-  const paragraphRunsAll = envelope === null || singleParagraph === undefined
-    ? []
-    : paragraphRuns(envelope, singleParagraph);
+  const plainParagraph = ((): { runs: Segment[]; texts: string[]; text: string } | undefined => {
+    if (envelope === null || singleParagraph === undefined) return undefined;
+    // (1) A top-level body paragraph. A cell and a text box report a deeper
+    // path (and a container holding this range), and a list's projected
+    // lead-in is not text, so all three are out.
+    const depth = singleParagraph.indices?.length;
+    if (depth !== undefined && depth !== 1) return undefined;
+    const inContainer = envelope.segments.some(item =>
+      (item.kind === "table" || item.kind === "cell") &&
+      item.start <= singleParagraph.start && item.end >= singleParagraph.end);
+    if (inContainer) return undefined;
+    // The paragraph's projection ends with its separator, which is structure.
+    const points = [...markdownText.replace(/[\r\n]+$/, "")];
+    const contentEnd = singleParagraph.start + points.length;
+    // A field, image or bookmark here holds text of its own, and an edit
+    // addressed to this paragraph can write over it: out.
+    const holdsControl = envelope.segments.some(item =>
+      (item.kind === "field" || item.kind === "image" || item.kind === "bookmark") &&
+      item.start < contentEnd && item.end > singleParagraph.start);
+    if (holdsControl) return undefined;
+    // The runs must tile the paragraph exactly. A gap is text the projection
+    // does not show, so a find cut from it would not be the engine's text.
+    const ordered = paragraphRuns(envelope, singleParagraph);
+    const texts: string[] = [];
+    let cursor = singleParagraph.start;
+    for (const run of ordered) {
+      if (run.start !== cursor || run.end < run.start || run.end > contentEnd) return undefined;
+      cursor = run.end;
+      texts.push(wholeRunText(points.slice(run.start - singleParagraph.start, run.end - singleParagraph.start).join("")));
+    }
+    if (ordered.length === 0 || cursor !== contentEnd) return undefined;
+    // (2) Plain text only. The characters below are the ones the projection
+    // writes as themselves; everything Markdown gives a second meaning to is
+    // refused, and so is any edge or doubled space, which a trimmed fragment
+    // cannot be told apart from.
+    const text = texts.join("");
+    if (text === "" || text.trim() !== text || text.includes("  ")) return undefined;
+    if (!/^[\p{L}\p{N} .,:;'"!?()\-]*$/u.test(text)) return undefined;
+    if (/^(?:[-+]|\d{1,3}[.)])\s/u.test(text)) return undefined;
+    return { runs: ordered, texts, text };
+  })();
   const rangeRuns = envelope !== null && singleParagraph !== undefined && state.range != null
     ? paragraphRuns(envelope, singleParagraph, state.range)
     : [];
@@ -217,65 +258,40 @@ export function SegmentInspector(): JSX.Element {
   const rangeTo = rangeRuns.length === 0 ? -1 : Math.max(...rangeRuns.map(item => item.end));
   const wholeRuns = state.range != null && rangeRuns.length > 0 &&
     rangeFrom === state.range.start && rangeTo === state.range.end;
-  // (a) Neighbours in the paragraph, with no field or image holding text
-  // between them: a gap means the selection is not one stretch of text.
-  const firstCoveredAt = rangeRuns.length === 0 || rangeRuns[0]!.id === undefined
+  const firstCoveredAt = plainParagraph === undefined || rangeRuns.length === 0
     ? -1
-    : paragraphRunsAll.findIndex(item => item.id === rangeRuns[0]!.id);
-  const runsContiguous = firstCoveredAt >= 0 &&
-    rangeRuns.every((item, at) => paragraphRunsAll[firstCoveredAt + at]?.id === item.id);
-  const controlInside = envelope !== null && singleParagraph !== undefined && wholeRuns &&
-    envelope.segments.some(item => item.kind !== "run" && item.kind !== "para" &&
-      item.section === singleParagraph.section && item.para === singleParagraph.para &&
-      item.start >= rangeFrom && item.end <= rangeTo);
-  // (b) Markdown whose rendering is not the document text, in doubt refused.
-  // hwp-cli does not escape a literal `*` or `_`, so an emphasis marker left
-  // over after stripping a well-formed pair can pair with an unrelated one and
-  // make the reconstructed text differ from the engine's. The paragraph
-  // projection ends with its separator, which is structure, not content.
-  const interiorMarkdown = markdownText.replace(/[\r\n]+$/, "");
-  // An underscore is refused outright: hwp-cli does not escape a literal one, so
-  // `_y, a_` pairs two unrelated underscores and the strip below would hide it.
-  // A `*` is accepted only inside pairs that strip to nothing, so a leftover
-  // asterisk (a literal one, or an unmatched marker) refuses the paragraph.
-  const riskyMarkup = /~~|<\/?(?:u|sup|sub)>|\[\^|\$|`|[\r\n]/.test(interiorMarkdown) ||
-    /^#{1,6}\s/.test(interiorMarkdown) ||
-    interiorMarkdown.includes("_") ||
-    /[*]/.test(stripEmphasis(interiorMarkdown));
-  const markdownPoints = useMemo(() => [...markdownText], [markdownText]);
-  const localStart = state.range == null || singleParagraph === undefined ? 0 : state.range.start - singleParagraph.start;
-  const localEnd = state.range == null || singleParagraph === undefined ? 0 : state.range.end - singleParagraph.start;
-  // `find` is the engine's only selector, so it is the selection's document
-  // text as written, untrimmed: the paragraph holds spaces, so the find does.
-  const findText = wholeRuns ? documentTextOf(markdownPoints.slice(localStart, localEnd).join("")) : "";
-  const paragraphText = documentTextOf(interiorMarkdown);
-  const expectedAt = documentTextOf(markdownPoints.slice(0, localStart).join("")).length;
-  // (c) Exactly one match, counting overlaps, and it starts where the
-  // selection starts: a single match elsewhere would rewrite text never
-  // selected, which is the case a Markdown-derived count misses.
+    : plainParagraph.runs.findIndex(item => item.start === rangeRuns[0]!.start);
+  const rangeContiguous = plainParagraph !== undefined && firstCoveredAt >= 0 &&
+    rangeRuns.every((item, at) => plainParagraph.runs[firstCoveredAt + at]?.start === item.start);
+  // `find` is the engine's text for the selected runs, which (2) has already
+  // made identical to their projection.
+  const findText = plainParagraph === undefined || !wholeRuns || !rangeContiguous
+    ? ""
+    : plainParagraph.texts.slice(firstCoveredAt, firstCoveredAt + rangeRuns.length).join("");
+  const paragraphText = plainParagraph?.text ?? "";
+  const expectedAt = plainParagraph === undefined || firstCoveredAt <= 0
+    ? 0
+    : plainParagraph.texts.slice(0, firstCoveredAt).reduce((total, item) => total + item.length, 0);
+  // (3) No edge whitespace of its own, and (4) exactly one match counting
+  // overlaps, starting where the selection starts: a single match elsewhere
+  // would rewrite text never selected.
   const occurrences: number[] = [];
   for (let at = 0; findText !== "" && at + findText.length <= paragraphText.length; at += 1) {
     if (paragraphText.startsWith(findText, at)) occurrences.push(at);
   }
   const uniqueAtSelection = occurrences.length === 1 && occurrences[0] === expectedAt;
-  // (d) A queued text op would change the text this placeholder is cut from,
-  // and the placeholder's own `{{name}}` would become the next find text.
-  const pendingTextEdit = state.pendingOps.some(op => TEXT_EDIT_OPS.has(op.kind));
+  // (5) Any queued op can change this document's text — a `set-field` writes its
+  // value into a paragraph, a `set-cell` replaces a cell's — so the control
+  // waits for an empty queue rather than for one class of op.
+  const queuedEdits = state.pendingOps.length > 0;
+  const placeholderRefused = plainParagraph === undefined || !wholeRuns || !rangeContiguous ||
+    findText === "" || findText.trim() !== findText || !uniqueAtSelection || queuedEdits;
 
   const placeholderNameTrimmed = placeholderName.trim();
   const placeholderNameEmpty = placeholderNameTrimmed === "";
   const placeholderNameValid = !placeholderNameEmpty &&
     !/[{}]/.test(placeholderNameTrimmed) && !/[\u0000-\u001f\u007f]/.test(placeholderNameTrimmed);
-  // One cause at a time, most specific first: the user acts on the first one.
-  const placeholderReason =
-    state.range == null || singleParagraph === undefined ? t("segment.placeholderNoRange")
-    : !wholeRuns ? t("segment.placeholderWholeRuns")
-    : !runsContiguous || controlInside ? t("segment.placeholderGap")
-    : riskyMarkup ? t("segment.placeholderRiskyMarkup")
-    : findText.trim() === "" ? t("segment.placeholderEmptySelection")
-    : pendingTextEdit ? t("segment.placeholderPendingEdits")
-    : !uniqueAtSelection ? t("segment.placeholderAmbiguous")
-    : "";
+  const placeholderReason = placeholderRefused ? t("segment.placeholderRefused") : "";
   const placeholderNameReason = placeholderNameEmpty
     ? t("segment.placeholderNameEmpty")
     : placeholderNameValid ? "" : t("segment.placeholderNameInvalid");
@@ -727,32 +743,11 @@ function scalarAtUtf16(offset: number, supplementaryStarts: readonly number[]): 
 }
 
 /**
- * Ops that change a paragraph's text, which is what an addressed `replace`
- * matches against. A queued one of these makes any text this panel read stale.
+ * One run's document text. The projection wraps a run in `**` or `*` when the
+ * whole of it is bold or italic, and those whole-run markers are the only
+ * syntax the placeholder guard strips. Anything left in the slice is syntax the
+ * client cannot see past, and the guard refuses it by character set.
  */
-const TEXT_EDIT_OPS = new Set<EditOp["kind"]>([
-  "replace",
-  "insert-para",
-  "insert-para-before",
-  "delete-para",
-  "insert-blocks",
-  "move-para",
-]);
-
-/**
- * Strip well-formed emphasis pairs only. Anything left over is a marker the
- * Markdown renderer and the engine's text disagree about, so the caller can
- * refuse rather than guess: `**x_y**` leaves the inner `_` behind.
- */
-function stripEmphasis(markdown: string): string {
-  return markdown
-    .replace(/(\*\*|__)([\s\S]*?)\1/g, "$2")
-    .replace(/(\*|_)([\s\S]*?)\1/g, "$2");
-}
-
-/** The document text a Markdown slice stands for, as far as it can be known. */
-function documentTextOf(markdown: string): string {
-  return stripEmphasis(markdown
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1"));
+function wholeRunText(markdown: string): string {
+  return /^(\*\*|\*)([\s\S]+)\1$/.exec(markdown)?.[2] ?? markdown;
 }
