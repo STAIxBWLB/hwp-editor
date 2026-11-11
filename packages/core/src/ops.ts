@@ -17,6 +17,8 @@
  *   migration to the ops file is host work, not engine adoption.
  */
 
+import { HwpEngineError } from "./errors.js";
+
 export type ParagraphAlignment =
   | "left"
   | "right"
@@ -305,13 +307,18 @@ export function opsToArgv(ops: EditOp[]): string[] {
 type OpsEntry = Record<string, unknown>;
 
 /**
- * A bare number gains the unit the CLI flag on this path already implies
- * (`--set-format size=16` is points, `--set-page width=210` is millimetres);
- * an already-suffixed value passes through. edit-ops-v1's `unit` fields are
- * suffixed strings, so this is where the two spellings meet.
+ * Bare nonnegative plain decimals gain the unit the CLI flag on this path
+ * implies. Suffixed values must match the edit-ops-v1 unit grammar exactly.
  */
 function withUnit(value: string, unit: "mm" | "pt" | "%"): string {
-  return /^-?\d+(\.\d+)?$/.test(value) ? `${value}${unit}` : value;
+  if (/^\d+(\.\d+)?$/.test(value)) return `${value}${unit}`;
+  if (/^\d+(\.\d+)?(mm|pt|%)$/.test(value)) return value;
+  const cause = new Error(`Invalid unit value ${JSON.stringify(value)}`);
+  throw new HwpEngineError(
+    "bad_request",
+    `${cause.message}; provide a nonnegative decimal with an optional mm, pt, or % suffix.`,
+    { cause },
+  );
 }
 
 /** set-format props: same keys as the CLI flag; only `size` needs a unit. */
@@ -328,7 +335,7 @@ function paraShapeEntry(key: ParaShapeKey, value: string): OpsEntry {
   switch (key) {
     case "line-spacing":
       return value.endsWith("pt")
-        ? { line_spacing_pt: value }
+        ? { line_spacing_pt: withUnit(value, "pt") }
         : { line_spacing_pct: withUnit(value, "%") };
     case "indent":
       return { indent_mm: withUnit(value, "mm") };
@@ -425,14 +432,17 @@ function opsEntry(op: EditOp): OpsEntry {
         path: op.path,
         ...(op.width === undefined || op.height === undefined
           ? {}
-          : { width_mm: `${op.width}mm`, height_mm: `${op.height}mm` }),
+          : {
+              width_mm: withUnit(String(op.width), "mm"),
+              height_mm: withUnit(String(op.height), "mm"),
+            }),
       };
     case "seal":
       return {
         op: "seal",
         anchor: op.anchor,
         path: op.path,
-        ...(op.size === undefined ? {} : { size_mm: `${op.size}mm` }),
+        ...(op.size === undefined ? {} : { size_mm: withUnit(String(op.size), "mm") }),
       };
     case "set-format":
       // Reserved fields LAST: props is a free Record, so a caller-supplied

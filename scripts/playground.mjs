@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 /** Prepare and run the playground from source, using the caller's hwp binary. */
 import { spawn, spawnSync } from "node:child_process";
-import { dirname, resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),"..");
-const binary=process.env.HWP_EDITOR_BIN?.trim() || process.env.HWP_CLI?.trim() || "hwp";
+const configuredBinary=process.env.HWP_EDITOR_BIN?.trim() || process.env.HWP_CLI?.trim() || "hwp";
+const binary=isAbsolute(configuredBinary) || configuredBinary.includes("/") || configuredBinary.includes("\\")
+  ? resolve(root,configuredBinary)
+  : configuredBinary;
 const env={...process.env,HWP_EDITOR_BIN:binary};
 const shell=process.platform==="win32";
 const probe=spawnSync(binary,["--version"],{cwd:root,env,encoding:"utf8"});

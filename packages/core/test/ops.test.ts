@@ -7,6 +7,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { argvToOps, opsToArgv, opsToJson, type EditOp } from "../src/ops.js";
+import { HwpEngineError } from "../src/errors.js";
 
 describe("opsToArgv", () => {
   it("serializes one --flag value pair per op, in order", () => {
@@ -331,7 +332,7 @@ describe("opsToJson", () => {
         { kind: "set-para", find: "t", key: "line-spacing", value: "160" },
         { kind: "set-para", find: "t", key: "line-spacing", value: "12pt" },
         { kind: "set-para", find: "t", key: "indent", value: "10" },
-        { kind: "set-para", find: "t", key: "indent", value: "-10" },
+        { kind: "set-para", find: "t", key: "indent", value: "10.5mm" },
         { kind: "set-para", find: "t", key: "top", value: "5" },
         { kind: "set-page", key: "width", value: "210" },
         { kind: "set-page", key: "margin-top", value: "25" },
@@ -342,12 +343,38 @@ describe("opsToJson", () => {
       { op: "set_para", pattern: "t", line_spacing_pct: "160%" },
       { op: "set_para", pattern: "t", line_spacing_pt: "12pt" },
       { op: "set_para", pattern: "t", indent_mm: "10mm" },
-      { op: "set_para", pattern: "t", indent_mm: "-10mm" },
+      { op: "set_para", pattern: "t", indent_mm: "10.5mm" },
       { op: "set_para", pattern: "t", top_mm: "5mm" },
       { op: "set_page", width_mm: "210mm" },
       { op: "set_page", margin_top_mm: "25mm" },
       { op: "set_page", orientation: "landscape" },
     ]);
+  });
+
+  it("rejects unit values outside the edit-ops-v1 grammar with a cause and next step", () => {
+    for (const value of ["-5", ".5", "1e2", "12in"]) {
+      let failure: unknown;
+      try {
+        opsToJson([{ kind: "set-para", find: "t", key: "indent", value }]);
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(HwpEngineError);
+      expect(failure).toMatchObject({
+        code: "bad_request",
+        message: expect.stringContaining("provide a nonnegative decimal"),
+        cause: expect.any(Error),
+      });
+    }
+  });
+
+  it("validates numeric image and seal dimensions before serializing units", () => {
+    for (const op of [
+      { kind: "insert-image", anchor: "x", path: "p.png", width: -5, height: 20 },
+      { kind: "seal", anchor: "x", path: "s.png", size: 1e2 },
+    ] satisfies EditOp[]) {
+      expect(() => opsToJson([op])).toThrow(HwpEngineError);
+    }
   });
 });
 
