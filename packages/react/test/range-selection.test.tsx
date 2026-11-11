@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { CatEnvelope, DocumentHandle } from "@hwp-editor/core";
+import type { CatEnvelope, DirectChar, DocumentHandle } from "@hwp-editor/core";
 import { HwpEditor } from "../src/HwpEditor.js";
 import { en, ko } from "../src/messages.js";
 import type { MessageTable } from "../src/messages.js";
@@ -11,17 +11,33 @@ afterEach(cleanup);
 const file: DocumentHandle = { name: "range.hwpx", data: new Uint8Array([1]) };
 const markdown = "**Bold**😀!";
 
+/**
+ * The direct character properties a run publishes, in the seven Hangul face
+ * slots a v2 host reports. A run's `*`/`**` marker is believed only when these
+ * agree with it, so a run that omits them is refused rather than guessed at.
+ */
+function runChar(bold = false, italic = false): DirectChar {
+  return {
+    bold,
+    italic,
+    size_pt: 10,
+    color: "#000000",
+    faces: [null, null, null, null, null, null, null],
+    face_ids: [0, 0, 0, 0, 0, 0, 0],
+  };
+}
+
 function rangeEnvelope(): CatEnvelope {
   const secondStart = [...markdown].length + 2;
   return {
     markdown: `${markdown}\n\n${markdown}`,
     segments: [
       { id: "para-first", indices: [0], start: 0, end: 10, kind: "para", section: 0, para: 0 },
-      { id: "run-bold", indices: [0, 0], start: 0, end: 8, kind: "run", section: 0, para: 0 },
-      { id: "run-emoji", indices: [0, 1], start: 8, end: 10, kind: "run", section: 0, para: 0 },
+      { id: "run-bold", indices: [0, 0], start: 0, end: 8, kind: "run", section: 0, para: 0, directChar: runChar(true) },
+      { id: "run-emoji", indices: [0, 1], start: 8, end: 10, kind: "run", section: 0, para: 0, directChar: runChar() },
       { id: "para-duplicate", indices: [1], start: secondStart, end: secondStart + 10, kind: "para", section: 0, para: 1 },
-      { id: "duplicate-bold", indices: [1, 0], start: secondStart, end: secondStart + 8, kind: "run", section: 0, para: 1 },
-      { id: "duplicate-emoji", indices: [1, 1], start: secondStart + 8, end: secondStart + 10, kind: "run", section: 0, para: 1 },
+      { id: "duplicate-bold", indices: [1, 0], start: secondStart, end: secondStart + 8, kind: "run", section: 0, para: 1, directChar: runChar(true) },
+      { id: "duplicate-emoji", indices: [1, 1], start: secondStart + 8, end: secondStart + 10, kind: "run", section: 0, para: 1, directChar: runChar() },
     ],
   };
 }
@@ -36,17 +52,22 @@ function repeatedEnvelope(): CatEnvelope {
     markdown: text,
     segments: [
       { id: "para-repeat", indices: [0], start: 0, end: 5, kind: "para", section: 0, para: 0 },
-      { id: "run-first", indices: [0, 0], start: 0, end: 2, kind: "run", section: 0, para: 0 },
-      { id: "run-second", indices: [0, 1], start: 2, end: 5, kind: "run", section: 0, para: 0 },
+      { id: "run-first", indices: [0, 0], start: 0, end: 2, kind: "run", section: 0, para: 0, directChar: runChar() },
+      { id: "run-second", indices: [0, 1], start: 2, end: 5, kind: "run", section: 0, para: 0, directChar: runChar() },
     ],
   };
 }
 
 /**
  * One paragraph of `markdown` split into the given runs, all in section 0.
- * The runs must tile the markdown, which is what the projection promises.
+ * The runs must tile the markdown, which is what the projection promises, and
+ * `chars` overrides the formatting of a run whose markers are under test.
  */
-function sentenceEnvelope(markdown: string, runs: Array<[number, number]>): CatEnvelope {
+function sentenceEnvelope(
+  markdown: string,
+  runs: Array<[number, number]>,
+  chars: Array<{ bold?: boolean; italic?: boolean }> = [],
+): CatEnvelope {
   const end = [...markdown].length;
   return {
     markdown,
@@ -54,6 +75,7 @@ function sentenceEnvelope(markdown: string, runs: Array<[number, number]>): CatE
       { id: "para-one", indices: [0], start: 0, end, kind: "para", section: 0, para: 0 },
       ...runs.map(([start, runEnd], at) => ({
         id: `run-${at}`, indices: [0, at], start, end: runEnd, kind: "run" as const, section: 0, para: 0,
+        directChar: runChar(chars[at]?.bold, chars[at]?.italic),
       })),
     ],
   };
@@ -75,9 +97,9 @@ function slotEnvelope(): CatEnvelope {
     markdown: `${body}\n\n${slot}\n\n`,
     segments: [
       { id: "para-body", indices: [0], start: 0, end: body.length, kind: "para", section: 0, para: 0 },
-      { id: "run-body", indices: [0, 0], start: 0, end: body.length, kind: "run", section: 0, para: 0 },
+      { id: "run-body", indices: [0, 0], start: 0, end: body.length, kind: "run", section: 0, para: 0, directChar: runChar() },
       { id: "para-slot", indices: [1], start: slotStart, end: slotStart + slot.length, kind: "para", section: 0, para: 1 },
-      { id: "run-slot", indices: [1, 0], start: slotStart, end: slotStart + slot.length, kind: "run", section: 0, para: 1 },
+      { id: "run-slot", indices: [1, 0], start: slotStart, end: slotStart + slot.length, kind: "run", section: 0, para: 1, directChar: runChar() },
     ],
   };
 }
@@ -91,12 +113,12 @@ function cellEnvelope(): CatEnvelope {
     markdown: `body\n\n${table}\n\n`,
     segments: [
       { id: "para-body", indices: [1], start: 0, end: 4, kind: "para", section: 0, para: 0 },
-      { id: "run-body", indices: [1, 0], start: 0, end: 4, kind: "run", section: 0, para: 0 },
+      { id: "run-body", indices: [1, 0], start: 0, end: 4, kind: "run", section: 0, para: 0, directChar: runChar() },
       { id: "para-table", indices: [2], start: tableStart, end: tableStart + table.length, kind: "para", section: 0, para: 1 },
       { id: "table", indices: [2, 0], start: tableStart, end: tableStart + table.length, kind: "table", section: 0, para: 1 },
       { id: "cell", indices: [2, 0, 0], start: cellStart, end: cellStart + 2, kind: "cell", section: 0, para: 1 },
       { id: "para-cell", indices: [2, 0, 0, 0], start: cellStart, end: cellStart + 2, kind: "para", section: 0, para: 1 },
-      { id: "run-cell", indices: [2, 0, 0, 0, 0], start: cellStart, end: cellStart + 2, kind: "run", section: 0, para: 1 },
+      { id: "run-cell", indices: [2, 0, 0, 0, 0], start: cellStart, end: cellStart + 2, kind: "run", section: 0, para: 1, directChar: runChar() },
     ],
   };
 }
@@ -288,8 +310,9 @@ describe.each([["en", en], ["ko", ko]] as const)("Placeholder guards (%s)", (loc
     from: number,
     to: number,
     extra: CatEnvelope["segments"] = [],
+    chars: Array<{ bold?: boolean; italic?: boolean }> = [],
   ) {
-    const envelope = sentenceEnvelope(markdown, runs);
+    const envelope = sentenceEnvelope(markdown, runs, chars);
     envelope.segments.push(...extra);
     const engine = createMockEngine({ envelope });
     render(<HwpEditor engine={engine} file={file} locale={locale} />);
@@ -411,12 +434,17 @@ describe.each([["en", en], ["ko", ko]] as const)("Placeholder guards (%s)", (loc
     expect(engine.calls.edit).toHaveLength(0);
   });
 
-  it("refuses control characters in the name", async () => {
-    const engine = await openRange("hello", [[0, 5]], 0, 5);
-    typeName("own\ter");
-    expect(make().disabled).toBe(true);
-    expect(screen.getByText(messages["segment.placeholderNameInvalid"])).toBeTruthy();
-    expect(engine.calls.edit).toHaveLength(0);
+  it("refuses control characters in the name, C1 included", async () => {
+    // A tab is C0 and U+0085 is C1: hwp's own field-name check refuses both,
+    // so the client must not send either.
+    for (const name of ["own\ter", "own\u0085er"]) {
+      const engine = await openRange("hello", [[0, 5]], 0, 5);
+      typeName(name);
+      expect(make().disabled).toBe(true);
+      expect(screen.getByText(messages["segment.placeholderNameInvalid"])).toBeTruthy();
+      expect(engine.calls.edit).toHaveLength(0);
+      cleanup();
+    }
   });
 
   it("refuses a paragraph whose projected text would have an edge space trimmed (t14-g6)", async () => {
@@ -466,7 +494,7 @@ describe.each([["en", en], ["ko", ko]] as const)("Placeholder guards (%s)", (loc
     expect(linked.calls.edit).toHaveLength(0);
     cleanup();
 
-    const bold = await openRange("2**3**4", [[0, 1], [1, 6], [6, 7]], 1, 6);
+    const bold = await openRange("2**3**4", [[0, 1], [1, 6], [6, 7]], 1, 6, [], [{}, { bold: true }, {}]);
     typeName("x");
     expect(make().disabled).toBe(false);
     fireEvent.click(make());
@@ -474,6 +502,31 @@ describe.each([["en", en], ["ko", ko]] as const)("Placeholder guards (%s)", (loc
     await waitFor(() => expect(bold.calls.edit).toHaveLength(1));
     expect(bold.calls.edit[0]?.ops).toEqual([
       { kind: "replace", address: { id: "para-one" }, find: "3", replace: "{{x}}" },
+    ]);
+  });
+
+  it("believes a marker only when the run's own formatting agrees (t14-g12)", async () => {
+    // hwp-cli does not escape `*`, so a plain run whose text is literally
+    // `*Note*` projects exactly like an italic one, and stripping it would
+    // leave a find the engine's text never holds. The published directChar is
+    // the only thing that separates them, and it says plain: refuse.
+    const literal = await openRange("*Note*", [[0, 6]], 0, 6);
+    typeName("x");
+    expect(make().disabled).toBe(true);
+    expect(screen.getByText(messages["segment.placeholderRefused"])).toBeTruthy();
+    expect(literal.calls.edit).toHaveLength(0);
+    cleanup();
+
+    // The marked run the projection does describe (italic, not bold) is
+    // stripped, and the find is the text inside its markers.
+    const italic = await openRange("a*b*c", [[0, 1], [1, 4], [4, 5]], 1, 4, [], [{}, { italic: true }, {}]);
+    typeName("x");
+    expect(make().disabled).toBe(false);
+    fireEvent.click(make());
+    fireEvent.click(await screen.findByRole("button", { name: messages["toolbar.applyWithCount"]({ count: 1 }) }));
+    await waitFor(() => expect(italic.calls.edit).toHaveLength(1));
+    expect(italic.calls.edit[0]?.ops).toEqual([
+      { kind: "replace", address: { id: "para-one" }, find: "b", replace: "{{x}}" },
     ]);
   });
 

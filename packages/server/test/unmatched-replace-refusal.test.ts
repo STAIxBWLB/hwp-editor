@@ -8,8 +8,9 @@
  * client's string table knows: `unmatched_replace`. These cases pin both
  * halves of that rule — the marker crosses, the prose does not.
  *
- * The stderr below is the line ahwp 1.6.0 writes (measured with `--verify` on
- * a `replace` whose find occurs nowhere in the addressed paragraph).
+ * The stderr below is the line hwp-cli v1.4.0 writes (ahwp 1.6.0 prints the
+ * same one) for a `replace` whose find occurs nowhere in the addressed
+ * paragraph, with `--verify` on so nothing is applied.
  */
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
@@ -70,7 +71,7 @@ describe("unmatched replace refusal classification", () => {
 
   it("does not call a mixed unapplied list an unmatched replace (t14-g8)", async () => {
     // The same line carries every unapplied op: set_field, create_field,
-    // delete_image and the rest. Measured on ahwp 1.6.0 with one missing
+    // delete_image and the rest. Measured on hwp-cli v1.4.0 with one missing
     // `from` and one unknown field name in a verified batch. Telling a user
     // whose field edit missed to select the text again is a wrong remedy.
     const error = await failure(
@@ -93,5 +94,20 @@ describe("unmatched replace refusal classification", () => {
     );
 
     expect(error.message).toBe("hwp edit failed (exit 3): edit refused: unmatched_replace");
+  });
+
+  it("splits an item whose value holds a Debug-escaped quote (t14-g14)", async () => {
+    // The values are written with Rust's `{:?}`, so an inner quote arrives as
+    // `\"`. Counting every `"` ends the quoted stretch early and swallows the
+    // separator, which reads a mixed list as one replace and sends a user whose
+    // field edit missed the wrong remedy.
+    const error = await failure(
+      "Error: 적용되지 않은 편집 요청이 있습니다: " +
+      'replace address=0.0 from="NOPE" to="{{a\\"b}}", set_field name="missing_field" ' +
+      "(--allow-partial로 일치한 요청만 적용 가능)",
+    );
+
+    expect(error.message).toBe("hwp edit failed (exit 3)");
+    expect(error.message).not.toContain("unmatched_replace");
   });
 });

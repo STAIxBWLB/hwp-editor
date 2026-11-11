@@ -442,11 +442,16 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           emitChange(next);
         } catch (e) {
           // A find that matched nothing leaves nothing applied, and the engine's
-          // own line for it is Korean prose naming staged paths, so both the
-          // error line and the host get the sentence instead.
-          const shown = isUnmatchedReplaceRefusal(e) ? new Error(t("error.unmatchedReplace")) : e;
-          store.dispatch({ type: "applyFailed", error: toEditorError(shown) });
-          emitError(shown);
+          // own line for it is Korean prose naming staged paths, so the error
+          // line carries the localized sentence. The host still hears the
+          // failure as it arrived — code, status and cause intact — because a
+          // wrapper that drops them cannot be branched on (`onError`'s contract).
+          const stored = toEditorError(e);
+          store.dispatch({
+            type: "applyFailed",
+            error: isUnmatchedReplaceRefusal(e) ? { ...stored, message: t("error.unmatchedReplace") } : stored,
+          });
+          emitError(e);
         }
       })();
     }, [editable, engine, store, t]);

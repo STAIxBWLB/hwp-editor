@@ -375,6 +375,32 @@ describe("onError", () => {
     expect(onError.mock.calls[0]?.[0]).toBe(boom);
   });
 
+  it("localizes an unmatched replace without dropping what the host branches on (t14-g13)", async () => {
+    // This is the one apply failure whose message the editor replaces, so it is
+    // the one that could reach `onError` stripped of its code, status and
+    // cause. The alert shows the table's sentence; the host still gets the
+    // error it arrived as, which is what its own doc promises.
+    const cause = new Error("hwp edit failed (exit 3): edit refused: unmatched_replace");
+    const boom = new HwpEngineError("failed", cause.message, { status: 400, cause });
+    const engine = createMockEngine();
+    engine.edit = async () => {
+      throw boom;
+    };
+    const onError = vi.fn();
+    render(<HwpEditor engine={engine} file={file} onError={onError} />);
+    await queueReplace();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Apply \(/ }));
+    const alerts = await screen.findAllByRole("alert");
+    expect(alerts.map((alert) => alert.textContent ?? "").join(" ")).toContain(en["error.unmatchedReplace"]);
+    expect(onError).toHaveBeenCalledTimes(1);
+    const shown = onError.mock.calls[0]?.[0] as HwpEngineError;
+    expect(shown).toBe(boom);
+    expect(shown.code).toBe("failed");
+    expect(shown.status).toBe(400);
+    expect(shown.cause).toBe(cause);
+  });
+
   it("fires with the caught value verbatim when revert fails", async () => {
     const boom = new HwpEngineError("failed", "hwp cat failed");
     const engine = createMockEngine();

@@ -790,10 +790,14 @@ const UNAPPLIED_EDIT_SUFFIX = "(--allow-partial";
 /**
  * The ops the engine lists as unapplied, or undefined when its line is absent.
  *
- * Measured on ahwp 1.6.0: the items follow the marker after a colon and are
- * separated by `, `, each opening with its op name — `replace address=0.0
- * from="NOPE" to="x", set_field name="missing_field"`. A `from="..."` value may
- * hold a comma of its own, so the split respects double quotes.
+ * Measured on hwp-cli v1.4.0 (ahwp 1.6.0 prints the same line): the items
+ * follow the marker after a colon and are separated by `, `, each opening with
+ * its op name — `replace address=0.0 from="NOPE" to="x", set_field
+ * name="missing_field"`. The values are written with Rust's `{:?}`, so an inner
+ * quote arrives as `\"` and a comma may sit inside either form: the split
+ * respects double quotes and skips the character an unescaped backslash
+ * escapes, or a value holding `\"` would end "inside" the quote and swallow the
+ * following item.
  */
 function unappliedItems(stderr: string): string[] | undefined {
   const markerAt = stderr.indexOf(UNAPPLIED_EDIT_MARKER);
@@ -805,7 +809,18 @@ function unappliedItems(stderr: string): string[] | undefined {
   const items: string[] = [];
   let current = "";
   let quoted = false;
+  let escaped = false;
   for (const character of body) {
+    if (escaped) {
+      escaped = false;
+      current += character;
+      continue;
+    }
+    if (quoted && character === "\\") {
+      escaped = true;
+      current += character;
+      continue;
+    }
     if (character === "\"") quoted = !quoted;
     if (character === "," && !quoted) {
       items.push(current.trim());

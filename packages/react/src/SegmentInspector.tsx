@@ -238,7 +238,9 @@ export function SegmentInspector(): JSX.Element {
     for (const run of ordered) {
       if (run.start !== cursor || run.end < run.start || run.end > contentEnd) return undefined;
       cursor = run.end;
-      texts.push(wholeRunText(points.slice(run.start - singleParagraph.start, run.end - singleParagraph.start).join("")));
+      const runText = wholeRunText(run, points.slice(run.start - singleParagraph.start, run.end - singleParagraph.start).join(""));
+      if (runText === undefined) return undefined;
+      texts.push(runText);
     }
     if (ordered.length === 0 || cursor !== contentEnd) return undefined;
     // (2) Plain text only. The characters below are the ones the projection
@@ -290,7 +292,7 @@ export function SegmentInspector(): JSX.Element {
   const placeholderNameTrimmed = placeholderName.trim();
   const placeholderNameEmpty = placeholderNameTrimmed === "";
   const placeholderNameValid = !placeholderNameEmpty &&
-    !/[{}]/.test(placeholderNameTrimmed) && !/[\u0000-\u001f\u007f]/.test(placeholderNameTrimmed);
+    !/[{}]/.test(placeholderNameTrimmed) && !/[\u0000-\u001f\u007f-\u009f]/.test(placeholderNameTrimmed);
   const placeholderReason = placeholderRefused ? t("segment.placeholderRefused") : "";
   const placeholderNameReason = placeholderNameEmpty
     ? t("segment.placeholderNameEmpty")
@@ -743,11 +745,22 @@ function scalarAtUtf16(offset: number, supplementaryStarts: readonly number[]): 
 }
 
 /**
- * One run's document text. The projection wraps a run in `**` or `*` when the
- * whole of it is bold or italic, and those whole-run markers are the only
- * syntax the placeholder guard strips. Anything left in the slice is syntax the
- * client cannot see past, and the guard refuses it by character set.
+ * One run's document text, or undefined when its markers cannot be trusted.
+ *
+ * hwp-cli wraps a whole run in `**` when it is bold and `*` when it is italic,
+ * and it does not escape a literal `*`, so a run whose text is literally
+ * `*Note*` projects exactly like an italic one. The run's own published
+ * `directChar` is what tells them apart: a marker is stripped only when the
+ * formatting says it is one, and any disagreement — or a missing `directChar`,
+ * which an older host may omit — refuses the paragraph.
  */
-function wholeRunText(markdown: string): string {
-  return /^(\*\*|\*)([\s\S]+)\1$/.exec(markdown)?.[2] ?? markdown;
+function wholeRunText(run: Segment, markdown: string): string | undefined {
+  const bold = /^\*\*([\s\S]+)\*\*$/u.exec(markdown);
+  const italic = bold === null ? /^\*([\s\S]+)\*$/u.exec(markdown) : null;
+  const direct = run.directChar;
+  if (direct === undefined) return undefined;
+  if (bold !== null) return direct.bold && !direct.italic ? bold[1]! : undefined;
+  if (italic !== null) return direct.italic && !direct.bold ? italic[1]! : undefined;
+  // No marker, so the run has to be plain: a bold or italic run carries one.
+  return direct.bold || direct.italic ? undefined : markdown;
 }
