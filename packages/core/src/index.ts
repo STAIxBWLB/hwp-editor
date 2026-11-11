@@ -178,3 +178,5 @@ export {
 } from "./edit-report.js";
 export type { EditIdPair, EditOpOutcome, EditReport } from "./edit-report.js";
 export type { Blocks } from "./generated/document-spec-v2.js";
+export { classifyEditRefusal, editRefusalMarker } from "./refusals.js";
+export type { EditRefusalKind } from "./refusals.js";

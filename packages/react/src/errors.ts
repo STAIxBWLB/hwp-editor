@@ -15,7 +15,7 @@
  * ErrorLine; nothing here renders text.
  */
 
-import type { EditorError, HwpErrorCode } from "@hwp-editor/core";
+import type { EditorError, EditRefusalKind, HwpErrorCode } from "@hwp-editor/core";
 import { isHwpEngineError, isHwpErrorCode } from "@hwp-editor/core";
 
 export type EngineErrorKind = "timeout" | "unavailable" | "protected" | "generic";
@@ -34,19 +34,19 @@ export function toEditorError(e: unknown): EditorError {
     : { message: e instanceof Error ? e.message : String(e) };
 }
 
-/** The classified edit refusals the server marks with `edit refused: <kind>`. */
-export type EngineRefusalKind = "unmatched_replace" | "run_range_conflict" | "range_tag";
+/** The classified edit refusals a transport marks with `edit refused: <kind>` (core `classifyEditRefusal`). */
+export type EngineRefusalKind = EditRefusalKind;
 
 /**
  * Which classified refusal a failure carries, if any (#76), so nothing was
- * applied. The server classifies before the error crosses a transport: the
+ * applied. Each transport classifies with core's `classifyEditRefusal`: the
  * engine's own line names staged paths and its Korean wording is not part of
  * the client contract, so only the stable marker travels. This module only
  * classifies; the sentence lives in the table.
  */
 export function engineRefusalKind(e: unknown): EngineRefusalKind | undefined {
   const message = e instanceof Error ? e.message : String(e);
-  const match = /edit refused: (unmatched_replace|run_range_conflict|range_tag)\b/u.exec(message);
+  const match = /edit refused: (unmatched_replace|run_range_conflict|range_tag)$/u.exec(message);
   return match === null ? undefined : match[1] as EngineRefusalKind;
 }
 

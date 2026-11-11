@@ -11,6 +11,7 @@ import { base64 } from "../src/http-engine.js";
 import type { DocumentHandle, EditOp, HwpErrorCode } from "../src/index.js";
 import { HwpEngineError, isHwpEngineError } from "../src/index.js";
 import { createTauriEngine, type TauriInvoke } from "../src/tauri.js";
+import { DRIFT, MIXED_CONFLICT, RANGE_TAG, RUN_CONFLICT, UNMATCHED } from "./fixtures/refusal-stderr.js";
 
 interface Call {
   cmd: string;
@@ -508,4 +509,37 @@ it("does not advertise or silently drop unsupported Tauri image bytes", async ()
   expect(caps).toMatchObject({editOps:"v1",templateMethods:["slots","template"]});
   await expect(engine.edit(doc,[{kind:"insert-image",anchor:"x",path:"x.png"}],{assets:[{name:"x.png",data:new Uint8Array([1])}]})).rejects.toThrow(/unsupported.*Tauri.*HTTP/);
   expect(calls.filter(call=>call.cmd==="hwped_edit")).toEqual([]);
+});
+
+describe("Tauri edit refusal classification (#80)", () => {
+  const reject = (detail: string): TauriInvoke => <T>(cmd: string): Promise<T> =>
+    cmd === "hwped_capabilities"
+      ? Promise.resolve({ version: "0.20.0", editable: true, formats: ["hwp", "hwpx"] } as T)
+      : Promise.reject(detail);
+
+  it.each([
+    [UNMATCHED, "unmatched_replace"],
+    [RUN_CONFLICT, "run_range_conflict"],
+    [DRIFT, "run_range_conflict"],
+    [RANGE_TAG, "range_tag"],
+  ] as const)("marks maru's hwp_failed edit with the HTTP marker (%#)", async (stderr, kind) => {
+    const raw = `hwp_failed: hwp edit failed (exit 3): /tmp/stage-1/in.hwp\n${stderr}`;
+    const engine = createTauriEngine(reject(raw));
+    const err = (await engine.edit(doc, [{ kind: "replace", find: "a", replace: "b" }])
+      .then(() => null, (e: unknown) => e)) as HwpEngineError;
+    expect(err.code).toBe("failed");
+    // The same message shape the HTTP transport sends, and nothing of stderr.
+    expect(err.message).toBe(`hwped_edit failed: hwp edit failed (exit 3): edit refused: ${kind}`);
+    expect(err.message).not.toContain("/tmp/");
+    expect(err.message).not.toContain("Error:");
+    // The engine cause is kept for an operator.
+    expect(err.cause).toBe(raw);
+  });
+
+  it("keeps an unclassified edit failure as it was", async () => {
+    const raw = `hwp_failed: hwp edit failed (exit 3): ${MIXED_CONFLICT}`;
+    const err = (await createTauriEngine(reject(raw)).edit(doc, [{ kind: "replace", find: "a", replace: "b" }])
+      .then(() => null, (e: unknown) => e)) as HwpEngineError;
+    expect(err.message).toBe(`hwped_edit failed: ${raw}`);
+  });
 });

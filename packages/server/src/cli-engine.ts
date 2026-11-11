@@ -1,5 +1,5 @@
 import { createTemplateCommands } from "./template-engine.js";
-import { TEMPLATE_METHODS, templateVersionSupported, parseEditReport, withCallerName, presetBatchOptions, readPresetBatch, type EditReport, type TemplateInputs, type FillResult, type LintReport, type LintProfile, type EmbeddedTemplate, type TemplateSpecV1, type TemplateDataV1 } from "@hwp-editor/core";
+import { classifyEditRefusal, editRefusalMarker, TEMPLATE_METHODS, templateVersionSupported, parseEditReport, withCallerName, presetBatchOptions, readPresetBatch, type EditReport, type TemplateInputs, type FillResult, type LintReport, type LintProfile, type EmbeddedTemplate, type TemplateSpecV1, type TemplateDataV1 } from "@hwp-editor/core";
 /**
  * CliEngine — HwpEngine implementation that shells out to the hwp-cli binary.
  *
@@ -687,7 +687,7 @@ function rethrowUploadedImageFailure(error: unknown, imageOnly: boolean): never 
     if (failure instanceof HwpCliError && failure.reason === "failed") {
       // A refusal the classifier knows (#76) carries its own next step; an
       // image remedy beside it would be a second, wrong one.
-      if (failure.stderr !== undefined && engineRefusalCause(failure.stderr) !== undefined) throw failure;
+      if (failure.stderr !== undefined && classifyEditRefusal(failure.stderr) !== undefined) throw failure;
       const nextStep = imageOnly
         ? "Image insertion failed; re-export valid PNG/JPEG image bytes and confirm the anchor text exists, then retry."
         : "Check the edit batch's operation targets and values, then retry.";
@@ -783,6 +783,9 @@ function insertBlocksRefusal(stderr: string, workDir: string | undefined): strin
  */
 function rethrowInsertBlocksRefusal(error: unknown, insertion: boolean, workDir: string): never {
   if (insertion && error instanceof HwpCliError && error.reason === "failed" && error.stderr !== undefined) {
+    // A refusal the shared classifier knows carries its own cause and next
+    // step (#80), as the image wrapper already does: no insertion prefix.
+    if (classifyEditRefusal(error.stderr) !== undefined) throw error;
     const cause = insertBlocksRefusal(error.stderr, workDir);
     throw new HwpCliError("failed", `${error.message}: ${cause}`, error.stderr, error.detail);
   }
@@ -790,118 +793,20 @@ function rethrowInsertBlocksRefusal(error: unknown, insertion: boolean, workDir:
 }
 
 /**
- * A `replace` whose find text matched nothing makes the engine apply nothing
- * and say so in Korean, naming the staged path and the offending find. The
- * client has no such text to classify, so the one stable cause travels instead:
- * `unmatched_replace`, which the editor renders as its own localized sentence.
- */
-const UNAPPLIED_EDIT_MARKER = "적용되지 않은 편집 요청이 있습니다";
-/** The engine closes the list with this hint; it is not part of any item. */
-const UNAPPLIED_EDIT_SUFFIX = "(--allow-partial";
-
-/**
- * The ops the engine lists as unapplied, or undefined when its line is absent.
- *
- * Measured on hwp-cli v1.4.0 (ahwp 1.6.0 prints the same line): the items
- * follow the marker after a colon and are separated by `, `, each opening with
- * its op name — `replace address=0.0 from="NOPE" to="x", set_field
- * name="missing_field"`. The values are written with Rust's `{:?}`, so an inner
- * quote arrives as `\"` and a comma may sit inside either form: the split
- * respects double quotes and skips the character an unescaped backslash
- * escapes, or a value holding `\"` would end "inside" the quote and swallow the
- * following item.
- *
- * The suffix is searched from the end: the hint is the last thing on the line,
- * while a value such as `from="see (--allow-partial in the docs)"` may carry
- * the same text, and ending the list there would truncate it.
- */
-function unappliedItems(stderr: string): string[] | undefined {
-  const markerAt = stderr.indexOf(UNAPPLIED_EDIT_MARKER);
-  if (markerAt < 0) return undefined;
-  const tail = stderr.slice(markerAt + UNAPPLIED_EDIT_MARKER.length);
-  const suffixAt = tail.lastIndexOf(UNAPPLIED_EDIT_SUFFIX);
-  const body = (suffixAt < 0 ? tail : tail.slice(0, suffixAt)).replace(/^:\s*/u, "").trim();
-  if (body === "") return undefined;
-  const items: string[] = [];
-  let current = "";
-  let quoted = false;
-  let escaped = false;
-  for (const character of body) {
-    if (escaped) {
-      escaped = false;
-      current += character;
-      continue;
-    }
-    if (quoted && character === "\\") {
-      escaped = true;
-      current += character;
-      continue;
-    }
-    if (character === "\"") quoted = !quoted;
-    if (character === "," && !quoted) {
-      items.push(current.trim());
-      current = "";
-      continue;
-    }
-    current += character;
-  }
-  items.push(current.trim());
-  return items.filter(item => item !== "");
-}
-
-/**
- * Report an unapplied-edit refusal as the zero-match replace cause — but only
- * when every op the engine lists is a replace. The same line carries
- * set_field, create_field, delete_image and the rest, and telling a user whose
- * field edit missed to "select the text again" would be a wrong remedy.
+ * Report a classified edit refusal as its stable marker (`edit refused:
+ * <kind>`), which the editor renders as its own localized sentence. The rule
+ * lives in core (`classifyEditRefusal`) so the Tauri transport applies the
+ * same one (#80). The wrapper keeps the original reason, which `routes.ts`
+ * turns into the wire code, and the engine's stderr and detail.
  */
 function rethrowUnmatchedEditRefusal(error: unknown): never {
   if (error instanceof HwpCliError && error.reason === "failed" && error.stderr !== undefined) {
-    const items = unappliedItems(error.stderr);
-    if (items !== undefined && items.length > 0 && items.every(item => /^replace\s/u.test(item))) {
-      // The wrapper keeps the original reason: it is what `routes.ts` turns
-      // into the wire code, and this classifier only refines the message.
-      throw new HwpCliError(error.reason, `${error.message}: edit refused: unmatched_replace`, error.stderr, error.detail);
-    }
-    const cause = engineRefusalCause(error.stderr);
-    if (cause !== undefined) {
-      throw new HwpCliError(error.reason, `${error.message}: edit refused: ${cause}`, error.stderr, error.detail);
+    const kind = classifyEditRefusal(error.stderr);
+    if (kind !== undefined) {
+      throw new HwpCliError(error.reason, `${error.message}: ${editRefusalMarker(kind)}`, error.stderr, error.detail);
     }
   }
   throw error;
-}
-
-/**
- * The hwp-cli 1.5-1.6 refusals the editor can reach (#76), as stable markers.
- *
- * hwp-cli v1.6.1 publishes no machine code for these (they are plain anyhow
- * strings), so each is matched on the most stable fixed token of its line:
- * - `range_tag`: `RANGE_TAG_SHIFT_REFUSAL` (hwp-convert/src/edit.rs:179,
- *   hwp-cli#470) names the HWP5 record by its identifier `PARA_RANGE_TAG`.
- * - `run_range_conflict` (hwp-cli#420), two carriers: the batch preflight's
- *   `ConflictKind::LengthChange` line (commands/edit.rs:1137) and the apply-time
- *   content-drift bail (commands/edit.rs:3553-3563), which fires when any
- *   earlier op (hyperlink, field, bookmark, image, set_cell...) changed the
- *   paragraph's length before a run-addressed set_format.
- * Only the error line is searched: the rest of stderr can echo user values
- * (a replace's from/to), which must not decide the classification. anyhow
- * prints the error first as `Error: ...`, its context chain continuing below;
- * the search runs from that line to the end of the chain.
- * Neither stderr nor its staged paths cross the boundary: only the marker.
- */
-const RANGE_TAG_TOKEN = "PARA_RANGE_TAG";
-const RUN_RANGE_CONFLICT_TOKENS = ["고정된 run 범위가 무효화됩니다", "범위가 다른 글자를 가리킵니다"] as const;
-
-function engineErrorText(stderr: string): string {
-  const at = stderr.search(/^Error: /mu);
-  return at < 0 ? "" : stderr.slice(at);
-}
-
-function engineRefusalCause(stderr: string): "range_tag" | "run_range_conflict" | undefined {
-  const text = engineErrorText(stderr);
-  if (text.includes(RANGE_TAG_TOKEN)) return "range_tag";
-  if (RUN_RANGE_CONFLICT_TOKENS.some(token => text.includes(token))) return "run_range_conflict";
-  return undefined;
 }
 
 /**
