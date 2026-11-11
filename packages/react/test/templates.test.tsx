@@ -105,12 +105,12 @@ it("clears the previous lint error when the profile or document changes", async 
   const { rerender } = render(<HwpEditor engine={engine} file={original} />);
   fireEvent.click(await screen.findByRole("tab", { name: en["tabs.lint"] }));
   fireEvent.click(screen.getByRole("button", { name: en["lint.run"] }));
-  expect(await screen.findByRole("alert").textContent).toContain("lint failed");
+  expect((await screen.findByRole("alert")).textContent).toContain("lint failed");
 
   fireEvent.change(screen.getByLabelText(en["lint.profile"]), { target: { value: "report" } });
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
   fireEvent.click(screen.getByRole("button", { name: en["lint.run"] }));
-  expect(await screen.findByRole("alert").textContent).toContain("lint failed");
+  expect((await screen.findByRole("alert")).textContent).toContain("lint failed");
 
   rerender(<HwpEditor engine={engine} file={filled} />);
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
