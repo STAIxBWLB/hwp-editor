@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compareSegments, formatAddresses, isSectionDefinitionParagraph, paragraphAddress, resolveSelection, segmentPath, selectSimilar, selectionAction, selectedParagraphs } from "../src/selection.js";
+import { compareSegments, formatAddresses, hasOwnRef, isSectionDefinitionParagraph, paragraphAddress, resolveSelection, segmentPath, selectSimilar, selectionAction, selectedParagraphs } from "../src/selection.js";
 import type { CatEnvelope, Segment } from "../src/segments.js";
 import { initialState, reducer } from "../src/state.js";
 
@@ -368,6 +368,27 @@ describe("selection helpers", () => {
     expect(formatAddresses({ markdown: "hello", segments: [topPara, topRun] }, [topPara])).toEqual([
       { at: { section: 0, paragraph: 3, run: 2 } },
     ]);
+  });
+
+  it("refuses a nested paragraph that carries no id of its own (t18-18)", () => {
+    // A ref is {section, para} plus an optional id, so a nested paragraph with
+    // no id names the host: selecting it and pressing Delete would remove the
+    // host with everything the projection nested inside it.
+    const host: Segment = { id: "host", indices: [0], start: 0, end: 4, kind: "para", section: 0, para: 0 };
+    const nested: Segment = { indices: [0, 0, 0, 0], start: 0, end: 4, kind: "para", section: 0, para: 0 };
+    const legacy: Segment = { start: 0, end: 4, kind: "para", section: 0, para: 0 };
+    const graph: CatEnvelope = { markdown: "abcd", segments: [host, nested] };
+    expect(hasOwnRef(host)).toBe(true);
+    // A legacy projection names no path, so its bare coordinate is its own.
+    expect(hasOwnRef(legacy)).toBe(true);
+    expect(hasOwnRef(nested)).toBe(false);
+
+    expect(resolveSelection(graph, nested)).toEqual({ paragraphs: [], paragraph: undefined, refusal: "unaddressable" });
+    expect(selectionAction(graph, initialState, nested, "single")).toEqual({ type: "refuseSelection", refusal: "unaddressable" });
+    expect(selectionAction(graph, initialState, host, "single")).toEqual({
+      type: "select",
+      selection: { section: 0, para: 0, id: "host" },
+    });
   });
 
   it("classifies a section's definition paragraph by position, not by text", () => {

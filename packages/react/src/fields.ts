@@ -8,7 +8,7 @@
  */
 
 import type { CatEnvelope, Segment, SegmentRef } from "@hwp-editor/core";
-import { segmentAtOffset } from "@hwp-editor/core";
+import { resolveSelection, segmentRef } from "@hwp-editor/core";
 
 export interface FieldSlot {
   /** Placeholder name as written between the braces. */
@@ -19,20 +19,57 @@ export interface FieldSlot {
 
 const SLOT_PATTERN = /\{\{\s*([^{}]+?)\s*\}\}/g;
 
-/** All `{{name}}` placeholder slots in the envelope, in document order. */
+/**
+ * The innermost segment covering `offset`.
+ *
+ * A v2 projection lists a table's host paragraph before the cell and the
+ * cell's own paragraph, and `segmentAtOffset` answers with the first segment
+ * whose range holds the offset: for a slot in a cell that is the host. Depth
+ * in `indices` is what says which segment sits inside which; on a tie the
+ * shorter range is the inner one, and a legacy projection (no indices at all)
+ * keeps the first segment it listed.
+ */
+function innermostAt(envelope: CatEnvelope, offset: number): Segment | undefined {
+  let best: Segment | undefined;
+  for (const segment of envelope.segments) {
+    if (segment.start > offset || offset >= segment.end) continue;
+    if (best === undefined) {
+      best = segment;
+      continue;
+    }
+    const depth = segment.indices?.length ?? 0;
+    const bestDepth = best.indices?.length ?? 0;
+    if (depth > bestDepth ||
+        (depth === bestDepth && segment.end - segment.start < best.end - best.start)) {
+      best = segment;
+    }
+  }
+  return best;
+}
+
+/**
+ * All `{{name}}` placeholder slots in the envelope, in document order.
+ *
+ * Each slot names the paragraph that holds it, never an enclosing one: a
+ * table and a cell sit inside a host paragraph whose range covers the whole
+ * table, so a slot resolved to the host would make the inspector's Delete
+ * remove the table as well. `resolveSelection` is the same mapper every other
+ * target goes through, so a slot resolves exactly where a click on it does.
+ */
 export function extractFieldSlots(envelope: CatEnvelope): FieldSlot[] {
   const slots: FieldSlot[] = [];
   const seen = new Set<string>();
   for (const match of envelope.markdown.matchAll(SLOT_PATTERN)) {
     const name = match[1] ?? "";
-    const offset = match.index ?? 0;
-    const segment: Segment | undefined = segmentAtOffset(envelope, offset);
-    if (segment === undefined || seen.has(name)) continue;
+    // `match.index` counts UTF-16 units while a segment range counts Unicode
+    // scalars, so a non-BMP character before the slot would shift the lookup
+    // one segment on. Counting the prefix's scalars is the offset.
+    const offset = [...envelope.markdown.slice(0, match.index ?? 0)].length;
+    const hit = innermostAt(envelope, offset);
+    if (hit === undefined || seen.has(name)) continue;
+    const paragraph = resolveSelection(envelope, hit).paragraph ?? hit;
     seen.add(name);
-    slots.push({
-      name,
-      segment: { section: segment.section, para: segment.para },
-    });
+    slots.push({ name, segment: segmentRef(paragraph) });
   }
   return slots;
 }

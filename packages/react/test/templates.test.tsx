@@ -99,6 +99,43 @@ it("ignores slot results from a document that was replaced during the request", 
   await waitFor(() => expect(screen.queryByLabelText("Stale field")).toBeNull());
 });
 
+it("refuses an embedded create that resolves after the host switched file (t18-1)", async () => {
+  // The reload of the newly selected file is held open, so the store still
+  // holds the old document when the create lands: comparing the document
+  // alone still matched, and only the load generation says it is stale.
+  const other: DocumentHandle = { name: "other.hwpx", data: new TextEncoder().encode("other") };
+  let release: (() => void) | undefined;
+  let releaseReload: (() => void) | undefined;
+  const engine = templateEngine();
+  const readDocument = engine.read.bind(engine);
+  engine.read = async (document) => {
+    if (document.name === other.name) {
+      await new Promise<void>((resolve) => { releaseReload = resolve; });
+    }
+    return readDocument(document);
+  };
+  engine.create = vi.fn(() => new Promise((resolve) => { release = () => resolve(filled); }));
+  const onError = vi.fn();
+  const { rerender } = render(<HwpEditor engine={engine} file={original} onError={onError} />);
+  fireEvent.click(await screen.findByRole("button", { name: en["toolbar.newDocument"] }));
+
+  const create = await screen.findByRole("button", { name: en["templates.createEmbedded"] }) as HTMLButtonElement;
+  await waitFor(() => expect(create.disabled).toBe(false));
+  fireEvent.click(create);
+  await waitFor(() => expect(engine.create).toHaveBeenCalled());
+
+  rerender(<HwpEditor engine={engine} file={other} onError={onError} />);
+  await waitFor(() => expect(releaseReload).toBeDefined());
+  expect(onError).not.toHaveBeenCalled();
+  release?.();
+
+  await waitFor(() => expect(onError).toHaveBeenCalled());
+  expect((onError.mock.calls[0]?.[0] as Error).message).toBe(en["error.staleReplacement"]);
+  releaseReload?.();
+  await waitFor(() => expect(engine.calls.read.at(-1)?.name).toBe(other.name));
+  expect(engine.calls.read.some((document) => document.name === filled.name)).toBe(false);
+});
+
 it("clears the previous lint error when the profile or document changes", async () => {
   const engine = templateEngine();
   engine.lint = vi.fn(async () => { throw new Error("lint failed"); });

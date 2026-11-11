@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { Segment } from "@hwp-editor/core";
 import { sanitizeSvg } from "../src/sanitize.js";
 import { plainSegmentText } from "../src/text.js";
 import { parseMarkdownTable, findTables, tableAtRef } from "../src/tables.js";
@@ -70,6 +71,33 @@ describe("fields", () => {
     const slots = extractFieldSlots(makeEnvelope());
     expect(slots).toEqual([
       { name: "date", segment: { section: 0, para: 3 } },
+    ]);
+  });
+
+  it("locates a slot after non-BMP characters by scalar offset (t18-14)", () => {
+    // `match.index` counts UTF-16 units while a segment range counts scalars.
+    // Each emoji is two units and one scalar, so five of them move the lookup
+    // five scalars on, past the paragraph that holds the slot.
+    const markdown = "😀😀😀😀😀{{a}}\n\nAfter";
+    const emoji: Segment = { id: "emoji-p", indices: [0], start: 0, end: 5, kind: "para", section: 0, para: 0 };
+    const slot: Segment = { id: "slot-p", indices: [1], start: 5, end: 10, kind: "para", section: 0, para: 1 };
+    const after: Segment = { id: "after-p", indices: [2], start: 10, end: 19, kind: "para", section: 0, para: 2 };
+    expect(extractFieldSlots({ markdown, segments: [emoji, slot, after] })).toEqual([
+      { name: "a", segment: { section: 0, para: 1, id: "slot-p" } },
+    ]);
+  });
+
+  it("locates a slot in a table cell on the cell's own paragraph (t18-15)", () => {
+    // The projection lists the host paragraph, then the table, the cell and
+    // the cell's paragraph, so the first segment covering the slot is the host.
+    // Resolving to the host aims the inspector's Delete at the whole table.
+    const markdown = "| {{x}} |";
+    const host: Segment = { id: "host-p", indices: [0], start: 0, end: 9, kind: "para", section: 0, para: 0 };
+    const table: Segment = { id: "tbl", indices: [0, 0], start: 0, end: 9, kind: "table", section: 0, para: 0 };
+    const cell: Segment = { id: "cell", indices: [0, 0, 0], start: 2, end: 7, kind: "cell", section: 0, para: 0 };
+    const cellPara: Segment = { id: "cell-p", indices: [0, 0, 0, 0], start: 2, end: 7, kind: "para", section: 0, para: 0 };
+    expect(extractFieldSlots({ markdown, segments: [host, table, cell, cellPara] })).toEqual([
+      { name: "x", segment: { section: 0, para: 0, id: "cell-p" } },
     ]);
   });
 });

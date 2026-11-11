@@ -32,6 +32,22 @@ export interface SelectionTargets {
 }
 
 /**
+ * Whether a segment's own ref names it and nothing else.
+ *
+ * A `SegmentRef` carries a section, a paragraph and an optional id, and
+ * `segmentForRef` falls back to the coordinate when the id is absent. A
+ * nested segment with no id therefore names the paragraph that hosts it:
+ * selecting it and pressing Delete would remove the host, taking whatever the
+ * projection nested inside it, and answering a format op would apply to the
+ * host's runs. No shipped transport emits that shape (v2 requires ids, v1
+ * has no indices), so such a segment is refused rather than resolved to
+ * something it is not.
+ */
+export function hasOwnRef(segment: Segment): boolean {
+  return segment.id !== undefined || segment.indices === undefined || segment.indices.length <= 1;
+}
+
+/**
  * Map a selected segment to the paragraphs an op may address.
  *
  * Every kind is mapped explicitly, because guessing is destructive: a table
@@ -39,7 +55,8 @@ export interface SelectionTargets {
  * so aiming a paragraph op at that host edits or deletes the table itself.
  * Nothing here falls back to an enclosing paragraph.
  *
- * - para: itself.
+ * - para: itself, unless it is nested without an id of its own: its ref then
+ *   names the host paragraph, so it is unaddressable rather than the host.
  * - run: the paragraph that directly holds it.
  * - cell: every paragraph inside the cell, since align, spacing and character
  *   format apply to all of them, but no single target: replace, insert and
@@ -56,7 +73,7 @@ export function resolveSelection(envelope: CatEnvelope, segment: Segment): Selec
   const only = (paragraph: Segment | undefined): SelectionTargets => paragraph === undefined
     ? refuse("unaddressable")
     : { paragraphs: [paragraph], paragraph, refusal: null };
-  if (segment.kind === "para") return only(segment);
+  if (segment.kind === "para") return only(hasOwnRef(segment) ? segment : undefined);
   if (segment.kind === "table") return refuse("table");
   if (segment.kind === "image" || segment.kind === "field" || segment.kind === "bookmark") return refuse("container");
   const indices = segment.indices;
@@ -274,7 +291,13 @@ export function selectionAction(
   target: Segment,
   mode: "single" | "toggle" | "extend",
 ): EditorAction {
-  if (mode === "single") return { type: "select", selection: segmentRef(target) };
+  if (mode === "single") {
+    // A unit whose ref would name its host is not selectable at all: the state
+    // would hold a coordinate that resolves to a different segment.
+    return hasOwnRef(target)
+      ? { type: "select", selection: segmentRef(target) }
+      : { type: "refuseSelection", refusal: "unaddressable" };
+  }
   const refs = state.selections?.length ? state.selections : state.selection ? [state.selection] : [];
   const segments = refs.flatMap((ref) => {
     const segment = segmentForRef(envelope, ref);

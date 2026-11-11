@@ -64,7 +64,7 @@ interface AssemblyRow {
  * name and the document metadata in both sources.
  */
 export function ComposePanel(props: ComposePanelProps): JSX.Element {
-  const { engine, t, onError, store, state } = useHwpEditorContext();
+  const { engine, t, onError, store, state, loadEpoch } = useHwpEditorContext();
   const components = props.components ?? STARTER_COMPONENTS;
   const [preset, setPreset] = useState<ComposePreset>("official");
   const [title, setTitle] = useState("");
@@ -164,6 +164,11 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
     if (!canCreate || busy) return;
     setBusy(true);
     setError(null);
+    // Both halves are captured now and checked before the result may replace
+    // the document: a load the host started meanwhile, and an apply or undo
+    // that changed the document, each make this result stale.
+    const epoch = loadEpoch();
+    const source = store.getState().document;
     try {
       const written = title.trim();
       const spec = assembling
@@ -174,6 +179,10 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
         : buildDocumentSpec(preset, { title, author, body });
       const stem = written === "" ? t("compose.defaultFileStem") : written;
       const result = await engine.compose(spec, `${stem}.hwpx`);
+      if (!mounted.current) return;
+      if (loadEpoch() !== epoch || store.getState().document !== source) {
+        throw new Error(t("error.staleReplacement"));
+      }
       props.onComposed(result.document);
     } catch (e) {
       // A component refusal carries a code, the component and the field, and
@@ -193,13 +202,16 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
 
   const createEmbedded = async (): Promise<void> => {
     if (!canCreate || busy || engine.create === undefined || !createStatus.supported || templateId === "") return;
+    const epoch = loadEpoch();
     const source = store.getState().document;
     setBusy(true); setError(null);
     try {
       const stem = title.trim() === "" ? templateId : title.trim();
       const next = await engine.create(templateId, `${stem}.hwpx`);
       if (!mounted.current) return;
-      if (store.getState().document !== source) throw new Error(t("error.staleReplacement"));
+      // A load in flight leaves the old document in the store until it
+      // resolves, so the document identity alone would still match.
+      if (loadEpoch() !== epoch || store.getState().document !== source) throw new Error(t("error.staleReplacement"));
       props.onComposed(next);
     } catch (e) {
       if (mounted.current) { setError(toEditorError(e)); onError?.(e); }

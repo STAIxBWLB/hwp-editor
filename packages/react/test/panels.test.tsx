@@ -652,6 +652,44 @@ describe("panel edge cases (TEST-03)", () => {
     expect(engine.calls.edit).toHaveLength(0);
   });
 
+  it("selects a slot's own paragraph inside a table cell, not the table's host (t18-15)", async () => {
+    // The projection lists the host paragraph before the table and the cell,
+    // so a slot resolved by its bare {section, para} selected the host: the
+    // inspector's Delete then removed the whole table with it.
+    const markdown = "| {{x}} |\n| --- |\n";
+    const segments: Segment[] = [
+      { id: "host-p", indices: [0], start: 0, end: markdown.length, kind: "para", section: 0, para: 0 },
+      { id: "tbl", indices: [0, 0], start: 0, end: markdown.length, kind: "table", section: 0, para: 0 },
+      { id: "cell", indices: [0, 0, 0], start: 2, end: 7, kind: "cell", section: 0, para: 0 },
+      { id: "cell-p", indices: [0, 0, 0, 0], start: 2, end: 7, kind: "para", section: 0, para: 0 },
+    ];
+    const engine = createMockEngine({ envelope: { markdown, segments } });
+    render(<HwpEditor engine={engine} file={file} />);
+    await screen.findByRole("button", { name: en["page.label"]({ page: 1 }) });
+
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.fields"] }));
+    fireEvent.click(await screen.findByRole("button", { name: "x" }));
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.para"] }));
+    clickBtn("segment.deletePara");
+
+    expect(await applyOps(engine, 1)).toEqual([
+      { kind: "delete-para", address: { id: "cell-p" } },
+    ]);
+  });
+
+  it("does not offer a nested paragraph that has no id of its own (t18-18)", async () => {
+    // Its ref would be {section, para} alone, which resolves to the paragraph
+    // hosting it: offering it would let a click select, and an op edit, the host.
+    const markdown = "body\n\n";
+    const segments: Segment[] = [
+      { id: "host-p", indices: [0], start: 0, end: markdown.length, kind: "para", section: 0, para: 0 },
+      { indices: [0, 0, 0, 0], start: 0, end: 4, kind: "para", section: 0, para: 0 },
+    ];
+    render(<HwpEditor engine={createMockEngine({ envelope: { markdown, segments } })} file={file} />);
+    await screen.findByRole("button", { name: en["page.label"]({ page: 1 }) });
+    expect(await screen.findAllByRole("option")).toHaveLength(1);
+  });
+
   it("renders the table empty state and queues nothing when the selection has no table", async () => {
     const engine = createMockEngine();
     await selectPara(engine, 0);

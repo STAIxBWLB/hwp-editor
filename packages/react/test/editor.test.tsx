@@ -491,6 +491,54 @@ describe.each(LOCALES)("HwpEditor compose flow — locale=%s", (locale) => {
     return screen.findByRole("dialog", { name: t["compose.title"] });
   }
 
+  it("keeps the file the host switched to when a compose resolves late (t18-1)", async () => {
+    // The reload of the newly selected file is held open, so the store still
+    // holds the old document when the compose lands: only the load generation
+    // says the result is stale, and a compose that checked the document alone
+    // would replace the file the host had just picked.
+    const composed: DocumentHandle = { name: "composed.hwpx", data: new TextEncoder().encode("composed") };
+    const other: DocumentHandle = { name: "other.hwpx", data: new TextEncoder().encode("other") };
+    let release!: () => void;
+    let releaseReload!: () => void;
+    let started = false;
+    const engine = createMockEngine();
+    const readDocument = engine.read.bind(engine);
+    engine.read = async (document) => {
+      if (document.name === other.name) {
+        await new Promise<void>((resolve) => { releaseReload = resolve; });
+      }
+      return readDocument(document);
+    };
+    engine.compose = () => {
+      started = true;
+      return new Promise((resolve) => {
+        release = () => resolve({ document: composed });
+      });
+    };
+    const onError = vi.fn();
+    const { rerender } = render(
+      <HwpEditor locale={locale} engine={engine} file={file} onError={onError} />,
+    );
+    await screen.findByRole("button", { name: t["page.label"]({ page: 1 }) });
+
+    fireEvent.click(screen.getByRole("button", { name: t["toolbar.newDocument"] }));
+    await screen.findByRole("dialog", { name: t["compose.title"] });
+    fireEvent.change(screen.getByLabelText(t["compose.titleLabel"]), { target: { value: "테스트" } });
+    fireEvent.click(screen.getByRole("button", { name: t["compose.submit"] }));
+    await vi.waitFor(() => expect(started).toBe(true));
+
+    rerender(<HwpEditor locale={locale} engine={engine} file={other} onError={onError} />);
+    await vi.waitFor(() => expect(releaseReload).toBeDefined());
+    release();
+
+    await vi.waitFor(() => expect(onError).toHaveBeenCalled());
+    expect((onError.mock.calls[0]?.[0] as Error).message).toBe(t["error.staleReplacement"]);
+    // The host's own load was left to finish, and the composed file was never read.
+    releaseReload();
+    await vi.waitFor(() => expect(engine.calls.read.at(-1)?.name).toBe(other.name));
+    expect(engine.calls.read.some((document) => document.name === composed.name)).toBe(false);
+  });
+
   it("closes on Escape even while focus is still on the trigger", async () => {
     const dialog = await openDialog(createMockEngine());
     fireEvent.keyDown(document, { key: "Escape" });
