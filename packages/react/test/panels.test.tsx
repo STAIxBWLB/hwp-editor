@@ -843,6 +843,34 @@ describe("ComponentsPanel (TEST-03)", () => {
     });
   });
 
+  it("anchors an insertion before a cell at the cell's first paragraph", async () => {
+    // "Before" and "after" are different ends of a cell: a cell holds several
+    // paragraphs, and only the cell's own first paragraph precedes all of them.
+    const host: Segment = { id: "cell-host", indices: [2], start: 0, end: 5, kind: "para", section: 0, para: 2 };
+    const table: Segment = { id: "cell-table", indices: [2, 0], start: 0, end: 5, kind: "table", section: 0, para: 2 };
+    const cell: Segment = { id: "cell-two", indices: [2, 0, 0], start: 0, end: 5, kind: "cell", section: 0, para: 2 };
+    const first: Segment = { id: "cell-two-p0", indices: [2, 0, 0, 0], start: 0, end: 1, kind: "para", section: 0, para: 2 };
+    const second: Segment = { id: "cell-two-p1", indices: [2, 0, 0, 1], start: 3, end: 4, kind: "para", section: 0, para: 2 };
+    // Envelope order is not document order: the second paragraph comes first
+    // here, so an anchor that trusted the list would take the wrong end.
+    const envelope: CatEnvelope = { markdown: "가\n\n나\n", segments: [second, host, table, cell, first] };
+    const engine = composedEngine(envelope);
+    engine.render = async () => [pageWithRow(cell)];
+    render(<HwpEditor engine={engine} file={file} />);
+    await screen.findByRole("button", { name: en["page.label"]({ page: 1 }) });
+    clickRow();
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+    fireEvent.click(await screen.findByRole("button", { name: en["components.positionBefore"] }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) }),
+    );
+    expect(engine.calls.edit[0]!.ops[0]).toMatchObject({
+      kind: "insert-blocks",
+      address: { id: "cell-two-p0" },
+      position: "before",
+    });
+  });
+
   it("names a table as the reason the palette cannot insert", async () => {
     const host: Segment = { id: "cell-host", indices: [2], start: 0, end: 1, kind: "para", section: 0, para: 2 };
     const table: Segment = { id: "cell-table", indices: [2, 0], start: 0, end: 1, kind: "table", section: 0, para: 2 };
@@ -913,6 +941,38 @@ describe("ComponentsPanel (TEST-03)", () => {
     const panel = screen.getByRole("region", { name: en["segment.panelAria"] });
     expect(panel.querySelector(".hwped-quote")?.textContent).toContain(text);
     expect(panel.querySelector('[aria-selected="true"]')?.textContent).toContain(text);
+  });
+
+  it("refuses to select from a truncated report and says why", async () => {
+    // `changed_total` means the engine capped the id list, so the selection
+    // would cover only part of what was inserted. The document is published
+    // either way: the palette reports the cap and leaves the selection alone.
+    const base = addressableEnvelope();
+    const engine = composedEngine(base);
+    const truncated: EditReport = {
+      ...insertReport,
+      ops: [{ ...insertReport.ops[0]!, changed_total: 4 }],
+    };
+    const baseEdit = engine.edit.bind(engine);
+    engine.edit = async (document, ops, options) => ({
+      ...(await baseEdit(document, ops, options)),
+      ...(options?.report === true ? { report: truncated } : {}),
+    });
+    await selectPara(engine, 1, base);
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) }),
+    );
+
+    const alert = await screen.findByText(en["components.reportTruncated"]);
+    expect(alert.getAttribute("role")).toBe("status");
+    // The document was published, so this is not a failure line.
+    expect(screen.queryAllByRole("alert")).toHaveLength(0);
+    // The replacement cleared the old selection, and the truncated report
+    // selected nothing: no paragraph was picked from a partial id list.
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.para"] }));
+    expect(screen.getByText(en["segment.selectedCount"]({ count: 0 }))).toBeTruthy();
+    expect(screen.queryByText(en["segment.selectedPara"]({ path: "0/2" }))).toBeNull();
   });
 
   it("disables insertion with a localized reason below hwp-cli 1.4.0", async () => {

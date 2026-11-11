@@ -1,0 +1,137 @@
+/**
+ * The two localization boundaries the palette owns, tested directly rather
+ * than through the DOM so every branch of the sentence has an assertion.
+ *
+ * - An `insert_blocks` width refusal becomes a sentence naming the widths the
+ *   failure measured. Three of them exist because the numbers arrive
+ *   independently: the server summary carries both, a host wired in process
+ *   carries the engine's body width but not the block's, and a refusal with
+ *   neither is still a sentence a user can act on. A blank where a width
+ *   belongs is the bug this pins against.
+ * - A `ComponentError` becomes a whole sentence in the user's locale, next
+ *   step included, while the engine-side English reason survives on `detail`.
+ */
+import { describe, expect, it } from "vitest";
+import { ComponentError, HwpEngineError } from "@hwp-editor/core";
+import type { Blocks, ComponentErrorCode } from "@hwp-editor/core";
+
+import { componentFailure, insertionFailure } from "../src/components-support.js";
+import { createT } from "../src/messages.js";
+import type { MessageKey } from "../src/messages.js";
+
+const en = createT("en");
+const ko = createT("ko");
+
+/** A 120 mm table: the widest block the component would insert. */
+const WIDE: Blocks = [{
+  type: "table",
+  width_mm: 120,
+  columns: [{ width_mm: 60 }, { width_mm: 60 }],
+  rows: [{ cells: [{ blocks: [{ type: "paragraph", runs: [{ type: "text", text: "결재" }] }] }] }],
+}];
+
+/** Blocks that carry no measurable width at all. */
+const UNMEASURED: Blocks = [{ type: "paragraph", runs: [{ type: "text", text: "붙임" }] }];
+
+/** What the CLI server's classification puts in the message (no paths). */
+const serverSummary = (widths: boolean): string =>
+  `hwp edit failed (exit 1): insert_blocks refused: layout_overflow${widths
+    ? " (block 120.00 mm, insertion point 46.40 mm)"
+    : ""}; insert it where the body is wide enough or use a narrower component, then retry`;
+
+/** The engine's own text when a host runs in process: body width, no block width. */
+const engineText =
+  "Error: insert_blocks 블록/스타일/목록 정의가 유효하지 않습니다: layout_overflow at " +
+  "$.sections[0].blocks[0].width_mm: table width exceeds body width 46.40 mm.";
+
+function overflow(message: string): HwpEngineError {
+  return new HwpEngineError("failed", message, { status: 422 });
+}
+
+describe("insertionFailure", () => {
+  it("names both widths, and keeps the engine code, status and cause", () => {
+    const error = overflow(serverSummary(true));
+    const shown = insertionFailure(error, WIDE, en) as Error & { detail?: string };
+
+    expect(shown.message).toBe(en("components.tooWide", { width: "120 mm", available: "46.4 mm" }));
+    expect((shown as { code?: string }).code).toBe("failed");
+    expect((shown as { status?: number }).status).toBe(422);
+    expect((shown as { cause?: unknown }).cause).toBe(error);
+    // The engine's own diagnostic stays for a log, not for the sentence.
+    expect(shown.detail).toContain("layout_overflow");
+  });
+
+  it("reads the engine's own body width when a host runs in process", () => {
+    const shown = insertionFailure(overflow(engineText), WIDE, en) as Error;
+
+    // Same sentence as the server summary's: the body width is the number
+    // that decides the refusal, whichever transport spelled it.
+    expect(shown.message).toBe(en("components.tooWide", { width: "120 mm", available: "46.4 mm" }));
+  });
+
+  it("names the block width alone when the refusal carries no body width", () => {
+    const shown = insertionFailure(overflow(serverSummary(false)), WIDE, en) as Error;
+
+    expect(shown.message).toBe(en("components.tooWideUnmeasured", { width: "120 mm" }));
+    expect(shown.message).toContain("120 mm");
+    expect(shown.message).not.toContain("only");
+  });
+
+  it("still says something actionable when neither width is known", () => {
+    const shown = insertionFailure(overflow(serverSummary(false)), UNMEASURED, en) as Error;
+
+    expect(shown.message).toBe(en("components.tooWideUnknown"));
+    // No placeholder survived as an empty slot: the sentence ends on a step.
+    expect(shown.message).not.toMatch(/is\s*[.,]|:\s*$/);
+  });
+
+  it("passes any other engine failure through untouched", () => {
+    const error = new HwpEngineError("failed", "hwp edit failed (exit 1)");
+    expect(insertionFailure(error, WIDE, en)).toBe(error);
+  });
+});
+
+describe("componentFailure", () => {
+  /** Each palette-reachable code and the next-step key it must render. */
+  const steps = [
+    ["component_param", "components.step.param"],
+    ["component_style", "components.step.style"],
+    ["component_invalid", "components.step.invalid"],
+    ["component_load", "components.step.load"],
+  ] as const satisfies ReadonlyArray<readonly [ComponentErrorCode, MessageKey]>;
+
+  it.each(steps)("gives %s its own localized next step", (code, key) => {
+    const error = new ComponentError(code, "src/components/broken.json", "params.기안자", "the reason");
+    const shown = componentFailure(error, ko) as Error & { detail?: string };
+
+    expect(shown.message).toBe(ko("components.refused", {
+      code,
+      source: "src/components/broken.json",
+      field: "params.기안자",
+      step: ko(key),
+    }));
+    // The step is the localized one, and the parser's English reason is not
+    // part of what the user reads.
+    expect(shown.message).toContain(ko(key));
+    expect(shown.message).not.toContain("the reason");
+    // The English one-line form survives as technical detail.
+    expect(shown.detail).toBe(error.message);
+  });
+
+  it("keeps the empty-field form for a refusal about the source itself", () => {
+    const error = new ComponentError("component_load", "https://example.test/c.json", "", "unreadable");
+    const shown = componentFailure(error, ko) as Error;
+
+    expect(shown.message).toBe(ko("components.refused", {
+      code: "component_load",
+      source: "https://example.test/c.json",
+      field: "",
+      step: ko("components.step.load"),
+    }));
+  });
+
+  it("passes a non-component throw through", () => {
+    const error = new Error("boom");
+    expect(componentFailure(error, en)).toBe(error);
+  });
+});

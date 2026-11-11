@@ -819,14 +819,15 @@ describe("documentSpecFromComponents", () => {
   });
 
   it("refuses to redefine an official profile style, and accepts the same values", () => {
-    const redefining = validateComponent(
+    // Refused at validation, so the message carries the component's own file
+    // rather than its `name`; `componentStyleMap` never sees such a component.
+    expect(() => validateComponent(
       { ...BASE_COMPONENT, styles: { "바탕글": { bold: true } } },
       REFUSAL_SOURCE,
-    );
-    expect(() => documentSpecFromComponents([redefining])).toThrow(
-      "components: 시험: styles.바탕글: redefines the official profile's 바탕글, and a component " +
-        "takes profile values from the table rather than replacing them (#54 Decision " +
-        "2026-11-10); define your style under its own name with based_on 바탕글, then retry",
+    )).toThrow(
+      "components: src/components/broken.json: styles.바탕글: redefines the official profile's 바탕글, " +
+        "and a component takes profile values from the table rather than replacing them (#54 " +
+        "Decision 2026-11-10); define your style under its own name with based_on 바탕글, then retry",
     );
     const restating = validateComponent(
       { ...BASE_COMPONENT, styles: { "바탕글": { ...OFFICIAL_PROFILE["바탕글"] } } },
@@ -1558,24 +1559,28 @@ describe("componentStyleMap", () => {
     expect(OFFICIAL_PROFILE["바탕글"]).toEqual(official);
   });
 
-  it("refuses a profile redefinition with the component and field named", () => {
-    const component = validateComponent({
-      name: "시험",
-      description: "시험용 구성요소",
-      params: {},
-      styles: { "바탕글": { font_size_pt: 30 } },
-      blocks: [{ type: "paragraph", style: "바탕글", runs: [{ type: "text", text: "본문" }] }],
-    }, REFUSAL_SOURCE);
-    expect(() => componentStyleMap([component])).toThrow(/redefines the official profile's 바탕글/);
+  it("refuses a profile redefinition where the component's own file is the source", () => {
+    // The refusal names what the user can open — the file or URL the component
+    // came from — rather than the component's `name`, which is one field inside
+    // that file (AC3). Validation is where the source is still known.
+    let refusal: unknown;
     try {
-      componentStyleMap([component]);
+      validateComponent({
+        name: "시험",
+        description: "시험용 구성요소",
+        params: {},
+        styles: { "바탕글": { font_size_pt: 30 } },
+        blocks: [{ type: "paragraph", style: "바탕글", runs: [{ type: "text", text: "본문" }] }],
+      }, REFUSAL_SOURCE);
     } catch (error) {
-      expect(isComponentError(error)).toBe(true);
-      if (!isComponentError(error)) throw error;
-      expect(error.code).toBe("component_style");
-      expect(error.source).toBe("시험");
-      expect(error.field).toBe("styles.바탕글");
+      refusal = error;
     }
+    expect(isComponentError(refusal)).toBe(true);
+    if (!isComponentError(refusal)) throw refusal;
+    expect(refusal.code).toBe("component_style");
+    expect(refusal.source).toBe(REFUSAL_SOURCE);
+    expect(refusal.field).toBe("styles.바탕글");
+    expect(refusal.reason).toContain("redefines the official profile's 바탕글");
   });
 
   it("codes a param refusal apart from a shape refusal, so a host can localize it", () => {

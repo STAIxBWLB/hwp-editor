@@ -145,12 +145,25 @@ describe("insertedParagraphIds", () => {
     expect(insertedParagraphIds({ ...outcome, status: "failed", reason: "insert_blocks: no address" })).toEqual([]);
   });
 
-  it("refuses a selection that disagrees with the engine's paragraph count", () => {
-    // Non-vacuity guard: the count is what proves the nesting rule above
-    // selected the right set, so a report that contradicts it must not be keyed.
+  it("keeps the named paragraphs when the engine counted a piece it could not name", () => {
+    // Measured with the 붙임 starter's empty fourth param: the block lands as
+    // an empty paragraph, so it is counted in pieces_touched and absent from
+    // changed. Returning the three named paragraphs is what makes a
+    // multi-paragraph starter movable at all; refusing the report left the
+    // palette with nothing to select.
     const outcome = firstOutcome(paragraphReport());
-    expect(() => insertedParagraphIds({ ...outcome, pieces_touched: 3 })).toThrow(
-      /reports 3 inserted paragraphs but lists 2 top-level ids/,
+    expect(insertedParagraphIds({ ...outcome, pieces_touched: 3 })).toEqual([
+      "a84ac20e7a012e4a.0.2",
+      "b47cc2fea12bd117.0.3",
+    ]);
+  });
+
+  it("refuses a report that lists more paragraphs than it touched", () => {
+    // The nesting rule above is proved by the count, so a report claiming
+    // fewer pieces than its own top-level ids is not this contract.
+    const outcome = firstOutcome(paragraphReport());
+    expect(() => insertedParagraphIds({ ...outcome, pieces_touched: 1 })).toThrow(
+      /reports 1 inserted paragraphs but lists 2 top-level ids/,
     );
   });
 });

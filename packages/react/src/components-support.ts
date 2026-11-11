@@ -16,9 +16,9 @@
  *   the source of both numbers, and a preflight from the rendered box would
  *   refuse insertions the engine accepts.
  */
-import type { TFunction } from "./messages.js";
-import { isComponentError } from "@hwp-editor/core";
-import type { Blocks } from "@hwp-editor/core";
+import type { MessageKey, TFunction } from "./messages.js";
+import { isComponentError, isHwpEngineError, HwpEngineError } from "@hwp-editor/core";
+import type { Blocks, ComponentErrorCode } from "@hwp-editor/core";
 
 /** A width as the localized messages print it, in whole millimetres. */
 function millimetres(value: number): string {
@@ -60,11 +60,18 @@ export function widestBlockMm(blocks: Blocks): number | undefined {
   return widest;
 }
 
-/** The insertion width the engine printed in a `layout_overflow` refusal, in mm. */
+/**
+ * The insertion width named in a `layout_overflow` refusal, in mm.
+ *
+ * Three spellings reach here: the server's one-line cause (`insertion point
+ * 46.40 mm`, built from cli-engine's refusal summary), the engine's own
+ * "body width is 46.40 mm" / "exceeds body width 46.40 mm", and the Korean
+ * tail it repeats the figure in. A host wired in process passes the raw engine
+ * text, so all three stay.
+ */
 export function overflowingBodyMm(message: string): number | undefined {
-  // The engine prints both forms: "body width is 46.40 mm" for a column total
-  // and "exceeds body width 46.40 mm" for the table's own width.
-  const match = /body width (?:is )?([\d.]+) ?mm/.exec(message) ??
+  const match = /insertion point ([\d.]+) ?mm/.exec(message) ??
+    /body width (?:is )?([\d.]+) ?mm/.exec(message) ??
     /폭은 ([\d.]+)mm/.exec(message);
   if (match === null) return undefined;
   const value = Number(match[1]);
@@ -74,8 +81,10 @@ export function overflowingBodyMm(message: string): number | undefined {
 /**
  * Whether an engine failure is the width refusal `insert_blocks` answers with.
  *
- * `layout_overflow` is the engine's own diagnostic token and survives its
- * Korean prose, which is why it is the marker rather than a translated phrase.
+ * `layout_overflow` is the engine's own diagnostic token: it survives the
+ * Korean prose, and the CLI server carries it out of stderr unchanged (it is
+ * the only part of an `insert_blocks` refusal that names no file path), so the
+ * same marker works over HTTP and in process.
  */
 export function isLayoutOverflow(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
@@ -83,9 +92,29 @@ export function isLayoutOverflow(error: unknown): boolean {
 }
 
 /**
+ * The localized sentence as an error a host renders, keeping what the failure
+ * arrived with: the engine code, the HTTP status and the original error stay on
+ * the wrapper (REVIEW.md — a failure wrapper must not drop them), and the
+ * engine's own diagnostic rides along on `detail` for a log.
+ */
+function wrapped(error: unknown, text: string, detail: string): Error {
+  if (isHwpEngineError(error)) {
+    return Object.assign(
+      new HwpEngineError(error.code, text, {
+        ...(error.status === undefined ? {} : { status: error.status }),
+        cause: error,
+      }),
+      { detail },
+    );
+  }
+  return Object.assign(new Error(text), { detail });
+}
+
+/**
  * An error to report for a failed insertion: the width refusal becomes a
- * localized sentence naming both widths, and anything else is passed through
- * as it came, so a host still sees the engine's own code and detail.
+ * localized sentence naming the widths it could measure, and anything else is
+ * passed through as it came, so a host still sees the engine's own code and
+ * detail.
  */
 export function insertionFailure(
   error: unknown,
@@ -96,18 +125,27 @@ export function insertionFailure(
   const message = error instanceof Error ? error.message : String(error);
   const wanted = widestBlockMm(blocks);
   const available = overflowingBodyMm(message);
-  const detail = error instanceof Error ? error : new Error(message);
-  // A width-bearing block is what overflows, so an unmeasurable component is
-  // reported as the engine sent it rather than with a guessed width.
-  if (wanted === undefined) return error;
-  const text = t("components.tooWide", {
-    width: millimetres(wanted),
-    available: available === undefined ? "" : millimetres(available),
-  });
-  // The engine's diagnostic stays on the error for a host that logs it; the
-  // message a user reads is the localized one.
-  return Object.assign(new Error(text), { detail: message });
+  // Every sentence below names a next step the user can take; none of them
+  // leaves a blank where a width would go.
+  const text = wanted === undefined
+    ? t("components.tooWideUnknown")
+    : available === undefined
+      ? t("components.tooWideUnmeasured", { width: millimetres(wanted) })
+      : t("components.tooWide", { width: millimetres(wanted), available: millimetres(available) });
+  return wrapped(error, text, message);
 }
+
+/**
+ * The localized next step for a refusal code. The English `reason` keeps its
+ * cause and "then retry" tail as technical detail on the error; what the user
+ * reads is a whole sentence in their own language, step included.
+ */
+const STEP_KEYS: Record<ComponentErrorCode, MessageKey> = {
+  component_param: "components.step.param",
+  component_style: "components.step.style",
+  component_invalid: "components.step.invalid",
+  component_load: "components.step.load",
+};
 
 /** A component refusal as the localized sentence for it. */
 export function componentRefusalText(error: unknown, t: TFunction): string | null {
@@ -116,15 +154,18 @@ export function componentRefusalText(error: unknown, t: TFunction): string | nul
     code: error.code,
     source: error.source,
     field: error.field,
-    reason: error.reason,
+    step: t(STEP_KEYS[error.code]),
   });
 }
 
 /**
  * The message to report for a throw from a component path: the localized
- * refusal when it is one, otherwise whatever came.
+ * refusal when it is one, otherwise whatever came. The English one-line form
+ * stays on `detail`, which is where a host's log reads it.
  */
 export function componentFailure(error: unknown, t: TFunction): unknown {
   const text = componentRefusalText(error, t);
-  return text === null ? error : new Error(text);
+  if (text === null) return error;
+  const detail = error instanceof Error ? error.message : String(error);
+  return wrapped(error, text, detail);
 }

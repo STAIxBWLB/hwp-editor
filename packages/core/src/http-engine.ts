@@ -1,5 +1,6 @@
 import { parsePageLayout } from "./layout.js";
 import { parseEditReport } from "./edit-report.js";
+import type { EditReport } from "./edit-report.js";
 import { imageAssetMediaType, validateImageAssets } from "./assets.js";
 /**
  * HwpEngine client for the HTTP route contract defined in protocol.ts.
@@ -276,10 +277,22 @@ export function createHttpEngine(
         method: "POST",
         body: form,
       });
+      // Parsed only when the caller asked for it, and an unreadable answer is
+      // dropped rather than failing an edit whose document was published: the
+      // same rule the Tauri engine applies, so both transports answer one
+      // shape for one request.
+      let report: EditReport | undefined;
+      if (options.report === true && res.report !== undefined) {
+        try {
+          report = parseEditReport(res.report);
+        } catch {
+          report = undefined;
+        }
+      }
       return {
         name: res.name,
         data: fromBase64(res.dataBase64),
-        ...(res.report === undefined ? {} : { report: parseEditReport(res.report) }),
+        ...(report === undefined ? {} : { report }),
       };
     },
 

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { CatEnvelope } from "@hwp-editor/core";
+import type { CatEnvelope, EditOp } from "@hwp-editor/core";
 import { HwpEditor } from "../src/HwpEditor.js";
 import { en, ko } from "../src/messages.js";
 import { createMockEngine } from "./mock-engine.js";
@@ -87,5 +87,112 @@ describe.each([["en", en], ["ko", ko]] as const)("paragraph multi-selection (%s)
 
     fireEvent.keyDown(screen.getByRole("option", { name: choice(2, "Paragraph two") }), { key: "Enter", ctrlKey: true });
     expect(screen.getAllByRole("option").filter((option) => option.getAttribute("aria-selected") === "true")).toHaveLength(5);
+  });
+});
+
+/**
+ * A component starter that inserts several paragraphs leaves exactly this
+ * selection: the run of paragraphs it created, all siblings of one another.
+ * Move and delete therefore have to act on the run — one `move-para` of the
+ * neighbouring paragraph across the whole run, or one `delete-para` per
+ * paragraph in a single batch — instead of turning the controls off.
+ */
+describe("paragraph run reorder and delete", () => {
+  /** Five paragraphs the engine named, as segment-envelope-v2 addresses them. */
+  function addressedFive(): CatEnvelope {
+    const envelope = fiveParagraphs();
+    return {
+      ...envelope,
+      segments: envelope.segments.map((segment, para) => ({
+        ...segment,
+        id: `${"a".repeat(16)}.0.${para}`,
+        indices: [para],
+      })),
+    };
+  }
+
+  const ids = (envelope: CatEnvelope) => envelope.segments.map((segment) => segment.id!);
+
+  /** Click Apply for the queued ops and return what the engine was sent. */
+  async function apply(messages: typeof en, count: number, engine: ReturnType<typeof createMockEngine>): Promise<EditOp[]> {
+    fireEvent.click(await screen.findByRole("button", { name: messages["toolbar.applyWithCount"]({ count }) }));
+    await waitFor(() => expect(engine.calls.edit).toHaveLength(1));
+    return engine.calls.edit[0]!.ops;
+  }
+
+  it.each([["en", en], ["ko", ko]] as const)("moves a contiguous run as one block (%s)", async (locale, messages) => {
+    const envelope = addressedFive();
+    const engine = createMockEngine({ envelope });
+    render(<HwpEditor engine={engine} file={file} locale={locale} />);
+    const options = await screen.findAllByRole("option");
+    fireEvent.click(options[1]!);
+    fireEvent.click(options[3]!, { shiftKey: true });
+    expect(screen.getByText(messages["segment.selectedCount"]({ count: 3 }))).toBeTruthy();
+
+    const up = screen.getByRole("button", { name: messages["segment.moveUp"] }) as HTMLButtonElement;
+    expect(up.disabled).toBe(false);
+    fireEvent.click(up);
+
+    // One op, and the paragraph that moves is the neighbour above the run:
+    // placing it after the run's last paragraph is what lifts the block.
+    const [id0, , , id3] = ids(envelope);
+    expect(await apply(messages, 1, engine)).toEqual([{
+      kind: "move-para",
+      address: { id: id0 },
+      to: { address: { id: id3 }, position: "after" },
+    }]);
+  });
+
+  it.each([["en", en], ["ko", ko]] as const)("deletes a contiguous run as one addressed batch (%s)", async (locale, messages) => {
+    const envelope = addressedFive();
+    const engine = createMockEngine({ envelope });
+    render(<HwpEditor engine={engine} file={file} locale={locale} />);
+    const options = await screen.findAllByRole("option");
+    fireEvent.click(options[2]!);
+    fireEvent.click(options[4]!, { shiftKey: true });
+
+    const remove = screen.getByRole("button", { name: messages["segment.deletePara"] }) as HTMLButtonElement;
+    expect(remove.disabled).toBe(false);
+    fireEvent.click(remove);
+
+    // One entry per paragraph, in document order, still one batch and one undo.
+    const [, , id2, id3, id4] = ids(envelope);
+    expect(await apply(messages, 3, engine)).toEqual([
+      { kind: "delete-para", address: { id: id2 } },
+      { kind: "delete-para", address: { id: id3 } },
+      { kind: "delete-para", address: { id: id4 } },
+    ]);
+  });
+
+  it("keeps move and delete off, with the reason, for a non-contiguous selection", async () => {
+    const envelope = addressedFive();
+    const engine = createMockEngine({ envelope });
+    render(<HwpEditor engine={engine} file={file} locale="en" />);
+    const options = await screen.findAllByRole("option");
+    fireEvent.click(options[0]!);
+    fireEvent.click(options[2]!, { ctrlKey: true });
+    expect(screen.getByText(en["segment.selectedCount"]({ count: 2 }))).toBeTruthy();
+
+    // Paragraphs 1 and 3 with paragraph 2 left out: no single op means this
+    // set, so the controls stay off rather than acting on a set nobody picked.
+    for (const name of [en["segment.moveUp"], en["segment.moveDown"], en["segment.deletePara"]]) {
+      expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(true);
+    }
+    expect(screen.getByText(en["segment.multiReorderRefused"])).toBeTruthy();
+    expect(engine.calls.edit).toHaveLength(0);
+  });
+
+  it("allows the run's edge and refuses only past it", async () => {
+    const envelope = addressedFive();
+    const engine = createMockEngine({ envelope });
+    render(<HwpEditor engine={engine} file={file} locale="en" />);
+    const options = await screen.findAllByRole("option");
+    fireEvent.click(options[0]!);
+    fireEvent.click(options[1]!, { shiftKey: true });
+
+    // The run starts at the first sibling, so up is refused and down is not.
+    expect((screen.getByRole("button", { name: en["segment.moveUp"] }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: en["segment.moveDown"] }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByText(en["segment.multiReorderRefused"])).toBeNull();
   });
 });

@@ -686,6 +686,67 @@ function rethrowUploadedImageFailure(error: unknown, imageOnly: boolean): never 
 }
 
 /**
+ * The cause class of an `insert_blocks` refusal, as one line a caller can act
+ * on, or null when the stderr is not one of them.
+ *
+ * `runCliOk` reports the exit code alone, because the CLI's own text names the
+ * staged input file and no temp path may reach a caller. An insertion's
+ * actionable causes write no path — a block wider than its destination (the
+ * engine prints both widths) and a style the target does not define (it prints
+ * the style's name) — so those are carried out here and the raw stderr stays in
+ * `detail` for an operator. Everything else keeps the bare exit line.
+ *
+ * The engine writes these diagnostics in Korean under every locale (`--lang`
+ * localizes clap help text only: the same refusal is byte-identical under
+ * `--lang en`, measured on ahwp 1.6.0), so the markers are Korean and
+ * permanent, like `PROTECTED_MARKERS` in core.
+ */
+function insertBlocksRefusal(stderr: string): string | null {
+  const millimetres = (pattern: RegExp): string | undefined => pattern.exec(stderr)?.[1];
+  if (stderr.includes("insert_blocks") && stderr.includes("layout_overflow")) {
+    // "column widths total 120.00 mm; body width is 46.40 mm" for a column
+    // sum, "exceeds body width 46.40 mm" for the table's own width, and the
+    // destination width again in the Korean tail.
+    const block = millimetres(/column widths total ([\d.]+) ?mm/);
+    const insertion = millimetres(/body width (?:is )?([\d.]+) ?mm/) ??
+      millimetres(/삽입 위치의 폭은 ([\d.]+)mm/);
+    const widths = [
+      ...(block === undefined ? [] : [`block ${block} mm`]),
+      ...(insertion === undefined ? [] : [`insertion point ${insertion} mm`]),
+    ];
+    return `insert_blocks refused: layout_overflow${widths.length === 0 ? "" : ` (${widths.join(", ")})`}; ` +
+      "insert it where the body is wide enough or use a narrower component, then retry";
+  }
+  const style = /스타일 '([^']+)'을 대상 문서에서 찾을 수 없습니다/.exec(stderr)?.[1];
+  if (style !== undefined) {
+    return `insert_blocks refused: unknown_style (${style}); ` +
+      "provide that style in `styles` or name one the document defines, then retry";
+  }
+  if (stderr.includes("insert_blocks")) {
+    return "insert_blocks refused: the block, style or list definition is not valid; " +
+      "fix the component's blocks or styles, then retry";
+  }
+  return null;
+}
+
+/**
+ * Report an insertion's refusal as its cause class. Nothing else changes: a
+ * batch without an insertion, and a non-insertion failure, keep the bare exit
+ * line, and a protected document's refusal was already remapped before this
+ * runs.
+ */
+function rethrowInsertBlocksRefusal(error: unknown, insertion: boolean): never {
+  if (insertion && error instanceof HwpCliError && error.reason === "failed" && error.stderr !== undefined) {
+    const cause = insertBlocksRefusal(error.stderr);
+    if (cause !== null) {
+      throw new HwpCliError("failed", `${error.message}: ${cause}`, error.stderr, error.detail);
+    }
+  }
+  throw error;
+}
+
+
+/**
  * A page dimension is only trustworthy when it is finite and strictly
  * positive. `PageCanvas`'s `aspectRatio` collapses on a zero, and
  * `page.width_pt` upstream is an `f32`, so a degenerate value means the
@@ -1272,7 +1333,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         if (options.report === true) args.push("--report", reportPath);
         await runCliOk(bin, args, timeoutMs, opts.locale, call?.signal).catch(options.assets?.length
           ? error => rethrowUploadedImageFailure(error, ops.every(op => op.kind === "insert-image"))
-          : rethrowProtected);
+          : rethrowProtected).catch(error => rethrowInsertBlocksRefusal(error, ops.some(op => op.kind === "insert-blocks")));
         const data = new Uint8Array(await readFile(output));
         if (options.report !== true) return { name: document.name, data };
         let report: EditReport | undefined;

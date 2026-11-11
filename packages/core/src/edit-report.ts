@@ -174,10 +174,17 @@ export function parseEditReport(raw: unknown): EditReport {
  * ids and, for a table or image block, the table, cell, cell-paragraph and run
  * ids nested under it. Only the paragraphs the request's blocks became are
  * addressable by the ops that reorder or remove them, so the ones kept here are
- * the shortest index chains that no other listed segment extends. The engine
- * counts exactly those in `pieces_touched`, and a selection that disagrees with
- * that count is a report this helper cannot key — refused rather than returned
- * partly, which would have the palette reorder the wrong paragraph.
+ * the shortest index chains that no other listed segment extends.
+ *
+ * `pieces_touched` counts the pieces the engine placed, which is not always the
+ * number of ids it can name: a block that lands as an empty paragraph has no
+ * segment to list, so it is counted and not named (measured on ahwp 1.6.0 with
+ * the 붙임 starter's empty fourth param: `pieces_touched: 4`, three paragraph
+ * ids, and the document holds an unaddressable empty paragraph). A shortfall is
+ * therefore expected and the named ids are returned. A surplus is not — a
+ * report listing more paragraphs than it touched is not this contract — and is
+ * refused, as is a capped list (`changed_total`), which the caller checks
+ * before calling this.
  */
 export function insertedParagraphIds(outcome: EditOpOutcome): string[] {
   if (outcome.status !== "applied") return [];
@@ -198,7 +205,7 @@ export function insertedParagraphIds(outcome: EditOpOutcome): string[] {
     }
     if (!nested) top.push(id);
   }
-  if (top.length !== outcome.pieces_touched) {
+  if (top.length > outcome.pieces_touched) {
     invalid(
       `ops[${outcome.index}] reports ${outcome.pieces_touched} inserted paragraphs but lists ` +
         `${top.length} top-level ids`,

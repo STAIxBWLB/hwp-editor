@@ -106,20 +106,37 @@ export const en = {
   "components.disabledChannel":
     "This host cannot send typed edit operations, so a component cannot be inserted.",
   "components.noReport":
-    "The engine applied the insertion but reported no ids, so the inserted paragraphs cannot be selected; ask the host for the edit report (hwp-cli 1.4.0+) and insert again.",
+    "The component is in the document, but this host returned no edit report, so the editor cannot " +
+    "select what it created; open the paragraph tab and pick the inserted paragraphs to move or remove them.",
+  "components.reportTruncated":
+    "The edit report capped the ids it lists, so the inserted paragraphs cannot be selected; insert a " +
+    "smaller component, or pick the new paragraphs in the paragraph list.",
   "components.tooWide": (p: { width: string; available: string }): string =>
-    `This component is ${p.width} wide and the insertion point is ${p.available}: the engine refuses ` +
-    "a block wider than where it would go. Insert it in a narrower column of the component, or " +
-    "choose a narrower component.",
+    `This component is ${p.width} wide and the insertion point is only ${p.available}, so the engine ` +
+    "refuses it. Insert it where the body is wide enough (beside a top-level paragraph, not inside a " +
+    "cell), or use a narrower component.",
+  "components.tooWideUnmeasured": (p: { width: string }): string =>
+    `This component is ${p.width} wide and the engine refused it as too wide for where it would go. ` +
+    "Insert it beside a top-level paragraph rather than inside a cell, or use a narrower component.",
+  "components.tooWideUnknown":
+    "The engine refused the insertion as too wide for where it would go. Insert it where the body is " +
+    "wide enough, or use a narrower component.",
   "components.refused": (p: {
     code: string;
     source: string;
     field: string;
-    reason: string;
+    step: string;
   }): string =>
-    p.field === ""
-      ? `${p.source} was refused (${p.code}): ${p.reason}`
-      : `${p.source}: ${p.field} was refused (${p.code}): ${p.reason}`,
+    (p.field === "" ? `${p.source} was refused (${p.code}). ` : `${p.source}: ${p.field} was refused (${p.code}). `) +
+    p.step,
+  "components.step.param":
+    "Correct that value in the panel, or fix the component's params, then insert it again.",
+  "components.step.style":
+    "Define the style under its own name based on the profile style, or fix the reference, then insert it again.",
+  "components.step.invalid":
+    "Fix the component's file so every field matches the component contract, then load it again.",
+  "components.step.load":
+    "Check the component file's path or URL and its JSON, then load it again.",
 
   // Error line — the prefix names which operation failed. The `{message}`
   // tail stays engine-authored and is never translated.
@@ -187,7 +204,7 @@ export const en = {
     p.count === 1 ? "1 paragraph selected" : `${p.count} paragraphs selected`,
   "segment.selectedRunCount": (p: { count: number }): string =>
     p.count === 1 ? "1 run selected" : `${p.count} runs selected`,
-  "segment.multiTextEditHint": "Text replacement, insertion, and deletion target one paragraph. Select one paragraph to use these controls.",
+  "segment.multiTextEditHint": "Text replacement and insertion target one paragraph. Select one paragraph to use those controls.",
   "segment.rangeTextEditHint": "Use whole paragraph to edit text",
   "segment.runTextEditHint": "Select a paragraph to edit its text",
   "segment.runSelectionTerminal": "Starts a new paragraph selection",
@@ -215,6 +232,8 @@ export const en = {
   "segment.moveUp": "Move up",
   "segment.moveDown": "Move down",
   "segment.deletePara": "Delete paragraph",
+  "segment.multiReorderRefused":
+    "Move and delete act on one paragraph or on paragraphs next to each other in the same place. Select such a run to move or delete it together.",
   "segment.alignLabel": "Alignment",
   "segment.alignGroupAria": "Paragraph alignment",
   "segment.alignLeft": "Left",
@@ -480,19 +499,32 @@ export const ko: MessageTable = {
     `구성 요소 삽입에는 hwp-cli ${p.version} 이상이 필요합니다. 이전 엔진은 삽입한 식별자를 보고하지 않습니다.`,
   "components.disabledChannel": "이 호스트는 형식이 지정된 편집 연산을 보낼 수 없어 구성 요소를 삽입할 수 없습니다.",
   "components.noReport":
-    "엔진이 삽입을 적용했지만 식별자를 보고하지 않아 삽입한 문단을 선택할 수 없습니다. 호스트에 편집 보고서(hwp-cli 1.4.0 이상)를 요청한 뒤 다시 삽입하세요.",
+    "구성 요소는 문서에 들어갔지만 이 호스트가 편집 리포트를 주지 않아, 삽입된 문단을 선택할 수 없습니다. " +
+    "문단 탭에서 삽입된 문단을 직접 선택해 옮기거나 삭제하세요.",
+  "components.reportTruncated":
+    "편집 리포트가 나열하는 식별자를 잘라내 삽입된 문단을 선택할 수 없습니다. 더 작은 구성 요소를 넣거나 문단 목록에서 새 문단을 직접 선택하세요.",
   "components.tooWide": (p: { width: string; available: string }): string =>
-    `이 구성 요소의 너비는 ${p.width}이고 삽입 지점의 너비는 ${p.available}입니다. 엔진은 삽입 지점보다 넓은 블록을 거부합니다. ` +
-    "구성 요소의 더 좁은 열에 삽입하거나 더 좁은 구성 요소를 선택하세요.",
+    `이 구성 요소의 너비는 ${p.width}이고 삽입 지점의 너비는 ${p.available}뿐이라 엔진이 거부합니다. ` +
+    "본문이 충분히 넓은 곳(셀 안이 아니라 최상위 문단 옆)에 넣거나 더 좁은 구성 요소를 사용하세요.",
+  "components.tooWideUnmeasured": (p: { width: string }): string =>
+    `이 구성 요소의 너비는 ${p.width}이고, 들어갈 자리에 비해 넓다고 엔진이 거부했습니다. ` +
+    "셀 안이 아니라 최상위 문단 옆에 넣거나 더 좁은 구성 요소를 사용하세요.",
+  "components.tooWideUnknown":
+    "들어갈 자리에 비해 넓다고 엔진이 삽입을 거부했습니다. 본문이 충분히 넓은 곳에 넣거나 더 좁은 구성 요소를 사용하세요.",
   "components.refused": (p: {
     code: string;
     source: string;
     field: string;
-    reason: string;
+    step: string;
   }): string =>
-    p.field === ""
-      ? `${p.source}이(가) 거부되었습니다(${p.code}): ${p.reason}`
-      : `${p.source}: ${p.field}이(가) 거부되었습니다(${p.code}): ${p.reason}`,
+    (p.field === ""
+      ? `${p.source}이(가) 거부되었습니다(${p.code}). `
+      : `${p.source}: ${p.field}이(가) 거부되었습니다(${p.code}). `) + p.step,
+  "components.step.param": "패널에서 그 값을 고치거나 구성 요소의 매개변수를 수정한 뒤 다시 삽입하세요.",
+  "components.step.style":
+    "프로파일 스타일을 based_on으로 두고 자기 이름으로 스타일을 정의하거나 참조를 고친 뒤 다시 삽입하세요.",
+  "components.step.invalid": "구성 요소 파일의 모든 필드가 구성 요소 규약에 맞도록 고친 뒤 다시 불러오세요.",
+  "components.step.load": "구성 요소 파일의 경로나 URL과 JSON을 확인한 뒤 다시 불러오세요.",
 
   "error.prefix.load": "문서 열기 실패",
   "error.prefix.apply": "편집 적용 실패",
@@ -549,7 +581,7 @@ export const ko: MessageTable = {
   "segment.rangeClear": "문단 전체 사용",
   "segment.selectedCount": (p) => `선택한 문단 ${p.count}개`,
   "segment.selectedRunCount": (p) => `선택한 run ${p.count}개`,
-  "segment.multiTextEditHint": "텍스트 교체, 삽입, 삭제는 한 문단을 대상으로 합니다. 이 기능을 사용하려면 문단 하나를 선택하세요.",
+  "segment.multiTextEditHint": "텍스트 교체와 삽입은 한 문단을 대상으로 합니다. 이 기능을 사용하려면 문단 하나를 선택하세요.",
   "segment.rangeTextEditHint": "텍스트를 편집하려면 문단 전체를 사용하세요",
   "segment.runTextEditHint": "텍스트를 편집하려면 문단을 선택하세요",
   "segment.runSelectionTerminal": "새 문단 선택이 시작됩니다",
@@ -576,6 +608,8 @@ export const ko: MessageTable = {
   "segment.moveUp": "위로 이동",
   "segment.moveDown": "아래로 이동",
   "segment.deletePara": "문단 삭제",
+  "segment.multiReorderRefused":
+    "이동과 삭제는 문단 하나, 또는 같은 자리에서 연속한 문단들을 대상으로 합니다. 그런 문단들을 함께 선택하면 한 번에 옮기거나 삭제할 수 있습니다.",
   "segment.alignLabel": "정렬",
   "segment.alignGroupAria": "문단 정렬",
   "segment.alignLeft": "왼쪽",

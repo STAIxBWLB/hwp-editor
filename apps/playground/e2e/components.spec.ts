@@ -152,6 +152,92 @@ test("AC8: a component inserted after the selected paragraph is rendered there",
   await expect(page.locator(".hwped").getByRole("alert")).toHaveCount(0);
 });
 
+/**
+ * AC8 for a component that is more than one paragraph.
+ *
+ * Six of the seven starters insert several paragraphs, and the selection a
+ * report names is then a run rather than a single paragraph. The controls must
+ * act on the run: one `move-para` of the neighbouring paragraph across the
+ * whole block, and one addressed `delete-para` per paragraph in a single
+ * batch, which is still one engine call and one undo.
+ */
+test("AC8: a multi-paragraph component is inserted, moved as a block, and deleted", async ({ page }) => {
+  const edits = await recordEdits(page);
+  await page.goto("/editor");
+
+  await page.getByLabel("fixture", { exact: true }).selectOption("table-demo.hwpx");
+  const pageView = page.getByRole("button", { name: en["page.label"]({ page: 1 }), exact: true });
+  await expect(pageView).toBeVisible({ timeout: 30_000 });
+  const box = await pageView.boundingBox();
+  if (box === null) throw new Error("page has no box");
+  await pageView.click({ position: { x: box.width / 2, y: 20 } });
+  await expect(page.locator(".hwped-quote")).toHaveText(/표 편집 데모/);
+
+  await page.getByRole("tab", { name: en["tabs.components"], exact: true }).click();
+  const panel = page.getByRole("region", { name: en["components.panelAria"], exact: true });
+  const name = "붙임";
+  const insert = panel.getByRole("button", { name: en["components.insert"]({ name }), exact: true });
+  const reRead = page.waitForResponse((response) => response.url().endsWith("/read"));
+  await insert.click();
+  const edited = (await (await reRead).json()) as { markdown: string };
+
+  expect(edits).toHaveLength(1);
+  const [op] = editOps(edits[0]!);
+  expect(op!.kind).toBe("insert-blocks");
+  // Four paragraph blocks, no table. The fourth param is empty by default, so
+  // the engine places an empty paragraph it cannot name in the report; the
+  // three named ones are what the palette can address.
+  expect(op!.blocks?.map((block) => block.type)).toEqual(["paragraph", "paragraph", "paragraph", "paragraph"]);
+  const heading = edited.markdown.indexOf("표 편집 데모");
+  const attachment = edited.markdown.indexOf("붙임 1. 관련 자료 1부.");
+  expect(heading).toBeGreaterThanOrEqual(0);
+  expect(attachment).toBeGreaterThan(heading);
+
+  // The inserted paragraphs are the selection, so the block moves from the
+  // paragraph controls with a single op.
+  await expect(insert).toBeEnabled();
+  await page.getByRole("tab", { name: en["tabs.para"], exact: true }).click();
+  const inspected = page.getByRole("region", { name: en["segment.panelAria"], exact: true });
+  await expect(inspected.locator(".hwped-quote")).toContainText("붙임");
+  const moved = page.waitForResponse((response) => response.url().endsWith("/read"));
+  await inspected.getByRole("button", { name: en["segment.moveUp"], exact: true }).click();
+  await page.getByRole("button", { name: en["toolbar.applyWithCount"]({ count: 1 }), exact: true }).click();
+  const afterMove = (await (await moved).json()) as { markdown: string };
+  const move = editOps(edits[1]!);
+  expect(move).toHaveLength(1);
+  expect(move[0]!.kind).toBe("move-para");
+  // The block stayed a block: every attachment line is now above the heading
+  // the component was inserted after.
+  expect(afterMove.markdown.indexOf("붙임 1. 관련 자료 1부.")).toBeLessThan(
+    afterMove.markdown.indexOf("표 편집 데모"),
+  );
+
+  // An applied edit clears the selection, so the run is picked again from the
+  // paragraph list: the first attachment paragraph through the last one the
+  // report named.
+  await expect(inspected.getByRole("listbox").locator('[aria-selected="true"]')).toHaveCount(0);
+  await inspected.getByRole("option", { name: /Paragraph \d+: 붙임$/ }).click();
+  await inspected
+    .getByRole("option", { name: /Paragraph \d+: 붙임 2\. 세부 일정 1부\.$/ })
+    .click({ modifiers: ["Shift"] });
+  await expect(inspected.locator(".hwped-quote")).toContainText("붙임");
+
+  // Delete acts on the run: one addressed delete per named paragraph, in one
+  // batch, so the engine sees one call and undo sees one step.
+  const removed = page.waitForResponse((response) => response.url().endsWith("/read"));
+  await inspected.getByRole("button", { name: en["segment.deletePara"], exact: true }).click();
+  await page.getByRole("button", { name: en["toolbar.applyWithCount"]({ count: 3 }), exact: true }).click();
+  const afterRemove = (await (await removed).json()) as { markdown: string };
+  const deletes = editOps(edits[2]!);
+  expect(deletes).toHaveLength(3);
+  expect(deletes.every((sent) => sent.kind === "delete-para")).toBe(true);
+  expect(new Set(deletes.map((sent) => sent.address?.id)).size).toBe(3);
+  expect(afterRemove.markdown).not.toContain("붙임 1. 관련 자료 1부.");
+  expect(afterRemove.markdown).not.toContain("붙임 2. 세부 일정 1부.");
+  expect(afterRemove.markdown).toContain("표 편집 데모");
+  await expect(page.locator(".hwped").getByRole("alert")).toHaveCount(0);
+});
+
 test("AC9: a document composed from the assembly keeps its order and params", async ({ page }) => {
   // An empty library leaves the editor's new-document entry in place.
   await page.route("**/fixtures/manifest.json", (route) => route.fulfill({ json: { fixtures: [] } }));

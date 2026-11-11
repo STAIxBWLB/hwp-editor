@@ -137,8 +137,33 @@ export function SegmentInspector(): JSX.Element {
   // One selection is one entry in the list, even when it is a cell that covers
   // several paragraphs.
   const multiSelection = explicitSegments.length > 1;
+  /**
+   * The paragraph run a multi-selection covers, in document order, or null
+   * when the selection is not a set of paragraphs. A component that inserts
+   * several paragraphs leaves exactly this: its paragraphs are the selection,
+   * and moving or deleting it has to act on the run rather than on one
+   * paragraph of it.
+   */
+  const paragraphRun = multiSelection && explicitSegments.every(item => item.kind === "para")
+    ? [...explicitSegments].sort(compareSegments)
+    : null;
+  /**
+   * Contiguity is what makes one move or one delete mean something: the run's
+   * members must be the next siblings of one another, or the op would act on a
+   * set the user did not select. Same section, same parent path, no gaps.
+   */
+  const runStart = paragraphRun === null ? -1 : siblings.findIndex(candidate => candidate.id === paragraphRun[0]?.id);
+  const runContiguous = paragraphRun !== null && runStart >= 0 &&
+    paragraphRun.every((item, at) => siblings[runStart + at]?.id === item.id);
+  const runEnd = runContiguous ? runStart + paragraphRun!.length - 1 : -1;
   const textSelectionRestricted = multiSelection || hasRunSelection || state.range != null;
   const singleTargetDisabled = disabled || textSelectionRestricted || address === undefined;
+  // Delete and move serve one paragraph, or a contiguous run of them; every
+  // other multi-selection keeps them off and says why.
+  const reorderRefused = multiSelection && !runContiguous;
+  const deleteDisabled = disabled || (paragraphRun === null ? textSelectionRestricted || address === undefined : !runContiguous);
+  const moveUpDisabled = deleteDisabled || (paragraphRun === null ? siblingAt <= 0 : runStart <= 0);
+  const moveDownDisabled = deleteDisabled || (paragraphRun === null ? siblingAt < 0 || siblingAt >= siblings.length - 1 : runEnd >= siblings.length - 1);
   const anchorDisabled = !editable || state.status === "applying" || textSelectionRestricted;
   const legacyLinkSeparator = capabilities?.editOps !== "v1" && [currentText, linkText, linkUrl].some(value => value.includes("=>"));
   const validShape = isPlainDecimal(shapeValue) && (shapeKey !== "line-spacing" || Number(shapeValue) > 0);
@@ -183,6 +208,57 @@ export function SegmentInspector(): JSX.Element {
       ...(state.selectionAnchor === null || state.selectionAnchor === undefined
         ? { anchor: primary }
         : { anchor: state.selectionAnchor }),
+    });
+  };
+
+  /**
+   * Move up / down: one paragraph swaps with its neighbour, while a run of
+   * them moves as a block — the neighbour is the paragraph that moves, across
+   * the whole run, which keeps the run intact and one apply one undo.
+   */
+  const moveParagraph = (direction: -1 | 1): void => {
+    if (paragraphRun === null) {
+      const neighbour = siblings[direction === -1 ? siblingAt - 1 : siblingAt + 1];
+      if (address === undefined || neighbour === undefined) return;
+      store.dispatch({
+        type: "queueOp",
+        op: {
+          kind: "move-para",
+          address,
+          to: { address: paragraphAddress(neighbour), position: direction === -1 ? "before" : "after" },
+        },
+      });
+      return;
+    }
+    if (!runContiguous) return;
+    const neighbour = siblings[direction === -1 ? runStart - 1 : runEnd + 1];
+    const anchor = direction === -1 ? paragraphRun[paragraphRun.length - 1] : paragraphRun[0];
+    if (neighbour === undefined || anchor === undefined) return;
+    store.dispatch({
+      type: "queueOp",
+      op: {
+        kind: "move-para",
+        address: paragraphAddress(neighbour),
+        to: { address: paragraphAddress(anchor), position: direction === -1 ? "after" : "before" },
+      },
+    });
+  };
+
+  /**
+   * Delete: one addressed `delete-para` for the paragraph, or one per
+   * paragraph of the run in a single queue action, so the batch is one engine
+   * call and one undo. The engine resolves every address against the document
+   * it loaded, so a batch of addresses is safe.
+   */
+  const deleteParagraphs = (): void => {
+    if (paragraphRun === null) {
+      if (address !== undefined) store.dispatch({ type: "queueOp", op: { kind: "delete-para", address } });
+      return;
+    }
+    if (!runContiguous) return;
+    store.dispatch({
+      type: "queueOps",
+      ops: paragraphRun.map(item => ({ kind: "delete-para" as const, address: paragraphAddress(item) })),
     });
   };
 
@@ -333,51 +409,29 @@ export function SegmentInspector(): JSX.Element {
           <button
             type="button"
             className="hwped-btn"
-            disabled={singleTargetDisabled || siblingAt <= 0}
-            onClick={() =>
-              store.dispatch({
-                type: "queueOp",
-                op: {
-                  kind: "move-para",
-                  address: address!,
-                  to: { address: paragraphAddress(siblings[siblingAt - 1]!), position: "before" },
-                },
-              })
-            }
+            disabled={moveUpDisabled}
+            onClick={() => moveParagraph(-1)}
           >
             {t("segment.moveUp")}
           </button>
           <button
             type="button"
             className="hwped-btn"
-            disabled={singleTargetDisabled || siblingAt < 0 || siblingAt >= siblings.length - 1}
-            onClick={() =>
-              store.dispatch({
-                type: "queueOp",
-                op: {
-                  kind: "move-para",
-                  address: address!,
-                  to: { address: paragraphAddress(siblings[siblingAt + 1]!), position: "after" },
-                },
-              })
-            }
+            disabled={moveDownDisabled}
+            onClick={() => moveParagraph(1)}
           >
             {t("segment.moveDown")}
           </button>
           <button
             type="button"
             className="hwped-btn hwped-btn-danger"
-            disabled={singleTargetDisabled}
-            onClick={() =>
-              store.dispatch({
-                type: "queueOp",
-                op: { kind: "delete-para", address: address! },
-              })
-            }
+            disabled={deleteDisabled}
+            onClick={deleteParagraphs}
           >
             {t("segment.deletePara")}
           </button>
         </div>
+        {reorderRefused && <p className="hwped-hint" role="status">{t("segment.multiReorderRefused")}</p>}
       </div>
 
       <div className="hwped-field">

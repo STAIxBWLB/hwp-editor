@@ -23,7 +23,7 @@ import type {
   ValidationReport,
 } from "@hwp-editor/core";
 import type { AddressedEditOp } from "@hwp-editor/core";
-import { componentStyleMap, createStore, insertedParagraphIds, resolveSelection, segmentAtRef, segmentRef, substituteParams, validateImageAssets, HwpEngineError, MAX_IMAGE_ASSETS, MAX_IMAGE_ASSETS_TOTAL_BYTES, STARTER_COMPONENTS } from "@hwp-editor/core";
+import { compareSegments, componentStyleMap, createStore, insertedParagraphIds, resolveSelection, segmentAtRef, segmentRef, substituteParams, validateImageAssets, HwpEngineError, MAX_IMAGE_ASSETS, MAX_IMAGE_ASSETS_TOTAL_BYTES, STARTER_COMPONENTS } from "@hwp-editor/core";
 import type { EditorError, EditorStore } from "@hwp-editor/core";
 import { HwpEditorContext } from "./context.js";
 import type { HwpEditorContextValue } from "./context.js";
@@ -134,14 +134,24 @@ type SideTab = "para" | "table" | "fields" | "templates" | "components" | "lint"
  *
  * `resolveSelection` is what every other addressed control uses, so a run
  * resolves to the paragraph that owns it and a table, image, field or bookmark
- * resolves to nothing with a reason. A cell resolves to its own paragraphs:
- * the last one is where an insertion inside that cell lands, and a cell with
- * no paragraph is refused rather than walked up to the table's host paragraph,
+ * resolves to nothing with a reason. A cell resolves to its own paragraphs,
+ * and the insertion position picks the edge of that run: "after" addresses the
+ * cell's last paragraph and "before" its first, so a box inserted before a
+ * cell's text does not land between the cell's own paragraphs. A cell with no
+ * paragraph is refused rather than walked up to the table's host paragraph,
  * which would put the component beside the table.
  */
-function insertAnchor(envelope: CatEnvelope, segment: Segment): ParagraphAddress | null {
+function insertAnchor(
+  envelope: CatEnvelope,
+  segment: Segment,
+  position: InsertPosition,
+): ParagraphAddress | null {
   const targets = resolveSelection(envelope, segment);
-  const paragraph = targets.paragraph ?? targets.paragraphs[targets.paragraphs.length - 1];
+  if (targets.paragraph !== undefined) {
+    return targets.paragraph.id === undefined ? null : { id: targets.paragraph.id };
+  }
+  const ordered = [...targets.paragraphs].sort(compareSegments);
+  const paragraph = position === "before" ? ordered[0] : ordered[ordered.length - 1];
   return paragraph?.id === undefined ? null : { id: paragraph.id };
 }
 
@@ -235,6 +245,13 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     // React-internal throw legitimately has none, and synthesizing `internal`
     // would be indistinguishable from a real `internal`.
     const [loadError, setLoadError] = useState<EditorError | null>(null);
+    /**
+     * A notice about an operation that succeeded in the document but could not
+     * finish its follow-up — an insertion whose report names no usable ids, so
+     * nothing can be selected. Not a failure, so it does not take the error
+     * line; it is shown here and still reaches the host through `onError`.
+     */
+    const [notice, setNotice] = useState<string | null>(null);
     const loadGeneration = useRef(0);
     const [tab, setTab] = useState<SideTab>("para");
     const [composing, setComposing] = useState(false);
@@ -246,6 +263,11 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
      * row list would keep ids that describe the document as it was written.
      */
     const [pendingInserted, setPendingInserted] = useState<string[]>([]);
+    /** Show a post-success notice and hand the same text to the host. */
+    const noteInsertion = useCallback((text: string): void => {
+      setNotice(text);
+      emitError(new Error(text));
+    }, [emitError]);
     /** The envelope an attempt has already been made against, so none repeats. */
     const insertedTriedFor = useRef<CatEnvelope | null>(null);
     const imageAssets = useRef(new Map<EditOp, ImageAsset>());
@@ -490,8 +512,10 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       (component: Component, values: Record<string, string>, position: InsertPosition): void => {
         const snapshot = store.getState();
         if (!editableRef.current || snapshot.document === null || envelope === null) return;
+        // A new attempt retires the previous attempt's notice.
+        setNotice(null);
         const segment = snapshot.selection === null ? undefined : segmentAtRef(envelope, snapshot.selection);
-        const address = segment === undefined ? null : insertAnchor(envelope, segment);
+        const address = segment === undefined ? null : insertAnchor(envelope, segment, position);
         if (address === null) return;
         let blocks: Component["blocks"];
         let styles: NonNullable<Extract<AddressedEditOp, { kind: "insert-blocks" }>["styles"]>;
@@ -537,12 +561,23 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           // A replacement the editor discarded (a load or an undo landed
           // first) created nothing this state may select.
           if (!applied) return;
-          const outcome = report?.ops[0];
+          // The report lists every op it ran, in request order, spelled with
+          // the engine's own name (`insert_blocks`, not the client's kind), so
+          // the entry this insertion owns is named rather than assumed first.
+          const outcome = report?.ops.find((entry) => entry.op === "insert_blocks");
           if (outcome === undefined) {
-            emitError(new Error(t("components.noReport")));
+            // The document was published, so this is a notice rather than a
+            // failure: the editor shows it and the host still hears it.
+            noteInsertion(t("components.noReport"));
             return;
           }
           if (outcome.status !== "applied") return;
+          // A capped list means the ids that would name the rest are simply
+          // absent; selecting a partial run would reorder half a component.
+          if (outcome.changed_total !== undefined) {
+            noteInsertion(t("components.reportTruncated"));
+            return;
+          }
           let ids: string[];
           try {
             ids = insertedParagraphIds(outcome);
@@ -553,7 +588,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           setPendingInserted(ids);
         })();
       },
-      [emitError, engine, envelope, replaceDocument, store, t],
+      [emitError, engine, envelope, noteInsertion, replaceDocument, store, t],
     );
 
     const selectedTargets =
@@ -563,12 +598,15 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
             const segment = segmentAtRef(envelope, state.selection);
             return segment === undefined ? undefined : resolveSelection(envelope, segment);
           })();
+    // Whether the palette can act at all: any position needs an anchor, and the
+    // panel's own before/after choice decides which edge of a cell's paragraph
+    // run is addressed.
     const selectedAddress =
       envelope === null || state.selection === null
         ? null
         : (() => {
             const segment = segmentAtRef(envelope, state.selection);
-            return segment === undefined ? null : insertAnchor(envelope, segment);
+            return segment === undefined ? null : insertAnchor(envelope, segment, "after");
           })();
     const componentDisabled =
       componentsSupportReason(capabilities, t) ||
@@ -814,6 +852,9 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           )}
           {loadError !== null && (
             <ErrorLine prefix={t("error.prefix.load")} {...loadError} />
+          )}
+          {notice !== null && (
+            <p className="hwped-hint" role="status">{notice}</p>
           )}
 
           <div className="hwped-main">

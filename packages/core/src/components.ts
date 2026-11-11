@@ -392,10 +392,37 @@ function validateStyles(raw: unknown, source: string): Record<string, Style> {
         `must be at most ${MAX_LENGTH.styleName} characters, as document-spec-v1 allows a style name`,
       );
     }
-    validated.push([name, validateStyle(style, source, at("styles", name))]);
+    validated.push([name, validatedStyle(name, style, source)]);
   }
   // `fromEntries` defines own properties, so a style named `__proto__` survives.
   return Object.fromEntries(validated);
+}
+
+/**
+ * One style, validated, with the profile rule applied where the source is
+ * still known.
+ *
+ * A component may reference an official profile style but not redefine it: a
+ * profile row is the one copy every component shares (#54 Decision
+ * 2026-11-10). Refusing it here rather than at composition means the refusal
+ * names the file or URL the component came from — the thing a user can open
+ * and fix. The composed and inserted paths both validate first, so the rule
+ * lives in one place.
+ */
+function validatedStyle(name: string, raw: unknown, source: string): Style {
+  const style = validateStyle(raw, source, at("styles", name));
+  const profile = PROFILE_STYLES.get(name);
+  if (profile !== undefined && !sameStyle(profile, style)) {
+    refuse(
+      source,
+      at("styles", name),
+      `redefines the official profile's ${name}, and a component takes profile values from ` +
+        `the table rather than replacing them (#54 Decision 2026-11-10); define your style ` +
+        `under its own name with based_on ${name}, then retry`,
+      "component_style",
+    );
+  }
+  return style;
 }
 
 /**
@@ -1130,9 +1157,9 @@ export function documentSpecFromComponents(
  * `insert_blocks` takes a `styles` map and refuses a block naming a style
  * neither it nor the target defines, so an insertion sends this map instead of
  * `component.styles`: the palette would otherwise need every profile style
- * pre-defined in the target. A component that redefines a profile style, or
- * two components that define one name differently, are refused here with the
- * component and field named, before any op is built.
+ * pre-defined in the target. Two components that define one name differently
+ * are refused here; a profile redefinition was already refused where the
+ * component's own file or URL was the source.
  *
  * The returned map shares nothing with the components or the profile table.
  */
@@ -1145,24 +1172,17 @@ export function componentStyleMap(
 
 /**
  * Merge the components' own styles and resolve every reference against the
- * profile table, refusing a redefinition or a reference nothing defines.
+ * profile table, refusing a reference nothing defines and a name two
+ * components define differently.
+ *
+ * A profile redefinition never reaches here: `validatedStyle` refuses it where
+ * the component's own file or URL is still the source.
  */
 function resolvedStyles(filled: readonly FilledComponent[]): Map<string, Style> {
   const styles = new Map<string, Style>();
   const definedBy = new Map<string, string>();
   for (const component of filled) {
     for (const [name, style] of Object.entries(component.styles ?? {})) {
-      const profile = PROFILE_STYLES.get(name);
-      if (profile !== undefined && !sameStyle(profile, style)) {
-        refuse(
-          component.name,
-          at("styles", name),
-          `redefines the official profile's ${name}, and a component takes profile values from ` +
-            `the table rather than replacing them (#54 Decision 2026-11-10); define your style ` +
-            `under its own name with based_on ${name}, then retry`,
-          "component_style",
-        );
-      }
       const previous = styles.get(name);
       if (previous !== undefined && !sameStyle(previous, style)) {
         refuse(
