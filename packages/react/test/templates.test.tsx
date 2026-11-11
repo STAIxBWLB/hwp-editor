@@ -178,7 +178,7 @@ it("refuses queue and normal apply mid-replacement, leaving exactly one undo", a
   const queue=screen.getByRole("button",{name:en["fields.setValue"]});
   expect((queue as HTMLButtonElement).disabled).toBe(true);
   fireEvent.click(queue);
-  const apply=screen.getByRole("button",{name:en["toolbar.applying"],exact:true});
+  const apply=screen.getByRole("button",{name:en["toolbar.applying"]});
   expect((apply as HTMLButtonElement).disabled).toBe(true);
   fireEvent.click(apply);
   await ref.current!.apply();
