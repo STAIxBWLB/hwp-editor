@@ -175,10 +175,10 @@ export function pendingTargetLabel(
         return t("pending.target.wholePiece", { id: op.address.id });
       }
     }
-    // Three addressed ops carry a SECOND target beside the address, and a row
+    // Four addressed ops carry a SECOND target beside the address, and a row
     // that showed only the address would name half of what the op does: which
     // text a replace looks for, which side of the paragraph blocks land on,
-    // and where a move puts it.
+    // where a move puts it, and which style an apply-style applies.
     if (op.kind === "replace") {
       return t("pending.target.replaceFind", {
         find: op.find, range: pendingAddressLabel(op.address, t),
@@ -195,6 +195,16 @@ export function pendingTargetLabel(
         range: pendingAddressLabel(op.address, t),
         destination: pendingAddressLabel(op.to.address, t),
         before: op.to.position === "before",
+      });
+    }
+    // `apply-style` carries a style beside its address, so the address-only
+    // return below hid the half a reader needs to tell two rows apart: a
+    // queued row read "Apply style: element p3" whatever style it applied.
+    // Resolved through the same resolver as the address-less style rows.
+    if (op.kind === "apply-style") {
+      return t("pending.target.styleOn", {
+        style: resolvers.style === undefined ? String(op.style) : resolvers.style(op.style),
+        range: pendingAddressLabel(op.address, t),
       });
     }
     return pendingAddressLabel(op.address, t);

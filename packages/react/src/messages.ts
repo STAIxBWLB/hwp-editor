@@ -100,6 +100,10 @@ export const en = {
     `${p.range} ${p.before ? "before" : "after"} ${p.destination}`,
   "pending.target.replaceFind": (p: { find: string; range: string }): string =>
     `find "${p.find}" in ${p.range}`,
+  // An apply-style row names the style beside its address, so two rows on the
+  // same paragraph are told apart by what they apply.
+  "pending.target.styleOn": (p: { style: string; range: string }): string =>
+    `${p.style} on ${p.range}`,
   "image.deleteAllHint": "Deletes every image in every paragraph containing this text, including matches in other sections, table cells and text boxes. Review the text before applying.",
   "fields.deleteAllHint": "Deletes every field with this name, including repeated fields in templates.",
   "fields.deleteAllBookmarksHint": "Deletes every bookmark with this name.",
@@ -655,6 +659,7 @@ export const ko: MessageTable = {
   "pending.target.after": (p) => `${p.range} 뒤`,
   "pending.target.moveTo": (p) => `${p.range} → ${p.destination} ${p.before ? "앞" : "뒤"}`,
   "pending.target.replaceFind": (p) => `${p.range}에서 "${p.find}" 찾기`,
+  "pending.target.styleOn": (p) => `${p.range}에 ${p.style}`,
   "pending.target.wholePiece": (p) => `요소 ${p.id}의 run 조각 전체`,
   "image.deleteAllHint": "이 텍스트를 포함하는 모든 문단의 모든 이미지를 삭제합니다. 다른 구역, 표 셀, 글상자의 일치 항목도 포함합니다. 적용 전에 텍스트를 확인하세요.",
   "fields.deleteAllHint": "이 이름을 가진 모든 필드를 삭제합니다. 템플릿의 반복 필드도 포함합니다.",

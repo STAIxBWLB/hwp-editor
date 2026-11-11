@@ -142,6 +142,28 @@ describe.each([["en", en], ["ko", ko]] as const)("pending row text (%s)", (local
       .toBe(messages["document.page.marginLeft"]);
   });
 
+  it("names the style an addressed apply-style row applies", () => {
+    // `apply-style` carries an address AND a style, so the address-only return
+    // used to answer first and the style was never read: two rows on the same
+    // paragraph read alike whatever they applied (#58 item 25).
+    const op = { kind: "apply-style" as const, address: { id: "p3" }, style: 3 };
+    expect(pendingTargetLabel(op, t, { style: () => "바탕글" }))
+      .toBe(messages["pending.target.styleOn"]({
+        style: "바탕글", range: messages["pending.target.id"]({ id: "p3" }),
+      }));
+    // With no resolver the ref prints as it arrives, the way the address-less
+    // style rows do, rather than dropping the row's other half.
+    expect(pendingTargetLabel(op, t))
+      .toBe(messages["pending.target.styleOn"]({
+        style: "3", range: messages["pending.target.id"]({ id: "p3" }),
+      }));
+    // A style this batch creates arrives as a name and needs no resolver.
+    expect(pendingTargetLabel({ kind: "apply-style", address: { id: "p3" }, style: "바탕글" }, t))
+      .toBe(messages["pending.target.styleOn"]({
+        style: "바탕글", range: messages["pending.target.id"]({ id: "p3" }),
+      }));
+  });
+
   it("names the second target an op carries beside its address", () => {
     // A row that showed only the address would name half of what the op does:
     // which text a replace looks for, which side of the paragraph blocks land

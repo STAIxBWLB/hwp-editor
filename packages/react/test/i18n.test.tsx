@@ -341,13 +341,23 @@ describe("table parity (I18N-06, I18N-08)", () => {
    * The allowlist is a decision per key, so each entry has to keep meaning
    * what it says: the pair is identical under every probe. An entry whose ko
    * value has since been translated is a stale decision, not a licence.
+   *
+   * The list holds both shapes - a placeholder string and a template that is
+   * nothing but its parameters - so both are read here. Comparing function
+   * keys alone left `error.kind.generic` and
+   * `segment.hyperlinkUrlPlaceholder` never checked, and a stale exemption on
+   * either would pass silently (#58 item 26).
    */
-  it("keeps each allowlisted template identical under every probe", () => {
-    const drifted = functionKeys.filter(
-      (key) =>
-        DELIBERATE_IDENTICAL.has(key) &&
-        !PROBES.every((probe) => call(en[key], probe) === call(ko[key], probe)),
-    );
+  it("keeps each allowlisted entry identical, whether a string or a template", () => {
+    const drifted = Array.from(DELIBERATE_IDENTICAL.keys()).filter((key) => {
+      const [mine, theirs] = [en[key], ko[key]];
+      if (typeof mine === "string" && typeof theirs === "string") return mine !== theirs;
+      if (typeof mine === "function" && typeof theirs === "function") {
+        return !PROBES.every((probe) => call(mine, probe) === call(theirs, probe));
+      }
+      // One side changed shape, so the pair is not the entry the list decided.
+      return true;
+    });
     expect(drifted).toEqual([]);
   });
 });
