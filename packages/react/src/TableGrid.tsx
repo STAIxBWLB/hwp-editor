@@ -1,84 +1,13 @@
 import { useEffect, useState } from "react";
 import type { JSX } from "react";
 import type { CloneTableMode } from "@hwp-editor/core";
-import { tableAtRef } from "./tables.js";
+import { tableAtRef, tableRows } from "./tables.js";
 import { plainSegmentText } from "./text.js";
 import { useHwpEditorContext } from "./context.js";
 
 interface CellCoord {
   row: number;
   col: number;
-}
-
-/** GFM's delimiter cell: `---` with optional alignment colons. */
-const GFM_DELIMITER_CELL = /^:?-{3,}:?$/;
-
-/** Whether the row's final `|` delimits the row rather than being a `\|`. */
-function endsWithCellDelimiter(row: string): boolean {
-  if (!row.endsWith("|")) return false;
-  let backslashes = 0;
-  for (let i = row.length - 2; i >= 0 && row[i] === "\\"; i -= 1) backslashes += 1;
-  return backslashes % 2 === 0;
-}
-
-/**
- * One GFM row's cells.
- *
- * An unescaped `|` separates cells and `\|` is a pipe inside one, which is how
- * the engine escapes a cell holding the character (#58 item 13b). The optional
- * outer pipe delimits the row, so the empty piece it leaves on either end is
- * dropped rather than becoming a cell.
- */
-function splitCells(row: string): string[] {
-  const pieces: string[] = [];
-  let current = "";
-  for (let i = 0; i < row.length; i++) {
-    const char = row[i];
-    if (char === "\\" && row[i + 1] === "|") { current += "|"; i += 1; continue; }
-    if (char === "|") { pieces.push(current); current = ""; continue; }
-    current += char;
-  }
-  pieces.push(current);
-  const trimmed = row.trim();
-  if (pieces.length > 1 && trimmed.startsWith("|")) pieces.shift();
-  if (pieces.length > 1 && endsWithCellDelimiter(trimmed)) pieces.pop();
-  return pieces.map((cell) => cell.trim());
-}
-
-/**
- * The rows of a GFM table, or of a tab-separated legacy one.
- *
- * A GFM delimiter row is the row directly under the header and carries one
- * cell per column, so `---` is data wherever else it appears: a one-column
- * table whose cell reads `---` keeps its row, and only a second row matching
- * the header's cell count is dropped (#58 item 13b). Dropping every matching
- * line shifted every row index after it, and those indices are what the delete
- * and add ops address.
- */
-export function tableRows(text: string): string[][] {
-  const rows: string[][] = [];
-  // GFM puts the delimiter exactly once, under the header. Counting the lines
-  // rather than the kept rows is what lets a second `---` stay data: a
-  // one-column table whose cell reads `---` cannot be told from the delimiter
-  // by its text, only by where it sits.
-  let lines = 0;
-  for (const line of text.split("\n")) {
-    if (line.trim() === "") continue;
-    const cells = line.includes("\t")
-      // A legacy tab-separated row keeps its cells as written; only GFM rows
-      // trim, because there the padding is the delimiter's whitespace.
-      ? line.split("\t")
-      : splitCells(line);
-    const second = lines === 1;
-    lines += 1;
-    const header = rows[0];
-    if (
-      second && header !== undefined && cells.length === header.length &&
-      cells.every((cell) => GFM_DELIMITER_CELL.test(cell))
-    ) continue;
-    rows.push(cells);
-  }
-  return rows;
 }
 
 /**
@@ -112,7 +41,7 @@ export function TableGrid(): JSX.Element {
   const legacy = capabilities?.editOps !== "v1";
   const disabled = !editable || state.document === null || envelope === null || state.status === "applying";
   const queue = store.dispatch.bind(store);
-  const rows = tableRows(newRows);
+  const rows = tableRows(newRows).rows;
   const addTablePanel = (
     <div className="hwped-field">
       {legacy && <p className="hwped-hint">{t("table.legacySeparatorHint")}</p>}

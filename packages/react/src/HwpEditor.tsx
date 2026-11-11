@@ -541,11 +541,13 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           markLoaded(generation);
           setLoadError(toEditorError(e));
           emitError(e);
-          // An apply (or a revert) dropped DURING this load was recorded with
-          // "a new document is still loading; wait for it to finish" - a next
-          // step that just became impossible, because the load has failed and
-          // nothing more is coming. The store's line is restated as the stale
-          // one it now is; a line carrying anything else is left alone (#58
+          // An APPLY dropped during this load is recorded on the store's line
+          // with "a new document is still loading; wait for it to finish" - a
+          // next step that just became impossible, because the load has failed
+          // and nothing more is coming. That line is restated as the stale one
+          // it now is; a line carrying anything else is left alone. A refused
+          // revert never reaches the store: it posts its own sentence on the
+          // notice line, so this branch has nothing to restate for it (#58
           // item 23a).
           const stored = store.getState();
           if (
