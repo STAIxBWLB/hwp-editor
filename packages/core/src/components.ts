@@ -683,8 +683,16 @@ function validateTable(
       // A cell's `blocks` is `#[serde(default)]` in the schema and the engine
       // still descends into it, so the level is checked even when the key is
       // absent: a table 17 cells deep is refused whether or not the innermost
-      // cell carries content.
-      validateBlocks(cellValue.blocks ?? [], source, at(cellField, "blocks"), 0, depth + 1);
+      // cell carries content. Serde defaults only a missing key, though, so
+      // `null` is a type error there and goes through as it stands, to be
+      // refused as "must be an array" rather than handed to the engine.
+      validateBlocks(
+        cellValue.blocks === undefined ? [] : cellValue.blocks,
+        source,
+        at(cellField, "blocks"),
+        0,
+        depth + 1,
+      );
     });
   });
   validateTableGrid(block, source, field);
@@ -699,6 +707,11 @@ function validateTable(
  * is therefore done in f32 here as well, because at the edge the two
  * arithmetics disagree in both directions - 1.01 against a 1 mm column is
  * accepted by the engine, 10.01 against a 10 mm one is refused.
+ *
+ * The accumulator rounds on every addition, not once at the end: six 1.01 mm
+ * columns total 6.0600004 in f32, which leaves 6.07 mm 0.00999975 away and so
+ * inside the bound, while the sum of the six rounded once reads 6.0599999 and
+ * puts the same width 0.0100002 away, outside it.
  *
  * The same rule's other half - the column sum against the page's body width -
  * needs a page the component cannot know, so it stays with the engine, and with
@@ -719,7 +732,7 @@ function validateTableWidth(
     at(field, "width_mm"),
     `is ${value.toFixed(2)} mm, but the columns total ${columnSum.toFixed(2)} mm; hwp compose ` +
       "refuses a table whose width and column sum differ by more than 0.01 mm " +
-      "(document_spec.rs:1503), so set width_mm to the column sum, or change a column width, " +
+      "(document_spec.rs:1508), so set width_mm to the column sum, or change a column width, " +
       "then retry",
   );
 }

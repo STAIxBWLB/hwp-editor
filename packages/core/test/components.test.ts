@@ -920,6 +920,22 @@ describe("engine-refusal mirrors", () => {
     expect(
       refusalFor((value) => (value["blocks"] = [nestedTablesWithoutCentre(17)])),
     ).toMatch(/sits 17 table cells deep/);
+    // Serde defaults a missing key only, so `null` is a type error to the
+    // engine - and the insertion preflight walks a cell's list whenever the key
+    // is present, which throws on null. Refused as the array it is not, never
+    // defaulted to one.
+    expect(
+      refusalFor((value) => {
+        value["blocks"] = [
+          {
+            type: "table",
+            width_mm: 100,
+            columns: [{ width_mm: 100 }],
+            rows: [{ cells: [{ blocks: null }] }],
+          },
+        ];
+      }),
+    ).toBe(`components: ${REFUSAL_SOURCE}: blocks[0].rows[0].cells[0].blocks: must be an array`);
   });
 
   it("refuses a based_on cycle between two styles (document_spec.rs:959)", () => {
@@ -967,7 +983,7 @@ describe("engine-refusal mirrors", () => {
     );
   });
 
-  it("refuses a table width that differs from its column sum (document_spec.rs:1503)", () => {
+  it("refuses a table width that differs from its column sum (document_spec.rs:1508)", () => {
     const columns = [{ width_mm: 40 }, { width_mm: 50 }];
     const cells = [{ blocks: [paragraph()] }, { blocks: [paragraph()] }];
     expect(
@@ -977,7 +993,7 @@ describe("engine-refusal mirrors", () => {
     ).toBe(
       `components: ${REFUSAL_SOURCE}: blocks[0].width_mm: is 100.00 mm, but the columns total ` +
         "90.00 mm; hwp compose refuses a table whose width and column sum differ by more than " +
-        "0.01 mm (document_spec.rs:1503), so set width_mm to the column sum, or change a column " +
+        "0.01 mm (document_spec.rs:1508), so set width_mm to the column sum, or change a column " +
         "width, then retry",
     );
     // Up to 0.01 mm the engine accepts the difference, so the mirror does too.
@@ -1013,7 +1029,30 @@ describe("engine-refusal mirrors", () => {
     ).toBe(
       `components: ${REFUSAL_SOURCE}: blocks[0].width_mm: is 10.01 mm, but the columns total ` +
         "10.00 mm; hwp compose refuses a table whose width and column sum differ by more than " +
-        "0.01 mm (document_spec.rs:1503), so set width_mm to the column sum, or change a column " +
+        "0.01 mm (document_spec.rs:1508), so set width_mm to the column sum, or change a column " +
+        "width, then retry",
+    );
+    // One column cannot tell the engine's accumulator from a sum rounded once
+    // at the end; six can. Per-addend the six 1.01 mm columns total
+    // 6.0600004, so 6.07 mm is 0.00999975 away and inside the bound, while the
+    // once-rounded 6.0599999 puts the same width 0.0100002 away - and 6.05 mm
+    // flips the pair the other way.
+    const sixColumns = (width: number): Record<string, unknown> => ({
+      type: "table",
+      width_mm: width,
+      columns: Array.from({ length: 6 }, () => ({ width_mm: 1.01 })),
+      rows: [{ cells: Array.from({ length: 6 }, () => ({ blocks: [paragraph()] })) }],
+    });
+    expect(
+      validateComponent(
+        { ...BASE_COMPONENT, blocks: [sixColumns(6.07)] },
+        REFUSAL_SOURCE,
+      ).blocks,
+    ).toHaveLength(1);
+    expect(refusalFor((value) => (value["blocks"] = [sixColumns(6.05)]))).toBe(
+      `components: ${REFUSAL_SOURCE}: blocks[0].width_mm: is 6.05 mm, but the columns total ` +
+        "6.06 mm; hwp compose refuses a table whose width and column sum differ by more than " +
+        "0.01 mm (document_spec.rs:1508), so set width_mm to the column sum, or change a column " +
         "width, then retry",
     );
   });
