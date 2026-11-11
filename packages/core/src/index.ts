@@ -48,11 +48,13 @@ export type {
 } from "./ops.js";
 export {
   offsetToRef,
+  markdownLength,
   parseCatEnvelope,
   segmentAtOffset,
   segmentAtRef,
   segmentRef,
   segmentText,
+  validateProjectedMetadata,
 } from "./segments.js";
 export type { CatEnvelope, DirectChar, DirectPara, Segment, SegmentKind, SegmentRef } from "./segments.js";
 export { formatAddresses, paragraphAddress, paragraphForSegment, selectedParagraphs, selectSimilar, selectionAction } from "./selection.js";

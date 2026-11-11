@@ -15,16 +15,15 @@
  * char_range: {start, end}, style, direct}` per segment, with ranges that
  * NEST (a run inside its para, a cell inside its table). What this module
  * publishes is the projection the rest of the editor already consumes: the
- * `CatEnvelope` projection retains `id`, with `start`/`end`
-
- * from `char_range`, `section` from `path.section`, and `para` from
+ * `CatEnvelope` projection retains `id`, with `start`/`end` from
+ * `char_range`, `section` from `path.section`, and `para` from
  * `path.indices[0]` (the top-level paragraph index, the coordinate
  * `SegmentRef` uses as a fallback for older host projections). Checksummed IDs
  * and nesting indices are retained for exact layout joins and editing; per-level
  * styles are not projected.
  *
- * `char_range` counts Unicode scalars into `markdown`; projected `start` and
- * `end` are converted to JS UTF-16 code-unit offsets for string slicing.
+ * `char_range`, `Segment.start`, and `Segment.end` use Unicode scalar offsets.
+ * `segmentText` converts those boundaries to JS UTF-16 offsets only when slicing.
  */
 
 /** The seven segment kinds the v2 envelope defines. */
@@ -52,9 +51,9 @@ export interface Segment {
   id?: string;
   /** Full v2 nesting path, including run index for run segments. */
   indices?: number[];
-  /** Start UTF-16 code-unit offset into `markdown` (inclusive). */
+  /** Start Unicode scalar offset into `markdown` (inclusive). */
   start: number;
-  /** End UTF-16 code-unit offset into `markdown` (exclusive). */
+  /** End Unicode scalar offset into `markdown` (exclusive). */
   end: number;
   /** What the range is; the v2 envelope emits all seven kinds. */
   kind: SegmentKind;
@@ -124,13 +123,13 @@ function projectSegment(raw: unknown): Segment {
   }
   const d = direct as Record<string, unknown> | undefined;
   if (direct !== undefined && (typeof direct !== "object" || direct === null || Array.isArray(direct))) {
-    throw new Error("segments envelope: malformed direct properties");
+    throw new Error("segments envelope: malformed direct properties; upgrade the host adapter to project valid v2 metadata.");
   }
   const char = d?.char as Record<string, unknown> | undefined;
   const para = d?.para as Record<string, unknown> | undefined;
   if ((d?.char !== undefined && (typeof d.char !== "object" || d.char === null || Array.isArray(d.char))) ||
       (d?.para !== undefined && (typeof d.para !== "object" || d.para === null || Array.isArray(d.para)))) {
-    throw new Error("segments envelope: malformed direct properties");
+    throw new Error("segments envelope: malformed direct properties; upgrade the host adapter to project valid v2 metadata.");
   }
   const directChar = char === undefined ? undefined : projectDirectChar(char);
   const directPara = para === undefined ? undefined : projectDirectPara(para);
@@ -147,23 +146,31 @@ function projectSegment(raw: unknown): Segment {
   };
 }
 
-function projectDirectChar(v: Record<string, unknown>): DirectChar {
+function projectDirectChar(value: unknown): DirectChar {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("segments envelope: malformed direct.char properties; upgrade the host adapter to project valid v2 metadata.");
+  }
+  const v = value as Record<string, unknown>;
   const { bold, italic, size_pt, color, faces, face_ids } = v;
   if (typeof bold !== "boolean" || typeof italic !== "boolean" ||
       typeof size_pt !== "number" || !Number.isFinite(size_pt) ||
       typeof color !== "string" || !Array.isArray(faces) || !faces.every((x) => typeof x === "string") ||
       !isNumberArray(face_ids) || face_ids.length !== faces.length || face_ids.some((x) => !Number.isInteger(x))) {
-    throw new Error("segments envelope: malformed direct.char properties");
+    throw new Error("segments envelope: malformed direct.char properties; upgrade the host adapter to project valid v2 metadata.");
   }
   return { bold, italic, size_pt, color, faces, face_ids };
 }
 
-function projectDirectPara(v: Record<string, unknown>): DirectPara {
+function projectDirectPara(value: unknown): DirectPara {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("segments envelope: malformed direct.para properties; upgrade the host adapter to project valid v2 metadata.");
+  }
+  const v = value as Record<string, unknown>;
   const { alignment, indent, line_spacing, line_spacing_type } = v;
   if (typeof alignment !== "string" || typeof indent !== "number" || !Number.isFinite(indent) ||
       typeof line_spacing !== "number" || !Number.isFinite(line_spacing) ||
       typeof line_spacing_type !== "number" || !Number.isInteger(line_spacing_type)) {
-    throw new Error("segments envelope: malformed direct.para properties");
+    throw new Error("segments envelope: malformed direct.para properties; upgrade the host adapter to project valid v2 metadata.");
   }
   return { alignment, indent, line_spacing, line_spacing_type };
 }
@@ -186,25 +193,60 @@ export function parseCatEnvelope(json: string): CatEnvelope {
     throw new Error("segments envelope: missing markdown string or segments array");
   }
   const projected = segments.map(projectSegment);
-  // Wire char_range counts Unicode scalar values; convert each endpoint to
-  // the UTF-16 coordinate system used by JS string slicing.
-  const scalarToUtf16 = (offset: number): number => {
-    if (!Number.isInteger(offset) || offset < 0) throw new Error("segments envelope: malformed character range");
-    let scalar = 0;
-    let utf16 = 0;
-    for (const point of markdown) {
-      if (scalar++ === offset) return utf16;
-      utf16 += point.length;
+  const envelope = { markdown, segments: projected };
+  boundaryInfo(envelope);
+  return envelope;
+}
+
+interface BoundaryInfo {
+  scalarLength: number;
+  utf16ByScalar: Map<number, number>;
+}
+
+const boundaryCache = new WeakMap<CatEnvelope, BoundaryInfo>();
+
+/** Resolve only scalar boundaries used by this envelope's segment ranges. */
+function boundaryInfo(envelope: CatEnvelope): BoundaryInfo {
+  const cached = boundaryCache.get(envelope);
+  if (cached !== undefined) return cached;
+  const wanted = new Set<number>();
+  for (const segment of envelope.segments) {
+    if (!Number.isInteger(segment.start) || !Number.isInteger(segment.end) || segment.start < 0 || segment.end < segment.start) {
+      throw new Error("segments envelope: malformed character range");
     }
-    if (scalar === offset) return utf16;
-    throw new Error("segments envelope: character range exceeds markdown");
-  };
-  for (const segment of projected) {
-    segment.start = scalarToUtf16(segment.start);
-    segment.end = scalarToUtf16(segment.end);
-    if (segment.end < segment.start) throw new Error("segments envelope: malformed character range");
+    wanted.add(segment.start);
+    wanted.add(segment.end);
   }
-  return { markdown, segments: projected };
+  wanted.add(0);
+  const utf16ByScalar = new Map<number, number>();
+  let scalar = 0;
+  let utf16 = 0;
+  if (wanted.has(0)) utf16ByScalar.set(0, 0);
+  for (const point of envelope.markdown) {
+    scalar++;
+    utf16 += point.length;
+    if (wanted.has(scalar)) utf16ByScalar.set(scalar, utf16);
+  }
+  for (const offset of wanted) {
+    if (!utf16ByScalar.has(offset)) throw new Error("segments envelope: character range exceeds markdown");
+  }
+  const info = { scalarLength: scalar, utf16ByScalar };
+  boundaryCache.set(envelope, info);
+  return info;
+}
+
+/** Return the Markdown length in the envelope's Unicode scalar coordinate system. */
+export function markdownLength(envelope: CatEnvelope): number {
+  return boundaryInfo(envelope).scalarLength;
+}
+
+/** Revalidate optional metadata from a projected transport envelope before it drives behavior. */
+export function validateProjectedMetadata(envelope: CatEnvelope): CatEnvelope {
+  for (const segment of envelope.segments) {
+    if (segment.directChar !== undefined) projectDirectChar(segment.directChar);
+    if (segment.directPara !== undefined) projectDirectPara(segment.directPara);
+  }
+  return envelope;
 }
 
 /** Extract the source coordinate of a segment. */
@@ -238,7 +280,11 @@ export function segmentAtRef(
 
 /** Slice the markdown text covered by a segment. */
 export function segmentText(envelope: CatEnvelope, segment: Segment): string {
-  return envelope.markdown.slice(segment.start, segment.end);
+  const info = boundaryInfo(envelope);
+  const start = info.utf16ByScalar.get(segment.start);
+  const end = info.utf16ByScalar.get(segment.end);
+  if (start === undefined || end === undefined) throw new Error("segments envelope: segment range is not in this envelope");
+  return envelope.markdown.slice(start, end);
 }
 
 /** Map a markdown offset to its source coordinate, if inside a segment. */

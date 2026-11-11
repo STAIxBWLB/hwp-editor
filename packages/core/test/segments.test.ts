@@ -17,12 +17,14 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  markdownLength,
   offsetToRef,
   parseCatEnvelope,
   segmentAtOffset,
   segmentAtRef,
   segmentRef,
   segmentText,
+  validateProjectedMetadata,
 } from "../src/segments.js";
 
 const fixture = (name: string) =>
@@ -85,7 +87,7 @@ describe("parseCatEnvelope", () => {
     ).toThrow(/malformed segment/);
   });
 
-  it("uses UTF-16 markdown slice boundaries for non-BMP text and validates direct attrs", () => {
+  it("preserves scalar range coordinates while slicing non-BMP markdown at UTF-16 boundaries", () => {
     const json = JSON.stringify({
       contract: "hwp-segment-envelope-v2", schema_version: "1.0", markdown: "😀한",
       segments: [{ id: "p", kind: "para", path: { section: 0, indices: [0] }, char_range: { start: 1, end: 2 },
@@ -93,11 +95,20 @@ describe("parseCatEnvelope", () => {
           char_shape_id: 999, para: { alignment: "left", indent: 0, line_spacing: 160, line_spacing_type: 0 }, para_shape_id: 999 } }],
     });
     const env = parseCatEnvelope(json);
-    expect(env.segments[0]).toMatchObject({ start: 2, end: 3, directChar: { bold: true, face_ids: [2] }, directPara: { alignment: "left" } });
+    expect(env.segments[0]).toMatchObject({ start: 1, end: 2, directChar: { bold: true, face_ids: [2] }, directPara: { alignment: "left" } });
+    expect(markdownLength(env)).toBe(2);
+    expect(segmentAtOffset(env, 1)).toBe(env.segments[0]);
     expect(segmentText(env, env.segments[0]!)).toBe("한");
     const malformed = JSON.parse(json) as { segments: Array<{ direct: { char: { size_pt: number } } }> };
     malformed.segments[0]!.direct.char.size_pt = Number.NaN;
     expect(() => parseCatEnvelope(JSON.stringify(malformed))).toThrow(/malformed direct[.]char/);
+  });
+
+  it("validates only present projected metadata and gives a host upgrade step for malformed values", () => {
+    const oldHost = { markdown: "x", segments: [{ start: 0, end: 1, kind: "para" as const, section: 0, para: 0 }] };
+    expect(validateProjectedMetadata(oldHost)).toBe(oldHost);
+    const malformed = { ...oldHost, segments: [{ ...oldHost.segments[0]!, directChar: { bold: "yes" } as never }] };
+    expect(() => validateProjectedMetadata(malformed)).toThrow(/malformed direct[.]char properties; upgrade the host adapter/);
   });
 });
 
@@ -113,7 +124,7 @@ describe("segment coordinate helpers", () => {
     expect(segmentAtOffset(env, 13)).toMatchObject({ section: 0, para: 0 });
     expect(offsetToRef(env, 13)).toEqual({ section: 0, para: 0, id: env.segments[0]!.id });
     // past the end of the markdown maps to nothing
-    expect(segmentAtOffset(env, env.markdown.length)).toBeUndefined();
+    expect(segmentAtOffset(env, markdownLength(env))).toBeUndefined();
   });
 
   it("finds the outermost segment at an offset inside a nested range", () => {
