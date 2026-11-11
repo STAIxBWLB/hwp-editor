@@ -271,6 +271,20 @@ describeBin("cli-engine (real hwp-cli binary)", () => {
 });
 
 describeBin("routes (real hwp-cli binary)", () => {
+  it("returns an actionable bad_request for invalid units before invoking edit", async () => {
+    const cli = engine();
+    const document = (await cli.compose(sampleSpec() as unknown as DocumentSpecV2, "units.hwpx")).document;
+    const handler = createHwpEditorHandler({ engine: cli });
+    const response = await handler(multipartRequest("http://localhost/api/hwp-editor/edit", {
+      file: document,
+      ops: JSON.stringify([{ kind: "set-page", key: "width", value: "-5" }]),
+    }));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: {
+      code: "bad_request", message: expect.stringContaining("provide a nonnegative decimal"),
+    } });
+  });
+
   it("POST /read round-trips a composed document over multipart", async () => {
     const cli = engine();
     const composed = await cli.compose(sampleSpec() as unknown as DocumentSpecV2, "wire.hwpx");
