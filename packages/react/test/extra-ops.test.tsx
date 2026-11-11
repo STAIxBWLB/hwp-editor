@@ -353,7 +353,11 @@ describe.each(locales)("table rows and legacy field creation (%s)", (locale, mes
  * behind the modal, and the host must hear it as every other refusal.
  */
 describe("ComposePanel refusal channel", () => {
-  function renderCompose(onComposed: (document: DocumentHandle) => string | void, onError?: (error: unknown) => void) {
+  function renderCompose(
+    onComposed: (document: DocumentHandle) => string | void,
+    onError?: (error: unknown) => void,
+    onClose: () => void = () => undefined,
+  ) {
     const store = createStore({
       ...initialState,
       document: { name: "test.hwpx", data: new Uint8Array([1]) },
@@ -383,14 +387,15 @@ describe("ComposePanel refusal channel", () => {
     } as HwpEditorContextValue;
     render(
       <HwpEditorContext.Provider value={value}>
-        <ComposePanel canCreate onComposed={onComposed} onClose={() => undefined} />
+        <ComposePanel canCreate onComposed={onComposed} onClose={onClose} />
       </HwpEditorContext.Provider>,
     );
   }
 
   it("shows a refusal the editor returns in the dialog, and tells the host", async () => {
     const onError = vi.fn();
-    renderCompose(() => en["error.loadingReplacement"], onError);
+    const onClose = vi.fn();
+    renderCompose(() => en["error.loadingReplacement"], onError, onClose);
     fireEvent.click(screen.getByRole("button", { name: en["compose.submit"] }));
 
     // In the dialog, where the user is looking — the notice line it would
@@ -400,7 +405,9 @@ describe("ComposePanel refusal channel", () => {
     expect(onError.mock.calls.some(
       ([error]) => (error as Error).message === en["error.loadingReplacement"],
     )).toBe(true);
-    // The press is refused, not consumed: the dialog is still here.
-    expect(screen.getByRole("button", { name: en["compose.submit"] })).toBeTruthy();
+    // The press is refused, not consumed: the dialog stays open. Asserted on a
+    // spy the panel could have called, because "the button is still rendered"
+    // could not fail against an `onClose` that was a no-op.
+    expect(onClose).not.toHaveBeenCalled();
   });
 });

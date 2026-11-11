@@ -1057,6 +1057,10 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         throw refusal;
       }
       const generation = loadGeneration.current;
+      // The stack top is the document the next undo would restore, and this
+      // reading is only about the document it started from.
+      const previous = snapshot.snapshots[snapshot.snapshots.length - 1];
+      let overtaken = false;
       try {
         const [nextEnvelope, pages, report] = await Promise.all([
           engine.read(snapshot.document),
@@ -1067,7 +1071,20 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         // own envelope replaces whatever this one has to say. Rejected rather
         // than returned quietly, because `await refresh()` would otherwise
         // report a re-read that was thrown away.
-        if (generation !== loadGeneration.current) throw new Error(t("error.staleRefresh"));
+        overtaken = generation !== loadGeneration.current;
+        if (overtaken) throw new Error(t("error.staleRefresh"));
+        // A load is not the only transition that moves the document inside one
+        // generation. An apply, an undo or a template replacement keeps both
+        // generation refs equal and swaps the document under this read, so the
+        // envelope and pages landing here describe bytes the store no longer
+        // holds - and every op queued afterwards would be addressed by them.
+        const now = store.getState();
+        if (
+          now.document !== snapshot.document ||
+          now.snapshots[now.snapshots.length - 1] !== previous
+        ) {
+          throw new Error(t("error.staleRefreshEdit"));
+        }
         setEnvelope(nextEnvelope);
         setValidation(report);
         store.dispatch({ type: "setPages", pages });
@@ -1079,8 +1096,10 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         // A no-op resolves quietly (above); a FAILURE must be observable to
         // the awaiting host, so surface it three ways and reject. A reading
         // that a load superseded is not a failure of the document now on
-        // screen: the load owns the error line, so only the host hears it.
-        if (generation === loadGeneration.current) setLoadError(toEditorError(e));
+        // screen: the load owns the error line, so only the host hears it. The
+        // same-generation discard is different - the edit that overtook this
+        // read landed on the document on screen - so that one is painted.
+        if (!overtaken && generation === loadGeneration.current) setLoadError(toEditorError(e));
         emitError(e);
         throw e;
       }
