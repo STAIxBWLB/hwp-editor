@@ -19,7 +19,7 @@
 
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import type { CatEnvelope, DocumentHandle, EditOp, LayoutRow, PageImage, Segment } from "@hwp-editor/core";
+import type { CatEnvelope, DocumentHandle, EditOp, EditReport, LayoutRow, PageImage, Segment } from "@hwp-editor/core";
 import tableFixture from "../../core/test/fixtures/cat-segments-table.json";
 import { base64, createTauriEngine, parseCatEnvelope } from "@hwp-editor/core";
 import { targetsSegment } from "../src/PageCanvas.js";
@@ -682,5 +682,102 @@ describe("panel edge cases (TEST-03)", () => {
       { kind: "delete-para", address: { at: { section: 0, paragraph: 0 } } },
       { kind: "insert-para", address: { at: { section: 0, paragraph: 0 } }, text: "마지막" },
     ]);
+  });
+});
+
+/**
+ * The components palette (AC8). An insertion's ids exist only in
+ * `edit-report-v1`, so the stub answers with one and the assertions read the
+ * rows the panel built from it — a position guessed from the request would
+ * pass a weaker test and fail against the engine.
+ */
+describe("ComponentsPanel (TEST-03)", () => {
+  const componentName = "결재란";
+  const insertedId = "bbbbbbbbbbbbbbbb.0.1";
+
+  /** A v2 envelope: every segment carries the id an address needs. */
+  function addressableEnvelope(): CatEnvelope {
+    const blocks = ["# **1. 회의록**", "2026년 8월 정기 회의"];
+    let markdown = "";
+    const segments: CatEnvelope["segments"] = [];
+    blocks.forEach((block, para) => {
+      const start = markdown.length;
+      markdown += `${block}\n\n`;
+      segments.push({
+        id: `${"a".repeat(16)}.0.${para}`,
+        indices: [para],
+        start,
+        end: start + block.length,
+        kind: "para",
+        section: 0,
+        para,
+      });
+    });
+    return { markdown, segments };
+  }
+
+  const insertReport: EditReport = {
+    schema_version: "1.0",
+    contract: "hwp-edit-report-v1",
+    output: "edited.hwpx",
+    dry_run: false,
+    ops: [{
+      index: 0,
+      op: "insert_blocks",
+      status: "applied",
+      pieces_touched: 1,
+      // One paragraph plus its run: the nesting the selection must collapse.
+      changed: [{ before: null, after: insertedId }, { before: null, after: `${insertedId}.0` }],
+      reason: null,
+      missing_style: "create",
+    }],
+    applied_count: 1,
+    failed_count: 0,
+  };
+
+  /** Mock engine that honours the report opt-in, at a component-capable version. */
+  function composedEngine(): Engine {
+    const engine = createMockEngine({ envelope: addressableEnvelope() });
+    engine.capabilities = async () => ({ version: "1.6.0", editable: true, editOps: "v1", formats: ["hwp", "hwpx"] });
+    const baseEdit = engine.edit.bind(engine);
+    engine.edit = async (document, ops, options) => ({
+      ...(await baseEdit(document, ops, options)),
+      ...(options?.report === true ? { report: insertReport } : {}),
+    });
+    return engine;
+  }
+
+  it("inserts beside the selection and lists only the paragraph ids the report named", async () => {
+    const engine = composedEngine();
+    const envelope = await engine.read(file);
+    await selectPara(engine, 1, envelope);
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) }),
+    );
+
+    // The row exists because the report's ids were read, not guessed.
+    expect(await screen.findByRole("button", { name: en["components.remove"]({ name: componentName }) })).toBeTruthy();
+    expect(engine.calls.edit).toHaveLength(1);
+    expect(engine.calls.edit[0]!.ops).toEqual([
+      expect.objectContaining({
+        kind: "insert-blocks",
+        address: { id: envelope.segments[1]!.id },
+        position: "after",
+      }),
+    ]);
+  });
+
+  it("disables insertion with a localized reason below hwp-cli 1.4.0", async () => {
+    const engine = createMockEngine({ envelope: addressableEnvelope() });
+    await selectPara(engine, 1, addressableEnvelope());
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+
+    expect(
+      await screen.findByText(en["components.disabledVersion"]({ version: "1.4.0" })),
+    ).toBeTruthy();
+    const insert = screen.getByRole("button", { name: en["components.insert"]({ name: componentName }) });
+    expect((insert as HTMLButtonElement).disabled).toBe(true);
+    expect(engine.calls.edit).toHaveLength(0);
   });
 });

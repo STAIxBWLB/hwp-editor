@@ -17,6 +17,8 @@ export { TableGrid } from "./TableGrid.js";
 export { FieldsPanel } from "./FieldsPanel.js";
 export { ComposePanel } from "./ComposePanel.js";
 export type { ComposePanelProps } from "./ComposePanel.js";
+export { ComponentsPanel, componentsSupportReason } from "./ComponentsPanel.js";
+export type { ComponentsPanelProps, InsertedComponent } from "./ComponentsPanel.js";
 
 export { sanitizeSvg } from "./sanitize.js";
 export { plainSegmentText } from "./text.js";

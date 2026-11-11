@@ -80,6 +80,28 @@ export const en = {
   "tabs.fields": "Fields",
   "tabs.templates": "Templates",
   "tabs.lint": "Lint",
+  "tabs.components": "Components",
+
+  // Component palette
+  "components.panelAria": "Component palette",
+  "components.catalogueAria": "Components you can insert",
+  "components.hint": "A component is inserted after the selected paragraph.",
+  "components.insert": (p: { name: string }): string => `Insert ${p.name}`,
+  "components.insertedTitle": "Inserted in this document",
+  "components.insertedEmpty":
+    "Nothing inserted yet. The rows added here are the paragraphs an insertion reported.",
+  "components.moveUp": (p: { name: string }): string => `Move ${p.name} up`,
+  "components.moveDown": (p: { name: string }): string => `Move ${p.name} down`,
+  "components.remove": (p: { name: string }): string => `Remove ${p.name}`,
+  "components.noSelection": "Select a paragraph in the document first.",
+  "components.noAddress":
+    "The selection cannot be addressed: this host's document read reports no segment ids.",
+  "components.disabledVersion": (p: { version: string }): string =>
+    `Inserting components requires hwp-cli ${p.version} or newer, because older engines report no inserted ids.`,
+  "components.disabledChannel":
+    "This host cannot send typed edit operations, so a component cannot be inserted.",
+  "components.noReport":
+    "The engine applied the insertion but reported no ids, so the inserted paragraphs cannot be selected.",
 
   // Error line — the prefix names which operation failed. The `{message}`
   // tail stays engine-authored and is never translated.
@@ -407,6 +429,23 @@ export const ko: MessageTable = {
   "tabs.fields": "필드",
   "tabs.templates": "템플릿",
   "tabs.lint": "문서 검사",
+  "tabs.components": "구성 요소",
+
+  "components.panelAria": "구성 요소 팔레트",
+  "components.catalogueAria": "삽입할 수 있는 구성 요소",
+  "components.hint": "구성 요소는 선택한 문단 뒤에 삽입됩니다.",
+  "components.insert": (p: { name: string }): string => `${p.name} 삽입`,
+  "components.insertedTitle": "이 문서에 삽입한 항목",
+  "components.insertedEmpty": "아직 삽입한 항목이 없습니다. 여기에는 삽입 결과가 보고한 문단이 추가됩니다.",
+  "components.moveUp": (p: { name: string }): string => `${p.name} 위로 이동`,
+  "components.moveDown": (p: { name: string }): string => `${p.name} 아래로 이동`,
+  "components.remove": (p: { name: string }): string => `${p.name} 삭제`,
+  "components.noSelection": "먼저 문서에서 문단을 선택하세요.",
+  "components.noAddress": "선택 항목의 주소를 알 수 없습니다. 이 호스트의 문서 읽기 결과에 세그먼트 식별자가 없습니다.",
+  "components.disabledVersion": (p: { version: string }): string =>
+    `구성 요소 삽입에는 hwp-cli ${p.version} 이상이 필요합니다. 이전 엔진은 삽입한 식별자를 보고하지 않습니다.`,
+  "components.disabledChannel": "이 호스트는 형식이 지정된 편집 연산을 보낼 수 없어 구성 요소를 삽입할 수 없습니다.",
+  "components.noReport": "엔진이 삽입을 적용했지만 식별자를 보고하지 않아 삽입한 문단을 선택할 수 없습니다.",
 
   "error.prefix.load": "문서 열기 실패",
   "error.prefix.apply": "편집 적용 실패",

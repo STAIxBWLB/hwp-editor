@@ -12,13 +12,17 @@ import type { CSSProperties, JSX, KeyboardEvent } from "react";
 import type {
   Capabilities,
   CatEnvelope,
+  Component,
   DocumentHandle,
+  EditReport,
   HwpEngine,
   EditOp,
   ImageAsset,
+  ParagraphAddress,
+  Segment,
   ValidationReport,
 } from "@hwp-editor/core";
-import { createStore, segmentAtRef, validateImageAssets, HwpEngineError, MAX_IMAGE_ASSETS, MAX_IMAGE_ASSETS_TOTAL_BYTES } from "@hwp-editor/core";
+import { createStore, insertedParagraphIds, segmentAtRef, validateImageAssets, HwpEngineError, MAX_IMAGE_ASSETS, MAX_IMAGE_ASSETS_TOTAL_BYTES } from "@hwp-editor/core";
 import type { EditorError, EditorStore } from "@hwp-editor/core";
 import { HwpEditorContext } from "./context.js";
 import type { HwpEditorContextValue } from "./context.js";
@@ -31,6 +35,9 @@ import { LintPanel } from "./LintPanel.js";
 import { DocumentPanel } from "./DocumentPanel.js";
 import { ImagePanel } from "./ImagePanel.js";
 import { ComposePanel } from "./ComposePanel.js";
+import { ComponentsPanel } from "./ComponentsPanel.js";
+import { componentsSupportReason } from "./ComponentsPanel.js";
+import type { InsertedComponent } from "./ComponentsPanel.js";
 import { isTableSlice } from "./tables.js";
 import { ErrorLine } from "./ErrorLine.js";
 import { toEditorError } from "./errors.js";
@@ -111,7 +118,32 @@ export interface HwpEditorHandle {
   openCompose(): void;
 }
 
-type SideTab = "para" | "table" | "fields" | "templates" | "lint" | "document" | "images";
+type SideTab = "para" | "table" | "fields" | "templates" | "components" | "lint" | "document" | "images";
+
+/**
+ * Where a component may be inserted: the selected paragraph's own id.
+ *
+ * A selection can be a run or a paragraph nested in a table cell, and
+ * `insert_blocks` takes a paragraph address. A run resolves to the paragraph
+ * that owns it; a nested paragraph keeps its id, whose path carries the whole
+ * nesting chain, rather than collapsing to a top-level index that would put
+ * the component beside the table instead of in the cell.
+ */
+function insertAddress(envelope: CatEnvelope, segment: Segment | undefined): ParagraphAddress | null {
+  if (segment === undefined) return null;
+  if (segment.kind === "para" && segment.id !== undefined) return { id: segment.id };
+  // A run's id ends with its run index, so the paragraph that owns it is the
+  // segment whose nesting path is the run's minus that last index.
+  const indices = segment.indices;
+  if (indices === undefined) return null;
+  const owner = envelope.segments.find((candidate) =>
+    candidate.kind === "para" &&
+    candidate.section === segment.section &&
+    candidate.indices !== undefined &&
+    candidate.indices.length === indices.length - 1 &&
+    candidate.indices.every((index, at) => index === indices[at]));
+  return owner?.id === undefined ? null : { id: owner.id };
+}
 
 /**
  * Every render goes straight to the engine. The former client-side
@@ -196,6 +228,12 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     const loadGeneration = useRef(0);
     const [tab, setTab] = useState<SideTab>("para");
     const [composing, setComposing] = useState(false);
+    /**
+     * Rows for what an insertion reported in THIS document state. The ids come
+     * from `edit-report-v1` alone: the engine assigns them against the
+     * document it just wrote, so a new load invalidates every one of them.
+     */
+    const [inserted, setInserted] = useState<InsertedComponent[]>([]);
     const imageAssets = useRef(new Map<EditOp, ImageAsset>());
     useEffect(() => {
       const active = new Set(state.pendingOps);
@@ -387,6 +425,134 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       },
       [emitChange, emitError, engine, store, t],
     );
+
+    // The rows are keyed by ids that only describe the current document state.
+    useEffect(() => {
+      setInserted([]);
+    }, [file]);
+
+    /**
+     * The engine reports the paragraphs an insertion created; only their ids
+     * can address them afterwards. A row whose id the engine no longer knows
+     * is refused by its drift check, never applied to a different paragraph.
+     */
+    const insertComponent = useCallback(
+      (component: Component): void => {
+        const snapshot = store.getState();
+        if (!editableRef.current || snapshot.document === null || envelope === null) return;
+        const address = insertAddress(
+          envelope,
+          snapshot.selection === null ? undefined : segmentAtRef(envelope, snapshot.selection),
+        );
+        if (address === null) return;
+        let report: EditReport | undefined;
+        void (async () => {
+          try {
+            await replaceDocument(async (current) => {
+              const result = await engine.edit(
+                current,
+                [{
+                  kind: "insert-blocks",
+                  address,
+                  position: "after",
+                  blocks: component.blocks,
+                  ...(component.styles === undefined ? {} : { styles: component.styles }),
+                }],
+                { report: true },
+              );
+              report = result.report;
+              return { name: result.name, data: result.data };
+            });
+          } catch (error) {
+            emitError(error);
+            return;
+          }
+          const outcome = report?.ops[0];
+          if (outcome === undefined) {
+            emitError(new Error(t("components.noReport")));
+            return;
+          }
+          if (outcome.status !== "applied") return;
+          const ids = insertedParagraphIds(outcome);
+          setInserted((previous) => [...previous, ...ids.map((id) => ({ id, name: component.name }))]);
+        })();
+      },
+      [emitError, engine, envelope, replaceDocument, store, t],
+    );
+
+    const moveInserted = useCallback(
+      (id: string, direction: -1 | 1): void => {
+        const at = inserted.findIndex((row) => row.id === id);
+        const neighbour = inserted[at + direction];
+        if (at < 0 || neighbour === undefined) return;
+        let report: EditReport | undefined;
+        void (async () => {
+          try {
+            await replaceDocument(async (current) => {
+              const result = await engine.edit(
+                current,
+                [{
+                  kind: "move-para",
+                  address: { id },
+                  to: { address: { id: neighbour.id }, position: direction === -1 ? "before" : "after" },
+                }],
+                { report: true },
+              );
+              report = result.report;
+              return { name: result.name, data: result.data };
+            });
+          } catch (error) {
+            emitError(error);
+            return;
+          }
+          // A move re-keys its own target; the report lists that pair and no
+          // other, so the rows are re-keyed by what it did report and left
+          // alone otherwise.
+          const pairs = report?.ops[0]?.changed ?? [];
+          setInserted((previous) => {
+            const rekeyed = previous.map((row) => {
+              const pair = pairs.find((entry) => entry.before === row.id);
+              return pair === undefined || pair.after === null ? row : { ...row, id: pair.after };
+            });
+            const next = [...rekeyed];
+            next[at] = rekeyed[at + direction]!;
+            next[at + direction] = rekeyed[at]!;
+            return next;
+          });
+        })();
+      },
+      [emitError, engine, inserted, replaceDocument],
+    );
+
+    const removeInserted = useCallback(
+      (id: string): void => {
+        void (async () => {
+          try {
+            await replaceDocument(async (current) => {
+              const result = await engine.edit(current, [{ kind: "delete-para", address: { id } }], { report: true });
+              return { name: result.name, data: result.data };
+            });
+          } catch (error) {
+            emitError(error);
+            return;
+          }
+          setInserted((previous) => previous.filter((row) => row.id !== id));
+        })();
+      },
+      [emitError, engine, replaceDocument],
+    );
+
+    const selectedAddress =
+      envelope === null || state.selection === null
+        ? null
+        : insertAddress(envelope, segmentAtRef(envelope, state.selection));
+    const componentDisabled =
+      componentsSupportReason(capabilities, t) ||
+      (state.selection === null
+        ? t("components.noSelection")
+        : selectedAddress === null
+          ? t("components.noAddress")
+          : "");
 
     const revert = useCallback((): Promise<void> => {
       const snapshot = store.getState();
@@ -650,6 +816,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
                     ["table", t("tabs.table")],
                     ["fields", t("tabs.fields")],
                     ["templates", t("tabs.templates")],
+                    ["components", t("tabs.components")],
                     ["lint", t("tabs.lint")],
                     ["document", t("tabs.document")],
                     ["images", t("tabs.images")],
@@ -674,6 +841,16 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
               {tab === "table" && <TableGrid />}
               {tab === "fields" && <FieldsPanel />}
               {tab === "templates" && <TemplatePanel />}
+              {tab === "components" && (
+                <ComponentsPanel
+                  inserted={inserted}
+                  disabledReason={componentDisabled}
+                  busy={!editable || state.status === "applying"}
+                  onInsert={insertComponent}
+                  onMove={moveInserted}
+                  onRemove={removeInserted}
+                />
+              )}
               {tab === "lint" && <LintPanel />}
               {tab === "document" && <DocumentPanel />}
               {tab === "images" && <ImagePanel />}

@@ -11,7 +11,7 @@
  */
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { insertedParagraphIds, parseEditReport } from "../src/edit-report.js";
+import { editReportSupported, insertedParagraphIds, parseEditReport } from "../src/edit-report.js";
 import type { EditOpOutcome, EditReport } from "../src/edit-report.js";
 
 const tableReport = (): unknown =>
@@ -51,6 +51,21 @@ function firstOutcome(report: EditReport): EditOpOutcome {
   if (outcome === undefined) throw new Error("the fixture report carries no outcome");
   return outcome;
 }
+
+describe("editReportSupported", () => {
+  it("accepts 1.4.0 and later, and nothing it cannot parse", () => {
+    // The palette disables itself with a localized reason below this floor,
+    // so the boundary is asserted on both sides of 1.4.0.
+    expect(editReportSupported("1.4.0")).toBe(true);
+    expect(editReportSupported("1.6.0")).toBe(true);
+    expect(editReportSupported("1.6.0-dev.3")).toBe(true);
+    expect(editReportSupported("2.0.0")).toBe(true);
+    expect(editReportSupported("1.3.9")).toBe(false);
+    expect(editReportSupported("0.20.0")).toBe(false);
+    expect(editReportSupported("")).toBe(false);
+    expect(editReportSupported("dev")).toBe(false);
+  });
+});
 
 describe("parseEditReport", () => {
   it("keeps the engine's outcomes, counts and id pairs", () => {

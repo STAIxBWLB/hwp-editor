@@ -14,6 +14,17 @@
  * rejected report without leaking one.
  */
 
+/** `insert_blocks` and `edit --report` need hwp-cli 1.4.0 (measured on 1.6.0). */
+export const EDIT_REPORT_MIN_VERSION = "1.4.0";
+
+/** Whether an engine version can insert blocks and report the ids it made. */
+export function editReportSupported(version: string): boolean {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(version);
+  if (match === null) return false;
+  const major = Number(match[1]);
+  return major > 1 || (major === 1 && Number(match[2]) >= 4);
+}
+
 /** A creation (`before: null`), a removal (`after: null`), or a re-key. */
 export interface EditIdPair {
   before: string | null;

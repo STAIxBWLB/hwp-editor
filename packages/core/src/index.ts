@@ -133,6 +133,11 @@ export {
   OFFICIAL_PROFILE,
 } from "./profiles.js";
 export type { DocumentProfile, ProfileName } from "./profiles.js";
-export { insertedParagraphIds, parseEditReport } from "./edit-report.js";
+export {
+  EDIT_REPORT_MIN_VERSION,
+  editReportSupported,
+  insertedParagraphIds,
+  parseEditReport,
+} from "./edit-report.js";
 export type { EditIdPair, EditOpOutcome, EditReport } from "./edit-report.js";
 export type { Blocks } from "./generated/document-spec-v2.js";
