@@ -1186,6 +1186,100 @@ describe("ComponentsPanel (TEST-03)", () => {
     ).toBe(false);
   });
 
+  it("disables the palette while an edit is queued, with the reason", async () => {
+    // An insertion replaces the whole document, so a queued edit would be
+    // lost: the palette says so and stays off until the queue is applied.
+    const engine = composedEngine();
+    const envelope = await engine.read(file);
+    await selectPara(engine, 1, envelope);
+    fireEvent.click(screen.getByRole("button", { name: en["segment.alignCenter"] }));
+    await screen.findByText(en["toolbar.pendingEdits"]({ count: 1 }));
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+
+    const insert = screen.getByRole("button", { name: en["components.insert"]({ name: componentName }) }) as HTMLButtonElement;
+    expect(insert.disabled).toBe(true);
+    expect(screen.getByText(en["components.pendingEdits"])).toBeTruthy();
+    expect(engine.calls.edit).toHaveLength(0);
+  });
+
+  it("shows a component refusal the palette cannot prevent", async () => {
+    // A component whose blocks name a placeholder it does not declare passes
+    // loading and fails substitution: the refusal has to reach the user, not
+    // only the host's onError.
+    const broken: Component = {
+      name: "이름 없는 값",
+      description: "References a param it never declares",
+      params: {},
+      blocks: [{ type: "paragraph", runs: [{ type: "text", text: "기안자: {{기안자}}" }] }],
+    };
+    const engine = composedEngine();
+    await renderPalette(engine, [broken]);
+    fireEvent.click(
+      screen.getByRole("button", { name: en["components.insert"]({ name: "이름 없는 값" }) }),
+    );
+
+    const notice = await screen.findByText((content) => content.includes(en["components.step.invalid"]));
+    expect(notice.getAttribute("role")).toBe("status");
+    // The sentence names the component and the field that has to change.
+    expect(notice.textContent).toContain("이름 없는 값");
+    expect(notice.textContent).toContain("blocks[0].runs[0].text");
+    expect(engine.calls.edit).toHaveLength(0);
+  });
+
+  it("says why when the report records the insertion as failed", async () => {
+    // The document is published, so this is a notice; what the user must not
+    // get is a click that changed nothing and said nothing.
+    const failed: EditReport = {
+      ...insertReport,
+      ops: [{ ...insertReport.ops[0]!, status: "failed", reason: "layout_overflow", changed: [] }],
+      applied_count: 0,
+      failed_count: 1,
+    };
+    const engine = composedEngine();
+    const baseEdit = engine.edit.bind(engine);
+    engine.edit = async (document, ops, options) => ({
+      ...(await baseEdit(document, ops, options)),
+      ...(options?.report === true ? { report: failed } : {}),
+    });
+    const envelope = await engine.read(file);
+    await selectPara(engine, 1, envelope);
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) }),
+    );
+
+    const notice = await screen.findByText(
+      en["components.insertionRefused"]({ reason: "layout_overflow" }),
+    );
+    expect(notice.getAttribute("role")).toBe("status");
+  });
+
+  it("shows a report that lists more paragraphs than it placed", async () => {
+    // Not this contract: the ids cannot be trusted, so nothing is selected and
+    // the sentence saying so is visible.
+    const surplus: EditReport = {
+      ...insertReport,
+      ops: [{ ...insertReport.ops[0]!, pieces_touched: 0 }],
+    };
+    const engine = composedEngine();
+    const baseEdit = engine.edit.bind(engine);
+    engine.edit = async (document, ops, options) => ({
+      ...(await baseEdit(document, ops, options)),
+      ...(options?.report === true ? { report: surplus } : {}),
+    });
+    const envelope = await engine.read(file);
+    await selectPara(engine, 1, envelope);
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) }),
+    );
+
+    const notice = await screen.findByText(
+      (content) => content.includes("reports 0 inserted paragraphs"),
+    );
+    expect(notice.getAttribute("role")).toBe("status");
+  });
+
   it("drops the notice when another document is loaded", async () => {
     const engine = composedEngine();
     engine.edit = async () => ({ name: "edited.hwpx", data: new Uint8Array([9]) });

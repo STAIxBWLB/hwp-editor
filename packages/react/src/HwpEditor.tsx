@@ -283,10 +283,17 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
      * row list would keep ids that describe the document as it was written.
      */
     const [pendingInserted, setPendingInserted] = useState<string[]>([]);
-    /** Show a notice and hand the same text to the host. */
-    const noteNotice = useCallback((text: string): void => {
+    /**
+     * Show a notice and hand the failure to the host.
+     *
+     * A palette refusal is not an engine failure of the document, so it does
+     * not take the error line; it is shown here (role="status") and `onError`
+     * still hears it. The error travels as it came when there is one, so a
+     * host that branches on a `code` keeps the code.
+     */
+    const noteNotice = useCallback((text: string, error?: unknown): void => {
       setNotice(text);
-      emitError(new Error(text));
+      emitError(error ?? new Error(text));
     }, [emitError]);
     /** The envelope an attempt has already been made against, so none repeats. */
     const insertedTriedFor = useRef<CatEnvelope | null>(null);
@@ -537,6 +544,14 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         if (!editableRef.current || snapshot.document === null || envelope === null) return;
         // A new attempt retires the previous attempt's notice.
         setNotice(null);
+        // An insertion replaces the document, so a queued edit would be lost:
+        // the replacement is refused, and the refusal has to be visible rather
+        // than reaching only a host that may not be listening. The palette is
+        // disabled for the same reason.
+        if (snapshot.pendingOps.length > 0) {
+          noteNotice(t("components.pendingEdits"));
+          return;
+        }
         const segment = snapshot.selection === null ? undefined : segmentAtRef(envelope, snapshot.selection);
         // The selection, not just its primary: a run of inserted paragraphs
         // anchors at its far edge, so a second insertion does not split it.
@@ -556,7 +571,10 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         } catch (error) {
           // A refused param, style reference or redefinition is a sentence for
           // the user, in their locale, naming the component and the field.
-          emitError(toError(componentFailure(error, t)));
+          // Every refusal is shown, not only handed to the host: a click that
+          // visibly does nothing is the bug this line exists to prevent.
+          const shown = toError(componentFailure(error, t));
+          noteNotice(shown.message, shown);
           return;
         }
         // Three refusals are certain before the document is touched, so they
@@ -609,7 +627,13 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
             noteNotice(t("components.noReport"));
             return;
           }
-          if (outcome.status !== "applied") return;
+          if (outcome.status !== "applied") {
+            // The report says the op did not apply, so the engine's own
+            // content-free reason is the cause: framed like any other refusal
+            // rather than left as a click that changed nothing.
+            noteNotice(t("components.insertionRefused", { reason: outcome.reason ?? "" }));
+            return;
+          }
           // A capped list means the ids that would name the rest are simply
           // absent; selecting a partial run would reorder half a component.
           if (outcome.changed_total !== undefined) {
@@ -620,7 +644,9 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           try {
             ids = insertedParagraphIds(outcome);
           } catch (error) {
-            emitError(toError(error));
+            // A report that lists more paragraphs than it touched is not this
+            // contract: say so where the user can read it.
+            noteNotice(toError(error).message, error);
             return;
           }
           setPendingInserted(ids);
@@ -652,6 +678,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         : "";
     const componentDisabled =
       componentsSupportReason(capabilities, t) ||
+      (state.pendingOps.length > 0 ? t("components.pendingEdits") : "") ||
       (state.selection === null
         ? t("components.noSelection")
         : selectedAddress !== null

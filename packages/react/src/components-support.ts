@@ -189,7 +189,10 @@ function unknownStyleName(message: string): string | undefined {
  * reads two prefixes stapled together.
  */
 function refusalReason(message: string): string {
-  return message
+  // The engine's stderr can be several lines, and the frame prints one cause:
+  // the first non-empty line is the failure, the rest is its context.
+  const firstLine = message.split(/\r?\n/).map((line) => line.trim()).find((line) => line !== "") ?? "";
+  return firstLine
     .replace(/^.*?hwp edit failed \(exit \d+\):\s*/, "")
     .replace(/^.*?hwped_edit failed:\s*/, "")
     .replace(/^hwp_failed:\s*/, "")

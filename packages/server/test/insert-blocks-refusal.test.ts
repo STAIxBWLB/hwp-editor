@@ -48,9 +48,18 @@ const DELETE: EditOp[] = [{ kind: "delete-para", address: { at: { section: 0, pa
 
 const document = { name: "sample.hwpx", data: new Uint8Array([1, 2, 3]) };
 
-/** The refusal a failed edit raised, or a thrown assertion when it succeeded. */
-async function failure(stderr: string, ops: EditOp[]): Promise<HwpCliError> {
-  const { bin } = createFakeBin({ info: "{}", mode: "fail", editStderr: stderr });
+/**
+ * The refusal a failed edit raised, or a thrown assertion when it succeeded.
+ *
+ * A single string is written to stderr verbatim; an array is written one line
+ * each, which is how a multi-line refusal is expressed.
+ */
+async function failure(stderr: string | string[], ops: EditOp[]): Promise<HwpCliError> {
+  const { bin } = createFakeBin({
+    info: "{}",
+    mode: "fail",
+    ...(Array.isArray(stderr) ? { editStderrLines: stderr } : { editStderr: stderr }),
+  });
   const error = await createCliEngine({ bin }).edit(document, ops).catch((cause: unknown) => cause);
   expect(error).toBeInstanceOf(HwpCliError);
   const cliError = error as HwpCliError;
@@ -137,6 +146,23 @@ describe("insert_blocks refusal classification", () => {
     expect(error.message).not.toContain("input.hwpx");
     // The operator's copy is untouched.
     expect(error.detail).toContain("/tmp/hwp-edit-abc123/input.hwpx");
+  });
+
+  it("prefers the engine's Error line over what it printed before it", async () => {
+    // The binary can print a note before the failure; the line that starts
+    // with `Error:` is the one that names it.
+    const error = await failure(
+      [
+        "note: staging /tmp/hwp-edit-abc123/input.hwpx",
+        "Error: failed to parse the staged document at byte 42",
+      ],
+      INSERT,
+    );
+
+    expect(error.message).toBe(
+      "hwp edit failed (exit 3): insert_blocks refused: failed to parse the staged document at byte 42",
+    );
+    expect(error.message).not.toContain("/tmp");
   });
 
   it("leaves a batch with no insertion on the bare exit line", async () => {

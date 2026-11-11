@@ -47,6 +47,13 @@ export interface FakeBinOptions {
   info?: string;
   /** stderr written by `mode: "fail"`; default `boom`. */
   editStderr?: string;
+  /**
+   * stderr written by `mode: "fail"`, one line each. A refusal the engine
+   * prints over several lines — a note before its `Error:` line — cannot be
+   * expressed through `editStderr`, because that one is emitted verbatim and
+   * keeps no newline.
+   */
+  editStderrLines?: string[];
   /** stdout written by `ok`/`fail` before exiting, e.g. a validate report. */
   stdout?: string;
   /**
@@ -92,7 +99,13 @@ function modeScript(opts: FakeBinOptions): string[] {
     case "ok":
       return [...stdout, "exit 0"];
     case "fail":
-      return [...stdout, `printf '%s' ${JSON.stringify(opts.editStderr ?? "boom")} >&2`, "exit 3"];
+      return [
+        ...stdout,
+        ...(opts.editStderrLines === undefined
+          ? [`printf '%s' ${JSON.stringify(opts.editStderr ?? "boom")} >&2`]
+          : opts.editStderrLines.map((line) => `printf '%s\\n' ${JSON.stringify(line)} >&2`)),
+        "exit 3",
+      ];
     case "overflow":
       // `yes` is a C program; a shell `while echo` loop takes seconds to
       // reach 32 MiB. `exec` so no shell is left waiting on the pipe.

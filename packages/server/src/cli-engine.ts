@@ -749,9 +749,13 @@ function insertBlocksRefusal(stderr: string, workDir: string | undefined): strin
     }
     return "insert_blocks refused: invalid_definition";
   }
-  const line = stderr.split(/\r?\n/).map((entry) => entry.trim()).find((entry) => entry !== "") ?? "";
-  // The engine opens the line with the op's own name ("Error: insert_blocks …");
-  // the prefix below already names the op, so the token is dropped rather than
+  // The engine's diagnostics arrive as `Error: <sentence>` with whatever it
+  // printed around it, so the line that starts with `Error:` names the
+  // failure; the first non-empty line is only the fallback.
+  const lines = stderr.split(/\r?\n/).map((entry) => entry.trim()).filter((entry) => entry !== "");
+  const line = lines.find((entry) => /^error:/i.test(entry)) ?? lines[0] ?? "";
+  // That line opens with the op's own name ("Error: insert_blocks …"); the
+  // prefix below already names the op, so the token is dropped rather than
   // printed twice.
   const reason = withoutPaths(
     line.replace(/^error:\s*/i, "").replace(/^insert_blocks\s+/, ""),

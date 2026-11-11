@@ -118,6 +118,22 @@ describe("insertionFailure", () => {
     );
   });
 
+  it("keeps one line of a multi-line engine refusal", () => {
+    // The frame prints a cause, not a transcript: the engine's first line is
+    // the failure and the rest is context.
+    const error = new HwpEngineError(
+      "failed",
+      "hwped_edit failed: hwp_failed: Error: insert_blocks 구역 정의 문단 앞에는 삽입할 수 없습니다\n" +
+        "Caused by: 0: layout at /tmp/x.hwpx",
+    );
+    const shown = insertionFailure(error, WIDE, en) as Error;
+
+    expect(shown.message).toBe(
+      en("components.insertionRefused", { reason: "구역 정의 문단 앞에는 삽입할 수 없습니다" }),
+    );
+    expect(shown.message).not.toContain("Caused by");
+  });
+
   it("leaves a failure that is not a refusal with the handling it has", () => {
     // A timeout is not the engine refusing this component, so it keeps its own
     // badge and message rather than being relabelled.

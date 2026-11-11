@@ -138,6 +138,9 @@ export const en = {
   "components.preflightEquation": (p: { name: string }): string =>
     `The open document is ${p.name}, an .hwp file, and the engine cannot insert an equation into one. ` +
     "Save it as .hwpx and insert the component again, or remove the equation.",
+  "components.pendingEdits":
+    "Apply or clear the queued edits first: an insertion replaces the whole document, so an edit " +
+    "waiting to be applied would be lost.",
   "components.refused": (p: {
     code: string;
     source: string;
@@ -557,6 +560,8 @@ export const ko: MessageTable = {
   "components.preflightEquation": (p: { name: string }): string =>
     `열려 있는 문서 ${p.name}은(는) .hwp 파일이고, 엔진은 .hwp에 수식을 삽입할 수 없습니다. ` +
     ".hwpx로 저장한 뒤 구성 요소를 다시 삽입하거나 수식을 빼세요.",
+  "components.pendingEdits":
+    "먼저 대기 중인 편집을 적용하거나 지우세요. 삽입은 문서 전체를 바꾸므로, 아직 적용되지 않은 편집이 사라집니다.",
   "components.refused": (p: {
     code: string;
     source: string;
