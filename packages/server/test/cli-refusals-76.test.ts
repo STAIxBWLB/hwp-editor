@@ -58,6 +58,7 @@ describe("hwp-cli 1.5-1.6 refusal classification (#76)", () => {
     const error = await failure(RANGE_TAG);
     expect(error.reason).toBe("failed");
     expect(error.message).toBe("hwp edit failed (exit 3): edit refused: range_tag");
+    expect(error.refusal).toBe("range_tag");
     expect(error.message).not.toContain("구간");
     expect(error.stderr).toBe(RANGE_TAG);
   });

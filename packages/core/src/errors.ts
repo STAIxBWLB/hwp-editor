@@ -17,6 +17,8 @@
  * vocabulary that must never be folded into this union.
  */
 
+import type { EditRefusalKind } from "./refusals.js";
+
 /** Machine-readable failure code carried by every engine error. */
 export type HwpErrorCode =
   // Engine reasons — mirrored from HwpCliError.reason.
@@ -84,6 +86,12 @@ export interface HwpEngineErrorOptions {
   status?: number;
   /** Underlying value that produced this error (parsed body, inner error). */
   cause?: unknown;
+  /**
+   * The classified edit refusal (#82), set by the transport from
+   * `classifyEditRefusal`. The client reads this field, never the message:
+   * a message can carry text the user typed.
+   */
+  refusal?: EditRefusalKind;
 }
 
 /** Engine failure carrying a stable `code` alongside its human message. */
@@ -95,6 +103,8 @@ export class HwpEngineError extends Error {
    * without a status would still answer true to `"status" in err`.
    */
   declare readonly status?: number;
+  /** The classified edit refusal, when a transport recognised one (#82). */
+  declare readonly refusal?: EditRefusalKind;
 
   constructor(
     public readonly code: HwpErrorCode,
@@ -108,6 +118,7 @@ export class HwpEngineError extends Error {
     // built without a status has no own `status` key at all.
     if (options.status !== undefined) this.status = options.status;
     if (options.cause !== undefined) this.cause = options.cause;
+    if (options.refusal !== undefined) this.refusal = options.refusal;
   }
 }
 

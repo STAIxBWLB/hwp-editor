@@ -181,6 +181,11 @@ Errors are `ErrorResponse` JSON with mapped statuses: 400 bad request,
 fails fast with 503 on every action, including `capabilities` — probe that
 route in health checks.
 
+An edit the engine refuses for a reason the editor recognises also carries
+`error.refusal` (`unmatched_replace`, `run_range_conflict` or `range_tag`),
+and `HwpEngineError.refusal` holds it on the client. Branch on that field,
+never on the message text, which can contain values the user typed.
+
 ## 4. Client
 
 ```tsx

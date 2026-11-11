@@ -128,5 +128,7 @@ export interface ErrorResponse {
   error: {
     code: string;
     message: string;
+    /** The classified edit refusal (`EditRefusalKind`), when there is one (#82). */
+    refusal?: string;
   };
 }

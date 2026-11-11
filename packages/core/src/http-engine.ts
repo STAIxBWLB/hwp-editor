@@ -18,6 +18,7 @@ import type {
   ValidationReport,
 } from "./engine.js";
 import { HwpEngineError, toHwpErrorCode } from "./errors.js";
+import { isEditRefusalKind } from "./refusals.js";
 import type { HwpErrorCode } from "./errors.js";
 import type { EditOp } from "./ops.js";
 import type { CatEnvelope } from "./segments.js";
@@ -129,7 +130,12 @@ async function parseError(res: Response): Promise<HwpEngineError> {
       // Pinned format: the "http 504"/"http 503" substrings are the
       // fallback markers classifyEngineError reads in @hwp-editor/react.
       `hwp-engine HTTP ${res.status}: ${body.error.message}`,
-      { status: res.status, cause: body },
+      {
+        status: res.status,
+        cause: body,
+        // Narrowed, never cast; an older server sends no field (#82).
+        ...(isEditRefusalKind(body.error.refusal) ? { refusal: body.error.refusal } : {}),
+      },
     );
   } catch {
     return new HwpEngineError(

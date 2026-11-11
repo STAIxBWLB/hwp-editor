@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { CatEnvelope, DirectChar, DocumentHandle } from "@hwp-editor/core";
+import { HwpEngineError } from "@hwp-editor/core";
 import { HwpEditor } from "../src/HwpEditor.js";
 import { en, ko } from "../src/messages.js";
 import type { MessageTable } from "../src/messages.js";
@@ -654,7 +655,7 @@ describe.each([["en", en], ["ko", ko]] as const)("Placeholder guards (%s)", (loc
   it("maps a zero-match refusal on Apply to a localized sentence (t14-g4)", async () => {
     const engine = createMockEngine({ envelope: sentenceEnvelope("hello", [[0, 5]]) });
     engine.edit = async () => {
-      throw new Error("hwped_edit failed: failed: edit refused: unmatched_replace");
+      throw new HwpEngineError("failed", "hwped_edit failed: failed: edit refused: unmatched_replace", { refusal: "unmatched_replace" });
     };
     render(<HwpEditor engine={engine} file={file} locale={locale} />);
     const textarea = await selectFirstParagraph(messages);
@@ -919,7 +920,7 @@ describe.each([["en", en], ["ko", ko]] as const)("Classified engine refusals on 
   ] as const)("shows %s as its own sentence, not the engine's line", async (marker, key) => {
     const engine = createMockEngine({ envelope: sentenceEnvelope("hello", [[0, 5]]) });
     engine.edit = async () => {
-      throw new Error(`hwped_edit failed: failed: edit refused: ${marker}`);
+      throw new HwpEngineError("failed", `hwped_edit failed: failed: edit refused: ${marker}`, { refusal: marker });
     };
     render(<HwpEditor engine={engine} file={file} locale={locale} />);
     await selectFirstParagraph(messages);
@@ -932,5 +933,33 @@ describe.each([["en", en], ["ko", ko]] as const)("Classified engine refusals on 
     });
     const shown = screen.queryAllByRole("alert").map(alert => alert.textContent ?? "").join(" ");
     expect(shown).not.toContain(marker);
+  });
+});
+
+describe.each([["en", en], ["ko", ko]] as const)("No or unknown refusal field on the engine error (#82, %s)", (locale, messages) => {
+  // An error without a `refusal` field (an older server, an unclassified
+  // failure) or with a value this client does not know: the message text must
+  // not pick a sentence. The error is built by hand; parseError's own
+  // narrowing is pinned in core's http-engine test.
+  it.each([
+    ["no field", {}],
+    ["an unknown kind", { refusal: "bogus" }],
+  ] as const)("shows the generic message for %s, even with the marker text", async (_label, extra) => {
+    const message = "hwp-engine HTTP 422: hwp edit failed (exit 3): edit refused: range_tag";
+    const engine = createMockEngine({ envelope: sentenceEnvelope("hello", [[0, 5]]) });
+    engine.edit = async () => {
+      throw Object.assign(new HwpEngineError("failed", message, { status: 422 }), extra);
+    };
+    render(<HwpEditor engine={engine} file={file} locale={locale} />);
+    await selectFirstParagraph(messages);
+    fireEvent.change(screen.getByLabelText(messages["segment.replaceLabel"]), { target: { value: "x" } });
+    fireEvent.click(screen.getByRole("button", { name: messages["segment.replaceSubmit"] }));
+    fireEvent.click(await screen.findByRole("button", { name: messages["toolbar.applyWithCount"]({ count: 1 }) }));
+    await waitFor(() => {
+      const alerts = screen.queryAllByRole("alert").map(alert => alert.textContent ?? "").join(" ");
+      expect(alerts).toContain("edit refused: range_tag");
+    });
+    const shown = screen.queryAllByRole("alert").map(alert => alert.textContent ?? "").join(" ");
+    expect(shown).not.toContain(messages["error.rangeTagRefused"]);
   });
 });
