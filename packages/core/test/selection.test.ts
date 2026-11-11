@@ -374,27 +374,60 @@ describe("selection helpers", () => {
     const legacy = { ...run } as Segment;
     delete legacy.sourceChars;
     expect(formatAddresses({ markdown: source.markdown, segments: [p, legacy] }, [p], range)).toEqual([{ id: "r0" }]);
-    // A source span the projection cannot read back exactly refuses the
-    // selection rather than formatting characters the user did not pick.
+    // A source span the projection cannot read back is not a window either,
+    // and widening to the whole run is what a drag did before #71.
     expect(formatAddresses({ markdown: source.markdown, segments: [p, { ...run, sourceChars: { start: 0, end: 4 } }] }, [p], range))
-      .toEqual([]);
+      .toEqual([{ id: "r0" }]);
+    // On .hwp the paragraph's last run publishes one unit more than it shows
+    // (the stored break), and the window still covers only the characters
+    // selected - measured on ahwp 1.6.1, where `chars` `[0, 3)` bolds the
+    // first three characters of a six-character last run.
+    const hwpRun: Segment = { ...run, sourceChars: { start: 0, end: 7 } };
+    const hwp: CatEnvelope = { markdown: source.markdown, segments: [p, hwpRun] };
+    expect(formatAddresses(hwp, [p], range)).toEqual([{ id: "r0", chars: [0, 3] }]);
+    expect(formatAddresses(hwp, [p], { ...range, start: 3, end: 6 })).toEqual([{ id: "r0", chars: [3, 6] }]);
+    expect(formatAddresses(hwp, [p], { ...range, start: 0, end: 6 })).toEqual([{ id: "r0" }]);
+  });
+
+  it("clamps a range that stops on a marker instead of dropping the selection", () => {
+    const bold = { bold: true, italic: false, size_pt: 10, color: "#000000", faces: Array(7).fill("A"), face_ids: Array(7).fill(0) };
+    const p: Segment = { id: "p", indices: [0], start: 0, end: 10, kind: "para", section: 0, para: 0 };
+    const run: Segment = { id: "b", indices: [0, 0], start: 2, end: 8, kind: "run", section: 0, para: 0,
+      directChar: bold, sourceChars: { start: 2, end: 4 } };
+    const envelope: CatEnvelope = { markdown: "앞 **굵게** 뒤\n", segments: [p, run] };
+    const at = (start: number, end: number) =>
+      formatAddresses(envelope, [p], { paragraph: { section: 0, para: 0, id: "p" }, start, end });
+    // The four drags the review reported as refused by #71's first head: the
+    // window's edge lands on the marker the emphasis is drawn with.
+    expect(at(0, 6)).toEqual([{ id: "b", chars: [2, 4] }]);
+    expect(at(2, 6)).toEqual([{ id: "b", chars: [2, 4] }]);
+    expect(at(4, 8)).toEqual([{ id: "b", chars: [2, 4] }]);
+    expect(at(5, 10)).toEqual([{ id: "b", chars: [3, 4] }]);
   });
 
   it("keeps a split run's pieces apart by their source windows", () => {
     const plain = { bold: false, italic: false, size_pt: 10, color: "#000000", faces: Array(7).fill("A"), face_ids: Array(7).fill(0) };
     const p: Segment = { id: "p", indices: [0], start: 0, end: 6, kind: "para", section: 0, para: 0 };
+    // The engine's own spans for a run a table interrupts: "앞" is (0, 1) and
+    // "뒤" (9, 11), the anchor's 8 WCHAR belong to neither piece, and the last
+    // piece carries the paragraph break. Scaled up here to three and two
+    // visible characters.
     const first: Segment = { id: "split", indices: [0, 0], start: 0, end: 3, kind: "run", section: 0, para: 0,
       directChar: plain, sourceChars: { start: 0, end: 3 } };
     const second: Segment = { id: "split", indices: [0, 1], start: 4, end: 6, kind: "run", section: 0, para: 0,
-      directChar: plain, sourceChars: { start: 3, end: 5 } };
+      directChar: plain, sourceChars: { start: 11, end: 14 } };
     const envelope: CatEnvelope = { markdown: "abc|de\n", segments: [p, first, second] };
-    // A block control interrupts the run, so one id names two pieces: the
-    // covered piece is the whole run, the partly covered one carries its own
-    // window, and the two are not deduplicated into one op.
-    expect(formatAddresses(envelope, [p], { paragraph: { section: 0, para: 0, id: "p" }, start: 0, end: 5 }))
-      .toEqual([{ id: "split" }, { id: "split", chars: [3, 4] }]);
-    expect(formatAddresses(envelope, [p], { paragraph: { section: 0, para: 0, id: "p" }, start: 1, end: 5 }))
-      .toEqual([{ id: "split", chars: [1, 3] }, { id: "split", chars: [3, 4] }]);
+    const at = (start: number, end: number) =>
+      formatAddresses(envelope, [p], { paragraph: { section: 0, para: 0, id: "p" }, start, end });
+    // One id names two pieces, so a covered piece names its own span: an op
+    // with the id alone would format the other piece too.
+    expect(at(0, 5)).toEqual([{ id: "split", chars: [0, 3] }, { id: "split", chars: [11, 12] }]);
+    expect(at(1, 5)).toEqual([{ id: "split", chars: [1, 3] }, { id: "split", chars: [11, 12] }]);
+    expect(at(0, 6)).toEqual([{ id: "split", chars: [0, 3] }, { id: "split", chars: [11, 14] }]);
+    expect(at(4, 6)).toEqual([{ id: "split", chars: [11, 14] }]);
+    // The interrupting control belongs to no piece, so a range inside the gap
+    // names nothing at all.
+    expect(at(3, 4)).toEqual([]);
   });
 
   it("does not emit top-level addresses for nested no-id runs", () => {

@@ -334,9 +334,12 @@ describe("runSourceRange", () => {
     const bold = run("앞 **굵게** 뒤\n", 2, 8, [2, 4], directChar(true));
     expect(runSourceRange(bold.envelope, bold.segment, 4, 5)).toEqual([2, 3]);
     expect(runSourceRange(bold.envelope, bold.segment, 5, 6)).toEqual([3, 4]);
-    // A window that starts on a marker, or lies wholly inside one, has no
-    // source character to name.
-    expect(runSourceRange(bold.envelope, bold.segment, 3, 5)).toBeUndefined();
+    // A window is drawn over the rendered markdown, so its edge lands on a
+    // marker: it is clamped to the characters the run shows rather than
+    // refused, because the same drag formatted something before #71.
+    expect(runSourceRange(bold.envelope, bold.segment, 3, 5)).toEqual([2, 3]);
+    expect(runSourceRange(bold.envelope, bold.segment, 2, 6)).toEqual([2, 4]);
+    // A window that covers only the closing marker covers no character at all.
     expect(runSourceRange(bold.envelope, bold.segment, 6, 8)).toBeUndefined();
     const italic = run("*굵게*\n", 0, 4, [0, 2], directChar(false, true));
     expect(runSourceRange(italic.envelope, italic.segment, 1, 2)).toEqual([0, 1]);
@@ -344,10 +347,14 @@ describe("runSourceRange", () => {
     expect(runSourceRange(both.envelope, both.segment, 3, 5)).toEqual([0, 2]);
     // The engine trims the wrapped text and leaves edge whitespace outside
     // the markers: a bold " / " projects as " **/** ", so the word inside
-    // maps and a window in the edge whitespace is refused.
+    // maps, and the edge whitespace joins the window only when the selection
+    // covers it.
     const spaced = run(" **/** \n", 0, 7, [0, 3], directChar(true));
     expect(runSourceRange(spaced.envelope, spaced.segment, 3, 4)).toEqual([1, 2]);
     expect(runSourceRange(spaced.envelope, spaced.segment, 0, 1)).toBeUndefined();
+    expect(runSourceRange(spaced.envelope, spaced.segment, 0, 4)).toEqual([0, 2]);
+    // The trailing space is the third source unit, so covering it ends at 3.
+    expect(runSourceRange(spaced.envelope, spaced.segment, 3, 7)).toEqual([1, 3]);
     // A literal `*Note*` in a plain run is text, not a marker: the direct
     // level says plain, and the fragment is the source verbatim.
     const literal = run("*Note*\n", 0, 6, [0, 6]);
@@ -362,16 +369,45 @@ describe("runSourceRange", () => {
     expect(runSourceRange(noDirect.envelope, noDirect.segment, 0, 1)).toBeUndefined();
   });
 
+  it("accepts the paragraph break a .hwp last piece publishes, and only there", () => {
+    // Measured on ahwp 1.6.1: a `.hwp` paragraph stores its break as the
+    // paragraph's last character, so its last piece ends one unit past the
+    // text it shows - "동일문 안내" publishes (0, 7) for six characters. The
+    // window still stops at the last character shown, so the break is never
+    // formatted.
+    const only = run("동일문 안내\n", 0, 6, [0, 7]);
+    expect(runSourceRange(only.envelope, only.segment, 0, 3)).toEqual([0, 3]);
+    expect(runSourceRange(only.envelope, only.segment, 3, 6)).toEqual([3, 6]);
+    expect(runSourceRange(only.envelope, only.segment, 0, 6)).toEqual([0, 6]);
+    // An earlier piece may not claim that unit: this one has a sibling after
+    // it, so its span must be its text.
+    const early: Segment = { id: "two", indices: [1, 0], start: 0, end: 6, kind: "run", section: 0, para: 1,
+      directChar: directChar(), sourceChars: { start: 0, end: 7 } };
+    const late: Segment = { id: "later", indices: [1, 1], start: 7, end: 9, kind: "run", section: 0, para: 1,
+      directChar: directChar(), sourceChars: { start: 7, end: 9 } };
+    const twoRuns: CatEnvelope = { markdown: "동일문 안내둘째\n", segments: [early, late] };
+    expect(runSourceRange(twoRuns, early, 0, 3)).toBeUndefined();
+    // And one unit is the whole allowance: a rewritten fragment is refused.
+    const longer = run("동일문 안내\n", 0, 6, [0, 8]);
+    expect(runSourceRange(longer.envelope, longer.segment, 0, 3)).toBeUndefined();
+  });
+
   it("keeps each piece of a block-control-split run on its own source span", () => {
+    // The engine's own measurement (hwp-cli tests/segment_source_chars.rs):
+    // "앞" publishes (0, 1) and "뒤" (9, 11) - the table anchor's 8 WCHAR sit
+    // between the pieces and belong to neither, and the last piece carries the
+    // paragraph break.
     const first: Segment = { id: "split", indices: [1, 0], start: 0, end: 3, kind: "run", section: 0, para: 1,
       directChar: directChar(), sourceChars: { start: 0, end: 3 } };
     const second: Segment = { id: "split", indices: [1, 1], start: 4, end: 6, kind: "run", section: 0, para: 1,
-      directChar: directChar(), sourceChars: { start: 3, end: 5 } };
+      directChar: directChar(), sourceChars: { start: 11, end: 14 } };
     const envelope: CatEnvelope = { markdown: "abc|de\n", segments: [first, second] };
     expect(runSourceRange(envelope, first, 1, 3)).toEqual([1, 3]);
-    expect(runSourceRange(envelope, second, 4, 5)).toEqual([3, 4]);
-    expect(runSourceRange(envelope, second, 5, 6)).toEqual([4, 5]);
-    // The interrupting control's own character belongs to no piece: a window
+    expect(runSourceRange(envelope, second, 4, 5)).toEqual([11, 12]);
+    expect(runSourceRange(envelope, second, 5, 6)).toEqual([12, 13]);
+    // The covered piece ends where it shows, never inside the break.
+    expect(runSourceRange(envelope, second, 4, 6)).toEqual([11, 13]);
+    // The interrupting control's own characters belong to no piece: a window
     // that reaches back over it is outside the piece's own range.
     expect(runSourceRange(envelope, second, 3, 5)).toBeUndefined();
   });
@@ -390,6 +426,23 @@ describe("runSourceRange", () => {
     // No published source offsets: there is no source coordinate to map to.
     const noSource = run("ab\n", 0, 2, undefined);
     expect(runSourceRange(noSource.envelope, noSource.segment, 0, 1)).toBeUndefined();
+  });
+
+  it("refuses a run whose text a field or a bookmark rewrites", () => {
+    // Measured on ahwp 1.6.1: a hyperlink projects as `[여기](https://…)` and
+    // the envelope publishes a `field` segment over the run that shows it, so
+    // the fragment's length has nothing to do with the source characters. A
+    // coincidence of lengths is the case that matters, so this one is equal.
+    const coincidence: Segment = { id: "link", indices: [1, 0], start: 0, end: 9, kind: "run",
+      section: 0, para: 1, directChar: directChar(), sourceChars: { start: 0, end: 9 } };
+    const field: Segment = { id: "fld", indices: [1, 0], start: 0, end: 9, kind: "field", section: 0, para: 1 };
+    const markdown = "[ab](xyz)\n";
+    expect(runSourceRange({ markdown, segments: [coincidence, field] }, coincidence, 0, 1)).toBeUndefined();
+    const bookmark: Segment = { ...field, id: "bmk", kind: "bookmark" };
+    expect(runSourceRange({ markdown, segments: [coincidence, bookmark] }, coincidence, 0, 1)).toBeUndefined();
+    // The same numbers read back as text once no field covers them, which is
+    // what says the field check - not the length - is what refuses.
+    expect(runSourceRange({ markdown, segments: [coincidence] }, coincidence, 0, 1)).toEqual([0, 1]);
   });
 });
 

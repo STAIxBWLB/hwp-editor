@@ -272,10 +272,19 @@ function addressesForRuns(
     if (address === undefined) continue;
     if (range !== undefined && range !== null) {
       const narrow = narrowToRange(envelope, run, range);
-      // One unaddressable piece refuses the whole selection: a partial list
-      // would format fewer characters than the user selected without saying so.
-      if (narrow === "refuse") return [];
-      if (narrow !== "whole") address = { ...address, chars: narrow };
+      if (narrow === "whole") {
+        // A split run publishes one id per piece, and an op that names only the
+        // id formats the whole run (edit-ops-v1), so a covered piece names its
+        // own span instead. The published span is what the resolver accepts,
+        // paragraph break included.
+        const span = run.sourceChars;
+        if (span !== undefined && run.id !== undefined && envelope.segments.some((sibling) =>
+          sibling !== run && sibling.kind === "run" && sibling.id === run.id)) {
+          address = { ...address, chars: [span.start, span.end] };
+        }
+      } else {
+        address = { ...address, chars: narrow };
+      }
     }
     const key = addressKey(address);
     if (targets.has(key)) continue;
@@ -291,24 +300,25 @@ function addressesForRuns(
 /**
  * What a markdown range selects inside one run piece.
  *
- * - `"whole"` — the range covers the piece, or the piece publishes no
- *   `source_chars` (a schema `1.0` host), which keeps the pre-#71 behavior of
- *   snapping the selection to the whole run.
+ * - `"whole"` — the range covers the piece; the piece publishes no
+ *   `source_chars` (a schema `1.0` host); or the projection cannot read the
+ *   window back character for character. The last two keep the pre-#71
+ *   behavior of snapping the selection to the whole run, which is what the
+ *   range hint promises, rather than formatting source characters the user did
+ *   not select: a guess is the failure AC2 names, and a whole run is not one.
  * - a `[start, end)` source window — the range covers part of a piece that
- *   publishes where its characters are, and `runSourceRange` could read the
- *   window back exactly.
- * - `"refuse"` — the piece is only partly selected and carries source offsets
- *   the projection cannot map (emphasis wrappers, escapes, inline controls).
- *   Guessing here would format source characters the user did not select.
+ *   publishes where its characters are, and `runSourceRange` read the window
+ *   back exactly. A window whose edge lands on a marker or on the edge
+ *   whitespace is clamped to the characters the run shows.
  */
 function narrowToRange(
   envelope: CatEnvelope,
   run: Segment,
   range: MarkdownRangeSelection,
-): "whole" | "refuse" | [number, number] {
+): "whole" | [number, number] {
   if (range.start <= run.start && range.end >= run.end) return "whole";
   if (run.sourceChars === undefined) return "whole";
-  return runSourceRange(envelope, run, Math.max(range.start, run.start), Math.min(range.end, run.end)) ?? "refuse";
+  return runSourceRange(envelope, run, Math.max(range.start, run.start), Math.min(range.end, run.end)) ?? "whole";
 }
 
 function addressKey(address: EditAddress): string {

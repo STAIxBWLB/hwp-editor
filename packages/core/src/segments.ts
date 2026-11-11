@@ -530,11 +530,17 @@ export function segmentText(envelope: CatEnvelope, segment: Segment): string {
  * bold, italic or bold-italic run is wrapped in is stripped only when the
  * run's own `directChar` says it IS a marker (a literal `*Note*` projects like
  * an italic run, and the direct level is what tells them apart), and what
- * remains must be exactly as long as the published source span. An underline
+ * remains must be as long as the published source span. An underline
  * (`<u>…</u>`) or strike (`~~…~~`) wrapper, an escaped `&`/`<`, a trimmed
- * fragment and an inline control counted in the source span all fail one of
- * those checks, and the caller keeps the whole run instead of guessing a
- * window that would format the wrong source characters.
+ * fragment, a field rendered as `[text](url)` and an inline control counted in
+ * the source span all fail one of those checks, and the caller keeps the whole
+ * run instead of guessing a window that would format the wrong source
+ * characters.
+ *
+ * The window is clamped to the characters the run shows. A selection is drawn
+ * over the rendered markdown, so its edges land on a marker or on the edge
+ * whitespace the marker pair sits inside; those characters are not the window,
+ * and the whitespace is part of it only when the selection covers it.
  *
  * The window is half-open and expressed in scalars into the emitted markdown;
  * a surrogate pair inside it counts once for the range and twice for the
@@ -550,27 +556,74 @@ export function runSourceRange(
   const source = run.sourceChars;
   if (source === undefined || !Number.isInteger(start) || !Number.isInteger(end) ||
       start < run.start || end > run.end || start >= end) return undefined;
+  // A field or a bookmark inside the piece has its own segment and its own
+  // source characters, and the markdown shows a rewritten form of them, so an
+  // equal length there is a coincidence rather than an identity. Measured on
+  // ahwp 1.6.1: a hyperlink field publishes `field` over the run that carries
+  // `[text](url)`, whose length has nothing to do with the field's characters.
+  if (envelope.segments.some((nested) => (nested.kind === "field" || nested.kind === "bookmark") &&
+      nested.start < run.end && nested.end > run.start)) return undefined;
   const inner = runWindowText(run, segmentText(envelope, run));
   if (inner === undefined) return undefined;
-  const base = run.start + inner.offset;
-  const from = start - base;
-  const to = end - base;
+  const innerStart = run.start + inner.offset;
+  const innerEnd = innerStart + inner.text.length;
   const text = [...inner.text];
-  if (from < 0 || to > text.length || from >= to) return undefined;
+  const from = Math.max(start, innerStart) - innerStart;
+  const to = Math.min(end, innerEnd) - innerStart;
+  // A window that stops on a marker or on the edge whitespace covers no
+  // character of the run, and the caller keeps the whole run for it.
+  if (from >= to) return undefined;
+  const visible = inner.lead + inner.text.length + inner.trail;
   // The visible text and the source span must be the same characters. A
   // control counted in the source, an escape that grows the output, or a
   // trim that shrinks it all break this equality; nothing converts between
   // the spaces, so a mismatch is a refusal rather than an estimate. The
   // source span of a formatted run also holds the edge whitespace the marker
   // pair was placed inside, so those widths are part of the comparison and of
-  // the window's origin.
-  if (inner.lead + inner.text.length + inner.trail !== source.end - source.start) return undefined;
+  // the window's origin. One difference is published rather than a rewrite:
+  // the last piece of a paragraph ends at the paragraph's own length, where a
+  // `.hwp` document stores its paragraph break as the paragraph's last
+  // character, so that piece reads one unit longer than it shows. Measured on
+  // ahwp 1.6.1: the three-character `동일문` of a two-run paragraph publishes
+  // `(9, 13)`, and `[3, 7)` over a six-character last piece still formats.
+  const span = source.end - source.start;
+  if (span !== visible && !(span === visible + 1 && isParagraphLastPiece(envelope, run))) return undefined;
   let utf16 = 0;
   for (let at = 0; at < from; at++) utf16 += text[at]!.length;
   const utf16Start = utf16;
   for (let at = from; at < to; at++) utf16 += text[at]!.length;
   const sourceBase = source.start + inner.lead;
-  return [sourceBase + utf16Start, sourceBase + utf16];
+  // Edge whitespace joins the window only when the selection covers it, and
+  // never the paragraph break: the window ends at the last character the piece
+  // shows, even where its published span runs one further.
+  return [
+    start <= run.start ? source.start : sourceBase + utf16Start,
+    end >= run.end ? source.start + visible : sourceBase + utf16,
+  ];
+}
+
+/**
+ * Whether this piece is the last its paragraph publishes.
+ *
+ * A `.hwp` paragraph stores its break as the paragraph's last character, so the
+ * last piece ends one past the text it shows - a bound `address.chars` also
+ * accepts (measured on ahwp 1.6.1: `[3, 7)` over `동일문 안내` formats `안내`
+ * alone). No earlier piece may claim that unit.
+ */
+function isParagraphLastPiece(envelope: CatEnvelope, run: Segment): boolean {
+  const own = run.sourceChars;
+  if (own === undefined) return false;
+  return !envelope.segments.some((sibling) => sibling !== run && sibling.kind === "run" &&
+    sameParagraph(sibling, run) && sibling.sourceChars !== undefined && sibling.sourceChars.start >= own.end);
+}
+
+/** Two run pieces belong to one paragraph when their paths share a parent. */
+function sameParagraph(a: Segment, b: Segment): boolean {
+  if (a.section !== b.section || a.para !== b.para) return false;
+  if (a.indices === undefined || b.indices === undefined) return true;
+  if (a.indices.length !== b.indices.length) return false;
+  const depth = a.indices.length - 1;
+  return a.indices.slice(0, depth).every((index, at) => b.indices![at] === index);
 }
 
 /**

@@ -128,6 +128,44 @@ test("AC2: three characters inside a longer run are bolded, the rest and the oth
 });
 
 /**
+ * AC2 again on the format that stores its paragraph break: a `.hwp` paragraph
+ * keeps the break as its last character, so ahwp 1.6.1 publishes the first
+ * paragraph's only run as `(0, 7)` for the six characters it shows. Reading
+ * the window back has to accept that one unit, or every partial selection in a
+ * paragraph's last run - most paragraphs of a real `.hwp` - would be refused.
+ */
+test("AC2 on .hwp: a sub-run window lands in a paragraph's last run", async ({page}) => {
+  await page.goto("/editor");
+  const loaded = page.waitForResponse(async response => readResponse(response) &&
+    ((await response.json()) as CatEnvelope).markdown.includes("동일문 다른"));
+  await page.getByLabel("fixture",{exact:true}).selectOption("z-subrun-demo.hwp");
+  const before = await (await loaded).json() as CatEnvelope;
+  const firstRun=before.segments.find(segment=>segment.kind==="run")!;
+  expect(segmentText(before,firstRun)).toBe("동일문 안내");
+  expect(firstRun.sourceChars).toEqual({start:0,end:7});
+  const bodies = await recordEdits(page);
+  const list=page.getByRole("listbox",{name:en["segment.paragraphChoices"]});
+  await list.getByRole("option").nth(0).click();
+  await selectRunRange(page, 0, 3);
+  await expect(page.getByText(en["segment.rangeRunCount"]({count:1}),{exact:true})).toBeVisible();
+  await page.getByLabel(en["segment.bold"],{exact:true}).check();
+  await page.getByRole("button",{name:en["segment.formatSubmit"],exact:true}).click();
+  const applied=page.waitForResponse(readResponse);
+  await page.getByRole("button",{name:en["toolbar.applyWithCount"]({count:1}),exact:true}).click();
+  expect(bodies).toHaveLength(1);
+  const ops=editOps(bodies[0]!);
+  expect(ops).toEqual([{kind:"set-format",address:{id:firstRun.id,chars:[0,3]},props:{bold:"on"}}]);
+  const after=await (await applied).json() as CatEnvelope;
+  const visible=(segment:CatEnvelope["segments"][number])=>
+    segmentText(after,segment)
+      .replace(/\*\*([\s\S]+?)\*\*/u,"$1")
+      .replace(/\*([\s\S]+?)\*/u,"$1");
+  const runs=after.segments.filter(segment=>segment.kind==="run");
+  expect(runs.filter(segment=>segment.directChar?.bold).map(visible)).toEqual(["동일문"]);
+  expect(runs.filter(segment=>!segment.directChar?.bold).map(visible)).toEqual([" 안내","동일문 다른 문단"]);
+});
+
+/**
  * The same selection against a schema `1.0` envelope: it carries no
  * `source_chars`, because the field's presence is the feature gate. The range
  * then keeps the pre-#71 behavior and names the whole run, rather than
