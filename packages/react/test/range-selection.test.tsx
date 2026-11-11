@@ -908,9 +908,11 @@ describe.each([["en", en], ["ko", ko]] as const)("Classified engine refusals on 
   });
 });
 
-describe.each([["en", en], ["ko", ko]] as const)("HTTP fallback without a refusal field (#82, %s)", (locale, messages) => {
-  // A server older than #82 sends no `error.refusal`, or a proxy sends a value
-  // this client does not know: the message text must not pick a sentence.
+describe.each([["en", en], ["ko", ko]] as const)("No or unknown refusal field on the engine error (#82, %s)", (locale, messages) => {
+  // An error without a `refusal` field (an older server, an unclassified
+  // failure) or with a value this client does not know: the message text must
+  // not pick a sentence. The error is built by hand; parseError's own
+  // narrowing is pinned in core's http-engine test.
   it.each([
     ["no field", {}],
     ["an unknown kind", { refusal: "bogus" }],

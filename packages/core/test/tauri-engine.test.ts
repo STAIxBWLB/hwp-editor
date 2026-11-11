@@ -545,13 +545,18 @@ describe("Tauri edit refusal classification (#80)", () => {
     expect(err.refusal).toBeUndefined();
   });
 
-  it("names a cause class and a next step when the engine wrote no stderr (#82)", async () => {
+  it("says the engine stopped and to apply again when it wrote no stderr (t34-a1)", async () => {
     const raw = "hwp_failed: hwp edit failed (exit 101): ";
     const err = (await createTauriEngine(reject(raw)).edit(doc, [{ kind: "replace", find: "a", replace: "b" }])
       .then(() => null, (e: unknown) => e)) as HwpEngineError;
     expect(err.code).toBe("failed");
-    expect(err.message).toMatch(/^hwped_edit failed: hwp edit failed \(exit 101\): the engine refused the edit without a diagnostic/u);
-    expect(err.message).toContain("remove the last pending edit and retry");
+    expect(err.message).toBe(
+      "hwped_edit failed: hwp edit failed (exit 101): the engine stopped without writing a diagnostic " +
+      "(most likely it was killed or ran out of memory), so nothing was applied. " +
+      "Apply again; if it fails the same way, report it with the host log.",
+    );
+    expect(err.message).not.toContain("refused");
+    expect(err.message).not.toContain("last pending edit");
     expect(err.refusal).toBeUndefined();
     expect(err.cause).toBe(raw);
   });

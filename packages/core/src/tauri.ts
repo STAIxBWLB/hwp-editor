@@ -213,17 +213,19 @@ function editRefusalFor(
 }
 
 /**
- * An edit failure whose stderr is empty would otherwise read as a bare exit
- * line with nothing after the colon: no cause class, no next step (REVIEW.md
- * "Failure wrappers keep the engine cause"). Name the class and where the
- * details are; the raw rejection stays on `cause`.
+ * An edit failure whose stderr is empty. `hwp edit` always writes to stderr
+ * when it fails (anyhow prints `Error: ...`, a panic prints its message), so
+ * empty stderr means the process was stopped from outside: killed, out of
+ * memory, or a crash with no output (maru reports a signal death as exit 1,
+ * hwped.rs:222). Name that cause and a step the user can take, instead of a
+ * bare exit line; the raw rejection stays on `cause`.
  */
 function silentEditFailure(cmd: string, code: HwpErrorCode, detail: string): string | null {
   if (code !== "failed" || cmd !== "hwped_edit") return null;
   const failure = MARU_EDIT_FAILURE.exec(detail);
   if (failure === null || failure[2]!.trim() !== "") return null;
-  return `${failure[1]!}: the engine refused the edit without a diagnostic, so nothing was applied. ` +
-    "The exit code and any host log are on the error cause; remove the last pending edit and retry, or report the exit code.";
+  return `${failure[1]!}: the engine stopped without writing a diagnostic (most likely it was killed or ran out of memory), ` +
+    "so nothing was applied. Apply again; if it fails the same way, report it with the host log.";
 }
 
 /**
