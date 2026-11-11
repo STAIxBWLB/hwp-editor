@@ -6,7 +6,9 @@ test("browser uploads image bytes, inserts then deletes the image",async({page})
   await page.getByLabel("fixture",{exact:true}).selectOption("table-demo.hwpx");
   await expect(page.getByRole("button",{name:en["page.label"]({page:1}),exact:true})).toBeVisible();
   await page.getByRole("tab",{name:en["tabs.images"],exact:true}).click();
-  await page.getByLabel(en["image.file"],{exact:true}).setInputFiles({name:"사진 @=>.png",mimeType:"image/png",buffer:Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==","base64")});
+  const fileInput=page.getByLabel(en["image.file"],{exact:true});
+  const sameImage={name:"사진 @=>.png",mimeType:"image/png",buffer:Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==","base64")};
+  await fileInput.setInputFiles(sameImage);
   await page.getByLabel(en["image.anchor"],{exact:true}).fill("표 편집 데모");
   await page.getByLabel(en["image.width"],{exact:true}).fill("20");
   await page.getByLabel(en["image.height"],{exact:true}).fill("15");
@@ -16,6 +18,10 @@ test("browser uploads image bytes, inserts then deletes the image",async({page})
   expect((await (await inserted).json()).segments.some((segment:{kind:string})=>segment.kind==="image")).toBe(true);
   await expect(page.getByRole("status",{name:en["validation.aria"],exact:true})).toHaveText(en["validation.valid"]);
   await expect(page.getByText(en["image.fileHint"],{exact:true})).toBeVisible();
+  await expect(fileInput).toHaveValue("");
+  await fileInput.setInputFiles(sameImage);
+  await page.getByLabel(en["image.anchor"],{exact:true}).fill("표 편집 데모");
+  await expect(page.getByRole("button",{name:en["image.insert"],exact:true})).toBeEnabled();
   await page.getByLabel(en["image.deleteAnchor"],{exact:true}).fill("표 편집 데모");
   await page.getByRole("button",{name:en["image.delete"],exact:true}).click();
   const deleted=page.waitForResponse(response=>response.url().endsWith("/read"));
