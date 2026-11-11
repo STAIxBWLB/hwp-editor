@@ -13,21 +13,29 @@ describe("refusal sentences (#80)", () => {
     expect(ko["error.runRangeConflict"]).toContain("바꿀 수 있어");
   });
 
-  it("offer the in-place step for a range mark and say a reopen drops the pending list", () => {
-    // The engine refuses any length change, shorter included, so "shorten" would not unblock;
-    // a marked cell refuses any change at all (hwp-convert edit.rs:1687-1727), and the
-    // engine names no op, so the sentence says how to find the refused one.
-    expect(en["error.rangeTagRefused"]).toContain("remove it from the pending list");
-    expect(en["error.rangeTagRefused"]).toContain("same length");
-    expect(en["error.rangeTagRefused"]).toContain("refuses any change to its content");
-    expect(en["error.rangeTagRefused"]).toContain("one at a time");
-    expect(en["error.rangeTagRefused"]).not.toContain("shorten");
-    expect(en["error.rangeTagRefused"]).toContain("reopening the document drops the pending list");
-    expect(ko["error.rangeTagRefused"]).toContain("같은 길이의 치환");
-    expect(ko["error.rangeTagRefused"]).toContain("셀은 내용을 어떻게 바꾸든");
-    expect(ko["error.rangeTagRefused"]).toContain("하나씩");
-    expect(ko["error.rangeTagRefused"]).not.toContain("줄인");
-    expect(ko["error.rangeTagRefused"]).toContain("대기 목록은 사라집니다");
+  it("name every refused edit, the unblocking step and what a reopen costs", () => {
+    // RANGE_TAG_SHIFT_REFUSAL also covers control insertion and removal,
+    // field values and marked cells (v1.6.1), and Apply sends the whole queue,
+    // so the step is to remove those edits, not to apply them one at a time.
+    const sentence = en["error.rangeTagRefused"];
+    for (const phrase of [
+      "changing a paragraph's text length",
+      "inserting or deleting a link, field, bookmark or image",
+      "deleting a table",
+      "changing a field's value",
+      "changing a marked table cell",
+      "The engine does not say which edit",
+      "Remove those pending edits from the pending list",
+      "a same-length text replacement in a paragraph is accepted",
+      "reopening drops the pending list",
+    ]) expect(sentence).toContain(phrase);
+    expect(sentence).not.toContain("one at a time");
+    expect(sentence).not.toContain("shorten");
+    for (const phrase of ["링크·필드·책갈피·그림의 삽입이나 삭제", "표 삭제", "필드 값 변경",
+      "구간 표시가 있는 표 셀의 변경", "대기 목록에서 해당 편집을 제거하고", "다시 열면 대기 목록은 사라집니다"]) {
+      expect(ko["error.rangeTagRefused"]).toContain(phrase);
+    }
+    expect(ko["error.rangeTagRefused"]).not.toContain("하나씩");
   });
 });
 

@@ -22,7 +22,7 @@ describe("classifyEditRefusal (#80)", () => {
   });
 
   it("does not classify a refusal line a Display-written value forged below the Error: line (t32-a5)", () => {
-    // An anchor printed with {anchor} (commands/edit.rs:2107) carrying a newline.
+    // An anchor printed with {anchor} (hwp-convert/src/edit.rs:2107, add_table) carrying a newline.
     const forged = (body: string): string =>
       `Error: 앵커 \"x\n    ${body}\"를 찾을 수 없습니다`.replace(/\\"/gu, '"');
     expect(classifyEditRefusal(forged(RANGE_TAG.slice("Error: ".length)))).toBeUndefined();
