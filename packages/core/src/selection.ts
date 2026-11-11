@@ -20,14 +20,14 @@ function uniqueSegments(segments: Segment[]): Segment[] {
 }
 
 export function paragraphForSegment(envelope: CatEnvelope, segment: Segment): Segment | undefined {
+  if (segment.kind === "para") return segment;
   if (segment.indices === undefined) {
-    if (segment.kind === "para") return segment;
     return envelope.segments.find((candidate) => candidate.kind === "para" && candidate.indices === undefined &&
       candidate.section === segment.section && candidate.para === segment.para &&
       candidate.start <= segment.start && candidate.end >= segment.end);
   }
   return envelope.segments.filter((candidate) => candidate.kind === "para" && candidate.section === segment.section &&
-    candidate.indices !== undefined && candidate.indices.length <= segment.indices!.length &&
+    candidate.indices !== undefined && candidate.indices.length < segment.indices!.length &&
     candidate.indices.every((index, at) => index === segment.indices![at]))
     .sort((a, b) => (b.indices?.length ?? 0) - (a.indices?.length ?? 0))[0];
 }

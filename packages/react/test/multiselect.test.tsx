@@ -27,8 +27,8 @@ function fiveParagraphs(): CatEnvelope {
         italic: false,
         size_pt: 10,
         color: "#000000",
-        faces: ["Test"],
-        face_ids: [1],
+        faces: Array(7).fill("Test"),
+        face_ids: Array(7).fill(1),
       },
       directPara: {
         alignment: para === 1 ? "center" : "left",
@@ -50,9 +50,8 @@ describe.each([["en", en], ["ko", ko]] as const)("paragraph multi-selection (%s)
     const options = screen.getAllByRole("option");
     expect(options).toHaveLength(5);
     expect(screen.getByText(messages["segment.selectedCount"]({ count: 0 }))).toBeTruthy();
-    await waitFor(() => expect((screen.getByRole("button", { name: messages["segment.setPara"] }) as HTMLButtonElement).disabled).toBe(false));
-
     fireEvent.click(options[0]!);
+    await waitFor(() => expect((screen.getByLabelText(messages["segment.paraShapeValueAria"]) as HTMLInputElement).disabled).toBe(false));
     fireEvent.click(options[4]!, { shiftKey: true });
     expect(screen.getAllByRole("option").filter((option) => option.getAttribute("aria-selected") === "true")).toHaveLength(5);
     expect(screen.getByText(messages["segment.selectedCount"]({ count: 5 }))).toBeTruthy();
@@ -74,6 +73,7 @@ describe.each([["en", en], ["ko", ko]] as const)("paragraph multi-selection (%s)
     fireEvent.click(options[1]!, { ctrlKey: true });
     expect(screen.getAllByRole("option").filter((option) => option.getAttribute("aria-selected") === "true")).toHaveLength(2);
 
+    fireEvent.click(screen.getByRole("option", { name: "Paragraph one" }));
     fireEvent.click(screen.getByRole("button", { name: messages["segment.similarChar"] }));
     const chosen = screen.getAllByRole("option").filter((option) => option.getAttribute("aria-selected") === "true");
     expect(chosen).toHaveLength(2);

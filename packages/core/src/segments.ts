@@ -2,7 +2,7 @@
  * Types and parser for the v2 segment envelope:
  * `hwp cat --format markdown --with-segments --segments v2`, the published
  * `segment-envelope-v2` contract (`contract: "hwp-segment-envelope-v2"`,
- * `schema_version: "1.0"`). The engine opts in with `--segments v2`, so this
+ * schema major 1). The engine opts in with `--segments v2`, so this
  * parser handles that one shape only and never branches on envelope version.
  *
  * Segment shape verified against the hwp-cli v0.20.0 release binary: both
@@ -19,8 +19,8 @@
  * `char_range`, `section` from `path.section`, and `para` from
  * `path.indices[0]` (the top-level paragraph index, the coordinate
  * `SegmentRef` uses as a fallback for older host projections). Checksummed IDs
- * and nesting indices are retained for exact layout joins and editing; per-level
- * styles are not projected.
+ * and nesting indices are retained for exact layout joins and editing. Direct
+ * character/paragraph attributes are validated and retained; inherited style levels are not projected.
  *
  * `char_range`, `Segment.start`, and `Segment.end` use Unicode scalar offsets.
  * `segmentText` converts those boundaries to JS UTF-16 offsets only when slicing.
@@ -113,8 +113,8 @@ function projectSegment(raw: unknown): Segment {
     typeof kind !== "string" ||
     !SEGMENT_KINDS.includes(kind as SegmentKind) ||
     typeof p !== "object" || p === null ||
-    typeof p.section !== "number" ||
-    !isNumberArray(p.indices) || p.indices.length === 0 ||
+    typeof p.section !== "number" || !Number.isInteger(p.section) || p.section < 0 ||
+    !isNumberArray(p.indices) || p.indices.length === 0 || p.indices.some(index => !Number.isInteger(index) || index < 0) ||
     typeof range !== "object" || range === null ||
     typeof range.start !== "number" ||
     typeof range.end !== "number"
@@ -188,7 +188,7 @@ export function parseCatEnvelope(json: string): CatEnvelope {
     throw new Error("segments envelope: not an object");
   }
   const { schema_version, contract, markdown, segments } = raw as Record<string, unknown>;
-  if (contract !== "hwp-segment-envelope-v2" || schema_version !== "1.0") {
+  if (contract !== "hwp-segment-envelope-v2" || typeof schema_version !== "string" || !/^1[.][0-9]+$/.test(schema_version)) {
     throw new Error("segments envelope: not a v2 envelope");
   }
   if (typeof markdown !== "string" || !Array.isArray(segments)) {

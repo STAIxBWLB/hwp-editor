@@ -31,12 +31,22 @@ const fixture = (name: string) =>
   readFileSync(join(import.meta.dirname, "fixtures", name), "utf8");
 
 describe("parseCatEnvelope", () => {
+  it.each(["1.1", "1.12"])("accepts additive envelope schema %s", schema_version => {
+    const wire = JSON.parse(fixture("cat-segments-basic.json"));
+    wire.schema_version = schema_version;
+    expect(parseCatEnvelope(JSON.stringify(wire)).segments).toHaveLength(5);
+  });
+  it.each([-1, 0.5])("rejects malformed path indices %s before selection", index => {
+    const wire = JSON.parse(fixture("cat-segments-basic.json"));
+    wire.segments[0].path.indices = [index];
+    expect(() => parseCatEnvelope(JSON.stringify(wire))).toThrow("malformed segment");
+  });
   it("parses the real basic envelope", () => {
     const env = parseCatEnvelope(fixture("cat-segments-basic.json"));
     expect(env.markdown).toContain("DocumentSpec v2 visual anchor");
     // v2 nests: the image and its run lie inside para 0's wider range.
     expect(env.segments).toHaveLength(5);
-    expect(env.segments[0]).toEqual({
+    expect(env.segments[0]).toMatchObject({
       id: "175b9dd4192615d5.0.0",
       indices: [0],
       start: 0,

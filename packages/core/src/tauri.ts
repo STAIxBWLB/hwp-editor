@@ -32,6 +32,7 @@ import type {
 import type { EditOp } from "./ops.js";
 import { opsToArgv, opsToJson } from "./ops.js";
 import type { CatEnvelope } from "./segments.js";
+import { validateProjectedMetadata } from "./segments.js";
 import type { DocumentSpecV2 } from "./generated/document-spec-v2.js";
 import type { TemplateDataV1, TemplateSpecV1 } from "./spec.js";
 import type { LintProfile } from "./templates.js";
@@ -273,7 +274,7 @@ export function createTauriEngine(
       return call<CatEnvelope>("hwped_read", {
         document: ref(document),
         ...scope(),
-      });
+      }).then(validateProjectedMetadata);
     },
 
     async render(document, options: RenderOptions = {}) {

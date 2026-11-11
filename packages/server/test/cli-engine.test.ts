@@ -60,6 +60,26 @@ function expectVersionAtLeast0200(version: string) {
 }
 
 describeBin("cli-engine (real hwp-cli binary)", () => {
+  it("AC3: applies spacing to five addressed paragraphs in one edit and restores all with one undo", async () => {
+    const cli = engine();
+    const spec = { version: "2.0", document: { version: "1.0", sections: [{ blocks:
+      Array.from({length:5},(_,index)=>({type:"paragraph",runs:[{type:"text",text:`문단 ${index} 😀`}]})),
+    }] } };
+    const original = (await cli.compose(spec as unknown as DocumentSpecV2, "batch.hwpx")).document;
+    const before = await cli.read(original);
+    const paragraphs = before.segments.filter(segment=>segment.kind === "para");
+    expect(paragraphs).toHaveLength(5);
+    const ops: EditOp[] = paragraphs.map(paragraph=>({kind:"set-para",address:{id:paragraph.id!},key:"line-spacing",value:"200%"}));
+    const edited = await cli.edit(original,ops);
+    const after = await cli.read(edited);
+    expect(after.segments.filter(segment=>segment.kind === "para").map(segment=>segment.directPara?.line_spacing)).toEqual([200,200,200,200,200]);
+    const restored = cli.undo(edited);
+    if (restored === null) throw new Error("missing undo snapshot");
+    expect(restored.data).toEqual(original.data);
+    expect((await cli.read(restored)).segments.filter(segment=>segment.kind === "para").map(segment=>segment.directPara))
+      .toEqual(paragraphs.map(segment=>segment.directPara));
+  });
+
   it("reports a verified >= 0.20.0 version", async () => {
     const info = await engine().binaryInfo();
     expect(info.bin).toBe(BIN);

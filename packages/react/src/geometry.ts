@@ -1,7 +1,7 @@
 /** Exact layout rows take precedence; older hosts keep the linear flow model. */
 
 import type { CatEnvelope, PageImage, Segment } from "@hwp-editor/core";
-import { segmentAtOffset, segmentAtRef } from "@hwp-editor/core";
+import { segmentAtOffset, segmentAtRef, markdownLength } from "@hwp-editor/core";
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -45,7 +45,7 @@ export function clickOffset(
     0,
     1,
   );
-  return Math.round(fraction * envelope.markdown.length);
+  return Math.round(fraction * markdownLength(envelope));
 }
 
 export interface SegmentBand {
@@ -66,7 +66,7 @@ export function segmentBand(
   segment: Segment,
   pageCount: number,
 ): SegmentBand | null {
-  const length = envelope.markdown.length;
+  const length = markdownLength(envelope);
   if (length === 0) return null;
   const total = Math.max(pageCount, 1);
   const center = (segment.start + segment.end) / 2;

@@ -19,6 +19,7 @@ import { HwpEngineError, toHwpErrorCode } from "./errors.js";
 import type { HwpErrorCode } from "./errors.js";
 import type { EditOp } from "./ops.js";
 import type { CatEnvelope } from "./segments.js";
+import { validateProjectedMetadata } from "./segments.js";
 import type { DocumentSpecV2 } from "./generated/document-spec-v2.js";
 import type { TemplateDataV1, TemplateSpecV1 } from "./spec.js";
 import type { LintProfile } from "./templates.js";
@@ -234,7 +235,7 @@ export function createHttpEngine(
       return request<CatEnvelope>("/read", {
         method: "POST",
         body: fileForm(document),
-      });
+      }).then(validateProjectedMetadata);
     },
 
     async render(document, options = {}) {

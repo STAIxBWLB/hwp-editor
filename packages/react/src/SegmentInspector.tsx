@@ -1,9 +1,9 @@
 import { isPlainDecimal } from "./unit-input.js";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import type { JSX } from "react";
 import type { ParagraphAlignment, ParaShapeKey, Segment } from "@hwp-editor/core";
-import { formatAddresses, paragraphAddress, paragraphForSegment, segmentAtRef, segmentRef, segmentText, selectSimilar, selectedParagraphs, selectionAction } from "@hwp-editor/core";
+import { formatAddresses, paragraphAddress, paragraphForSegment, paragraphRuns, segmentAtRef, segmentRef, segmentText, selectSimilar, selectedParagraphs, selectionAction } from "@hwp-editor/core";
 import { plainSegmentText } from "./text.js";
 import { useHwpEditorContext } from "./context.js";
 import type { MessageKey } from "./messages.js";
@@ -37,7 +37,14 @@ export function SegmentInspector(): JSX.Element {
   const { state, store, envelope, editable, capabilities, t } = useHwpEditorContext();
   const { selection } = state;
 
-  const paragraphs = envelope?.segments.filter((candidate) => candidate.kind === "para") ?? [];
+  const paragraphKeys = new Set<string>();
+  const paragraphs = envelope?.segments.filter(candidate => {
+    if (candidate.kind !== "para") return false;
+    const key = candidate.id ?? `${candidate.section}:${candidate.para}`;
+    if (paragraphKeys.has(key)) return false;
+    paragraphKeys.add(key);
+    return true;
+  }) ?? [];
   const selected = envelope === null ? [] : selectedParagraphs(envelope, state);
   const segment =
     envelope !== null && selection !== null
@@ -51,6 +58,18 @@ export function SegmentInspector(): JSX.Element {
       ? plainSegmentText(segmentText(envelope, paragraph))
       : "";
 
+  const markdownText = envelope !== null && paragraph !== undefined ? segmentText(envelope, paragraph) : "";
+  const supplementaryStarts = useMemo(() => {
+    const positions: number[] = [];
+    let offset = 0;
+    for (const point of markdownText) {
+      if (point.length === 2) positions.push(offset);
+      offset += point.length;
+    }
+    return positions;
+  }, [markdownText]);
+  const rangeInput = useRef<HTMLTextAreaElement>(null);
+  const [rangeInvalid, setRangeInvalid] = useState(false);
   const [replaceWith, setReplaceWith] = useState("");
   const [insertText, setInsertText] = useState("");
   const [bold, setBold] = useState(false);
@@ -64,6 +83,7 @@ export function SegmentInspector(): JSX.Element {
 
   // Reset drafts when the selection moves.
   useEffect(() => {
+    setRangeInvalid(false);
     setReplaceWith("");
     setInsertText("");
     setBold(false);
@@ -78,13 +98,30 @@ export function SegmentInspector(): JSX.Element {
   const address = paragraph === undefined ? undefined : paragraphAddress(paragraph);
   const addressedUnavailable = capabilities?.editOps !== "v1";
   const disabled = !editable || addressedUnavailable || state.status === "applying";
+  const selectedRefs = state.selections?.length ? state.selections : selection === null ? [] : [selection];
+  const explicitSegments = envelope === null ? [] : selectedRefs.flatMap(ref => {
+    const item = segmentAtRef(envelope, ref);
+    return item === undefined ? [] : [item];
+  });
+  const hasRunSelection = explicitSegments.some(item => item.kind === "run");
   const multiSelection = selected.length > 1;
-  const singleTargetDisabled = disabled || multiSelection || address === undefined;
-  const anchorDisabled = !editable || state.status === "applying";
+  const textSelectionRestricted = multiSelection || hasRunSelection || state.range != null;
+  const singleTargetDisabled = disabled || textSelectionRestricted || address === undefined;
+  const anchorDisabled = !editable || state.status === "applying" || textSelectionRestricted;
   const legacyLinkSeparator = capabilities?.editOps !== "v1" && [currentText, linkText, linkUrl].some(value => value.includes("=>"));
   const validShape = isPlainDecimal(shapeValue) && (shapeKey !== "line-spacing" || Number(shapeValue) > 0);
   const validFontSize = fontSize.trim() === "" || (isPlainDecimal(fontSize) && Number(fontSize) > 0);
-  const formatTargets = envelope === null ? [] : formatAddresses(envelope, selected);
+  const formatInputs = envelope === null ? [] : explicitSegments.flatMap(item => {
+    const target = item.kind === "run" ? item : paragraphForSegment(envelope, item);
+    return target === undefined ? [] : [target];
+  });
+  const formatTargets = envelope === null ? [] : formatAddresses(envelope, formatInputs, state.range);
+  const runs = envelope === null || paragraph === undefined ? [] : paragraphRuns(envelope, paragraph);
+  const rangeAvailable = !multiSelection && runs.some(run => run.id !== undefined || (paragraph?.indices?.length === 1 && run.indices?.length === 2));
+  const charPrimary = segment?.kind === "run" ? segment
+    : envelope !== null && state.range != null && formatTargets[0]?.id !== undefined
+      ? segmentAtRef(envelope, { id: formatTargets[0].id, section: 0, para: 0 }) ?? paragraph
+      : paragraph;
 
   const activateSelection = (target: Segment, mode: "single" | "toggle" | "extend"): void => {
     if (envelope === null) return;
@@ -97,9 +134,17 @@ export function SegmentInspector(): JSX.Element {
   };
   const selectLikePrimary = (level: "char" | "para"): void => {
     if (envelope === null || paragraph === undefined) return;
-    const refs = selectSimilar(envelope, paragraph, level);
+    const match = level === "char" ? charPrimary : paragraph;
+    if (match === undefined) return;
+    const refs = selectSimilar(envelope, match, level);
     if (refs.length === 0) return;
-    const primary = segmentRef(paragraph);
+    const activeMatch = refs.find(ref => {
+      const item = segmentAtRef(envelope, ref);
+      const parent = item === undefined ? undefined : paragraphForSegment(envelope, item);
+      return parent === paragraph || (parent?.id !== undefined && parent.id === paragraph.id) ||
+        (parent !== undefined && parent.id === undefined && paragraph.id === undefined && parent.section === paragraph.section && parent.para === paragraph.para);
+    });
+    const primary = activeMatch ?? refs[0]!;
     store.dispatch({
       type: "selectMany",
       selections: refs,
@@ -151,7 +196,7 @@ export function SegmentInspector(): JSX.Element {
         <p className="hwped-hint">{t("segment.hint")}</p>
       ) : <>
       {addressedUnavailable && <p className="hwped-hint" role="status">{t("segment.addressedUnavailable")}</p>}
-      {multiSelection && <p className="hwped-hint" role="status">{t("segment.multiTextEditHint")}</p>}
+      {textSelectionRestricted && <p className="hwped-hint" role="status">{t("segment.multiTextEditHint")}</p>}
       <div className="hwped-field">
         <span className="hwped-label">
           {t("segment.selectedPara", { section: paragraph.section, para: paragraph.para })}
@@ -294,10 +339,10 @@ export function SegmentInspector(): JSX.Element {
       <div className="hwped-field">
         <span className="hwped-label">{t("segment.selectSimilar")}</span>
         <div className="hwped-row">
-          <button type="button" className="hwped-btn" disabled={paragraph.directChar === undefined} onClick={() => selectLikePrimary("char")}>{t("segment.similarChar")}</button>
+          <button type="button" className="hwped-btn" disabled={charPrimary?.directChar === undefined} onClick={() => selectLikePrimary("char")}>{t("segment.similarChar")}</button>
           <button type="button" className="hwped-btn" disabled={paragraph.directPara === undefined} onClick={() => selectLikePrimary("para")}>{t("segment.similarPara")}</button>
         </div>
-        {paragraph.directChar === undefined && <p className="hwped-hint">{t("segment.similarCharUnavailable")}</p>}
+        {charPrimary?.directChar === undefined && <p className="hwped-hint">{t("segment.similarCharUnavailable")}</p>}
         {paragraph.directPara === undefined && <p className="hwped-hint">{t("segment.similarParaUnavailable")}</p>}
       </div>
       <div className="hwped-field">
@@ -313,7 +358,34 @@ export function SegmentInspector(): JSX.Element {
       </div>
 
       <div className="hwped-field">
+        <label className="hwped-label" htmlFor="hwped-run-range">{t("segment.rangeTextAria")}</label>
+        <p className="hwped-hint">{t("segment.rangeWholeRunHint")}</p>
+        {!rangeAvailable && <p className="hwped-hint">{t("segment.rangeUnavailable")}</p>}
+        <textarea ref={rangeInput} id="hwped-run-range" className="hwped-textarea" rows={3} readOnly value={markdownText}
+          disabled={disabled || !rangeAvailable} onSelect={event => {
+            if (paragraph === undefined || !rangeAvailable) return;
+            const field = event.currentTarget;
+            const start = scalarAtUtf16(field.selectionStart, supplementaryStarts);
+            const end = scalarAtUtf16(field.selectionEnd, supplementaryStarts);
+            if (start === undefined || end === undefined) { setRangeInvalid(true); return; }
+            setRangeInvalid(false);
+            store.dispatch({ type: "setRange", range: start === end ? null : {
+              paragraph: segmentRef(paragraph), start: paragraph.start + start, end: paragraph.start + end,
+            } });
+          }} />
+        {(rangeInvalid || (state.range != null && formatTargets.length === 0)) && <p role="alert" className="hwped-hint">{t("segment.rangeInvalid")}</p>}
+        {state.range != null && <>
+          <p className="hwped-hint" role="status">{t("segment.rangeRunCount", { count: formatTargets.length })}</p>
+          <button type="button" className="hwped-btn" onClick={() => {
+            setRangeInvalid(false); rangeInput.current?.setSelectionRange(0, 0);
+            if (hasRunSelection && paragraph !== undefined) store.dispatch({ type: "select", selection: segmentRef(paragraph) });
+            else store.dispatch({ type: "setRange", range: null });
+          }}>{t("segment.rangeClear")}</button>
+        </>}
+      </div>
+      <div className="hwped-field">
         <span className="hwped-label">{t("segment.formatLabel")}</span>
+        <p className="hwped-hint">{t("segment.formatRunCount", { count: formatTargets.length })}</p>
         <div className="hwped-row">
           <label className="hwped-check">
             <input
@@ -348,7 +420,7 @@ export function SegmentInspector(): JSX.Element {
             type="button"
             className="hwped-btn"
             disabled={
-              disabled || !validFontSize || formatTargets.length === 0 ||
+              disabled || rangeInvalid || !validFontSize || formatTargets.length === 0 ||
               (!bold && fontSize.trim() === "" && color === "")
             }
             onClick={() => {
@@ -367,4 +439,16 @@ export function SegmentInspector(): JSX.Element {
       </>}
     </div>
   );
+}
+
+/** Convert the Inspector's DOM UTF-16 selection to emitted Markdown scalar offsets. */
+function scalarAtUtf16(offset: number, supplementaryStarts: readonly number[]): number | undefined {
+  let low = 0, high = supplementaryStarts.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (supplementaryStarts[middle]! + 2 <= offset) low = middle + 1;
+    else high = middle;
+  }
+  if (supplementaryStarts[low] !== undefined && supplementaryStarts[low]! + 1 === offset) return undefined;
+  return offset - low;
 }

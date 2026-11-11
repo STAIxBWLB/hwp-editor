@@ -3,21 +3,21 @@ import { formatAddresses, paragraphAddress, paragraphForSegment, selectSimilar, 
 import type { CatEnvelope, Segment } from "../src/segments.js";
 import { initialState, reducer } from "../src/state.js";
 
-const para = (n: number, directChar = { bold: false, italic: false, size_pt: 10, color: "#000", faces: ["A"], face_ids: [0] }): Segment =>
+const para = (n: number, directChar = { bold: false, italic: false, size_pt: 10, color: "#000000", faces: Array(7).fill("A"), face_ids: Array(7).fill(0) }): Segment =>
   ({ id: `p${n}`, indices: [n], start: n * 10, end: n * 10 + 9, kind: "para", section: 0, para: n, directChar,
     directPara: { alignment: "left", indent: 0, line_spacing: 160, line_spacing_type: 0 } });
-const env: CatEnvelope = { markdown: "", segments: [
+const env: CatEnvelope = { markdown: "x".repeat(29), segments: [
   para(0), { id: "r0", indices: [0, 1], start: 0, end: 3, kind: "run", section: 0, para: 0,
-    directChar: { bold: false, italic: false, size_pt: 10, color: "#000", faces: ["A"], face_ids: [0] } },
+    directChar: { bold: false, italic: false, size_pt: 10, color: "#000000", faces: Array(7).fill("A"), face_ids: Array(7).fill(0) } },
   { id: "r0-other-style", indices: [0, 2], start: 3, end: 9, kind: "run", section: 0, para: 0,
-    directChar: { bold: true, italic: false, size_pt: 10, color: "#000", faces: ["A"], face_ids: [0] } },
+    directChar: { bold: true, italic: false, size_pt: 10, color: "#000000", faces: Array(7).fill("A"), face_ids: Array(7).fill(0) } },
   para(1), { id: "tbl", indices: [1, 0], start: 10, end: 15, kind: "table", section: 0, para: 1 },
   { id: "cell", indices: [1, 0, 0], start: 10, end: 15, kind: "cell", section: 0, para: 1 },
   { id: "inner-para", indices: [1, 0, 0, 0], start: 10, end: 15, kind: "para", section: 0, para: 1 },
   { id: "r1", indices: [1, 1], start: 10, end: 15, kind: "run", section: 0, para: 1,
-    directChar: { bold: false, italic: false, size_pt: 10, color: "#000", faces: ["A"], face_ids: [0] } },
-  { ...para(1), id: "sibling-para", indices: [1, 1] },
-  para(2, { bold: true, italic: false, size_pt: 10, color: "#000", faces: ["A"], face_ids: [0] }),
+    directChar: { bold: false, italic: false, size_pt: 10, color: "#000000", faces: Array(7).fill("A"), face_ids: Array(7).fill(0) } },
+  { ...para(1), id: "sibling-para", indices: [1, 0, 1, 0] },
+  para(2, { bold: true, italic: false, size_pt: 10, color: "#000000", faces: Array(7).fill("A"), face_ids: Array(7).fill(0) }),
 ] };
 
 describe("selection helpers", () => {
@@ -51,10 +51,10 @@ describe("selection helpers", () => {
     expect(selectSimilar(env, { ...env.segments[0]!, directChar: undefined }, "char")).toEqual([]);
     expect(selectSimilar(env, env.segments[0]!, "para").map((r) => r.id)).toEqual(["p0", "p1", "sibling-para", "p2"]);
     const reordered = { ...env.segments[0]!, directChar: {
-      face_ids: [0], faces: ["A"], color: "#000", size_pt: 10, italic: false, bold: false,
+      face_ids: Array(7).fill(0), faces: Array(7).fill("A"), color: "#000000", size_pt: 10, italic: false, bold: false,
     } };
     expect(selectSimilar(env, reordered, "char").map((r) => r.id)).toContain("r1");
-    const oldProjection: CatEnvelope = { markdown: "", segments: env.segments.filter((s) => s.kind === "para") };
+    const oldProjection: CatEnvelope = { markdown: "x".repeat(29), segments: env.segments.filter((s) => s.kind === "para") };
     expect(selectSimilar(oldProjection, oldProjection.segments[0]!, "char").map((r) => r.id)).toEqual([
       "p0", "p1", "sibling-para",
     ]);
