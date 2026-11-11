@@ -276,6 +276,14 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     // would be indistinguishable from a real `internal`.
     const [loadError, setLoadError] = useState<EditorError | null>(null);
     /**
+     * A failure of a RE-READ, kept apart from `loadError` on purpose: the
+     * document on screen is still the one the host chose, so "could not open
+     * the document" would be false (#58 item 29). A later refresh that
+     * succeeds clears it, and nothing a refresh does can clear a real load
+     * failure, because that one lives in the state above.
+     */
+    const [refreshError, setRefreshError] = useState<EditorError | null>(null);
+    /**
      * A sentence about an operation the editor finished differently than the
      * document did: an insertion whose report names no usable ids, so nothing
      * can be selected, or one the editor refuses to send at all. Neither is a
@@ -358,6 +366,20 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
      */
     const [pendingInserted, setPendingInserted] = useState<string[]>([]);
     /**
+     * The "still loading" sentence as this render's locale spells it, and the
+     * sentences already POSTED in whichever locale was current when they were
+     * posted — to the notice line, or to the store's error line for an apply a
+     * load dropped.
+     *
+     * Read at post time, not at clear time: a load that ends after the host
+     * switched language holds the previous locale's text, and comparing it
+     * against the current locale's sentence would leave it on the line forever
+     * (#58 items 23a and 23b).
+     */
+    const loadingSentence = useRef("");
+    loadingSentence.current = t("error.loadingReplacement");
+    const postedLoadingSentences = useRef(new Set<string>());
+    /**
      * Show a notice, and hand a failure to the host.
      *
      * A palette refusal is not an engine failure of the document, so it does
@@ -369,6 +391,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
      * wrong.
      */
     const noteNotice = useCallback((text: string, error?: unknown): void => {
+      if (text === loadingSentence.current) postedLoadingSentences.current.add(text);
       setNotice(text);
       if (error !== undefined) emitError(error);
     }, [emitError]);
@@ -380,13 +403,6 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     const noteRefusal = useCallback((text: string, error?: unknown): void => {
       noteNotice(text, error ?? new Error(text));
     }, [noteNotice]);
-    /**
-     * The sentence a refusal made during a load puts on the notice line. Kept
-     * as a ref so a load that ends can retire exactly that sentence — and no
-     * other notice — without the load effect depending on the locale.
-     */
-    const loadingSentence = useRef("");
-    loadingSentence.current = t("error.loadingReplacement");
     /**
      * The exact "undo discarded" sentence the last dropped revert put on the
      * line, caught where it was posted rather than rebuilt here: a locale
@@ -406,12 +422,15 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
      * Mark a load complete, which opens the replacement guard, closes the
      * in-flight hint, and drops the "still loading" sentence it has just made
      * untrue: that notice is set while a load runs, so nothing else would ever
-     * take it down.
+     * take it down. Retired by the text it was POSTED with, so a locale switch
+     * during the load cannot save it (#58 item 23b).
      */
     const markLoaded = useCallback((generation: number): void => {
       loadedGeneration.current = generation;
       setLoadInFlight(false);
-      setNotice((current) => (current === loadingSentence.current ? null : current));
+      setNotice((current) => (
+        current !== null && postedLoadingSentences.current.has(current) ? null : current
+      ));
     }, []);
     /**
      * Retire the "undo discarded" sentence once a document LANDS: the next
@@ -469,6 +488,8 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         setCapabilities(null);
         setValidation(null);
         setLoadError(null);
+        // No document is open, so no re-read of one can still be failing.
+        setRefreshError(null);
         // The host chose no document, so nothing may keep acting on the one
         // that closed: an empty store is what makes Apply, the template panel
         // and Styles no-ops, and it is also the only way out of "applying" for
@@ -494,6 +515,9 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           setEnvelope(nextEnvelope);
           setValidation(report);
           setLoadError(null);
+          // The document this load installs has been read fresh, so a re-read
+          // failure recorded against the one it replaces is over.
+          setRefreshError(null);
           store.dispatch({ type: "load", document: file, pages });
           // Every load is a new document, even one whose file has the name of
           // the document it replaces: a panel's choice of row belongs to the
@@ -517,6 +541,25 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           markLoaded(generation);
           setLoadError(toEditorError(e));
           emitError(e);
+          // An apply (or a revert) dropped DURING this load was recorded with
+          // "a new document is still loading; wait for it to finish" - a next
+          // step that just became impossible, because the load has failed and
+          // nothing more is coming. The store's line is restated as the stale
+          // one it now is; a line carrying anything else is left alone (#58
+          // item 23a).
+          const stored = store.getState();
+          if (
+            stored.status === "error" && stored.error !== null &&
+            postedLoadingSentences.current.has(stored.error.message)
+          ) {
+            store.dispatch({
+              type: "replaceError",
+              // `latestT`, so the sentence is in the locale on screen without
+              // making the load effect depend on it: a locale change must not
+              // re-run a load.
+              error: { ...stored.error, message: latestT.current("error.staleApply") },
+            });
+          }
         }
       })();
       return () => {
@@ -608,17 +651,18 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       const dropApply = (): void => {
         const latest = store.getState();
         if (latest.document !== snapshot.document || latest.snapshots !== applyingSnapshots) return;
-        store.dispatch({
-          type: "applyFailed",
-          error: {
-            // Only a load still in flight will take this document away. One
-            // that already ended without dispatching `load` never will, and
-            // this line is the only thing that says why the apply vanished.
-            message: loadGeneration.current === loadedGeneration.current
-              ? t("error.staleApply")
-              : t("error.loadingReplacement"),
-          },
-        });
+        // Only a load still in flight will take this document away. One that
+        // already ended without dispatching `load` never will, and this line
+        // is the only thing that says why the apply vanished.
+        const loading = loadGeneration.current !== loadedGeneration.current;
+        const message = loading ? t("error.loadingReplacement") : t("error.staleApply");
+        // Recorded by the exact text it was posted with, because the load that
+        // is still running may FAIL, and then this line's next step ("wait for
+        // it to finish") is impossible: the failed load restates it as the
+        // stale one (#58 item 23a). A locale switch in between must not hide
+        // it, which is why the sentence is kept rather than rebuilt there.
+        if (loading) postedLoadingSentences.current.add(message);
+        store.dispatch({ type: "applyFailed", error: { message } });
       };
       return (async () => {
         try {
@@ -1091,6 +1135,10 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         setEnvelope(nextEnvelope);
         setValidation(report);
         store.dispatch({ type: "setPages", pages });
+        // This re-read is the one on screen now, so a failure an earlier
+        // refresh left up describes a reading that has been replaced (#58
+        // item 29). A load failure is not this line and stays.
+        setRefreshError(null);
         // The bytes were re-read, so the table derived from them is stale too;
         // this is also the failed Styles tab's retry that does not need a new
         // file.
@@ -1102,7 +1150,9 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         // the load owns the error line; when an edit or undo overtook it, that
         // edit has already installed its own envelope and pages, so nothing
         // shown is wrong. Either way only the host hears it, through onError.
-        if (!discarded && generation === loadGeneration.current) setLoadError(toEditorError(e));
+        // A real failure is painted on the refresh line, not the load line:
+        // the document the host chose is open and remains so (#58 item 29).
+        if (!discarded && generation === loadGeneration.current) setRefreshError(toEditorError(e));
         emitError(e);
         throw e;
       }
@@ -1392,6 +1442,9 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           {loadError !== null && (
             <ErrorLine prefix={t("error.prefix.load")} {...loadError} />
           )}
+          {refreshError !== null && (
+            <ErrorLine prefix={t("error.prefix.refresh")} {...refreshError} />
+          )}
           {notice !== null && (
             <p className="hwped-hint" role="status">{notice}</p>
           )}
@@ -1513,6 +1566,9 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
                     setCapabilities(caps);
                     setValidation(report);
                     setLoadError(null);
+                    // A composed document is a new one, read fresh: a re-read
+                    // failure recorded against the previous document is over.
+                    setRefreshError(null);
                     setEnvelope(nextEnvelope);
                     store.dispatch({ type: "load", document, pages });
                     // A composed document is a new document: the host's file

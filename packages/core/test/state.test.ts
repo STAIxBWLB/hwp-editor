@@ -128,6 +128,41 @@ describe("reducer", () => {
     expect(s.error?.code).toBe("protected");
   });
 
+  /**
+   * #58 item 23a: the store's line is the caller's to restate when the
+   * condition it described has changed — an apply dropped during a load says
+   * "wait for it to finish", which a failed load makes impossible. It is not a
+   * second way to report a failure, so a store with no error ignores it.
+   */
+  it("replaceError restates an error the store is already showing", () => {
+    let s = reducer(loaded, {
+      type: "queueOp",
+      op: { kind: "delete-para", text: "x" },
+    });
+    s = reducer(s, { type: "applyStarted" });
+    s = reducer(s, {
+      type: "applyFailed",
+      error: { message: "a new document is still loading" },
+    });
+    const restated = reducer(s, {
+      type: "replaceError",
+      error: { message: "the document changed under the edit" },
+    });
+    expect(restated.error?.message).toBe("the document changed under the edit");
+    expect(restated.status).toBe("error");
+    // Only the sentence moves: not the rollback, not the retryable queue.
+    expect(restated.snapshots).toBe(s.snapshots);
+    expect(restated.pendingOps).toHaveLength(1);
+
+    // No error to restate, so nothing is painted.
+    expect(reducer(loaded, { type: "replaceError", error: { message: "new" } })).toBe(loaded);
+    const dirty = reducer(loaded, {
+      type: "queueOp",
+      op: { kind: "delete-para", text: "x" },
+    });
+    expect(reducer(dirty, { type: "replaceError", error: { message: "new" } })).toBe(dirty);
+  });
+
   it("applyStarted without a document does nothing", () => {
     expect(reducer(initialState, { type: "applyStarted" })).toBe(
       initialState,

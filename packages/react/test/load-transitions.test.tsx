@@ -30,7 +30,7 @@ import type {
 import { TEMPLATE_METHODS } from "@hwp-editor/core";
 import { HwpEditor } from "../src/HwpEditor.js";
 import type { HwpEditorHandle } from "../src/HwpEditor.js";
-import { en } from "../src/messages.js";
+import { en, ko } from "../src/messages.js";
 import type { MessageTable } from "../src/messages.js";
 import { clientYForPara, createMockEngine, makeEnvelope } from "./mock-engine.js";
 import type { MockEngine } from "./mock-engine.js";
@@ -918,5 +918,198 @@ describe("#53 follow-up 4: a preset press outlived by its document", () => {
     await act(async () => { h.releaseRead(); });
     await vi.waitFor(() => expect(screen.getByText(switched.name)).toBeTruthy());
     expect(screen.queryByText(en["styles.presetUnchanged"])).toBeNull();
+  });
+});
+
+/** Every alert line's text, so a sentence can be found wherever it is painted. */
+const alertTexts = (): string[] =>
+  screen.queryAllByRole("alert").map((node) => node.textContent ?? "");
+
+/**
+ * #58 item 23a: an apply dropped by a load is recorded with "a new document is
+ * still loading; wait for it to finish". When that load FAILS, the next step
+ * it names has become impossible, and the line says the stale thing it now is.
+ * Only the line carrying that exact sentence is restated: any other reason is
+ * left where it is.
+ */
+describe("#58 item 23a: a dropped apply's sentence when the load that dropped it fails", () => {
+  it("restates its still-loading sentence as the stale one", async () => {
+    const h = editorEngine({
+      holdEdit: true,
+      holdRead: (document) => document.name === broken.name,
+      failWhenReleased: (document) => document.name === broken.name,
+    });
+    const view = render(<HwpEditor engine={h.engine} file={file} />);
+    await selectAndQueueReplace(en);
+    await applyOne(en);
+    await vi.waitFor(() => expect(h.editStarted()).toBe(true));
+
+    // The switch starts a load; the edit then answers, and its result belongs
+    // to the document the host has left, so it is dropped onto the store's
+    // line — in the sentence that expects the load to finish.
+    view.rerender(<HwpEditor engine={h.engine} file={broken} />);
+    await vi.waitFor(() => expect(h.readStarted()).toBe(true));
+    await act(async () => { h.releaseEdit(); });
+
+    // The order the swap depends on: the dropped apply's line is there BEFORE
+    // the load ends, and it is the loading sentence it was recorded with.
+    await vi.waitFor(() => expect(alertTexts().some(
+      (text) => text.includes(en["error.prefix.apply"]) && text.includes(en["error.loadingReplacement"]),
+    )).toBe(true));
+
+    await act(async () => { h.releaseRead(); });
+
+    // The load has failed, so nothing is coming to finish: the line says the
+    // edit's result was discarded, and the load's own line names the file.
+    await vi.waitFor(() => expect(alertTexts().some(
+      (text) => text.includes(en["error.staleApply"]),
+    )).toBe(true));
+    expect(alertTexts().some((text) => text.includes(en["error.loadingReplacement"]))).toBe(false);
+    expect(alertTexts().some(
+      (text) => text.includes(en["error.prefix.apply"]) && text.includes(en["error.staleApply"]),
+    )).toBe(true);
+    expect(alertTexts().some(
+      (text) => text.includes(en["error.prefix.load"]) && text.includes("read failed: broken.hwpx"),
+    )).toBe(true);
+  });
+
+  it("leaves a line that carries a different reason alone", async () => {
+    const h = editorEngine({ failRead: (document) => document.name === broken.name });
+    // An edit that FAILS, so the store's line carries the engine's own reason
+    // rather than the loading sentence. Restating it would overwrite the one
+    // cause the user can act on.
+    h.engine.edit = async () => { throw new Error("edit failed"); };
+    const view = render(<HwpEditor engine={h.engine} file={file} />);
+    await selectAndQueueReplace(en);
+    await applyOne(en);
+    await vi.waitFor(() => expect(alertTexts().some(
+      (text) => text.includes(en["error.prefix.apply"]) && text.includes("edit failed"),
+    )).toBe(true));
+
+    view.rerender(<HwpEditor engine={h.engine} file={broken} />);
+    await vi.waitFor(() => expect(alertTexts().length).toBe(2));
+
+    expect(alertTexts().some(
+      (text) => text.includes(en["error.prefix.apply"]) && text.includes("edit failed"),
+    )).toBe(true);
+    expect(alertTexts().some((text) => text.includes(en["error.prefix.load"]))).toBe(true);
+    expect(alertTexts().some((text) => text.includes(en["error.staleApply"]))).toBe(false);
+  });
+});
+
+/**
+ * #58 item 23b: the loading notice is posted in the locale of the press. A
+ * load that ends after the host switched language holds the OLD locale's
+ * sentence, so a retirement keyed on the current locale's spelling leaves it
+ * on the line forever.
+ */
+describe("#58 item 23b: the loading notice survives a locale switch only until the load ends", () => {
+  it("retires a notice posted before the locale switched mid-load", async () => {
+    const h = editorEngine({ holdRead: (document) => document.name === switched.name });
+    const view = render(<HwpEditor engine={h.engine} file={file} />);
+    await selectAndQueueReplace(en);
+    await screen.findByText(pending(en, 1));
+
+    view.rerender(<HwpEditor engine={h.engine} file={switched} />);
+    await vi.waitFor(() => expect(h.readStarted()).toBe(true));
+    // Refused while the load runs, so the notice is the English sentence.
+    await applyOne(en);
+    expect(await screen.findByText(en["error.loadingReplacement"])).toBeTruthy();
+
+    // The load is still running when the host switches language: the notice
+    // keeps the text it was posted with, which is the point.
+    view.rerender(<HwpEditor locale="ko" engine={h.engine} file={switched} />);
+    await vi.waitFor(() => expect(screen.getByText(en["error.loadingReplacement"])).toBeTruthy());
+
+    await act(async () => { h.releaseRead(); });
+    await vi.waitFor(() => expect(screen.getByText(switched.name)).toBeTruthy());
+
+    // Nothing is loading any more, so neither locale's sentence may remain.
+    expect(screen.queryByText(en["error.loadingReplacement"])).toBeNull();
+    expect(screen.queryByText(ko["error.loadingReplacement"])).toBeNull();
+  });
+});
+
+/**
+ * #58 item 29: a re-read has its own subject. The document the host chose is
+ * still open, so a re-read failure cannot say "failed to open document", the
+ * line it paints belongs to the next refresh rather than the next load, and no
+ * refresh may retire a real load failure.
+ */
+describe("#58 item 29: a re-read failure has its own line", () => {
+  it("paints the refresh prefix, never the load one, in the locale on screen", async () => {
+    const h = editorEngine();
+    const ref = createRef<HwpEditorHandle>();
+    const view = render(<HwpEditor ref={ref} engine={h.engine} file={file} />);
+    await screen.findByText(file.name);
+    // Only the re-read fails; the load has already succeeded.
+    h.engine.render = async () => { throw new Error("render failed"); };
+
+    await act(async () => {
+      await expect(handle(ref).refresh()).rejects.toThrow("render failed");
+    });
+
+    const line = screen.getByRole("alert").textContent ?? "";
+    expect(line).toContain(en["error.prefix.refresh"]);
+    expect(line).toContain("render failed");
+    // The document the host chose is open: it was not opened again.
+    expect(line).not.toContain(en["error.prefix.load"]);
+
+    // The prefix is chrome, so it follows the locale like every other line.
+    view.rerender(<HwpEditor ref={ref} locale="ko" engine={h.engine} file={file} />);
+    await vi.waitFor(() => expect(screen.getByRole("alert").textContent).toContain(ko["error.prefix.refresh"]));
+    expect(screen.getByRole("alert").textContent).not.toContain(ko["error.prefix.load"]);
+  });
+
+  it("retires that line when a later refresh succeeds", async () => {
+    const h = editorEngine();
+    const ref = createRef<HwpEditorHandle>();
+    render(<HwpEditor ref={ref} engine={h.engine} file={file} />);
+    await screen.findByText(file.name);
+    const renderPages = h.engine.render.bind(h.engine);
+    h.engine.render = async () => { throw new Error("render failed"); };
+    await act(async () => {
+      await expect(handle(ref).refresh()).rejects.toThrow("render failed");
+    });
+    expect(screen.getByRole("alert").textContent).toContain(en["error.prefix.refresh"]);
+
+    // The next refresh reads the same bytes and succeeds, so the failure it
+    // replaces describes nothing on screen any more.
+    h.engine.render = renderPages;
+    await act(async () => { await handle(ref).refresh(); });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText(file.name)).toBeTruthy();
+  });
+
+  it("never clears or replaces a real load failure", async () => {
+    const h = editorEngine({ failRead: (document) => document.name === broken.name });
+    const ref = createRef<HwpEditorHandle>();
+    const view = render(<HwpEditor ref={ref} engine={h.engine} file={file} />);
+    await screen.findByText(file.name);
+
+    view.rerender(<HwpEditor ref={ref} engine={h.engine} file={broken} />);
+    const loadLine = await screen.findByRole("alert");
+    expect(loadLine.textContent).toContain(en["error.prefix.load"]);
+    expect(loadLine.textContent).toContain("read failed: broken.hwpx");
+
+    // A refresh of the document still open SUCCEEDS, and cannot answer for the
+    // file the host asked for: that failure is still the one thing to fix.
+    await act(async () => { await handle(ref).refresh(); });
+    expect(alertTexts().some(
+      (text) => text.includes(en["error.prefix.load"]) && text.includes("read failed: broken.hwpx"),
+    )).toBe(true);
+
+    // A refresh that fails is a SECOND line, because it names a different
+    // document: the store line would otherwise lose the load's reason.
+    h.engine.render = async () => { throw new Error("render failed"); };
+    await act(async () => {
+      await expect(handle(ref).refresh()).rejects.toThrow("render failed");
+    });
+    expect(alertTexts().some(
+      (text) => text.includes(en["error.prefix.load"]) && text.includes("read failed: broken.hwpx"),
+    )).toBe(true);
+    expect(alertTexts().some(
+      (text) => text.includes(en["error.prefix.refresh"]) && text.includes("render failed"),
+    )).toBe(true);
   });
 });

@@ -112,6 +112,7 @@ export type EditorAction =
   | { type: "applyStarted" }
   | { type: "applySucceeded"; document: DocumentHandle; pages?: PageImage[] }
   | { type: "applyFailed"; error: EditorError }
+  | { type: "replaceError"; error: EditorError }
   | { type: "applyUnchanged" }
   | { type: "undo" };
 
@@ -221,6 +222,13 @@ export function reducer(state: EditorState, action: EditorAction): EditorState {
         status: "error",
         error: action.error,
       };
+    case "replaceError":
+      // Restate an error the store is ALREADY showing, for a caller that has
+      // learned the recorded sentence no longer describes what happened. It
+      // touches neither the snapshots nor the status, and a store with no
+      // error ignores it: an action that could paint a line where there was
+      // none would be a second way to report a failure.
+      return state.status === "error" ? { ...state, error: action.error } : state;
     case "applyUnchanged":
       // The edit ran and the document is the one it started from, so the
       // snapshot applyStarted staged would undo it to itself: popped, and the
