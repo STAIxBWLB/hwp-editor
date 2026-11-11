@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Response } from "@playwright/test";
 import { en } from "@hwp-editor/react";
 import { segmentText, type CatEnvelope, type EditOp } from "@hwp-editor/core";
 
