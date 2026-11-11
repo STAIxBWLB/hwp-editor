@@ -705,6 +705,8 @@ describe("HwpEditor refuses work against a document a load is replacing (t25)", 
     release();
     await vi.waitFor(() => expect(engine.calls.read.at(-1)?.name).toBe(other.name));
     expect(engine.calls.edit).toHaveLength(0);
+    // The sentence described a load, so the load that lands takes it away.
+    await vi.waitFor(() => expect(screen.queryByText(en["error.loadingReplacement"])).toBeNull());
   });
 
   it("drops an apply that a load overtook while the engine was working", async () => {
@@ -779,11 +781,13 @@ describe("HwpEditor refuses work against a document a load is replacing (t25)", 
     releases[0]?.();
 
     await vi.waitFor(() => expect(engine.calls.edit).toHaveLength(1));
-    await vi.waitFor(() =>
-      expect(
-        screen.getAllByRole("alert").map((node) => node.textContent ?? "").join("\n"),
-      ).toContain(en["error.loadingReplacement"]),
-    );
+    const alerts = () =>
+      screen.getAllByRole("alert").map((node) => node.textContent ?? "").join("\n");
+    // Nothing is loading any more, so the drop must not tell the user to wait
+    // for a load that will never finish, and must not borrow the sentence that
+    // describes one.
+    await vi.waitFor(() => expect(alerts()).toContain(en["error.staleApply"]));
+    expect(alerts()).not.toContain(en["error.loadingReplacement"]);
     expect(container.firstElementChild?.getAttribute("data-status")).toBe("error");
     expect(onChange).not.toHaveBeenCalled();
 

@@ -306,6 +306,22 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       setNotice(text);
       emitError(error ?? new Error(text));
     }, [emitError]);
+    /**
+     * The sentence a refusal made during a load puts on the notice line. Kept
+     * as a ref so a load that ends can retire exactly that sentence — and no
+     * other notice — without the load effect depending on the locale.
+     */
+    const loadingSentence = useRef("");
+    loadingSentence.current = t("error.loadingReplacement");
+    /**
+     * Mark a load complete, which opens the replacement guard, and drop the
+     * "still loading" sentence it has just made untrue: that notice is set
+     * while a load runs, so nothing else would ever take it down.
+     */
+    const markLoaded = useCallback((generation: number): void => {
+      loadedGeneration.current = generation;
+      setNotice((current) => (current === loadingSentence.current ? null : current));
+    }, []);
     /** The envelope an attempt has already been made against, so none repeats. */
     const insertedTriedFor = useRef<CatEnvelope | null>(null);
     const imageAssets = useRef(new Map<EditOp, ImageAsset>());
@@ -349,9 +365,10 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         setCapabilities(null);
         setValidation(null);
         setLoadError(null);
-        // Nothing is loading, so a replacement has no stale document to
-        // overwrite. Its own `document === null` check refuses it.
-        loadedGeneration.current = generation;
+        // Nothing loads here, and no store transition follows: the store keeps
+        // the previous document, so marking complete only opens the replacement
+        // guard. Resetting the store on a null file is a separate gap.
+        markLoaded(generation);
         return;
       }
       (async () => {
@@ -368,7 +385,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           setValidation(report);
           setLoadError(null);
           store.dispatch({ type: "load", document: file, pages });
-          loadedGeneration.current = generation;
+          markLoaded(generation);
           // Once per completed load, from THIS effect only: a second effect
           // keyed on envelope/pages would re-fire after every apply and undo.
           emitReady(file);
@@ -377,7 +394,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           // A failed load keeps the previous document, and it is the one the
           // editor still shows: refusing every replacement afterwards would
           // leave the surface stuck with no way out but a new file.
-          loadedGeneration.current = generation;
+          markLoaded(generation);
           setLoadError(toEditorError(e));
           emitError(e);
         }
@@ -385,7 +402,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       return () => {
         cancelled = true;
       };
-    }, [engine, file, store]);
+    }, [engine, file, markLoaded, store]);
 
     // Single fan-out point: every panel, both toolbar buttons and the
     // applyPendingOps guard read `editable`, so `readOnly` works everywhere
@@ -469,7 +486,14 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         if (latest.document !== snapshot.document || latest.snapshots !== applyingSnapshots) return;
         store.dispatch({
           type: "applyFailed",
-          error: { message: t("error.loadingReplacement") },
+          error: {
+            // Only a load still in flight will take this document away. One
+            // that already ended without dispatching `load` never will, and
+            // this line is the only thing that says why the apply vanished.
+            message: loadGeneration.current === loadedGeneration.current
+              ? t("error.staleApply")
+              : t("error.loadingReplacement"),
+          },
         });
       };
       return (async () => {
@@ -1130,7 +1154,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
                     // the guard opens here even when the surface went
                     // read-only during the read, which is a refusal to show
                     // the file and not a load that will finish the job.
-                    loadedGeneration.current = generation;
+                    markLoaded(generation);
                     if (!editableRef.current) return;
                     setCapabilities(caps);
                     setValidation(report);
@@ -1144,7 +1168,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
                     // The composed file reaches the editor through `file`
                     // anyway, so a failed read here must not leave every
                     // replacement refused as if a load were still running.
-                    loadedGeneration.current = generation;
+                    markLoaded(generation);
                     setLoadError(toEditorError(e));
                     emitError(e);
                   }
