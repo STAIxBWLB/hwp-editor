@@ -777,6 +777,22 @@ function rethrowInsertBlocksRefusal(error: unknown, insertion: boolean, workDir:
   throw error;
 }
 
+/**
+ * A `replace` whose find text matched nothing makes the engine apply nothing
+ * and say so in Korean, naming the staged path and the offending find. The
+ * client has no such text to classify, so the one stable cause travels instead:
+ * `unmatched_replace`, which the editor renders as its own localized sentence.
+ */
+const UNMATCHED_EDIT_MARKER = "적용되지 않은 편집 요청이 있습니다";
+
+function rethrowUnmatchedEditRefusal(error: unknown): never {
+  if (error instanceof HwpCliError && error.reason === "failed" &&
+      error.stderr !== undefined && error.stderr.includes(UNMATCHED_EDIT_MARKER)) {
+    throw new HwpCliError("failed", `${error.message}: edit refused: unmatched_replace`, error.stderr, error.detail);
+  }
+  throw error;
+}
+
 
 /**
  * A page dimension is only trustworthy when it is finite and strictly
@@ -1365,7 +1381,8 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         if (options.report === true) args.push("--report", reportPath);
         await runCliOk(bin, args, timeoutMs, opts.locale, call?.signal).catch(options.assets?.length
           ? error => rethrowUploadedImageFailure(error, ops.every(op => op.kind === "insert-image"))
-          : rethrowProtected).catch(error => rethrowInsertBlocksRefusal(error, ops.some(op => op.kind === "insert-blocks"), dir));
+          : rethrowProtected).catch(error => rethrowInsertBlocksRefusal(error, ops.some(op => op.kind === "insert-blocks"), dir))
+          .catch(rethrowUnmatchedEditRefusal);
         const data = new Uint8Array(await readFile(output));
         if (options.report !== true) return { name: document.name, data };
         let report: EditReport | undefined;

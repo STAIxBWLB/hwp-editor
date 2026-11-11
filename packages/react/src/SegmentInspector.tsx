@@ -2,7 +2,7 @@ import { isPlainDecimal } from "./unit-input.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import type { JSX } from "react";
-import type { ParagraphAlignment, ParaShapeKey, SelectionRefusal, Segment } from "@hwp-editor/core";
+import type { EditOp, ParagraphAlignment, ParaShapeKey, SelectionRefusal, Segment } from "@hwp-editor/core";
 import { compareSegments, formatAddresses, isSectionDefinitionParagraph, paragraphAddress, paragraphRuns, resolveSelection, segmentAtRef, segmentPath, segmentRef, segmentText, selectSimilar, selectedParagraphs, selectionAction } from "@hwp-editor/core";
 import { plainSegmentText } from "./text.js";
 import { useHwpEditorContext } from "./context.js";
@@ -197,17 +197,19 @@ export function SegmentInspector(): JSX.Element {
       : singleParagraph;
 
   /**
-   * The text a "make placeholder" would replace, and whether the selection can
-   * be replaced at all.
+   * Whether the selected runs can become a `{{name}}` placeholder.
    *
-   * The op is an addressed `replace`, whose `find` matches text, not offsets:
-   * the engine replaces every match inside the addressed paragraph. So the find
-   * text has to be the whole of what the user selected (a range that starts or
-   * ends inside a run would leave half a run behind), and it has to occur once,
-   * or the op would rewrite a passage the user never selected. A sub-run
-   * selection therefore fails closed; per-run granularity is what the range
-   * contract offers today.
+   * `replace` is matched against the paragraph's own DOCUMENT text and rewrites
+   * every match there, and edit-ops-v1 gives it a paragraph address only, so it
+   * cannot be scoped to a run. The client cannot rebuild that text in general
+   * (Markdown renders underline, strikethrough, footnotes and media differently
+   * from the text hwp-cli sees), so the control stays off unless nothing about
+   * this paragraph can make the two disagree. Every refusal names its cause and
+   * the way round it; none of them widens or trims the selection to fit.
    */
+  const paragraphRunsAll = envelope === null || singleParagraph === undefined
+    ? []
+    : paragraphRuns(envelope, singleParagraph);
   const rangeRuns = envelope !== null && singleParagraph !== undefined && state.range != null
     ? paragraphRuns(envelope, singleParagraph, state.range)
     : [];
@@ -215,25 +217,76 @@ export function SegmentInspector(): JSX.Element {
   const rangeTo = rangeRuns.length === 0 ? -1 : Math.max(...rangeRuns.map(item => item.end));
   const wholeRuns = state.range != null && rangeRuns.length > 0 &&
     rangeFrom === state.range.start && rangeTo === state.range.end;
+  // (a) Neighbours in the paragraph, with no field or image holding text
+  // between them: a gap means the selection is not one stretch of text.
+  const firstCoveredAt = rangeRuns.length === 0 || rangeRuns[0]!.id === undefined
+    ? -1
+    : paragraphRunsAll.findIndex(item => item.id === rangeRuns[0]!.id);
+  const runsContiguous = firstCoveredAt >= 0 &&
+    rangeRuns.every((item, at) => paragraphRunsAll[firstCoveredAt + at]?.id === item.id);
+  const controlInside = envelope !== null && singleParagraph !== undefined && wholeRuns &&
+    envelope.segments.some(item => item.kind !== "run" && item.kind !== "para" &&
+      item.section === singleParagraph.section && item.para === singleParagraph.para &&
+      item.start >= rangeFrom && item.end <= rangeTo);
+  // (b) Markdown whose rendering is not the document text, in doubt refused.
+  // hwp-cli does not escape a literal `*` or `_`, so an emphasis marker left
+  // over after stripping a well-formed pair can pair with an unrelated one and
+  // make the reconstructed text differ from the engine's. The paragraph
+  // projection ends with its separator, which is structure, not content.
+  const interiorMarkdown = markdownText.replace(/[\r\n]+$/, "");
+  // An underscore is refused outright: hwp-cli does not escape a literal one, so
+  // `_y, a_` pairs two unrelated underscores and the strip below would hide it.
+  // A `*` is accepted only inside pairs that strip to nothing, so a leftover
+  // asterisk (a literal one, or an unmatched marker) refuses the paragraph.
+  const riskyMarkup = /~~|<\/?(?:u|sup|sub)>|\[\^|\$|`|[\r\n]/.test(interiorMarkdown) ||
+    /^#{1,6}\s/.test(interiorMarkdown) ||
+    interiorMarkdown.includes("_") ||
+    /[*]/.test(stripEmphasis(interiorMarkdown));
   const markdownPoints = useMemo(() => [...markdownText], [markdownText]);
-  const rangeText = state.range == null || singleParagraph === undefined || !wholeRuns
-    ? ""
-    : plainSegmentText(markdownPoints.slice(
-        state.range.start - singleParagraph.start,
-        state.range.end - singleParagraph.start,
-      ).join(""));
+  const localStart = state.range == null || singleParagraph === undefined ? 0 : state.range.start - singleParagraph.start;
+  const localEnd = state.range == null || singleParagraph === undefined ? 0 : state.range.end - singleParagraph.start;
+  // `find` is the engine's only selector, so it is the selection's document
+  // text as written, untrimmed: the paragraph holds spaces, so the find does.
+  const findText = wholeRuns ? documentTextOf(markdownPoints.slice(localStart, localEnd).join("")) : "";
+  const paragraphText = documentTextOf(interiorMarkdown);
+  const expectedAt = documentTextOf(markdownPoints.slice(0, localStart).join("")).length;
+  // (c) Exactly one match, counting overlaps, and it starts where the
+  // selection starts: a single match elsewhere would rewrite text never
+  // selected, which is the case a Markdown-derived count misses.
+  const occurrences: number[] = [];
+  for (let at = 0; findText !== "" && at + findText.length <= paragraphText.length; at += 1) {
+    if (paragraphText.startsWith(findText, at)) occurrences.push(at);
+  }
+  const uniqueAtSelection = occurrences.length === 1 && occurrences[0] === expectedAt;
+  // (d) A queued text op would change the text this placeholder is cut from,
+  // and the placeholder's own `{{name}}` would become the next find text.
+  const pendingTextEdit = state.pendingOps.some(op => TEXT_EDIT_OPS.has(op.kind));
+
   const placeholderNameTrimmed = placeholderName.trim();
-  const placeholderNameValid = placeholderNameTrimmed !== "" &&
-    !placeholderNameTrimmed.includes("{") && !placeholderNameTrimmed.includes("}");
-  const placeholderRepeated = rangeText !== "" && currentText.split(rangeText).length > 2;
-  const placeholderDisabled = disabled || address === undefined || !wholeRuns ||
-    rangeText === "" || !placeholderNameValid || placeholderRepeated;
+  const placeholderNameEmpty = placeholderNameTrimmed === "";
+  const placeholderNameValid = !placeholderNameEmpty &&
+    !/[{}]/.test(placeholderNameTrimmed) && !/[\u0000-\u001f\u007f]/.test(placeholderNameTrimmed);
+  // One cause at a time, most specific first: the user acts on the first one.
+  const placeholderReason =
+    state.range == null || singleParagraph === undefined ? t("segment.placeholderNoRange")
+    : !wholeRuns ? t("segment.placeholderWholeRuns")
+    : !runsContiguous || controlInside ? t("segment.placeholderGap")
+    : riskyMarkup ? t("segment.placeholderRiskyMarkup")
+    : findText.trim() === "" ? t("segment.placeholderEmptySelection")
+    : pendingTextEdit ? t("segment.placeholderPendingEdits")
+    : !uniqueAtSelection ? t("segment.placeholderAmbiguous")
+    : "";
+  const placeholderNameReason = placeholderNameEmpty
+    ? t("segment.placeholderNameEmpty")
+    : placeholderNameValid ? "" : t("segment.placeholderNameInvalid");
+  const placeholderDisabled = disabled || address === undefined ||
+    placeholderReason !== "" || placeholderNameReason !== "";
 
   const makePlaceholder = (): void => {
     if (placeholderDisabled || address === undefined) return;
     store.dispatch({
       type: "queueOp",
-      op: { kind: "replace", address, find: rangeText, replace: `{{${placeholderNameTrimmed}}}` },
+      op: { kind: "replace", address, find: findText, replace: `{{${placeholderNameTrimmed}}}` },
     });
   };
 
@@ -599,10 +652,9 @@ export function SegmentInspector(): JSX.Element {
         <button type="button" className="hwped-btn" disabled={placeholderDisabled} onClick={makePlaceholder}>
           {t("segment.placeholderCreate")}
         </button>
-        {state.range == null && <p className="hwped-hint">{t("segment.placeholderNoRange")}</p>}
-        {state.range != null && !wholeRuns && <p className="hwped-hint">{t("segment.placeholderWholeRuns")}</p>}
-        {state.range != null && wholeRuns && !placeholderNameValid && <p role="alert" className="hwped-hint">{t("segment.placeholderNameInvalid")}</p>}
-        {placeholderRepeated && <p role="alert" className="hwped-hint">{t("segment.placeholderAmbiguous")}</p>}
+        {placeholderReason !== "" && <p className="hwped-hint" role="status">{placeholderReason}</p>}
+        {placeholderReason === "" && placeholderNameReason !== "" &&
+          <p role="alert" className="hwped-hint">{placeholderNameReason}</p>}
       </div>}
       <div className="hwped-field">
         <span className="hwped-label">{t("segment.formatLabel")}</span>
@@ -672,4 +724,35 @@ function scalarAtUtf16(offset: number, supplementaryStarts: readonly number[]): 
   }
   if (supplementaryStarts[low] !== undefined && supplementaryStarts[low]! + 1 === offset) return undefined;
   return offset - low;
+}
+
+/**
+ * Ops that change a paragraph's text, which is what an addressed `replace`
+ * matches against. A queued one of these makes any text this panel read stale.
+ */
+const TEXT_EDIT_OPS = new Set<EditOp["kind"]>([
+  "replace",
+  "insert-para",
+  "insert-para-before",
+  "delete-para",
+  "insert-blocks",
+  "move-para",
+]);
+
+/**
+ * Strip well-formed emphasis pairs only. Anything left over is a marker the
+ * Markdown renderer and the engine's text disagree about, so the caller can
+ * refuse rather than guess: `**x_y**` leaves the inner `_` behind.
+ */
+function stripEmphasis(markdown: string): string {
+  return markdown
+    .replace(/(\*\*|__)([\s\S]*?)\1/g, "$2")
+    .replace(/(\*|_)([\s\S]*?)\1/g, "$2");
+}
+
+/** The document text a Markdown slice stands for, as far as it can be known. */
+function documentTextOf(markdown: string): string {
+  return stripEmphasis(markdown
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1"));
 }
