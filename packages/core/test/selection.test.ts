@@ -48,7 +48,7 @@ describe("selection helpers", () => {
     expect(formatAddresses(env, env.segments.filter((s) => similarRuns.some((r) => r.id === s.id)))).toEqual([
       { id: "r0" }, { id: "r1" },
     ]);
-    expect(selectSimilar(env, { ...env.segments[0]!, directChar: undefined }, "char")).toEqual([]);
+    expect(selectSimilar(env, { id: "no-attrs", start: 0, end: 1, kind: "run", section: 0, para: 0 }, "char")).toEqual([]);
     expect(selectSimilar(env, env.segments[0]!, "para").map((r) => r.id)).toEqual(["p0", "p1", "sibling-para", "p2"]);
     const reordered = { ...env.segments[0]!, directChar: {
       face_ids: Array(7).fill(0), faces: Array(7).fill("A"), color: "#000000", size_pt: 10, italic: false, bold: false,

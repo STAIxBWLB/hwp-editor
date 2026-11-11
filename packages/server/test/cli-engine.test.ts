@@ -59,6 +59,18 @@ function expectVersionAtLeast0200(version: string) {
   expect(ok, `expected hwp-cli >= 0.20.0, got ${version}`).toBe(true);
 }
 
+it("keeps malformed direct-metadata diagnostics actionable at the CLI boundary", async () => {
+  const {bin}=createFakeBin({version:"1.4.0",catStdout:JSON.stringify({
+    contract:"hwp-segment-envelope-v2",schema_version:"1.0",markdown:"x",segments:[{
+      id:"para",kind:"para",path:{section:0,indices:[0]},char_range:{start:0,end:1},
+      direct:{char:{bold:"yes"},para:null},
+    }],
+  })});
+  const failure=await createCliEngine({bin}).read({name:"doc.hwpx",data:new Uint8Array([1])}).catch((error:unknown)=>error);
+  expect(failure).toMatchObject({reason:"failed",message:expect.stringContaining("direct.char"),cause:expect.any(Error)});
+  expect((failure as Error).message).toContain("upgrade the host adapter");
+});
+
 describeBin("cli-engine (real hwp-cli binary)", () => {
   it("AC3: applies spacing to five addressed paragraphs in one edit and restores all with one undo", async () => {
     const cli = engine();

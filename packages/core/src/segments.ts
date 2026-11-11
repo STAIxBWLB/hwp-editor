@@ -103,7 +103,7 @@ function isNumberArray(v: unknown): v is number[] {
 /** Validate one wire segment and project it to the published shape. */
 function projectSegment(raw: unknown): Segment {
   if (typeof raw !== "object" || raw === null) {
-    throw new Error("segments envelope: malformed segment");
+    throw new Error("segments envelope: malformed segment path or range; upgrade the host adapter to emit valid segment-envelope-v2 data, then reload.");
   }
   const { id, kind, path, char_range, direct } = raw as Record<string, unknown>;
   const range = char_range as Record<string, unknown> | undefined;
@@ -119,7 +119,7 @@ function projectSegment(raw: unknown): Segment {
     typeof range.start !== "number" ||
     typeof range.end !== "number"
   ) {
-    throw new Error("segments envelope: malformed segment");
+    throw new Error("segments envelope: malformed segment path or range; upgrade the host adapter to emit valid segment-envelope-v2 data, then reload.");
   }
   const d = direct as Record<string, unknown> | undefined;
   if (direct !== undefined && (typeof direct !== "object" || direct === null || Array.isArray(direct))) {
@@ -185,14 +185,14 @@ function projectDirectPara(value: unknown): DirectPara {
 export function parseCatEnvelope(json: string): CatEnvelope {
   const raw: unknown = JSON.parse(json);
   if (typeof raw !== "object" || raw === null) {
-    throw new Error("segments envelope: not an object");
+    throw new Error("segments envelope: not an object; upgrade the host adapter to emit segment-envelope-v2 JSON, then reload.");
   }
   const { schema_version, contract, markdown, segments } = raw as Record<string, unknown>;
   if (contract !== "hwp-segment-envelope-v2" || typeof schema_version !== "string" || !/^1[.][0-9]+$/.test(schema_version)) {
-    throw new Error("segments envelope: not a v2 envelope");
+    throw new Error("segments envelope: not a v2 envelope (contract or schema major); upgrade the host adapter to emit segment-envelope-v2 schema 1.x, then reload.");
   }
   if (typeof markdown !== "string" || !Array.isArray(segments)) {
-    throw new Error("segments envelope: missing markdown string or segments array");
+    throw new Error("segments envelope: missing markdown string or segments array; upgrade the host adapter to emit complete segment-envelope-v2 data, then reload.");
   }
   const projected = segments.map(projectSegment);
   const envelope = { markdown, segments: projected };
@@ -214,7 +214,7 @@ function boundaryInfo(envelope: CatEnvelope): BoundaryInfo {
   const wanted = new Set<number>();
   for (const segment of envelope.segments) {
     if (!Number.isInteger(segment.start) || !Number.isInteger(segment.end) || segment.start < 0 || segment.end < segment.start) {
-      throw new Error("segments envelope: malformed character range");
+      throw new Error("segments envelope: malformed character range; upgrade the host adapter to emit nonnegative scalar offsets, then reload.");
     }
     wanted.add(segment.start);
     wanted.add(segment.end);
@@ -230,7 +230,7 @@ function boundaryInfo(envelope: CatEnvelope): BoundaryInfo {
     if (wanted.has(scalar)) utf16ByScalar.set(scalar, utf16);
   }
   for (const offset of wanted) {
-    if (!utf16ByScalar.has(offset)) throw new Error("segments envelope: character range exceeds markdown");
+    if (!utf16ByScalar.has(offset)) throw new Error("segments envelope: character range exceeds markdown; upgrade the host adapter to emit offsets into its own Markdown, then reload.");
   }
   const info = { scalarLength: scalar, utf16ByScalar };
   boundaryCache.set(envelope, info);
@@ -294,7 +294,7 @@ export function segmentText(envelope: CatEnvelope, segment: Segment): string {
   const info = boundaryInfo(envelope);
   const start = info.utf16ByScalar.get(segment.start);
   const end = info.utf16ByScalar.get(segment.end);
-  if (start === undefined || end === undefined) throw new Error("segments envelope: segment range is not in this envelope");
+  if (start === undefined || end === undefined) throw new Error("segments envelope: segment range is not in this envelope; reload the document before selecting it again.");
   return envelope.markdown.slice(start, end);
 }
 

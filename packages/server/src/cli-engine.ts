@@ -994,7 +994,16 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
     const inspection = await withWorkDir(async (dir) => {
       const file = await stage(dir, document);
       const cat = await runCliOk(bin, ["cat", file, "--format", "markdown", "--with-segments", "--segments", "v2"], timeoutMs, opts.locale, signal);
-      const envelope = parseCatEnvelope(cat.stdout);
+      let envelope: CatEnvelope;
+      try { envelope = parseCatEnvelope(cat.stdout); }
+      catch (cause) {
+        const message = cause instanceof Error && cause.message.startsWith("segments envelope:")
+          ? cause.message
+          : "hwp cat returned invalid segment JSON; use a host with the segment-envelope-v2 contract, then reload.";
+        const failure = new HwpCliError("failed", message);
+        failure.cause = cause;
+        throw failure;
+      }
       // Best-effort extras: a document that cats fine but fails fields should
       // still read; the extras inform editing UI, not the wire contract.
       const [fields, bookmarks, slots, info] = await Promise.all([
