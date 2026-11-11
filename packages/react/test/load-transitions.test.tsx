@@ -119,6 +119,8 @@ interface EngineOptions {
   failRead?: (document: DocumentHandle, call: number) => boolean;
   /** Hold a read of this document until `releaseRead()`. */
   holdRead?: (document: DocumentHandle, call: number) => boolean;
+  /** A held read that REJECTS when released, so a failure can land late. */
+  failWhenReleased?: (document: DocumentHandle, call: number) => boolean;
   /** Hold the engine edit until `releaseEdit()`. */
   holdEdit?: boolean;
 }
@@ -143,7 +145,12 @@ function editorEngine(opts: EngineOptions = {}) {
       const call = reads.length;
       if (opts.failRead?.(document, call) === true) throw new Error(`read failed: ${document.name}`);
       if (opts.holdRead?.(document, call) === true) {
-        await new Promise<void>((resolve) => { readGates.push(resolve); });
+        const fails = opts.failWhenReleased?.(document, call) === true;
+        await new Promise<void>((resolve, reject) => {
+          readGates.push(fails
+            ? () => reject(new Error(`read failed: ${document.name}`))
+            : resolve);
+        });
       }
       return base.read(document);
     },
@@ -329,15 +336,46 @@ describe("#58 item 21: revert and refresh belong to one load generation", () => 
 
     // The undo read answers against the document the host has left. Its result
     // is dropped whole: the snapshot stays where it was, and nothing reaches
-    // the host as if the undo had landed on the new document.
+    // the host as if the undo had landed on the new document. The refusal is a
+    // sentence because nothing else would explain why the press did nothing:
+    // the load that took over has not landed, so it dispatched no transition.
     await act(async () => { h.releaseRead(); });
     await settle();
     expect(onChange.mock.calls.length).toBe(changes);
+    expect(screen.getByText(en["error.staleRevert"])).toBeTruthy();
     const revert = screen.getByRole("button", { name: en["toolbar.revert"] }) as HTMLButtonElement;
     expect(revert.disabled).toBe(false);
 
     await act(async () => { h.releaseRead(); });
     await vi.waitFor(() => expect(screen.getByText(switched.name)).toBeTruthy());
+  });
+
+  it("keeps a failed undo off the document a newer load put on screen", async () => {
+    // The undo's read fails AFTER the switched-to file has landed: the error
+    // belongs to the document the host left, so it must not take the error
+    // line of the one now on screen. Only the generation can tell — the store
+    // has already moved, and the snapshot stack with it.
+    const h = editorEngine({
+      holdRead: (document, call) => document.name === file.name && call > 1,
+      failWhenReleased: (document, call) => document.name === file.name && call > 1,
+    });
+    const onError = vi.fn();
+    const view = render(<HwpEditor engine={h.engine} file={file} onError={onError} />);
+    await selectAndQueueReplace(en);
+    await applyOne(en);
+    await screen.findByText(pending(en, 0));
+
+    fireEvent.click(screen.getByRole("button", { name: en["toolbar.revert"] }));
+    await vi.waitFor(() => expect(h.readGates).toHaveLength(1));
+    view.rerender(<HwpEditor engine={h.engine} file={switched} onError={onError} />);
+    await vi.waitFor(() => expect(screen.getByText(switched.name)).toBeTruthy());
+
+    await act(async () => { h.releaseRead(); });
+    await settle();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText(switched.name)).toBeTruthy();
+    // The host still hears the engine's failure, as it arrived.
+    expect(onError.mock.calls.some(([error]) => String((error as Error).message).includes("read failed"))).toBe(true);
   });
 
   it("refuses a refresh while a load is replacing the document", async () => {
@@ -428,6 +466,54 @@ describe("#58 item 24: creating a document waits for a load in flight", () => {
     expect(create.disabled).toBe(false);
     expect(within(dialog).queryByText(en["compose.loadingInFlight"])).toBeNull();
   });
+
+  it("refuses a press while an earlier composition is still being read", async () => {
+    // The composed path raises no hint at all: `onComposed` moves the
+    // generation and reads the document without touching `loadInFlight`, so
+    // the dialog reopens ENABLED while the editor is still taking the previous
+    // composition on. The generations are the only guard there, and the
+    // refusal has to be a sentence — nothing on this surface says a read is
+    // running.
+    const composed = "composed.hwpx";
+    const h = editorEngine({ styles: true, holdRead: (document) => document.name === composed });
+    render(<HwpEditor engine={h.engine} file={file} />);
+    await screen.findByText(file.name);
+
+    fireEvent.click(screen.getByRole("button", { name: en["toolbar.newDocument"] }));
+    let dialog = await screen.findByRole("dialog", { name: en["compose.title"] });
+    fireEvent.change(within(dialog).getByLabelText(en["compose.titleLabel"]), {
+      target: { value: "composed" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: en["compose.submit"] }));
+    await vi.waitFor(() => expect(h.readStarted()).toBe(true));
+
+    fireEvent.click(screen.getByRole("button", { name: en["toolbar.newDocument"] }));
+    dialog = await screen.findByRole("dialog", { name: en["compose.title"] });
+    const submit = within(dialog).getByRole("button", { name: en["compose.submit"] }) as HTMLButtonElement;
+    // Enabled, and no hint: this is the window the flag cannot cover.
+    expect(submit.disabled).toBe(false);
+    expect(within(dialog).queryByText(en["compose.loadingInFlight"])).toBeNull();
+
+    fireEvent.change(within(dialog).getByLabelText(en["compose.titleLabel"]), {
+      target: { value: "second" },
+    });
+    fireEvent.click(submit);
+
+    // Refused on the generations, and said out loud: the composition is not
+    // spent against a document this editor is still leaving.
+    const alert = await within(dialog).findByRole("alert");
+    expect(alert.textContent).toContain(en["error.loadingReplacement"]);
+    expect(h.engine.calls.compose).toHaveLength(1);
+    expect(screen.getByText(file.name)).toBeTruthy();
+
+    // The composition being read is the one that lands, and the press is
+    // offered again once it has.
+    await act(async () => { h.releaseRead(); });
+    await vi.waitFor(() => expect(screen.queryByText(file.name)).toBeNull());
+    fireEvent.click(submit);
+    await vi.waitFor(() => expect(h.engine.calls.compose).toHaveLength(2));
+    await vi.waitFor(() => expect(screen.queryByText(composed)).toBeNull());
+  });
 });
 
 /**
@@ -467,6 +553,64 @@ describe("#53 follow-up 1: documentOrigin moves where the load lands", () => {
     // A composed document replaces the stored one without changing the host's
     // file, so the panel's counter — not the file name — is what retires it.
     await vi.waitFor(() => expect(styleRow().getAttribute("aria-pressed")).toBe("false"));
+  });
+
+  it("retires a choice made while the composed document is being read", async () => {
+    // The counter moves where the composed document is TAKEN, not where its
+    // read starts. A press made during that read belongs to the document on
+    // screen, so it must be retired when the composed one lands — exactly as a
+    // choice made before the press is. Bumping at the start of the compose
+    // would count this press against the new document and keep it highlighted
+    // on the next document's row with the same id.
+    const composed = "composed.hwpx";
+    const h = editorEngine({ styles: true, holdRead: (document) => document.name === composed });
+    render(<HwpEditor engine={h.engine} file={file} />);
+    fireEvent.click(await screen.findByRole("tab", { name: en["tabs.styles"] }));
+    await screen.findByRole("button", { name: /바탕글/ });
+
+    fireEvent.click(screen.getByRole("button", { name: en["toolbar.newDocument"] }));
+    const dialog = await screen.findByRole("dialog", { name: en["compose.title"] });
+    fireEvent.change(within(dialog).getByLabelText(en["compose.titleLabel"]), {
+      target: { value: "composed" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: en["compose.submit"] }));
+    await vi.waitFor(() => expect(h.readStarted()).toBe(true));
+
+    // Made against the document the store still holds — the read has not
+    // landed, so this is a choice in the old document.
+    fireEvent.click(styleRow());
+    await vi.waitFor(() => expect(styleRow().getAttribute("aria-pressed")).toBe("true"));
+
+    await act(async () => { h.releaseRead(); });
+    await vi.waitFor(() => expect(styleRow().getAttribute("aria-pressed")).toBe("false"));
+    // The composed document is the one open now, so the choice was made in a
+    // document that is gone rather than in the one that arrived.
+    expect(screen.queryByText(file.name)).toBeNull();
+  });
+
+  it("keeps the Styles choice when the composed read fails", async () => {
+    // The mirror image: a composed read that fails leaves the previous
+    // document on screen and editable, so a choice in it is still a choice in
+    // the document the user is working on. Only the landing retires it.
+    const composed = "composed.hwpx";
+    const h = editorEngine({ styles: true, failRead: (document) => document.name === composed });
+    render(<HwpEditor engine={h.engine} file={file} />);
+    fireEvent.click(await screen.findByRole("tab", { name: en["tabs.styles"] }));
+    fireEvent.click(await screen.findByRole("button", { name: /바탕글/ }));
+    await vi.waitFor(() => expect(styleRow().getAttribute("aria-pressed")).toBe("true"));
+
+    fireEvent.click(screen.getByRole("button", { name: en["toolbar.newDocument"] }));
+    const dialog = await screen.findByRole("dialog", { name: en["compose.title"] });
+    fireEvent.change(within(dialog).getByLabelText(en["compose.titleLabel"]), {
+      target: { value: "composed" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: en["compose.submit"] }));
+
+    // The failure reached the surface, so the old document really is what is
+    // being edited — otherwise the surviving highlight would prove nothing.
+    expect((await screen.findByRole("alert")).textContent).toContain(en["error.prefix.load"]);
+    expect(screen.getByText(file.name)).toBeTruthy();
+    expect(styleRow().getAttribute("aria-pressed")).toBe("true");
   });
 });
 

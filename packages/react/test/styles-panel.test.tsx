@@ -1002,7 +1002,7 @@ describe("styles tab operations (en)", () => {
     fireEvent.click(await screen.findByRole("tab", { name: en["tabs.styles"] }));
 
     // The cause, and the next step the tab itself can carry out.
-    expect(screen.getAllByText(en["styles.loadFailed"]).length).toBeGreaterThan(0);
+    await waitFor(() => expect(screen.getAllByText(en["styles.loadFailed"]).length).toBeGreaterThan(0));
     expect(screen.queryByRole("button", { name: /바탕글/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: en["styles.retry"] }));
 

@@ -64,7 +64,7 @@ interface AssemblyRow {
  * name and the document metadata in both sources.
  */
 export function ComposePanel(props: ComposePanelProps): JSX.Element {
-  const { engine, t, onError, store, state, loadEpoch, loadInFlight } = useHwpEditorContext();
+  const { engine, t, onError, store, state, loadEpoch, loadSettled, loadInFlight } = useHwpEditorContext();
   const components = props.components ?? STARTER_COMPONENTS;
   const [preset, setPreset] = useState<ComposePreset>("official");
   const [title, setTitle] = useState("");
@@ -169,6 +169,16 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
 
   const compose = async (): Promise<void> => {
     if (!canCreate || busy) return;
+    // A load in flight would be replaced by what this composes, and it is the
+    // file the host chose. `locked` disables the button, but the hint is a
+    // render behind, so the press itself asks the generations. A composed
+    // document's read raises no hint at all — the dialog is open and enabled
+    // while this editor is still taking that composition on — so the refusal
+    // is said out loud rather than left as a press that did nothing.
+    if (!loadSettled()) {
+      setError(toEditorError(new Error(t("error.loadingReplacement"))));
+      return;
+    }
     setBusy(true);
     setError(null);
     // Both halves are captured now and checked before the result may replace
@@ -209,6 +219,12 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
 
   const createEmbedded = async (): Promise<void> => {
     if (!canCreate || busy || engine.create === undefined || !createStatus.supported || templateId === "") return;
+    // Same rule as `compose`: a document created now would replace the file
+    // the host has chosen and this editor has not finished reading.
+    if (!loadSettled()) {
+      setError(toEditorError(new Error(t("error.loadingReplacement"))));
+      return;
+    }
     const epoch = loadEpoch();
     const source = store.getState().document;
     setBusy(true); setError(null);

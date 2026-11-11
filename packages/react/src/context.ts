@@ -84,6 +84,16 @@ export interface HwpEditorContextValue {
    */
   loadEpoch: () => number;
   /**
+   * Whether the document the store holds is the one the host last chose: false
+   * while `loadEpoch` has moved and the load it announced has not ended. A
+   * flow that creates or replaces a document takes this at its press and
+   * refuses there, because `loadInFlight` cannot be the decision: it is a
+   * render behind a started load, and a composed document's read moves
+   * `loadEpoch` without raising it at all, leaving the creating dialog open
+   * and enabled while the previous composition is still being read.
+   */
+  loadSettled: () => boolean;
+  /**
    * Whether a load that will read bytes is running. A RENDER HINT, for
    * controls that are better disabled than refused: it is one render behind
    * the generations above, so a panel disables on it and never decides from it
