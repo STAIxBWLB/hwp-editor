@@ -50,6 +50,7 @@ describe.each([["en", en], ["ko", ko]] as const)("paragraph multi-selection (%s)
     const options = screen.getAllByRole("option");
     expect(options).toHaveLength(5);
     expect(screen.getByText(messages["segment.selectedCount"]({ count: 0 }))).toBeTruthy();
+    await waitFor(() => expect((screen.getByRole("button", { name: messages["segment.setPara"] }) as HTMLButtonElement).disabled).toBe(false));
 
     fireEvent.click(options[0]!);
     fireEvent.click(options[4]!, { shiftKey: true });
