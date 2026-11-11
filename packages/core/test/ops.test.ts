@@ -369,9 +369,20 @@ describe("opsToJson", () => {
   });
 
   it("validates numeric image and seal dimensions before serializing units", () => {
+    const json = (ops: EditOp[]): unknown => JSON.parse(opsToJson(ops));
+    expect(
+      json([
+        { kind: "insert-image", anchor: "x", path: "p.png", width: 1e-7, height: 1e2 },
+        { kind: "seal", anchor: "x", path: "s.png", size: 1e-7 },
+      ]),
+    ).toEqual([
+      { op: "insert_image", anchor: "x", path: "p.png", width_mm: "0.0000001mm", height_mm: "100mm" },
+      { op: "seal", anchor: "x", path: "s.png", size_mm: "0.0000001mm" },
+    ]);
+
     for (const op of [
       { kind: "insert-image", anchor: "x", path: "p.png", width: -5, height: 20 },
-      { kind: "seal", anchor: "x", path: "s.png", size: 1e2 },
+      { kind: "seal", anchor: "x", path: "s.png", size: Number.POSITIVE_INFINITY },
     ] satisfies EditOp[]) {
       expect(() => opsToJson([op])).toThrow(HwpEngineError);
     }

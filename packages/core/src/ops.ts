@@ -321,6 +321,26 @@ function withUnit(value: string, unit: "mm" | "pt" | "%"): string {
   );
 }
 
+/** Convert Number.toString() exponent notation to the equivalent plain decimal. */
+function plainDecimal(value: number): string {
+  const encoded = String(value);
+  const match = /^(\d+)(?:\.(\d+))?[eE]([+-]?\d+)$/.exec(encoded);
+  if (!match) return encoded;
+  const whole = match[1]!;
+  const fraction = match[2] ?? "";
+  const digits = whole + fraction;
+  const decimalAt = whole.length + Number(match[3]);
+  if (decimalAt <= 0) return `0.${"0".repeat(-decimalAt)}${digits}`;
+  if (decimalAt >= digits.length) return `${digits}${"0".repeat(decimalAt - digits.length)}`;
+  return `${digits.slice(0, decimalAt)}.${digits.slice(decimalAt)}`;
+}
+
+/** Numeric dimensions use a plain decimal JSON unit even for tiny/large numbers. */
+function numericUnit(value: number, unit: "mm"): string {
+  if (!Number.isFinite(value) || value < 0) return withUnit(String(value), unit);
+  return withUnit(plainDecimal(value), unit);
+}
+
 /** set-format props: same keys as the CLI flag; only `size` needs a unit. */
 function formatPropsEntry(props: Record<string, string>): OpsEntry {
   const out: OpsEntry = {};
@@ -433,8 +453,8 @@ function opsEntry(op: EditOp): OpsEntry {
         ...(op.width === undefined || op.height === undefined
           ? {}
           : {
-              width_mm: withUnit(String(op.width), "mm"),
-              height_mm: withUnit(String(op.height), "mm"),
+              width_mm: numericUnit(op.width, "mm"),
+              height_mm: numericUnit(op.height, "mm"),
             }),
       };
     case "seal":
@@ -442,7 +462,7 @@ function opsEntry(op: EditOp): OpsEntry {
         op: "seal",
         anchor: op.anchor,
         path: op.path,
-        ...(op.size === undefined ? {} : { size_mm: withUnit(String(op.size), "mm") }),
+        ...(op.size === undefined ? {} : { size_mm: numericUnit(op.size, "mm") }),
       };
     case "set-format":
       // Reserved fields LAST: props is a free Record, so a caller-supplied
