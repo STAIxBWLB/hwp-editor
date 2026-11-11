@@ -96,6 +96,7 @@ export function SegmentInspector(): JSX.Element {
   const [lineSpacingUnit, setLineSpacingUnit] = useState<"%" | "pt">("%");
   const [linkUrl, setLinkUrl] = useState("");
   const [linkText, setLinkText] = useState("");
+  const [placeholderName, setPlaceholderName] = useState("");
 
   // Reset drafts when the selection moves.
   useEffect(() => {
@@ -108,6 +109,7 @@ export function SegmentInspector(): JSX.Element {
     setShapeValue("");
     setLinkUrl("");
     setLinkText("");
+    setPlaceholderName("");
   }, [selection]);
 
   const find = currentText;
@@ -193,6 +195,47 @@ export function SegmentInspector(): JSX.Element {
     : envelope !== null && state.range != null && formatTargets[0]?.id !== undefined
       ? segmentAtRef(envelope, { id: formatTargets[0].id, section: 0, para: 0 }) ?? singleParagraph
       : singleParagraph;
+
+  /**
+   * The text a "make placeholder" would replace, and whether the selection can
+   * be replaced at all.
+   *
+   * The op is an addressed `replace`, whose `find` matches text, not offsets:
+   * the engine replaces every match inside the addressed paragraph. So the find
+   * text has to be the whole of what the user selected (a range that starts or
+   * ends inside a run would leave half a run behind), and it has to occur once,
+   * or the op would rewrite a passage the user never selected. A sub-run
+   * selection therefore fails closed; per-run granularity is what the range
+   * contract offers today.
+   */
+  const rangeRuns = envelope !== null && singleParagraph !== undefined && state.range != null
+    ? paragraphRuns(envelope, singleParagraph, state.range)
+    : [];
+  const rangeFrom = rangeRuns.length === 0 ? -1 : Math.min(...rangeRuns.map(item => item.start));
+  const rangeTo = rangeRuns.length === 0 ? -1 : Math.max(...rangeRuns.map(item => item.end));
+  const wholeRuns = state.range != null && rangeRuns.length > 0 &&
+    rangeFrom === state.range.start && rangeTo === state.range.end;
+  const markdownPoints = useMemo(() => [...markdownText], [markdownText]);
+  const rangeText = state.range == null || singleParagraph === undefined || !wholeRuns
+    ? ""
+    : plainSegmentText(markdownPoints.slice(
+        state.range.start - singleParagraph.start,
+        state.range.end - singleParagraph.start,
+      ).join(""));
+  const placeholderNameTrimmed = placeholderName.trim();
+  const placeholderNameValid = placeholderNameTrimmed !== "" &&
+    !placeholderNameTrimmed.includes("{") && !placeholderNameTrimmed.includes("}");
+  const placeholderRepeated = rangeText !== "" && currentText.split(rangeText).length > 2;
+  const placeholderDisabled = disabled || address === undefined || !wholeRuns ||
+    rangeText === "" || !placeholderNameValid || placeholderRepeated;
+
+  const makePlaceholder = (): void => {
+    if (placeholderDisabled || address === undefined) return;
+    store.dispatch({
+      type: "queueOp",
+      op: { kind: "replace", address, find: rangeText, replace: `{{${placeholderNameTrimmed}}}` },
+    });
+  };
 
   const activateSelection = (target: Segment, mode: "single" | "toggle" | "extend"): void => {
     if (envelope === null) return;
@@ -546,6 +589,20 @@ export function SegmentInspector(): JSX.Element {
             else store.dispatch({ type: "setRange", range: null });
           }}>{t("segment.rangeClear")}</button>
         </>}
+      </div>}
+      {singleParagraph !== undefined && <div className="hwped-field">
+        <span className="hwped-label">{t("segment.placeholderLabel")}</span>
+        <p className="hwped-hint">{t("segment.placeholderHint")}</p>
+        <input className="hwped-input" type="text" value={placeholderName} disabled={disabled}
+          placeholder={t("segment.placeholderNamePlaceholder")} aria-label={t("segment.placeholderNameAria")}
+          onChange={(e) => setPlaceholderName(e.target.value)} />
+        <button type="button" className="hwped-btn" disabled={placeholderDisabled} onClick={makePlaceholder}>
+          {t("segment.placeholderCreate")}
+        </button>
+        {state.range == null && <p className="hwped-hint">{t("segment.placeholderNoRange")}</p>}
+        {state.range != null && !wholeRuns && <p className="hwped-hint">{t("segment.placeholderWholeRuns")}</p>}
+        {state.range != null && wholeRuns && !placeholderNameValid && <p role="alert" className="hwped-hint">{t("segment.placeholderNameInvalid")}</p>}
+        {placeholderRepeated && <p role="alert" className="hwped-hint">{t("segment.placeholderAmbiguous")}</p>}
       </div>}
       <div className="hwped-field">
         <span className="hwped-label">{t("segment.formatLabel")}</span>

@@ -26,6 +26,22 @@ function rangeEnvelope(): CatEnvelope {
   };
 }
 
+/**
+ * One paragraph whose two runs spell the same word, which is the shape an
+ * addressed `replace` cannot express: its find text matches every occurrence.
+ */
+function repeatedEnvelope(): CatEnvelope {
+  const text = "aa aa";
+  return {
+    markdown: text,
+    segments: [
+      { id: "para-repeat", indices: [0], start: 0, end: 5, kind: "para", section: 0, para: 0 },
+      { id: "run-first", indices: [0, 0], start: 0, end: 2, kind: "run", section: 0, para: 0 },
+      { id: "run-second", indices: [0, 1], start: 2, end: 5, kind: "run", section: 0, para: 0 },
+    ],
+  };
+}
+
 function noRunEnvelope(): CatEnvelope {
   return {
     markdown,
@@ -138,5 +154,59 @@ describe.each([["en", en], ["ko", ko]] as const)("Markdown run range selection (
     expect(await screen.findByText(messages["segment.rangeTextEditHint"])).toBeTruthy();
     expect(screen.queryByText(messages["segment.runTextEditHint"])).toBeNull();
     expect(screen.queryByText(messages["segment.multiTextEditHint"])).toBeNull();
+  });
+});
+
+describe.each([["en", en], ["ko", ko]] as const)("Making a placeholder from a range (%s)", (locale, messages) => {
+  it("queues one addressed replace of the covered runs, with plain text as the find", async () => {
+    const engine = createMockEngine({ envelope: rangeEnvelope() });
+    render(<HwpEditor engine={engine} file={file} locale={locale} />);
+    const textarea = await selectFirstParagraph(messages);
+    await selectRange(textarea, 0, markdown.length);
+    fireEvent.change(screen.getByLabelText(messages["segment.placeholderNameAria"]), { target: { value: "owner" } });
+    const make = screen.getByRole("button", { name: messages["segment.placeholderCreate"] }) as HTMLButtonElement;
+    expect(make.disabled).toBe(false);
+    fireEvent.click(make);
+    fireEvent.click(await screen.findByRole("button", { name: messages["toolbar.applyWithCount"]({ count: 1 }) }));
+    await waitFor(() => expect(engine.calls.edit).toHaveLength(1));
+    // The find is the paragraph's TEXT, not its Markdown: `hwp edit` matches
+    // document text, so the markers around the selected runs are stripped.
+    expect(engine.calls.edit[0]?.ops).toEqual([
+      { kind: "replace", address: { id: "para-first" }, find: "Bold😀!", replace: "{{owner}}" },
+    ]);
+  });
+
+  it("refuses a range that starts or ends inside a run instead of replacing the rest of it", async () => {
+    const engine = createMockEngine({ envelope: rangeEnvelope() });
+    render(<HwpEditor engine={engine} file={file} locale={locale} />);
+    const textarea = await selectFirstParagraph(messages);
+    // Scalars 0..4 end inside run-bold (0..8), so the op would replace text
+    // the user did not select.
+    await selectRange(textarea, 0, 4);
+    fireEvent.change(screen.getByLabelText(messages["segment.placeholderNameAria"]), { target: { value: "owner" } });
+    expect((screen.getByRole("button", { name: messages["segment.placeholderCreate"] }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(messages["segment.placeholderWholeRuns"])).toBeTruthy();
+    expect(engine.calls.edit).toHaveLength(0);
+  });
+
+  it("refuses a find text the paragraph repeats, because the engine replaces every match", async () => {
+    const engine = createMockEngine({ envelope: repeatedEnvelope() });
+    render(<HwpEditor engine={engine} file={file} locale={locale} />);
+    fireEvent.click((await screen.findAllByRole("option"))[0]!);
+    const textarea = await screen.findByRole("textbox", { name: messages["segment.rangeTextAria"] }) as HTMLTextAreaElement;
+    await waitFor(() => expect(textarea.disabled).toBe(false));
+    // "aa" is the whole of run-a and occurs twice in the paragraph.
+    await selectRange(textarea, 0, 2);
+    fireEvent.change(screen.getByLabelText(messages["segment.placeholderNameAria"]), { target: { value: "owner" } });
+    expect((screen.getByRole("button", { name: messages["segment.placeholderCreate"] }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(messages["segment.placeholderAmbiguous"])).toBeTruthy();
+    expect(engine.calls.edit).toHaveLength(0);
+  });
+
+  it("offers no placeholder until a range exists", async () => {
+    render(<HwpEditor engine={createMockEngine({ envelope: rangeEnvelope() })} file={file} locale={locale} />);
+    await selectFirstParagraph(messages);
+    expect((screen.getByRole("button", { name: messages["segment.placeholderCreate"] }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(messages["segment.placeholderNoRange"])).toBeTruthy();
   });
 });
