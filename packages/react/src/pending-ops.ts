@@ -128,8 +128,11 @@ export function pendingAddressLabel(
  * editor names the piece's own source span instead - and that window is the
  * piece, whole. The op shape therefore says nothing: a window that maps
  * character for character and a window that was widened to the piece look
- * alike, and only the document tells them apart. A piece publishing exactly
- * this span is the whole of that piece.
+ * alike, and only the document tells them apart.
+ *
+ * A run is a piece only when the document publishes a sibling under the same
+ * id: an unsplit run has no pieces, so a window equal to its own span is that
+ * run's window and says nothing about widening.
  */
 function formatsWholePiece(
   envelope: CatEnvelope | null,
@@ -137,8 +140,9 @@ function formatsWholePiece(
   chars: [number, number],
 ): boolean {
   if (envelope === null) return false;
-  return envelope.segments.some((segment) => segment.kind === "run" && segment.id === id &&
-    segment.sourceChars !== undefined &&
+  const pieces = envelope.segments.filter((segment) => segment.kind === "run" && segment.id === id);
+  if (pieces.length < 2) return false;
+  return pieces.some((segment) => segment.sourceChars !== undefined &&
     segment.sourceChars.start === chars[0] && segment.sourceChars.end === chars[1]);
 }
 

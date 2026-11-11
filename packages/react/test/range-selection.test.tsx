@@ -409,15 +409,17 @@ describe.each([["en", en], ["ko", ko]] as const)("Markdown run range selection (
     // carrying the id alone would format both pieces. So a piece the range was
     // widened to looks exactly like one it mapped, and the label has to come
     // from the coverage answer. This piece holds an ampersand, which the
-    // client never maps character for character (t30-c5).
+    // client never maps character for character (t30-c5). Both pieces carry
+    // the engine's shape: one id, one path, and the control's 8 units between
+    // their spans.
     const envelope: CatEnvelope = {
       markdown: "a&b|c\n\n",
       segments: [
         { id: "para-one", indices: [0], start: 0, end: 5, kind: "para", section: 0, para: 0 },
         { id: "amp", indices: [0, 0], start: 0, end: 3, kind: "run", section: 0, para: 0,
           directChar: runChar(), sourceChars: { start: 0, end: 3 } },
-        { id: "amp", indices: [0, 1], start: 4, end: 5, kind: "run", section: 0, para: 0,
-          directChar: runChar(), sourceChars: { start: 3, end: 4 } },
+        { id: "amp", indices: [0, 0], start: 4, end: 5, kind: "run", section: 0, para: 0,
+          directChar: runChar(), sourceChars: { start: 11, end: 12 } },
       ],
     };
     const engine = createMockEngine({ envelope });

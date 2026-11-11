@@ -111,6 +111,23 @@ describe.each([["en", en], ["ko", ko]] as const)("pending row text (%s)", (local
     expect(pendingTargetLabel(wholePiece, t)).toBe(messages["pending.target.chars"]({
       range: messages["pending.target.id"]({ id: "split" }), start: 9, end: 11,
     }));
+    // A run nobody split has no pieces, so a window equal to its whole span is
+    // that run's own window and the row reads as a window: the "whole piece"
+    // reading belongs to an id a sibling shares, which is what makes an op
+    // naming the id alone format more than the window.
+    const unsplit: CatEnvelope = {
+      markdown: "굵게\n",
+      segments: [
+        { id: "p2", indices: [1], start: 0, end: 3, kind: "para", section: 0, para: 1 },
+        { id: "solo", indices: [1, 0], start: 0, end: 2, kind: "run", section: 0, para: 1,
+          directChar: plain, sourceChars: { start: 0, end: 2 } },
+      ],
+    };
+    expect(pendingTargetLabel({ kind: "set-format", address: { id: "solo", chars: [0, 2] },
+      props: { bold: "on" } }, t, {}, unsplit))
+      .toBe(messages["pending.target.chars"]({
+        range: messages["pending.target.id"]({ id: "solo" }), start: 0, end: 2,
+      }));
   });
 
   it("resolves a style row and a metadata key through the tables that own them", () => {
