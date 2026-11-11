@@ -68,7 +68,10 @@ it("keeps malformed direct-metadata diagnostics actionable at the CLI boundary",
   })});
   const failure=await createCliEngine({bin}).read({name:"doc.hwpx",data:new Uint8Array([1])}).catch((error:unknown)=>error);
   expect(failure).toMatchObject({reason:"failed",message:expect.stringContaining("direct.char"),cause:expect.any(Error)});
-  expect((failure as Error).message).toContain("upgrade the host adapter");
+  // The JSON came from the hwp binary on this path, so the remedy is the
+  // hwp-cli version, not an upgrade of some other host adapter.
+  expect((failure as Error).message).toContain("use hwp-cli 0.20.0 or newer");
+  expect((failure as Error).message).not.toContain("host adapter");
 });
 
 describeBin("cli-engine (real hwp-cli binary)", () => {

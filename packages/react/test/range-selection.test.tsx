@@ -33,6 +33,18 @@ function noRunEnvelope(): CatEnvelope {
   };
 }
 
+function unaddressableRunEnvelope(): CatEnvelope {
+  // A nested paragraph whose run carries no id: the range exists, but this
+  // client has no address for it, which is the metadata case, not an empty one.
+  return {
+    markdown,
+    segments: [
+      { id: "cell-para", indices: [0, 0, 0, 0], start: 0, end: 10, kind: "para", section: 0, para: 0 },
+      { indices: [0, 0, 0, 0, 0], start: 0, end: 10, kind: "run", section: 0, para: 0 },
+    ],
+  };
+}
+
 async function selectRange(textarea: HTMLTextAreaElement, start: number, end: number): Promise<void> {
   textarea.focus();
   textarea.setSelectionRange(start, end);
@@ -98,11 +110,21 @@ describe.each([["en", en], ["ko", ko]] as const)("Markdown run range selection (
     expect(halfEngine.calls.edit).toHaveLength(0);
   });
 
-  it("explains in the active locale when run metadata is absent", async () => {
+  it("explains in the active locale why a range is off, without blaming the host for an empty paragraph", async () => {
     render(<HwpEditor engine={createMockEngine({ envelope: noRunEnvelope() })} file={file} locale={locale} />);
     fireEvent.click(await screen.findByRole("option"));
     const textarea = await screen.findByRole("textbox", { name: messages["segment.rangeTextAria"] }) as HTMLTextAreaElement;
     expect(textarea.disabled).toBe(true);
-    expect(screen.getByText(messages["segment.rangeUnavailable"])).toBeTruthy();
+    // A paragraph without runs needs no host upgrade: it has no text range to
+    // select inside it, and the host-upgrade remedy would be wrong advice.
+    expect(screen.getByText(messages["segment.rangeUnavailableNoRuns"])).toBeTruthy();
+    expect(screen.queryByText(messages["segment.rangeUnavailable"])).toBeNull();
+
+    cleanup();
+    render(<HwpEditor engine={createMockEngine({ envelope: unaddressableRunEnvelope() })} file={file} locale={locale} />);
+    fireEvent.click(await screen.findByRole("option"));
+    // A run that exists but has no address is the metadata case.
+    expect(await screen.findByText(messages["segment.rangeUnavailable"])).toBeTruthy();
+    expect(screen.queryByText(messages["segment.rangeUnavailableNoRuns"])).toBeNull();
   });
 });

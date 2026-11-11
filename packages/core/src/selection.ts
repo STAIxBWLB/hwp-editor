@@ -85,18 +85,38 @@ export function segmentPath(segment: Segment): string {
   return `${segment.section}/${segment.indices?.join(".") ?? segment.para}`;
 }
 
+/**
+ * Document order, taken from `path`, never from envelope position.
+ *
+ * segment-envelope-v2 does not promise an ordered segment list, and a point
+ * paragraph (`start === end`) is emitted after the ranges that start at the
+ * same offset, so envelope order puts it after a paragraph that follows it.
+ * Sorting by section and then by `indices` lexicographically is the order the
+ * contract defines; a legacy projection without indices falls back to `para`.
+ */
+export function compareSegments(a: Segment, b: Segment): number {
+  if (a.section !== b.section) return a.section - b.section;
+  const left = a.indices ?? [a.para];
+  const right = b.indices ?? [b.para];
+  for (let at = 0; at < Math.min(left.length, right.length); at++) {
+    if (left[at] !== right[at]) return left[at]! - right[at]!;
+  }
+  return left.length - right.length;
+}
+
+function segmentForRef(envelope: CatEnvelope, ref: SegmentRef): Segment | undefined {
+  return envelope.segments.find((candidate) => ref.id !== undefined
+    ? candidate.id === ref.id
+    : candidate.section === ref.section && candidate.para === ref.para);
+}
+
 export function selectedParagraphs(envelope: CatEnvelope, state: EditorState): Segment[] {
   const refs = state.selections?.length ? state.selections : state.selection ? [state.selection] : [];
   const paragraphs = refs.flatMap((ref) => {
-    const segment = envelope.segments.find((candidate) => ref.id !== undefined
-      ? candidate.id === ref.id
-      : candidate.section === ref.section && candidate.para === ref.para);
+    const segment = segmentForRef(envelope, ref);
     return segment === undefined ? [] : resolveSelection(envelope, segment).paragraphs;
   });
-  const orderedParagraphs = uniqueSegments(envelope.segments.filter((s) => s.kind === "para"));
-  const order = new Map(orderedParagraphs.map((s, i) => [segmentKey(s), i]));
-  return uniqueSegments(paragraphs).sort((a, b) =>
-    (order.get(segmentKey(a)) ?? 0) - (order.get(segmentKey(b)) ?? 0));
+  return uniqueSegments(paragraphs).sort(compareSegments);
 }
 
 export function paragraphAddress(segment: Segment): ParagraphAddress {
@@ -214,6 +234,18 @@ function addressKey(address: EditAddress): string {
   return "id" in address ? `id:${address.id}` : `${address.at.section}:${address.at.paragraph}:${address.at.run}`;
 }
 
+/**
+ * The units a click contributes to the current selection, at the granularity
+ * the selection already has. Paragraph level resolves like an edit target; run
+ * level, which matching character format produces, keeps runs as runs so a
+ * modifier click never hands the format op a whole paragraph.
+ */
+function selectionUnits(envelope: CatEnvelope, segment: Segment, runLevel: boolean): Segment[] {
+  if (!runLevel) return resolveSelection(envelope, segment).paragraphs;
+  if (segment.kind === "run") return [segment];
+  return resolveSelection(envelope, segment).paragraphs.flatMap((paragraph) => paragraphRuns(envelope, paragraph));
+}
+
 export function selectionAction(
   envelope: CatEnvelope,
   state: EditorState,
@@ -221,41 +253,51 @@ export function selectionAction(
   mode: "single" | "toggle" | "extend",
 ): EditorAction {
   if (mode === "single") return { type: "select", selection: segmentRef(target) };
-  const hitTargets = resolveSelection(envelope, target).paragraphs;
+  const refs = state.selections?.length ? state.selections : state.selection ? [state.selection] : [];
+  const stored = refs.flatMap((ref) => {
+    const segment = segmentForRef(envelope, ref);
+    return segment === undefined ? [] : [segment];
+  });
+  // The selection keeps the granularity it was built with: a run-level
+  // selection stays run-level, so extending or toggling it cannot widen to the
+  // paragraphs around those runs.
+  const runLevel = stored.some((segment) => segment.kind === "run");
+  const units = selectionUnits(envelope, target, runLevel);
   // A table, an image, an empty cell: nothing to extend across, and widening
   // to the paragraph that encloses it would select that paragraph's text.
-  if (hitTargets.length === 0) return { type: "select", selection: segmentRef(target) };
-  const current = selectedParagraphs(envelope, state);
-  const anchorRef = state.selectionAnchor ?? (state.selection ? state.selection : segmentRef(hitTargets[0]!));
-  const anchorHit = envelope.segments.find((s) => anchorRef.id ? s.id === anchorRef.id : s.section === anchorRef.section && s.para === anchorRef.para);
-  // An anchor with no paragraph target of its own has nothing to measure a
-  // range from, so the range starts at the click instead of throwing.
-  const anchorTargets = anchorHit === undefined ? [] : resolveSelection(envelope, anchorHit).paragraphs;
-  const anchor = anchorTargets[0] ?? hitTargets[0]!;
-  const paragraphKeys = new Set(hitTargets.map(segmentKey));
+  if (units.length === 0) return { type: "select", selection: segmentRef(target) };
+  const anchorRef = state.selectionAnchor ?? (state.selection ? state.selection : segmentRef(units[0]!));
+  const anchorSegment = segmentForRef(envelope, anchorRef);
+  // An anchor with no unit of its own has nothing to measure a range from, so
+  // the range starts at the click instead of throwing.
+  const anchorUnits = anchorSegment === undefined ? [] : selectionUnits(envelope, anchorSegment, runLevel);
+  const anchor = anchorUnits[0] ?? units[0]!;
+  const unitKeys = new Set(units.map(segmentKey));
   let selected: Segment[];
   if (mode === "toggle") {
-    // Toggling a cell takes its whole content, so align and format reach every
-    // paragraph of it rather than the first one.
-    selected = current.some((p) => paragraphKeys.has(segmentKey(p)))
-      ? current.filter((p) => !paragraphKeys.has(segmentKey(p)))
-      : [...current, ...hitTargets];
+    // Toggling a cell (or a run) takes its whole content, so align and format
+    // reach every unit of it rather than the first one.
+    selected = stored.some((segment) => unitKeys.has(segmentKey(segment)))
+      ? stored.filter((segment) => !unitKeys.has(segmentKey(segment)))
+      : [...stored, ...units];
   } else {
-    const paragraphs = uniqueSegments(envelope.segments.filter((s) => s.kind === "para"));
-    const position = new Map(paragraphs.map((p, i) => [segmentKey(p), i]));
+    const ordered = uniqueSegments(envelope.segments.filter((s) => s.kind === (runLevel ? "run" : "para"))).sort(compareSegments);
+    const position = new Map(ordered.map((unit, index) => [segmentKey(unit), index]));
     const anchorFirst = position.get(segmentKey(anchor)) ?? -1;
-    const anchorLast = position.get(segmentKey(anchorTargets[anchorTargets.length - 1] ?? anchor)) ?? anchorFirst;
-    const hitFirst = position.get(segmentKey(hitTargets[0]!)) ?? -1;
-    const hitLast = position.get(segmentKey(hitTargets[hitTargets.length - 1]!)) ?? hitFirst;
+    const anchorLast = position.get(segmentKey(anchorUnits[anchorUnits.length - 1] ?? anchor)) ?? anchorFirst;
+    const hitFirst = position.get(segmentKey(units[0]!)) ?? -1;
+    const hitLast = position.get(segmentKey(units[units.length - 1]!)) ?? hitFirst;
     const from = anchorFirst < 0 || hitFirst < 0 ? Math.max(anchorFirst, hitFirst) : Math.min(anchorFirst, hitFirst);
     const to = anchorFirst < 0 || hitFirst < 0 ? from : Math.max(anchorLast, hitLast);
-    // Both endpoints resolve to paragraphs the envelope lists, so this slice is
-    // the range; the `-1` arms only keep an unlisted endpoint selecting itself.
-    selected = from < 0 ? [anchor, ...hitTargets] : paragraphs.slice(from, to + 1);
+    // Both endpoints resolve to units the envelope lists, so this slice is the
+    // range; the `-1` arms only keep an unlisted endpoint selecting itself.
+    selected = from < 0 ? [anchor, ...units] : ordered.slice(from, to + 1);
   }
-  const refs = selected.map(segmentRef);
-  const primary = segmentRef(hitTargets[0]!);
-  return { type: "selectMany", selections: refs, primary, anchor: mode === "extend" ? segmentRef(anchor) : anchorRef };
+  // The state is the source of the refs, but never of their order: it keeps
+  // the primary first, and a selection reads in document order.
+  const selectionList = uniqueSegments(selected).sort(compareSegments).map(segmentRef);
+  const primary = segmentRef(units[0]!);
+  return { type: "selectMany", selections: selectionList, primary, anchor: mode === "extend" ? segmentRef(anchor) : anchorRef };
 }
 
 export function selectSimilar(envelope: CatEnvelope, primary: Segment, level: "char" | "para"): SegmentRef[] {
@@ -267,10 +309,10 @@ export function selectSimilar(envelope: CatEnvelope, primary: Segment, level: "c
     const candidates = hasRuns
       ? envelope.segments.filter((segment) => segment.kind === "run")
       : envelope.segments.filter((segment) => segment.kind === "para");
-    return uniqueSegments(candidates.filter((segment) => stableStructure(segment.directChar) === key)).map(segmentRef);
+    return uniqueSegments(candidates.filter((segment) => stableStructure(segment.directChar) === key)).sort(compareSegments).map(segmentRef);
   }
   return uniqueSegments(envelope.segments.filter((segment) => segment.kind === "para" &&
-    stableStructure(segment.directPara) === key)).map(segmentRef);
+    stableStructure(segment.directPara) === key)).sort(compareSegments).map(segmentRef);
 }
 
 function stableStructure(value: unknown): string {

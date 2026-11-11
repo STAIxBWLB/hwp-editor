@@ -390,6 +390,76 @@ describe("SegmentInspector op emission (TEST-03)", () => {
     expect(engine.calls.edit).toHaveLength(0);
   });
 
+  it("keeps a run-level selection in runs when a modifier click toggles or extends it", async () => {
+    const plain = { bold: false, italic: false, size_pt: 10, color: "#000000", faces: Array(7).fill("A"), face_ids: Array(7).fill(0) };
+    const bold = { ...plain, bold: true };
+    const envelope: CatEnvelope = { markdown: "xy\n\nxy\n\nz", segments: [
+      { id: "P0", indices: [0], start: 0, end: 2, kind: "para", section: 0, para: 0, directChar: bold },
+      { id: "r00", indices: [0, 0], start: 0, end: 1, kind: "run", section: 0, para: 0, directChar: plain },
+      { id: "r01", indices: [0, 1], start: 1, end: 2, kind: "run", section: 0, para: 0, directChar: bold },
+      { id: "P1", indices: [1], start: 4, end: 6, kind: "para", section: 0, para: 1, directChar: plain },
+      { id: "r10", indices: [1, 0], start: 4, end: 5, kind: "run", section: 0, para: 1, directChar: plain },
+      { id: "r11", indices: [1, 1], start: 5, end: 6, kind: "run", section: 0, para: 1, directChar: bold },
+      { id: "P2", indices: [2], start: 8, end: 9, kind: "para", section: 0, para: 2, directChar: plain },
+      { id: "r20", indices: [2, 0], start: 8, end: 9, kind: "run", section: 0, para: 2, directChar: plain },
+    ] };
+    const openSimilar = async (): Promise<Engine> => {
+      cleanup();
+      const engine = createMockEngine({ envelope });
+      render(<HwpEditor engine={engine} file={file} />);
+      fireEvent.click((await screen.findAllByRole("option"))[0]!);
+      clickBtn("segment.similarChar");
+      return engine;
+    };
+
+    // Ctrl-clicking a paragraph after a run-level selection adds its runs, not
+    // the paragraph: bold reaches r01, r11 and r20, and never r00/r10.
+    const toggling = await openSimilar();
+    expect(screen.getByText(en["segment.selectedRunCount"]({ count: 2 }))).toBeTruthy();
+    fireEvent.click(screen.getAllByRole("option")[2]!, { ctrlKey: true });
+    expect(await screen.findByText(en["segment.selectedRunCount"]({ count: 3 }))).toBeTruthy();
+    fireEvent.click(screen.getByLabelText(en["segment.bold"]));
+    clickBtn("segment.formatSubmit");
+    expect(await applyOps(toggling, 3)).toEqual([
+      { kind: "set-format", address: { id: "r01" }, props: { bold: "on" } },
+      { kind: "set-format", address: { id: "r11" }, props: { bold: "on" } },
+      { kind: "set-format", address: { id: "r20" }, props: { bold: "on" } },
+    ]);
+
+    // Shift-extending keeps run identity and stays inside the range: the run
+    // before the anchor is not pulled in, and no whole paragraph is addressed.
+    const extending = await openSimilar();
+    fireEvent.click(screen.getAllByRole("option")[2]!, { shiftKey: true });
+    expect(await screen.findByText(en["segment.selectedRunCount"]({ count: 4 }))).toBeTruthy();
+    fireEvent.click(screen.getByLabelText(en["segment.bold"]));
+    clickBtn("segment.formatSubmit");
+    const extended = await applyOps(extending, 4);
+    expect(extended).toEqual([
+      { kind: "set-format", address: { id: "r01" }, props: { bold: "on" } },
+      { kind: "set-format", address: { id: "r10" }, props: { bold: "on" } },
+      { kind: "set-format", address: { id: "r11" }, props: { bold: "on" } },
+      { kind: "set-format", address: { id: "r20" }, props: { bold: "on" } },
+    ]);
+    expect(JSON.stringify(extended)).not.toContain('"r00"');
+  });
+
+  it("lists and numbers paragraphs by path, not by the order the envelope emitted", async () => {
+    const envelope: CatEnvelope = { markdown: "ab\n\ncd", segments: [
+      { id: "P0", indices: [0], start: 0, end: 2, kind: "para", section: 0, para: 0 },
+      { id: "P2", indices: [2], start: 4, end: 6, kind: "para", section: 0, para: 2 },
+      // A v2 point paragraph is emitted after the ranges that start at its own
+      // offset, so envelope order puts it after P2.
+      { id: "P1", indices: [1], start: 4, end: 4, kind: "para", section: 0, para: 1 },
+    ] };
+    render(<HwpEditor engine={createMockEngine({ envelope })} file={file} />);
+    const options = await screen.findAllByRole("option");
+    expect(options.map((option) => option.textContent)).toEqual([
+      en["segment.choiceLabel"]({ index: 1, text: "ab" }),
+      en["segment.choiceLabel"]({ index: 2, text: en["segment.emptyPara"] }),
+      en["segment.choiceLabel"]({ index: 3, text: "cd" }),
+    ]);
+  });
+
   it("gives a bookmark selection no paragraph target, so Delete never reaches the host text", async () => {
     const base = parseCatEnvelope(JSON.stringify(tableFixture));
     // A bookmark control sits inside a text run: its range is the host

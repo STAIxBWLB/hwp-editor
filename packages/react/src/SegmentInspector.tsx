@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import type { JSX } from "react";
 import type { ParagraphAlignment, ParaShapeKey, Segment } from "@hwp-editor/core";
-import { formatAddresses, paragraphAddress, paragraphRuns, resolveSelection, segmentAtRef, segmentPath, segmentRef, segmentText, selectSimilar, selectedParagraphs, selectionAction } from "@hwp-editor/core";
+import { compareSegments, formatAddresses, paragraphAddress, paragraphRuns, resolveSelection, segmentAtRef, segmentPath, segmentRef, segmentText, selectSimilar, selectedParagraphs, selectionAction } from "@hwp-editor/core";
 import { plainSegmentText } from "./text.js";
 import { useHwpEditorContext } from "./context.js";
 import type { MessageKey } from "./messages.js";
@@ -38,13 +38,15 @@ export function SegmentInspector(): JSX.Element {
   const { selection } = state;
 
   const paragraphKeys = new Set<string>();
-  const paragraphs = envelope?.segments.filter(candidate => {
+  // Path order, not envelope order: a v2 point paragraph is emitted after the
+  // ranges that start at its own offset.
+  const paragraphs = (envelope?.segments.filter(candidate => {
     if (candidate.kind !== "para") return false;
     const key = candidate.id ?? `${candidate.section}:${candidate.para}`;
     if (paragraphKeys.has(key)) return false;
     paragraphKeys.add(key);
     return true;
-  }) ?? [];
+  }) ?? []).sort(compareSegments);
   const selected = envelope === null ? [] : selectedParagraphs(envelope, state);
   const segment =
     envelope !== null && selection !== null
@@ -123,8 +125,9 @@ export function SegmentInspector(): JSX.Element {
   const legacyLinkSeparator = capabilities?.editOps !== "v1" && [currentText, linkText, linkUrl].some(value => value.includes("=>"));
   const validShape = isPlainDecimal(shapeValue) && (shapeKey !== "line-spacing" || Number(shapeValue) > 0);
   const validFontSize = fontSize.trim() === "" || (isPlainDecimal(fontSize) && Number(fontSize) > 0);
+  // The state keeps the primary first; the ops read in document order.
   const formatInputs = envelope === null ? [] : explicitSegments.flatMap(item =>
-    item.kind === "run" ? [item] : resolveSelection(envelope, item).paragraphs);
+    item.kind === "run" ? [item] : resolveSelection(envelope, item).paragraphs).sort(compareSegments);
   const formatTargets = envelope === null ? [] : formatAddresses(envelope, formatInputs, state.range);
   const runs = envelope === null || singleParagraph === undefined ? [] : paragraphRuns(envelope, singleParagraph);
   const rangeAvailable = !multiSelection && runs.some(run => run.id !== undefined || (singleParagraph?.indices?.length === 1 && run.indices?.length === 2));
@@ -201,7 +204,13 @@ export function SegmentInspector(): JSX.Element {
             );
           })}
         </div>
-        <p className="hwped-hint" role="status">{t("segment.selectedCount", { count: selected.length })}</p>
+        <p className="hwped-hint" role="status">{
+          // A run-level selection has to count runs: those are the refs the
+          // state holds and the targets the format op will address.
+          hasRunSelection
+            ? t("segment.selectedRunCount", { count: explicitSegments.length })
+            : t("segment.selectedCount", { count: selected.length })
+        }</p>
       </div>
       {segment === undefined || selection === null ? (
         <p className="hwped-hint">{t("segment.hint")}</p>
@@ -372,7 +381,11 @@ export function SegmentInspector(): JSX.Element {
       {singleParagraph !== undefined && <div className="hwped-field">
         <label className="hwped-label" htmlFor="hwped-run-range">{t("segment.rangeTextAria")}</label>
         <p className="hwped-hint">{t("segment.rangeWholeRunHint")}</p>
-        {!rangeAvailable && <p className="hwped-hint">{t("segment.rangeUnavailable")}</p>}
+        {!rangeAvailable && <p className="hwped-hint">{
+          // An empty or v2 point paragraph has no runs at all: nothing about the
+          // host is missing, so the host-upgrade remedy would be wrong.
+          runs.length === 0 ? t("segment.rangeUnavailableNoRuns") : t("segment.rangeUnavailable")
+        }</p>}
         <textarea ref={rangeInput} id="hwped-run-range" className="hwped-textarea" rows={3} readOnly value={markdownText}
           disabled={disabled || !rangeAvailable} onSelect={event => {
             if (!rangeAvailable) return;

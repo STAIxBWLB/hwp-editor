@@ -57,7 +57,7 @@ export {
   validateProjectedMetadata,
 } from "./segments.js";
 export type { CatEnvelope, DirectChar, DirectPara, Segment, SegmentKind, SegmentRef } from "./segments.js";
-export { formatAddresses, paragraphAddress, paragraphRuns, resolveSelection, segmentPath, selectedParagraphs, selectSimilar, selectionAction } from "./selection.js";
+export { compareSegments, formatAddresses, paragraphAddress, paragraphRuns, resolveSelection, segmentPath, selectedParagraphs, selectSimilar, selectionAction } from "./selection.js";
 export type { SelectionRefusal, SelectionTargets } from "./selection.js";
 export type {
   DocumentSpecV2,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatAddresses, paragraphAddress, resolveSelection, segmentPath, selectSimilar, selectionAction, selectedParagraphs } from "../src/selection.js";
+import { compareSegments, formatAddresses, paragraphAddress, resolveSelection, segmentPath, selectSimilar, selectionAction, selectedParagraphs } from "../src/selection.js";
 import type { CatEnvelope, Segment } from "../src/segments.js";
 import { initialState, reducer } from "../src/state.js";
 
@@ -131,6 +131,67 @@ describe("selection helpers", () => {
     const state = reducer(initialState, { type: "select", selection: { section: 0, para: 1, id: "host" } });
     expect(selectionAction(container, state, container.segments[1]!, "toggle"))
       .toEqual({ type: "select", selection: { section: 0, para: 1, id: "img" } });
+  });
+
+  it("keeps a run-level selection in runs when a modifier click extends or toggles it", () => {
+    const plain = { bold: false, italic: false, size_pt: 10, color: "#000000", faces: Array(7).fill("A"), face_ids: Array(7).fill(0) };
+    const bold = { ...plain, bold: true };
+    const runs: CatEnvelope = { markdown: "xy\n\nxy\n\nz", segments: [
+      { id: "P0", indices: [0], start: 0, end: 2, kind: "para", section: 0, para: 0, directChar: plain },
+      { id: "r00", indices: [0, 0], start: 0, end: 1, kind: "run", section: 0, para: 0, directChar: plain },
+      { id: "r01", indices: [0, 1], start: 1, end: 2, kind: "run", section: 0, para: 0, directChar: bold },
+      { id: "P1", indices: [1], start: 4, end: 6, kind: "para", section: 0, para: 1, directChar: plain },
+      { id: "r10", indices: [1, 0], start: 4, end: 5, kind: "run", section: 0, para: 1, directChar: plain },
+      { id: "r11", indices: [1, 1], start: 5, end: 6, kind: "run", section: 0, para: 1, directChar: bold },
+      { id: "P2", indices: [2], start: 8, end: 9, kind: "para", section: 0, para: 2, directChar: plain },
+      { id: "r20", indices: [2, 0], start: 8, end: 9, kind: "run", section: 0, para: 2, directChar: plain },
+    ] };
+    const segmentFor = (id: string): Segment => runs.segments.find((s) => s.id === id)!;
+    const p2 = segmentFor("P2");
+    // Matching character format runs from the selected run's own bold shape and
+    // selects the bold runs, never their paragraphs.
+    const similar = selectSimilar(runs, segmentFor("r01"), "char");
+    expect(similar.map((ref) => ref.id)).toEqual(["r01", "r11"]);
+    const afterSimilar = reducer(initialState, { type: "selectMany", selections: similar, primary: similar[0]!, anchor: similar[0]! });
+    // A modifier click on a paragraph joins the run list; it must not replace
+    // the selection with whole paragraphs, which would format r00 and r10.
+    const toggled = selectionAction(runs, afterSimilar, p2, "toggle");
+    expect(toggled.type).toBe("selectMany");
+    if (toggled.type !== "selectMany") return;
+    expect(toggled.selections.map((ref) => ref.id)).toEqual(["r01", "r11", "r20"]);
+    const toggledSegments = toggled.selections.map((ref) => segmentFor(ref.id!));
+    expect(formatAddresses(runs, toggledSegments)).toEqual([{ id: "r01" }, { id: "r11" }, { id: "r20" }]);
+    // A Shift-extend keeps run identity too, and stays inside the range: the
+    // run before the anchor is not pulled in.
+    const extended = selectionAction(runs, afterSimilar, p2, "extend");
+    expect(extended.type).toBe("selectMany");
+    if (extended.type !== "selectMany") return;
+    expect(extended.selections.map((ref) => ref.id)).toEqual(["r01", "r10", "r11", "r20"]);
+    expect(extended.selections.every((ref) => ref.id?.startsWith("r"))).toBe(true);
+  });
+
+  it("orders paragraphs by path, not envelope position, so a point paragraph sorts in place", () => {
+    const pointScan: CatEnvelope = { markdown: "ab\n\ncd", segments: [
+      { id: "P0", indices: [0], start: 0, end: 2, kind: "para", section: 0, para: 0 },
+      { id: "P2", indices: [2], start: 4, end: 6, kind: "para", section: 0, para: 2 },
+      { id: "r2", indices: [2, 0], start: 4, end: 6, kind: "run", section: 0, para: 2 },
+      { id: "P1", indices: [1], start: 4, end: 4, kind: "para", section: 0, para: 1 },
+    ] };
+    const state = reducer(initialState, { type: "select", selection: { section: 0, para: 0, id: "P0" } });
+    // The empty point paragraph at offset 4 is emitted after P2 in the
+    // envelope, but it reads before it.
+    const toPoint = selectionAction(pointScan, state, pointScan.segments[3]!, "extend");
+    expect(toPoint.type).toBe("selectMany");
+    if (toPoint.type !== "selectMany") return;
+    expect(toPoint.selections.map((ref) => ref.id)).toEqual(["P0", "P1"]);
+    // The range past the point takes it in rather than skipping it.
+    const toLast = selectionAction(pointScan, state, pointScan.segments[1]!, "extend");
+    expect(toLast.type).toBe("selectMany");
+    if (toLast.type !== "selectMany") return;
+    expect(toLast.selections.map((ref) => ref.id)).toEqual(["P0", "P1", "P2"]);
+    expect(selectedParagraphs(pointScan, reducer(state, toLast)).map((p) => p.id)).toEqual(["P0", "P1", "P2"]);
+    expect([...pointScan.segments].filter((s) => s.kind === "para").sort(compareSegments).map((s) => s.id))
+      .toEqual(["P0", "P1", "P2"]);
   });
 
   it("toggles and extends ranges in paragraph reading order", () => {

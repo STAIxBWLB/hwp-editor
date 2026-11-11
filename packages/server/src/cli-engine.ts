@@ -997,9 +997,14 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       let envelope: CatEnvelope;
       try { envelope = parseCatEnvelope(cat.stdout); }
       catch (cause) {
-        const message = cause instanceof Error && cause.message.startsWith("segments envelope:")
-          ? cause.message
-          : "hwp cat returned invalid segment JSON; use a host with the segment-envelope-v2 contract, then reload.";
+        // The JSON on this path came out of the hwp binary, so the remedy names
+        // hwp-cli and its accepted version. The shared parser can only say
+        // "upgrade the host adapter", which is the right advice for a projected
+        // envelope and wrong here.
+        const problem = cause instanceof Error && cause.message.startsWith("segments envelope:")
+          ? cause.message.slice("segments envelope: ".length).split("; ")[0]!
+          : "invalid segment JSON";
+        const message = `hwp cat returned segment data this client cannot read (${problem}); check hwp --version and use hwp-cli ${MIN_VERSION.join(".")} or newer below ${MAX_VERSION_EXCLUSIVE.join(".")}, then reload.`;
         const failure = new HwpCliError("failed", message);
         failure.cause = cause;
         throw failure;
