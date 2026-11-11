@@ -194,8 +194,114 @@ export const OP_FLAGS: Record<LegacyEditOp["kind"], string> = {
   "delete-bookmark": "--delete-bookmark",
 };
 
+type ArgvSeparatorField = {
+  field: string;
+  value: string | undefined;
+  separator: string;
+  when?: (value: string) => boolean;
+};
+
+/** Structural separators consumed by the v1.4.0 hwp-cli argv parsers. */
+function argvSeparatorFields(op: LegacyEditOp): ArgvSeparatorField[] {
+  switch (op.kind) {
+    case "replace":
+      return [{ field: "find", value: op.find, separator: "=>" }];
+    case "set-field":
+      return [{ field: "name", value: op.name, separator: "=" }];
+    case "set-meta":
+      return [{ field: "key", value: op.key, separator: "=" }];
+    case "create-field":
+      return [
+        { field: "anchor", value: op.anchor, separator: "=>" },
+        { field: "name", value: op.name, separator: "=>" },
+        { field: "name", value: op.name, separator: "=" },
+      ];
+    case "create-bookmark":
+      return [
+        { field: "anchor", value: op.anchor, separator: "=>" },
+        { field: "name", value: op.name, separator: "=>" },
+      ];
+    case "create-hyperlink":
+      return [
+        { field: "anchor", value: op.anchor, separator: "=>" },
+        { field: "text", value: op.text, separator: "=>" },
+        { field: "url", value: op.url, separator: "=>" },
+      ];
+    case "insert-image":
+      return [
+        { field: "anchor", value: op.anchor, separator: "=>" },
+        {
+          field: "path", value: op.path, separator: "@",
+          when: path => imagePathHasDimensionSuffix(path),
+        },
+      ];
+    case "seal":
+      return [
+        { field: "anchor", value: op.anchor, separator: "=>" },
+        {
+          field: "path", value: op.path, separator: "@",
+          when: path => sealPathHasSizeSuffix(path),
+        },
+      ];
+    case "set-format":
+      return [
+        { field: "find", value: op.find, separator: ":" },
+        ...Object.entries(op.props).flatMap(([key, value]) => [
+          { field: `props.${key}.key`, value: key, separator: "=" },
+          { field: `props.${key}.key`, value: key, separator: "," },
+          { field: `props.${key}.value`, value, separator: "," },
+        ]),
+      ];
+    case "set-align":
+      return [{ field: "find", value: op.find, separator: "=" }];
+    case "insert-para":
+    case "insert-para-before":
+      return [{ field: "anchor", value: op.anchor, separator: "=>" }];
+    case "add-table":
+      return [{ field: "anchor", value: op.anchor, separator: "=>" }];
+    case "clone-table":
+      return [{ field: "anchor", value: op.anchor, separator: "=>" }];
+    case "set-para":
+      return [
+        { field: "find", value: op.find, separator: "=>" },
+        { field: "value", value: op.value, separator: "," },
+      ];
+    default:
+      return [];
+  }
+}
+
+function imagePathHasDimensionSuffix(path: string): boolean {
+  const suffix = path.slice(path.lastIndexOf("@") + 1);
+  const dimensions = suffix.split(/[xX]/);
+  return dimensions.length === 2 && dimensions.every(part => isRustFloat(part.trim()));
+}
+
+function sealPathHasSizeSuffix(path: string): boolean {
+  const suffix = path.slice(path.lastIndexOf("@") + 1).trim().replace(/mm$/, "");
+  return isRustFloat(suffix);
+}
+
+function isRustFloat(value: string): boolean {
+  return /^[+-]?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|inf(?:inity)?|nan)$/i.test(value);
+}
+
+function validateArgvSeparators(op: LegacyEditOp): void {
+  for (const { field, value, separator, when } of argvSeparatorFields(op)) {
+    if (value !== undefined && value.includes(separator) && (when === undefined || when(value))) {
+      const cause = new Error(`${op.kind} ${field} contains the structural argv separator ${JSON.stringify(separator)}`);
+      throw new HwpEngineError(
+        "bad_request",
+        `${cause.message}; remove the separator or upgrade the host to the edit-ops-v1 JSON transport.`,
+        { cause },
+      );
+    }
+  }
+}
+
 /** Serialize one op to its CLI value string (the part after the flag). */
 function opValue(op: LegacyEditOp): string {
+  validateArgvSeparators(op);
   switch (op.kind) {
     case "replace":
       return `${op.find}=>${op.replace}`;
@@ -212,16 +318,6 @@ function opValue(op: LegacyEditOp): string {
     case "create-bookmark":
       return `${op.anchor}=>${op.name}`;
     case "create-hyperlink":
-      for (const [field, value] of [["anchor", op.anchor], ["text", op.text], ["url", op.url]] as const) {
-        if (value?.includes("=>")) {
-          const cause = new Error(`create-hyperlink ${field} contains the argv separator "=>"`);
-          throw new HwpEngineError(
-            "bad_request",
-            `${cause.message}; remove the separator or upgrade the host to the edit-ops-v1 JSON transport.`,
-            { cause },
-          );
-        }
-      }
       return op.text === undefined
         ? `${op.anchor}=>${op.url}`
         : `${op.anchor}=>${op.text}=>${op.url}`;

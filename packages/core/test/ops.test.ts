@@ -52,13 +52,36 @@ describe("opsToArgv", () => {
     ]);
   });
 
-  it("rejects hyperlink separator values on argv while keeping JSON payloads literal", () => {
-    const badOps: EditOp[] = [
-      { kind: "create-hyperlink", anchor: "a=>b", text: "label", url: "https://a.b" },
-      { kind: "create-hyperlink", anchor: "anchor", text: "a=>b", url: "https://a.b" },
-      { kind: "create-hyperlink", anchor: "anchor", text: "label", url: "https://a.b/=>c" },
+  it("rejects structural separators in argv fields while preserving JSON payloads", () => {
+    const badOps: Array<[EditOp, string, string]> = [
+      [{ kind: "replace", find: "a=>b", replace: "tail=>value" }, "replace find", "=>"],
+      [{ kind: "set-field", name: "a=b", value: "tail=value" }, "set-field name", "="],
+      [{ kind: "set-meta", key: "a=b" as never, value: "tail=value" }, "set-meta key", "="],
+      [{ kind: "create-field", anchor: "a=>b", name: "field" }, "create-field anchor", "=>"],
+      [{ kind: "create-field", anchor: "anchor", name: "a=>b" }, "create-field name", "=>"],
+      [{ kind: "create-field", anchor: "anchor", name: "a=b" }, "create-field name", "="],
+      [{ kind: "create-bookmark", anchor: "a=>b", name: "mark" }, "create-bookmark anchor", "=>"],
+      [{ kind: "create-bookmark", anchor: "anchor", name: "a=>b" }, "create-bookmark name", "=>"],
+      [{ kind: "create-hyperlink", anchor: "a=>b", text: "label", url: "https://a.b" }, "create-hyperlink anchor", "=>"],
+      [{ kind: "create-hyperlink", anchor: "anchor", text: "a=>b", url: "https://a.b" }, "create-hyperlink text", "=>"],
+      [{ kind: "create-hyperlink", anchor: "anchor", text: "label", url: "https://a.b/=>c" }, "create-hyperlink url", "=>"],
+      [{ kind: "insert-image", anchor: "a=>b", path: "image.png" }, "insert-image anchor", "=>"],
+      [{ kind: "insert-image", anchor: "anchor", path: "image.png@10x20" }, "insert-image path", "@"],
+      [{ kind: "seal", anchor: "a=>b", path: "seal.png" }, "seal anchor", "=>"],
+      [{ kind: "seal", anchor: "anchor", path: "seal@20" }, "seal path", "@"],
+      [{ kind: "set-format", find: "a:b", props: {} }, "set-format find", ":"],
+      [{ kind: "set-format", find: "x", props: { "bold=on": "yes" } }, "set-format props.bold=on.key", "="],
+      [{ kind: "set-format", find: "x", props: { "bold,on": "yes" } }, "set-format props.bold,on.key", ","],
+      [{ kind: "set-format", find: "x", props: { bold: "yes,italic=on" } }, "set-format props.bold.value", ","],
+      [{ kind: "set-align", find: "a=b", alignment: "left" }, "set-align find", "="],
+      [{ kind: "insert-para", anchor: "a=>b", text: "tail=>value" }, "insert-para anchor", "=>"],
+      [{ kind: "insert-para-before", anchor: "a=>b", text: "tail=>value" }, "insert-para-before anchor", "=>"],
+      [{ kind: "add-table", anchor: "a=>b", rows: [["tail=>value"]] }, "add-table anchor", "=>"],
+      [{ kind: "clone-table", sourceTable: 0, anchor: "a=>b" }, "clone-table anchor", "=>"],
+      [{ kind: "set-para", find: "a=>b", key: "indent", value: "tail,value" }, "set-para find", "=>"],
+      [{ kind: "set-para", find: "x", key: "indent", value: "1,top:2" }, "set-para value", ","],
     ];
-    for (const [op, field] of badOps.map((op, index) => [op, ["anchor", "text", "url"][index]!] as const)) {
+    for (const [op, field, separator] of badOps) {
       let failure: unknown;
       try {
         opsToArgv([op]);
@@ -67,14 +90,57 @@ describe("opsToArgv", () => {
       }
       expect(failure).toBeInstanceOf(HwpEngineError);
       expect((failure as HwpEngineError).code).toBe("bad_request");
-      expect((failure as HwpEngineError).message).toContain(`create-hyperlink ${field}`);
+      expect((failure as HwpEngineError).message).toContain(field);
+      expect((failure as HwpEngineError).message).toContain(JSON.stringify(separator));
       expect((failure as HwpEngineError).message).toContain("upgrade the host");
       expect((failure as HwpEngineError).cause).toBeInstanceOf(Error);
+      expect(((failure as HwpEngineError).cause as Error).message).toContain(field);
     }
-    expect(JSON.parse(opsToJson(badOps))).toEqual([
-      { op: "create_hyperlink", anchor: "a=>b", display: "label", url: "https://a.b" },
-      { op: "create_hyperlink", anchor: "anchor", display: "a=>b", url: "https://a.b" },
-      { op: "create_hyperlink", anchor: "anchor", display: "label", url: "https://a.b/=>c" },
+    const jsonSafe = badOps
+      .map(([op]) => op)
+      .filter(op => op.kind !== "set-para" || !op.value.includes(","));
+    expect(() => opsToJson(jsonSafe)).not.toThrow();
+    const jsonLiteralOps: EditOp[] = [
+      { kind: "replace", find: "a=>b", replace: "c=>d" },
+      { kind: "create-field", anchor: "a=>b", name: "n=>m", value: "v=x" },
+      { kind: "create-hyperlink", anchor: "a=>b", text: "t=>u", url: "https://x/=>y" },
+      { kind: "set-field", name: "a=b", value: "c=d" },
+    ];
+    expect(JSON.parse(opsToJson(jsonLiteralOps))).toEqual([
+      { op: "replace", from: "a=>b", to: "c=>d" },
+      { op: "create_field", anchor: "a=>b", name: "n=>m", value: "v=x" },
+      { op: "create_hyperlink", anchor: "a=>b", display: "t=>u", url: "https://x/=>y" },
+      { op: "set_field", name: "a=b", value: "c=d" },
+    ]);
+  });
+
+  it("keeps split-once tail fields intact on the argv path", () => {
+    expect(opsToArgv([
+      { kind: "replace", find: "find", replace: "a=>b" },
+      { kind: "set-field", name: "field", value: "a=b" },
+      { kind: "set-meta", key: "title", value: "a=b" },
+      { kind: "create-field", anchor: "anchor", name: "field", value: "a=b" },
+      { kind: "set-cell", table: 0, row: 0, col: 0, value: "a=b" },
+      { kind: "insert-para", anchor: "anchor", text: "a=>b" },
+      { kind: "insert-image", anchor: "anchor", path: "dir=>image.png" },
+      { kind: "seal", anchor: "anchor", path: "dir=>seal.png" },
+      { kind: "add-table", anchor: "anchor", rows: [["a=>b"]] },
+      { kind: "set-format", find: "find", props: { font: "Noto=Sans:JP" } },
+      { kind: "set-align", find: "find", alignment: "left" },
+      { kind: "set-page", key: "orientation", value: "land:scape" },
+    ])).toEqual([
+      "--replace", "find=>a=>b",
+      "--set-field", "field=a=b",
+      "--set-meta", "title=a=b",
+      "--create-field", "anchor=>field=a=b",
+      "--set-cell", "0:0:0=a=b",
+      "--insert-para", "anchor=>a=>b",
+      "--insert-image", "anchor=>dir=>image.png",
+      "--seal", "anchor=>dir=>seal.png",
+      "--add-table", 'anchor=>[["a=>b"]]',
+      "--set-format", "find:font=Noto=Sans:JP",
+      "--set-align", "find=left",
+      "--set-page", "orientation:land:scape",
     ]);
   });
 
