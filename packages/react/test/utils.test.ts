@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { Segment } from "@hwp-editor/core";
-import { resolveSelection } from "@hwp-editor/core";
+import { COMPOSE_STYLE_ROWS, DOCUMENT_PROFILES, resolveSelection } from "@hwp-editor/core";
 import { sanitizeSvg } from "../src/sanitize.js";
 import { plainSegmentText } from "../src/text.js";
 import { parseMarkdownTable, findTables, tableAtRef } from "../src/tables.js";
 import { extractFieldSlots } from "../src/fields.js";
-import { buildDocumentSpec, bodyToBlocks } from "../src/presets.js";
+import { COMPOSE_PRESETS, buildDocumentSpec, bodyToBlocks } from "../src/presets.js";
 import { createT } from "../src/messages.js";
 import { nearestSegment, segmentBand } from "../src/geometry.js";
 import { makeEnvelope } from "./mock-engine.js";
@@ -157,6 +157,50 @@ describe("presets", () => {
     expect(section.blocks[1]).toMatchObject({ type: "paragraph", style: "heading" });
     expect(section.blocks[2]).toMatchObject({ type: "paragraph", style: "body" });
     expect(spec.document.styles?.["body"]?.font_family).toBe("함초롬바탕");
+  });
+
+  it("keeps the panel's heading and title rows at the values the table states (#35)", () => {
+    // `hwp compose` refuses a style the spec does not define, so the panel
+    // spells these rows out. The numbers are this repo's own - the engine's
+    // presets carry no title or heading style - so they are pinned as values
+    // here rather than only read back from the table, and a drift in either the
+    // table or the builder shows up.
+    const styles = buildDocumentSpec("report", { title: "제목", author: "", body: "# 머리\n\n본문" }).document.styles;
+    expect(styles?.["heading"]).toEqual({
+      font_family: "함초롬바탕", font_size_pt: 18, bold: true, spacing_before_pt: 13, spacing_after_pt: 6,
+    });
+    expect(styles?.["title"]).toEqual({
+      font_family: "함초롬바탕", font_size_pt: 21, bold: true, align: "center", spacing_after_pt: 18,
+    });
+    // The sizes are relative to the preset's body row: `official` is 12pt.
+    const official = buildDocumentSpec("official", { title: "제목", author: "", body: "본문" }).document.styles;
+    expect(official?.["heading"]?.font_size_pt).toBe(15);
+    expect(official?.["title"]?.font_size_pt).toBe(18);
+  });
+
+  it("derives every preset's heading and title rows from the profile tables (#35)", () => {
+    // The two tables, not the builder: `DOCUMENT_PROFILES` for the body row and
+    // `COMPOSE_STYLE_ROWS` for what the panel adds to it. A literal creeping
+    // back into `presets.ts` diverges from these and fails here, for every
+    // preset rather than the one a value happens to match.
+    for (const preset of COMPOSE_PRESETS) {
+      const profile = DOCUMENT_PROFILES[preset];
+      const styles = buildDocumentSpec(preset, { title: "제목", author: "", body: "# 머리\n\n본문" }).document.styles;
+      expect(styles?.["heading"]).toEqual({
+        font_family: profile.fontFamily,
+        font_size_pt: profile.bodySizePt + COMPOSE_STYLE_ROWS.heading.sizeDeltaPt,
+        bold: true,
+        spacing_before_pt: COMPOSE_STYLE_ROWS.heading.spacingBeforePt,
+        spacing_after_pt: COMPOSE_STYLE_ROWS.heading.spacingAfterPt,
+      });
+      expect(styles?.["title"]).toEqual({
+        font_family: profile.fontFamily,
+        font_size_pt: profile.bodySizePt + COMPOSE_STYLE_ROWS.title.sizeDeltaPt,
+        bold: true,
+        align: "center",
+        spacing_after_pt: COMPOSE_STYLE_ROWS.title.spacingAfterPt,
+      });
+    }
   });
 
   it("omits page numbers for presets without them", () => {

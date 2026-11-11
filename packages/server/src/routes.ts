@@ -31,6 +31,7 @@ import {
   MAX_IMAGE_ASSET_BYTES,
   MAX_IMAGE_ASSETS,
   MAX_IMAGE_ASSETS_TOTAL_BYTES,
+  sniffDocumentFormat,
   validateImageAssets,
   imageAssetsMatchOps,
   withCallerName,
@@ -190,28 +191,14 @@ function sha256Text(text: string): string {
 }
 
 /**
- * CFBF/OLE2 container signature — the first eight bytes of every HWP5 file.
- *
- * Deliberately a second copy of `cli-engine.ts`'s constant rather than a
- * shared export: the two answer different questions and must be free to
- * diverge (see the note on `sniffFormat`).
- */
-const CFBF_SIGNATURE = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
-
-/**
- * The OPC media type an HWPX package declares in its first zip entry.
- *
- * hwp-cli's own writer emits that entry first and STORED
- * (hwp-cli/crates/hwpx/src/write/mod.rs:331-332), and `hwp validate` warns
- * when the layout is violated (commands/validate.rs:100-103). The layout was
- * checked against 19 real HWPX files — 14 hwp-cli-produced and 5
- * Hancom-authored — and 19 of 19 passed.
- */
-const HWPX_MIMETYPE = "application/hwp+zip";
-
-/**
  * Decide whether these bytes are admissible as an HWP or HWPX document, from
  * the leading bytes alone. `null` means refuse.
+ *
+ * The byte rule itself is `sniffDocumentFormat` in `@hwp-editor/core`, the same
+ * reader the editor uses to tell the two formats apart, so an upload this gate
+ * admits and a document the editor classifies cannot disagree. What is decided
+ * here is the verdict: this call site refuses a header the reader does not
+ * recognize, where the editor falls back to the file name.
  *
  * Reads at most about ninety bytes and decompresses nothing, so it does not
  * itself widen the archive surface. Every archive-structure defence — entry
@@ -226,23 +213,8 @@ const HWPX_MIMETYPE = "application/hwp+zip";
  * producer, whose failure mode is a clear 400 rather than a silent one.
  */
 function sniffFormat(d: Uint8Array): ".hwp" | ".hwpx" | null {
-  if (d.length >= CFBF_SIGNATURE.length && CFBF_SIGNATURE.every((b, i) => d[i] === b)) {
-    return ".hwp";
-  }
-  // 30-byte local file header + an 8-byte `mimetype` name is the floor below
-  // which none of the reads below are in range.
-  if (d.length < 38) return null;
-  if (!(d[0] === 0x50 && d[1] === 0x4b && d[2] === 0x03 && d[3] === 0x04)) return null;
-  const view = new DataView(d.buffer, d.byteOffset, d.byteLength);
-  if (view.getUint16(8, true) !== 0) return null; // compression method must be STORED
-  const nameLen = view.getUint16(26, true);
-  const extraLen = view.getUint16(28, true);
-  if (nameLen !== 8) return null;
-  if (new TextDecoder().decode(d.subarray(30, 38)) !== "mimetype") return null;
-  const start = 30 + nameLen + extraLen;
-  const end = start + HWPX_MIMETYPE.length;
-  if (d.length < end) return null;
-  return new TextDecoder().decode(d.subarray(start, end)) === HWPX_MIMETYPE ? ".hwpx" : null;
+  const sniffed = sniffDocumentFormat(d);
+  return sniffed === "hwp" ? ".hwp" : sniffed === "hwpx" ? ".hwpx" : null;
 }
 
 /** Extract the uploaded document from a multipart form. */

@@ -62,6 +62,8 @@ export {
   segmentAtRef,
   segmentRef,
   segmentText,
+  shownSpan,
+  sniffDocumentFormat,
   validateProjectedMetadata,
 } from "./segments.js";
 export type {
@@ -163,6 +165,7 @@ export type {
   LoadComponentsOptions,
 } from "./components.js";
 export {
+  COMPOSE_STYLE_ROWS,
   DOCUMENT_PROFILE_NAMES,
   DOCUMENT_PROFILES,
   OFFICIAL_BODY_PROFILE,

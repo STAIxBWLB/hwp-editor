@@ -404,6 +404,34 @@ describe.each([["en", en], ["ko", ko]] as const)("Markdown run range selection (
     ]);
   });
 
+  it("does not warn about a bold piece the selection covers whole (#71)", async () => {
+    // A bold run a block control interrupts is published as `**굵게` and `나**`:
+    // each piece's range starts on the half of the marker pair it carries, so
+    // the characters the piece shows begin two scalars later. A selection of
+    // exactly what it shows covered the piece, and the panel must not claim the
+    // op takes characters the selection never reached.
+    const envelope: CatEnvelope = {
+      markdown: "**굵게|나**\n\n",
+      segments: [
+        { id: "para-one", indices: [0], start: 0, end: 8, kind: "para", section: 0, para: 0 },
+        { id: "bold-split", indices: [0, 0], start: 0, end: 4, kind: "run", section: 0, para: 0,
+          directChar: runChar(true), sourceChars: { start: 0, end: 2 } },
+        { id: "bold-split", indices: [0, 0], start: 5, end: 8, kind: "run", section: 0, para: 0,
+          directChar: runChar(true), sourceChars: { start: 9, end: 10 } },
+      ],
+    };
+    const engine = createMockEngine({ envelope });
+    render(<HwpEditor engine={engine} file={file} locale={locale} />);
+    const textarea = await selectFirstParagraph(messages);
+    await selectRange(textarea, 2, 4);
+    expect(await screen.findByText(messages["segment.rangeRunCount"]({ count: 1 }))).toBeTruthy();
+    expect(screen.queryByText(messages["segment.rangeWholeRunTargets"]({ count: 1 }))).toBeNull();
+    // One scalar further in stops inside what the piece shows, which is the
+    // widening the warning exists for.
+    await selectRange(textarea, 3, 4);
+    expect(await screen.findByText(messages["segment.rangeWholeRunTargets"]({ count: 1 }))).toBeTruthy();
+  });
+
   it("labels a widened target that still carries a window (t30-c3)", async () => {
     // A split run emits every piece with its own source window, because an op
     // carrying the id alone would format both pieces. So a piece the range was

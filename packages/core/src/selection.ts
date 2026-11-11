@@ -1,6 +1,6 @@
 import type { EditAddress, ParagraphAddress } from "./ops.js";
 import type { CatEnvelope, DocumentFormat, Segment, SegmentRef } from "./segments.js";
-import { markdownLength, runCoverage, segmentRef } from "./segments.js";
+import { markdownLength, runCoverage, segmentRef, shownSpan } from "./segments.js";
 import type { EditorAction, EditorState, MarkdownRangeSelection } from "./state.js";
 
 function segmentKey(segment: Segment): string {
@@ -323,7 +323,15 @@ function addressesForRuns(
         // The range is partial to this piece and the coverage widened it: the
         // whole piece goes with the op although the selection stopped inside
         // it, which is what a reader is warned about.
-        widened = run.start < range.start || run.end > range.end;
+        //
+        // Partial to what the piece SHOWS, not to its published bounds: an
+        // emphasis run's bounds include the marker pair it is wrapped in, so a
+        // selection of exactly the characters the piece shows starts after
+        // `run.start` and would otherwise be called partial - a warning about
+        // text the selection covered. A piece a block control split carries
+        // only one half of that pair, which is the same question.
+        const shown = shownSpan(envelope, run);
+        widened = range.start > shown.start || range.end < shown.end;
         // A split run publishes one id per piece, and an op that names only the
         // id formats the whole run (edit-ops-v1), so a covered piece names its
         // own span instead. The published span is what the resolver accepts,

@@ -532,25 +532,32 @@ export type DocumentFormat = "hwp" | "hwpx" | "unknown";
 /** CFBF/OLE2 container signature: the first eight bytes of every HWP5 file. */
 const CFBF_SIGNATURE = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1] as const;
 
-/** The OPC media type an HWPX package declares in its first zip entry. */
+/**
+ * The OPC media type an HWPX package declares in its first zip entry.
+ *
+ * hwp-cli's own writer emits that entry first and STORED
+ * (hwp-cli/crates/hwpx/src/write/mod.rs:331-332), and `hwp validate` warns when
+ * the layout is violated (commands/validate.rs:100-103). The layout was checked
+ * against 19 real HWPX files — 14 hwp-cli-produced and 5 Hancom-authored — and
+ * 19 of 19 passed.
+ */
 const HWPX_MIMETYPE = "application/hwp+zip";
 
 /**
  * Which format these bytes are, from the container header alone, or `null`
  * when the header names no container this rule knows.
  *
- * The two checks mirror the server's admission sniff (`routes.ts:sniffFormat`),
- * which has to decide whether to accept an upload at all, and they are
- * deliberately repeated rather than shared: an admission check must stay
- * strict, while this one answers a much smaller question - does the document
- * store its paragraph break? - and must not refuse a document the editor can
- * open. So an unrecognized header is `null` and lets the file name answer,
- * where the server would refuse.
+ * The one reader for that question. The server's upload gate
+ * (`routes.ts:sniffFormat`) refuses an upload whose header answers `null` and
+ * admits nothing else; `documentFormat` below lets the file name answer
+ * instead, because opening a document the editor can read matters more than a
+ * strict admission check. Strictness is the call site's, so the two byte checks
+ * exist once.
  *
  * An HWPX package declares its media type in a first, STORED `mimetype` entry;
  * a `PK\x03\x04` header without one is some other zip, not evidence either way.
  */
-function sniffDocumentFormat(data: Uint8Array | undefined): "hwp" | "hwpx" | null {
+export function sniffDocumentFormat(data: Uint8Array | undefined): "hwp" | "hwpx" | null {
   if (data === undefined) return null;
   if (data.length >= CFBF_SIGNATURE.length && CFBF_SIGNATURE.every((byte, at) => data[at] === byte)) {
     return "hwp";
@@ -794,6 +801,22 @@ function visibleSpan(run: Segment, fragment: string): { start: number; end: numb
   const closing = /\*+\s*$/u.exec(fragment);
   if (closing !== null) return { start: 0, end: chars.length - [...closing[0]].length };
   return whole;
+}
+
+/**
+ * The markdown scalars a piece shows, as absolute offsets.
+ *
+ * `runCoverage` asks this question to decide whether a window reaches a
+ * character of the piece at all; a caller asking whether the selection covered
+ * the piece needs the same span in the markdown's own coordinates. The marker
+ * pair an emphasis run is wrapped in, and the edge whitespace the pair sits
+ * inside, are not characters the piece shows: a selection of `굵게` inside
+ * `**굵게**` covers the piece whole although it starts after `run.start`, and a
+ * piece a block control split may carry only one half of that pair.
+ */
+export function shownSpan(envelope: CatEnvelope, run: Segment): { start: number; end: number } {
+  const shown = visibleSpan(run, segmentText(envelope, run));
+  return { start: run.start + shown.start, end: run.start + shown.end };
 }
 
 /**

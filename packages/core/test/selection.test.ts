@@ -465,6 +465,34 @@ describe("selection helpers", () => {
     expect(at(4, 6)).toEqual([{ address: { id: "split", chars: [11, 14] }, whole: true, widened: false }]);
   });
 
+  it("asks widening against what a piece shows, not against its marker pair (#71)", () => {
+    // The engine wraps a bold run in `**`, and a block control that interrupts
+    // it publishes the pieces as `**굵게` and `나**`: each fragment carries one
+    // half of the pair, and the marker scalars sit inside the piece's published
+    // range. A selection of the characters the piece shows therefore starts
+    // after `run.start`, and reading that as "partial" warned about a whole run
+    // the selection had already covered.
+    const plain = { bold: false, italic: false, size_pt: 10, color: "#000000", faces: Array(7).fill("A"), face_ids: Array(7).fill(0) };
+    const bold = { ...plain, bold: true };
+    const p: Segment = { id: "p", indices: [0], start: 0, end: 8, kind: "para", section: 0, para: 0 };
+    const first: Segment = { id: "bold-split", indices: [0, 0], start: 0, end: 4, kind: "run", section: 0, para: 0,
+      directChar: bold, sourceChars: { start: 0, end: 2 } };
+    const second: Segment = { id: "bold-split", indices: [0, 0], start: 5, end: 8, kind: "run", section: 0, para: 0,
+      directChar: bold, sourceChars: { start: 9, end: 10 } };
+    const envelope: CatEnvelope = { markdown: "**굵게|나**", segments: [p, first, second] };
+    const at = (start: number, end: number) =>
+      formatTargets(envelope, [p], { paragraph: { section: 0, para: 0, id: "p" }, start, end }, "hwpx");
+    // What each piece shows sits inside its fragment: `굵게` at 2..4 and `나` at
+    // 5..6. Neither can be read back - each carries half a marker pair - so the
+    // coverage is the whole piece, and a selection that covers the piece added
+    // nothing to it.
+    expect(at(2, 4)).toEqual([{ address: { id: "bold-split", chars: [0, 2] }, whole: true, widened: false }]);
+    expect(at(5, 6)).toEqual([{ address: { id: "bold-split", chars: [9, 10] }, whole: true, widened: false }]);
+    // A selection that stops inside what the piece shows is the case the
+    // warning exists for, marker or no marker.
+    expect(at(3, 4)).toEqual([{ address: { id: "bold-split", chars: [0, 2] }, whole: true, widened: true }]);
+  });
+
   it("names no target for a piece a drag touches only through its marker", () => {
     // The AC2 fixture, addressed directly: a plain run, a bold " / " and an
     // italic run, with the spans ahwp 1.6.1 publishes for them. A drag that

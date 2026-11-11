@@ -138,3 +138,19 @@ export const DOCUMENT_PROFILES: Readonly<Record<ProfileName, DocumentProfile>> =
   gaejosik: { fontFamily: MALGUN_GOTHIC, bodySizePt: 15, lineHeightPercent: 160, pageNumber: true },
   press: { fontFamily: HCR_BATANG, bodySizePt: 14, lineHeightPercent: 160, pageNumber: true },
 });
+
+/**
+ * The heading and title rows the compose panel writes, relative to a preset's
+ * body row.
+ *
+ * `hwp compose` refuses a style the spec does not define and starts every style
+ * from its own default paragraph shape, so the panel has to spell them out.
+ * They are this repo's own numbers rather than a preset's: `hwp new --preset
+ * <name>` writes only 바탕글 and the six 개요 rows, so no drift test against the
+ * binary can cover a title or heading style. They live here so the panel and
+ * every other composer of a spec read one copy.
+ */
+export const COMPOSE_STYLE_ROWS = deepFreeze({
+  heading: { sizeDeltaPt: 3, spacingBeforePt: 13, spacingAfterPt: 6 },
+  title: { sizeDeltaPt: 6, spacingAfterPt: 18 },
+} as const);
