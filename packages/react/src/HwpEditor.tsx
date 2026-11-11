@@ -30,7 +30,7 @@ import { HwpEditorContext } from "./context.js";
 import type { HwpEditorContextValue, StylesStatus } from "./context.js";
 import { PageCanvas } from "./PageCanvas.js";
 import { SegmentInspector } from "./SegmentInspector.js";
-import { StylesPanel } from "./StylesPanel.js";
+import { PRESET_LABEL, StylesPanel } from "./StylesPanel.js";
 import { TableGrid } from "./TableGrid.js";
 import { FieldsPanel } from "./FieldsPanel.js";
 import { TemplatePanel } from "./TemplatePanel.js";
@@ -43,6 +43,7 @@ import { componentsSupportReason } from "./ComponentsPanel.js";
 import type { InsertPosition } from "./ComponentsPanel.js";
 import { componentFailure, insertionFailure, insertionPreflight } from "./components-support.js";
 import { isTableSlice } from "./tables.js";
+import { pendingKindKey, pendingTargetLabel } from "./pending-ops.js";
 import { ErrorLine } from "./ErrorLine.js";
 import { isUnmatchedReplaceRefusal, toEditorError } from "./errors.js";
 import { createT } from "./messages.js";
@@ -1200,16 +1201,10 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
             <ol className="hwped-pending-list" aria-label={t("toolbar.pendingList")}>
               {state.pendingOps.map((op, index) => (
                 <li key={index}>
-                  {op.kind}: {"address" in op
-                    ? JSON.stringify(op.address)
-                    : "find" in op ? op.find : "anchor" in op ? op.anchor : "key" in op ? op.key
-                      // A named-style op names the style it rewrites; without
-                      // this branch an update would read "update-style:
-                      // update-style", which says nothing the kind already did.
-                      // It addresses a style this document defines by its own
-                      // header id (a styles-v1 name can be empty or shared),
-                      // so the row is resolved back for reading.
-                      : "style" in op ? styleLabel(op.style) : "name" in op ? op.name : op.kind}
+                  {t(pendingKindKey(op.kind))}: {pendingTargetLabel(op, t, {
+                    style: styleLabel,
+                    preset: (preset) => t(PRESET_LABEL[preset]),
+                  })}
                   {" "}<button type="button" className="hwped-btn" disabled={state.status === "applying"}
                     onClick={() => store.dispatch({ type: "dequeueOp", index })}>{t("toolbar.removePending", { index: index + 1 })}</button>
                 </li>

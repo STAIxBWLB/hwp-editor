@@ -54,7 +54,8 @@ const ALIGN_LABEL: Record<ParagraphAlignment, MessageKey> = {
   center: "segment.alignCenter",
   distribute: "segment.alignDistribute",
 };
-const PRESET_LABEL: Record<StyleTablePreset, MessageKey> = {
+/** Exported so the pending list labels a queued preset op from the same table. */
+export const PRESET_LABEL: Record<StyleTablePreset, MessageKey> = {
   official: "presets.official",
   report: "presets.report",
   plan: "presets.plan",

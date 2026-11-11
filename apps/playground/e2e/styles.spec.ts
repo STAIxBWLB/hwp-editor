@@ -190,7 +190,7 @@ test("AC6: a body-style size change moves every body paragraph and leaves direct
  * reports itself unapplied — which the editor shows as a notice, not a
  * failure.
  */
-test("AC2: a table-less document keeps the preset's style update and says what it could not style", async ({ page }) => {
+test("t12-a2: a table-less document keeps the preset's style update and says what it could not style", async ({ page }) => {
   const edits = await recordEdits(page);
   const loadedStyles = page.waitForResponse((response) => response.url().endsWith("/styles"));
   await openStylesDemo(page, "styles-plain-demo.hwpx");
