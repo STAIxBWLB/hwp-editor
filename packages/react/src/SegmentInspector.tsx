@@ -193,7 +193,9 @@ export function SegmentInspector(): JSX.Element {
         </div>
         <p className="hwped-hint" role="status">{t("segment.selectedCount", { count: selected.length })}</p>
       </div>
-      {(segment === undefined || paragraph === undefined || selection === null) ? (
+      {selection !== null && segment !== undefined && paragraph === undefined ? (
+        <p className="hwped-hint" role="status">{t("segment.noParagraphSelection")}</p>
+      ) : (segment === undefined || paragraph === undefined || selection === null) ? (
         <p className="hwped-hint">{t("segment.hint")}</p>
       ) : <>
       {addressedUnavailable && <p className="hwped-hint" role="status">{t("segment.addressedUnavailable")}</p>}

@@ -21,13 +21,32 @@ const env: CatEnvelope = { markdown: "x".repeat(29), segments: [
 ] };
 
 describe("selection helpers", () => {
-  it("normalizes nested content to its immediate top paragraph and addresses it", () => {
+  it("maps nested content to the paragraph that holds its text, never to the table's host", () => {
     const table = env.segments.find((s) => s.id === "tbl")!;
-    expect(paragraphForSegment(env, table)?.id).toBe("p1");
+    const cell = env.segments.find((s) => s.id === "cell")!;
+    // The paragraph that anchors the table control is not the table's text: a
+    // delete-para there removes the table, so a table has no paragraph target.
+    expect(paragraphForSegment(env, table)).toBeUndefined();
+    // A cell's text lives in the paragraph inside it, and that is what a
+    // paragraph op may address.
+    expect(paragraphForSegment(env, cell)?.id).toBe("inner-para");
     expect(paragraphAddress(env.segments[0]!)).toEqual({ id: "p0" });
     expect(formatAddresses(env, [env.segments[0]!, env.segments[3]!])).toEqual([{ id: "r0" }, { id: "r0-other-style" }, { id: "r1" }]);
     expect(formatAddresses(env, [env.segments[1]!])).toEqual([{ id: "r0" }]);
     expect(paragraphForSegment(env, env.segments.find((s) => s.id === "inner-para")!)?.id).toBe("inner-para");
+    // A cell whose paragraphs the envelope does not carry cannot be descended
+    // into, and its host is not a substitute.
+    const emptyCell: Segment = { id: "empty-cell", indices: [1, 0, 2], start: 10, end: 15, kind: "cell", section: 0, para: 1 };
+    expect(paragraphForSegment({ markdown: env.markdown, segments: [...env.segments, emptyCell] }, emptyCell)).toBeUndefined();
+    // A legacy projection carries no nesting path, so neither a table nor a
+    // cell resolves, rather than falling back to the enclosing paragraph.
+    const legacyHost: CatEnvelope = { markdown: "x", segments: [
+      { start: 0, end: 1, kind: "para", section: 0, para: 0 },
+      { start: 0, end: 1, kind: "table", section: 0, para: 0 },
+      { start: 0, end: 1, kind: "cell", section: 0, para: 0 },
+    ] };
+    expect(paragraphForSegment(legacyHost, legacyHost.segments[1]!)).toBeUndefined();
+    expect(paragraphForSegment(legacyHost, legacyHost.segments[2]!)).toBeUndefined();
   });
 
   it("toggles and extends ranges in paragraph reading order", () => {
@@ -73,6 +92,19 @@ describe("selection helpers", () => {
     expect(formatAddresses(legacy, [legacy.segments[0]!])).toEqual([]);
     expect(formatAddresses({ markdown: "x", segments: [{ start: 0, end: 1, kind: "para", section: 0, para: 0 }] },
       [{ start: 0, end: 1, kind: "para", section: 0, para: 0 }])).toEqual([{ at: { section: 0, paragraph: 0, run: 0 } }]);
+  });
+
+  it("addresses a legacy range run by its position in the paragraph, not in the overlap", () => {
+    // Three id-less runs; only the third overlaps the range, so its index in
+    // the filtered list is 0 while its position in the paragraph is 2.
+    const legacy: CatEnvelope = { markdown: "abcdefghij", segments: [
+      { start: 0, end: 9, kind: "para", section: 0, para: 0 },
+      { start: 0, end: 3, kind: "run", section: 0, para: 0 },
+      { start: 3, end: 6, kind: "run", section: 0, para: 0 },
+      { start: 6, end: 9, kind: "run", section: 0, para: 0 },
+    ] };
+    expect(formatAddresses(legacy, [legacy.segments[0]!], { paragraph: { section: 0, para: 0 }, start: 6, end: 9 }))
+      .toEqual([{ at: { section: 0, paragraph: 0, run: 2 } }]);
   });
 
   it("addresses only overlapping whole runs for one valid Markdown scalar range", () => {

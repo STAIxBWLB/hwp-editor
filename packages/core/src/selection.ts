@@ -19,17 +19,44 @@ function uniqueSegments(segments: Segment[]): Segment[] {
   });
 }
 
+/**
+ * The paragraph an op must address for a selected segment.
+ *
+ * A paragraph is itself; nested content resolves to the paragraph that
+ * DIRECTLY holds it, never to a higher one. The distinction is destructive: a
+ * table and its cells sit inside a host paragraph (`[p, control, cell, …]`),
+ * and `delete-para` on that host paragraph deletes the table with it, so
+ * neither a table nor a cell may resolve to the host.
+ *
+ * A cell maps to the first paragraph inside it, which is where its text lives
+ * and what align, spacing and format may target. A table, and a cell whose
+ * paragraphs the envelope does not carry (an empty cell), map to nothing: the
+ * caller disables the paragraph edits and says why, because the engine refuses
+ * an address it cannot descend into and a guessed ancestor is how a refused
+ * edit becomes a deleted table.
+ */
 export function paragraphForSegment(envelope: CatEnvelope, segment: Segment): Segment | undefined {
   if (segment.kind === "para") return segment;
-  if (segment.indices === undefined) {
+  if (segment.kind === "table") return undefined;
+  const indices = segment.indices;
+  if (indices === undefined) {
+    // A legacy projection carries no nesting path, so a cell cannot be
+    // descended into and its host paragraph is not its text.
+    if (segment.kind === "cell") return undefined;
     return envelope.segments.find((candidate) => candidate.kind === "para" && candidate.indices === undefined &&
       candidate.section === segment.section && candidate.para === segment.para &&
       candidate.start <= segment.start && candidate.end >= segment.end);
   }
-  return envelope.segments.filter((candidate) => candidate.kind === "para" && candidate.section === segment.section &&
-    candidate.indices !== undefined && candidate.indices.length < segment.indices!.length &&
-    candidate.indices.every((index, at) => index === segment.indices![at]))
-    .sort((a, b) => (b.indices?.length ?? 0) - (a.indices?.length ?? 0))[0];
+  if (segment.kind === "cell") {
+    return envelope.segments.find((candidate) => candidate.kind === "para" &&
+      candidate.section === segment.section && candidate.indices !== undefined &&
+      candidate.indices.length === indices.length + 1 &&
+      indices.every((index, at) => candidate.indices![at] === index));
+  }
+  return envelope.segments.find((candidate) => candidate.kind === "para" &&
+    candidate.section === segment.section && candidate.indices !== undefined &&
+    candidate.indices.length === indices.length - 1 &&
+    candidate.indices.every((index, at) => index === indices[at]));
 }
 
 export function selectedParagraphs(envelope: CatEnvelope, state: EditorState): Segment[] {
@@ -87,7 +114,7 @@ export function formatAddresses(
       ? paragraph.id === range.paragraph.id
       : paragraph.section === range.paragraph.section && paragraph.para === range.paragraph.para;
     if (!matches || range.start < paragraph.start || range.end > paragraph.end) return [];
-    return addressesForRuns(paragraphRuns(envelope, paragraph, range), paragraph, false);
+    return addressesForRuns(envelope, paragraphRuns(envelope, paragraph, range), paragraph, false);
   }
   const out: EditAddress[] = [];
   const targets = new Set<string>();
@@ -101,7 +128,7 @@ export function formatAddresses(
     }
     if (selected.kind !== "para") continue;
     const paragraph = selected;
-    for (const address of addressesForRuns(paragraphRuns(envelope, paragraph), paragraph, true)) {
+    for (const address of addressesForRuns(envelope, paragraphRuns(envelope, paragraph), paragraph, true)) {
       const key = addressKey(address);
       if (targets.has(key)) continue;
       targets.add(key);
@@ -128,16 +155,21 @@ function addressForSelectedRun(envelope: CatEnvelope, run: Segment): EditAddress
   return undefined;
 }
 
-function addressesForRuns(runs: Segment[], paragraph: Segment, allowLegacyFallback: boolean): EditAddress[] {
+function addressesForRuns(envelope: CatEnvelope, runs: Segment[], paragraph: Segment, allowLegacyFallback: boolean): EditAddress[] {
   const out: EditAddress[] = [];
   const targets = new Set<string>();
   const legacyProjection = paragraph.indices === undefined && runs.every((run) => run.indices === undefined);
-  for (const [index, run] of runs.entries()) {
+  // A legacy paragraph carries no run indices, so its runs are addressed by
+  // position; `runs` may be only the subset a range overlaps, and the index
+  // inside that subset is not the run's position in the paragraph.
+  const siblings = legacyProjection ? paragraphRuns(envelope, paragraph) : [];
+  for (const run of runs) {
     let address: EditAddress | undefined;
     if (run.id !== undefined) {
       address = { id: run.id };
     } else if (legacyProjection) {
-      address = { at: { section: run.section, paragraph: run.para, run: index } };
+      const ordinal = siblings.indexOf(run);
+      address = ordinal < 0 ? undefined : { at: { section: run.section, paragraph: run.para, run: ordinal } };
     } else if (paragraph.indices?.length === 1 && run.indices?.length === 2) {
       address = { at: { section: run.section, paragraph: run.para, run: run.indices[1]! } };
     }

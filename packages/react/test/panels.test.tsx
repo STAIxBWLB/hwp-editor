@@ -19,10 +19,11 @@
 
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import type { CatEnvelope, DocumentHandle, EditOp } from "@hwp-editor/core";
+import type { CatEnvelope, DocumentHandle, EditOp, PageImage, Segment } from "@hwp-editor/core";
 import tableFixture from "../../core/test/fixtures/cat-segments-table.json";
 import { base64, createTauriEngine, parseCatEnvelope } from "@hwp-editor/core";
 import { targetsSegment } from "../src/PageCanvas.js";
+import { plainSegmentText } from "../src/text.js";
 import { HwpEditor } from "../src/HwpEditor.js";
 import { en, ko } from "../src/messages.js";
 import { clientYForPara, createMockEngine, makeEnvelope, makePage } from "./mock-engine.js";
@@ -124,6 +125,37 @@ function clickBtn(key: keyof typeof en): void {
   const label = en[key];
   if (typeof label !== "string") throw new Error(`${key} is not a plain label`);
   fireEvent.click(screen.getByRole("button", { name: label }));
+}
+
+/**
+ * A page whose layout carries one row, as the CLI render does. A click inside
+ * that box hit-tests to the row's own segment by id, which is the only way a
+ * cell selection is reachable: the paragraph-only fallback never yields one.
+ */
+function pageWithRow(segment: Segment): PageImage {
+  return {
+    ...makePage(),
+    layout: {
+      width_pt: 600,
+      height_pt: 800,
+      truncated: false,
+      rows: [{
+        id: segment.id!,
+        kind: "cell",
+        box: { x0: 100, y0: 100, x1: 300, y1: 140 },
+        source_chars: { start: segment.start, end: segment.end },
+      }],
+    },
+  };
+}
+
+/** Click the middle of {@link pageWithRow}'s box, in page pixels. */
+function clickRow(): void {
+  // 200/600 and 120/800 of the 595x842 page the jsdom stub reports.
+  fireEvent.click(screen.getByRole("button", { name: en["page.label"]({ page: 1 }) }), {
+    clientX: (200 / 600) * 595,
+    clientY: (120 / 800) * 842,
+  });
 }
 
 const tableEnvelope = parseCatEnvelope(JSON.stringify(tableFixture));
@@ -303,6 +335,50 @@ describe("SegmentInspector op emission (TEST-03)", () => {
     expect(await applyOps(engine, 1)).toEqual([
       { kind: "set-format", address: { at: { section: 0, paragraph: 0, run: 0 } }, props: { size: "12" } },
     ]);
+  });
+
+  it("deletes a selected cell's own paragraph, never the paragraph that anchors the table", async () => {
+    const envelope = parseCatEnvelope(JSON.stringify(tableFixture));
+    const cell = envelope.segments.find((s) => s.kind === "cell" && s.indices?.length === 3)!;
+    const inner = envelope.segments.find((s) => s.kind === "para" && s.indices?.length === 4 &&
+      cell.indices!.every((index, at) => s.indices![at] === index))!;
+    const host = envelope.segments.find((s) => s.kind === "para" && s.indices?.length === 1 &&
+      s.indices![0] === cell.indices![0])!;
+    const engine = createMockEngine({ envelope });
+    engine.render = async () => [pageWithRow(cell)];
+    render(<HwpEditor engine={engine} file={file} />);
+    await screen.findByRole("button", { name: en["page.label"]({ page: 1 }) });
+    clickRow();
+
+    // The cell's own paragraph is the surface, not the table slice that
+    // occupies the host paragraph.
+    const panel = await screen.findByRole("region", { name: en["segment.panelAria"] });
+    expect(panel.querySelector(".hwped-quote")?.textContent).toBe(
+      plainSegmentText(envelope.markdown.slice(inner.start, inner.end)),
+    );
+    clickBtn("segment.deletePara");
+    expect(await applyOps(engine, 1)).toEqual([{ kind: "delete-para", address: { id: inner.id } }]);
+    expect(engine.calls.edit[0]!.ops[0]).not.toEqual({ kind: "delete-para", address: { id: host.id } });
+  });
+
+  it("turns paragraph edits off when a selected cell carries no paragraph", async () => {
+    const envelope = parseCatEnvelope(JSON.stringify(tableFixture));
+    const cell = envelope.segments.filter((s) => s.kind === "cell").at(-1)!;
+    // An empty cell's paragraph is not in the read, so nothing inside the cell
+    // is addressable; the host paragraph is not a substitute for it.
+    envelope.segments = envelope.segments.filter((s) => !(s.indices !== undefined &&
+      s.indices.length > cell.indices!.length &&
+      cell.indices!.every((index, at) => s.indices![at] === index)));
+    const engine = createMockEngine({ envelope });
+    engine.render = async () => [pageWithRow(cell)];
+    render(<HwpEditor engine={engine} file={file} />);
+    await screen.findByRole("button", { name: en["page.label"]({ page: 1 }) });
+    clickRow();
+
+    expect(await screen.findByText(en["segment.noParagraphSelection"])).toBeTruthy();
+    expect(screen.queryByRole("button", { name: en["segment.deletePara"] })).toBeNull();
+    expect(screen.getByLabelText(en["toolbar.pendingEdits"]({ count: 0 }), { exact: true })).toBeTruthy();
+    expect(engine.calls.edit).toHaveLength(0);
   });
 
   it("queues set-format with all three props when all three are set", async () => {

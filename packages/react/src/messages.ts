@@ -136,6 +136,7 @@ export const en = {
   "segment.selectedCount": (p: { count: number }): string =>
     p.count === 1 ? "1 paragraph selected" : `${p.count} paragraphs selected`,
   "segment.multiTextEditHint": "Text replacement, insertion, and deletion target one paragraph. Select one paragraph to use these controls.",
+  "segment.noParagraphSelection": "This selection is a table or a cell without a paragraph of its own, so paragraph edits are off: deleting its host paragraph would remove the table. Pick a paragraph from the list above.",
   "segment.selectSimilar": "Select paragraphs with matching direct formatting",
   "segment.similarChar": "Matching character format",
   "segment.similarPara": "Matching paragraph format",
@@ -443,6 +444,7 @@ export const ko: MessageTable = {
   "segment.rangeClear": "문단 전체 사용",
   "segment.selectedCount": (p) => `선택한 문단 ${p.count}개`,
   "segment.multiTextEditHint": "텍스트 교체, 삽입, 삭제는 한 문단을 대상으로 합니다. 이 기능을 사용하려면 문단 하나를 선택하세요.",
+  "segment.noParagraphSelection": "이 선택은 표이거나 자체 문단이 없는 셀이라 문단 편집을 사용할 수 없습니다. 표를 감싼 문단을 삭제하면 표가 함께 사라지기 때문입니다. 위 목록에서 문단을 선택하세요.",
   "segment.selectSimilar": "직접 서식이 같은 문단 선택",
   "segment.similarChar": "같은 글자 서식",
   "segment.similarPara": "같은 문단 서식",
