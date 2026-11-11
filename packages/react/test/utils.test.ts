@@ -159,6 +159,24 @@ describe("presets", () => {
     expect(spec.document.styles?.["body"]?.font_family).toBe("함초롬바탕");
   });
 
+  it("writes the heading and title rows profiles.ts states (#35)", () => {
+    // `hwp compose` refuses a style the spec does not define, so the panel
+    // spells these rows out. The numbers are `COMPOSE_STYLE_ROWS` in
+    // `@hwp-editor/core`; they are pinned here as values rather than read back
+    // from the table the builder uses, so a drift in either side shows up.
+    const styles = buildDocumentSpec("report", { title: "제목", author: "", body: "# 머리\n\n본문" }).document.styles;
+    expect(styles?.["heading"]).toEqual({
+      font_family: "함초롬바탕", font_size_pt: 18, bold: true, spacing_before_pt: 13, spacing_after_pt: 6,
+    });
+    expect(styles?.["title"]).toEqual({
+      font_family: "함초롬바탕", font_size_pt: 21, bold: true, align: "center", spacing_after_pt: 18,
+    });
+    // The sizes are relative to the preset's body row: `official` is 12pt.
+    const official = buildDocumentSpec("official", { title: "제목", author: "", body: "본문" }).document.styles;
+    expect(official?.["heading"]?.font_size_pt).toBe(15);
+    expect(official?.["title"]?.font_size_pt).toBe(18);
+  });
+
   it("omits page numbers for presets without them", () => {
     const spec = buildDocumentSpec("official", { title: "", author: "", body: "내용" });
     expect(spec.document.sections[0]?.page_number).toBeUndefined();

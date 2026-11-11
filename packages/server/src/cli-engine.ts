@@ -36,6 +36,7 @@ import {
   parseCatEnvelope,
   parseStyleTable,
   protectedReasonFromDiagnostics,
+  sniffDocumentFormat,
   stylesVersionSupported,
   type Capabilities,
   type CatEnvelope,
@@ -119,9 +120,6 @@ export const HANDSHAKE_FLAGS: readonly string[] = [
   "--verify",
   "--allow-partial",
 ];
-
-/** Hancom binary .hwp is a CFBF (OLE2) container; .hwpx is a zip. */
-const CFBF_SIGNATURE = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
 
 
 /**
@@ -543,13 +541,17 @@ function cacheKey(scope: string | undefined, data: Uint8Array): string {
     .digest("hex");
 }
 
+/**
+ * The extension to give an output file: the one the name carries, or - for a
+ * name that carries none - the one the container says, read by the same
+ * `sniffDocumentFormat` the upload gate and the editor use. A header that
+ * names no container gets `.hwpx`, the engine's own output format, rather than
+ * a refusal: this decides a file name, not an admission.
+ */
 function sniffExtension(document: DocumentHandle): ".hwp" | ".hwpx" {
   const ext = path.extname(document.name).toLowerCase();
   if (ext === ".hwp" || ext === ".hwpx") return ext;
-  const isCfbf =
-    document.data.length >= CFBF_SIGNATURE.length &&
-    CFBF_SIGNATURE.every((byte, i) => document.data[i] === byte);
-  return isCfbf ? ".hwp" : ".hwpx";
+  return sniffDocumentFormat(document.data) === "hwp" ? ".hwp" : ".hwpx";
 }
 
 /** Basename + validated extension, so a hostile name can never escape tmp. */

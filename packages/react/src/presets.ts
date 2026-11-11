@@ -1,13 +1,14 @@
 /**
  * Compose-panel presets → DocumentSpec v2.
  *
- * The profile values are not here: `DOCUMENT_PROFILES` in `@hwp-editor/core`
- * is the one copy (issue #54 Decision 2026-11-10), read here and by the
- * component library, with a binary-gated test that diffs each engine preset
- * against `hwp new --preset <name>`.
+ * The numbers are not here: `DOCUMENT_PROFILES` (each preset's body row) and
+ * `COMPOSE_STYLE_ROWS` (the heading and title rows this panel adds) in
+ * `@hwp-editor/core` are the one copy (issue #54 Decision 2026-11-10), read
+ * here and by the component library, with a binary-gated test that diffs each
+ * engine preset's body row against `hwp new --preset <name>`.
  */
 
-import { DOCUMENT_PROFILE_NAMES, DOCUMENT_PROFILES } from "@hwp-editor/core";
+import { COMPOSE_STYLE_ROWS, DOCUMENT_PROFILE_NAMES, DOCUMENT_PROFILES } from "@hwp-editor/core";
 import type { DocumentProfile, ProfileName } from "@hwp-editor/core";
 import type { DocumentSpecV2 } from "@hwp-editor/core";
 
@@ -108,17 +109,17 @@ export function buildDocumentSpec(
         },
         heading: {
           font_family: profile.fontFamily,
-          font_size_pt: profile.bodySizePt + 3,
+          font_size_pt: profile.bodySizePt + COMPOSE_STYLE_ROWS.heading.sizeDeltaPt,
           bold: true,
-          spacing_before_pt: 13,
-          spacing_after_pt: 6,
+          spacing_before_pt: COMPOSE_STYLE_ROWS.heading.spacingBeforePt,
+          spacing_after_pt: COMPOSE_STYLE_ROWS.heading.spacingAfterPt,
         },
         title: {
           font_family: profile.fontFamily,
-          font_size_pt: profile.bodySizePt + 6,
+          font_size_pt: profile.bodySizePt + COMPOSE_STYLE_ROWS.title.sizeDeltaPt,
           bold: true,
           align: "center",
-          spacing_after_pt: 18,
+          spacing_after_pt: COMPOSE_STYLE_ROWS.title.spacingAfterPt,
         },
       },
       sections: [section],
