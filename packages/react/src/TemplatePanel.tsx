@@ -111,7 +111,7 @@ function listFieldInput(
 }
 
 export function TemplatePanel(): JSX.Element {
-  const { engine, state, store, capabilities, editable, replaceDocument, onError, t } = useHwpEditorContext();
+  const { engine, state, store, capabilities, editable, replaceDocument, onError, t, loadEpoch } = useHwpEditorContext();
   const document = state.document;
   const open = document !== null;
   const status = templateMethodStatus(engine, capabilities, "slots");
@@ -128,7 +128,7 @@ export function TemplatePanel(): JSX.Element {
   const [values, setValues] = useState<Record<string, string>>({});
   const [spec, setSpec] = useState<TemplateSpecV1 | null>(null);
   const [specValues, setSpecValues] = useState<Record<string, unknown>>({});
-  const [preview, setPreview] = useState<{ source: DocumentHandle; document: DocumentHandle; pages: PageImage[]; kind: "fill" | "spec"; generation: number } | null>(null);
+  const [preview, setPreview] = useState<{ source: DocumentHandle; document: DocumentHandle; pages: PageImage[]; kind: "fill" | "spec"; generation: number; epoch: number } | null>(null);
   const [previewBusy, setBusy] = useState(false);
   const busy = previewBusy || state.status === "applying";
   const [error, setError] = useState<ReturnType<typeof toEditorError> | null>(null);
@@ -243,11 +243,15 @@ export function TemplatePanel(): JSX.Element {
   const previewFill = async (): Promise<void> => {
     if (document === null || engine.fill === undefined || !fillStatus.supported) return;
     const generation = ++previewRequest.current;
+    // The load generation is captured with the request: a preview the host
+    // switched files during is stale at Apply, and the store still holds the
+    // old document while the new one loads, so identity alone would not say so.
+    const epoch = loadEpoch();
     setBusy(true); setError(null); setPreview(null);
     try {
       const result = await engine.fill(document, values);
       const pages = await engine.render(result.document, { format: "svg" });
-      if (previewRequest.current === generation && store.getState().document === document) setPreview({ source: document, document: result.document, pages, kind: "fill", generation });
+      if (previewRequest.current === generation && store.getState().document === document) setPreview({ source: document, document: result.document, pages, kind: "fill", generation, epoch });
     } catch (e) {
       if (previewRequest.current === generation) { setError(toEditorError(e)); onError?.(e); }
     } finally { if (previewRequest.current === generation) setBusy(false); }
@@ -256,12 +260,13 @@ export function TemplatePanel(): JSX.Element {
   const previewSpec = async (): Promise<void> => {
     if (document === null || spec === null || engine.template === undefined || !templateStatus.supported) return;
     const generation = ++previewRequest.current;
+    const epoch = loadEpoch();
     setBusy(true); setError(null); setPreview(null);
     try {
       const data: TemplateDataV1 = { version: "1.0", values: { ...specValues } };
       const result = await engine.template(spec, data, document.name);
       const pages = await engine.render(result.document, { format: "svg" });
-      if (previewRequest.current === generation && store.getState().document === document) setPreview({ source: document, document: result.document, pages, kind: "spec", generation });
+      if (previewRequest.current === generation && store.getState().document === document) setPreview({ source: document, document: result.document, pages, kind: "spec", generation, epoch });
     } catch (e) {
       if (previewRequest.current === generation) { setError(toEditorError(e)); onError?.(e); }
     } finally { if (previewRequest.current === generation) setBusy(false); }
@@ -272,6 +277,13 @@ export function TemplatePanel(): JSX.Element {
     const result = preview;
     if (store.getState().document !== result.source || previewRequest.current !== result.generation) {
       setPreview(null);
+      return;
+    }
+    // A load the host started after the preview was requested makes the
+    // previewed document stale even though the store has not caught up yet.
+    if (loadEpoch() !== result.epoch) {
+      setPreview(null);
+      setError(toEditorError(new Error(t("error.stalePreview"))));
       return;
     }
     setBusy(true); setError(null);

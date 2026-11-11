@@ -767,6 +767,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     }, [engine, store]);
 
     const openCompose = useCallback(() => setComposing(true), []);
+    const loadEpoch = useCallback(() => loadGeneration.current, []);
 
     useImperativeHandle(
       ref,
@@ -788,6 +789,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         queueImage,
         refresh,
         openCompose,
+        loadEpoch,
         t,
         // Always defined now, and stable: a widening, since every consumer
         // already calls it as `onError?.(e)` and it no-ops when the host
@@ -807,6 +809,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         queueImage,
         refresh,
         openCompose,
+        loadEpoch,
         t,
       ],
     );

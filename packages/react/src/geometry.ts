@@ -1,7 +1,7 @@
 /** Exact layout rows take precedence; older hosts keep the linear flow model. */
 
 import type { CatEnvelope, PageImage, Segment } from "@hwp-editor/core";
-import { segmentAtOffset, segmentAtRef, markdownLength } from "@hwp-editor/core";
+import { segmentAtOffset, markdownLength } from "@hwp-editor/core";
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -78,6 +78,29 @@ export function segmentBand(
 }
 
 
+/**
+ * id to segment for one envelope, built once.
+ *
+ * A click walks every layout row on the page, so resolving a row's id with a
+ * linear scan of the envelope makes one click O(rows x segments). The envelope
+ * object is the cache key because every read() replaces it: a stale index
+ * cannot outlive the document it describes. The first segment wins, which is
+ * what the scan this replaces did, and a repeated id on one page is a fragment
+ * the projection lists more than once.
+ */
+const idIndexes = new WeakMap<CatEnvelope, Map<string, Segment>>();
+
+function idIndex(envelope: CatEnvelope): Map<string, Segment> {
+  const cached = idIndexes.get(envelope);
+  if (cached !== undefined) return cached;
+  const index = new Map<string, Segment>();
+  for (const segment of envelope.segments) {
+    if (segment.id !== undefined && !index.has(segment.id)) index.set(segment.id, segment);
+  }
+  idIndexes.set(envelope, index);
+  return index;
+}
+
 /** Resolve both axes in page coordinates, favoring inner text over its table. */
 export function segmentOnPage(
   envelope: CatEnvelope,
@@ -93,13 +116,14 @@ export function segmentOnPage(
   const { width_pt, height_pt, rows } = page.layout;
   const x = clamp(xFraction, 0, 1) * width_pt;
   const y = clamp(yFraction, 0, 1) * height_pt;
+  const byId = idIndex(envelope);
   let best: Segment | undefined;
   let bestVertical = Infinity;
   let bestHorizontal = Infinity;
   let bestArea = Infinity;
   for (const row of rows) {
     const box = row.box;
-    const segment = segmentAtRef(envelope, { id: row.id, section: 0, para: 0 });
+    const segment = byId.get(row.id);
     if (box === null || segment === undefined) continue;
     const dx = Math.max(box.x0 - x, 0, x - box.x1);
     const dy = Math.max(box.y0 - y, 0, y - box.y1);

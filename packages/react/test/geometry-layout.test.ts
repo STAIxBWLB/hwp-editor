@@ -78,4 +78,32 @@ describe("layout geometry", () => {
     const { layout: _, ...legacy } = page;
     expect(segmentOnPage(envelope, legacy, 0.5, 0.5, 0, 1)).toBe(nearestSegment(envelope, 0, 0.5, 1));
   });
+
+  it("reads the segment list once per envelope, not once per layout row (t18-2)", () => {
+    // A click used to resolve every row with a linear scan, so a page of forty
+    // rows read the envelope's segments forty times over. The count must not
+    // grow with the rows: this counts the element reads a Proxy sees.
+    const counted = (segments: Segment[]): { envelope: CatEnvelope; reads: () => number } => {
+      let reads = 0;
+      const list = new Proxy(segments, {
+        get(target, property, receiver): unknown {
+          if (typeof property === "string" && /^\d+$/u.test(property)) reads += 1;
+          return Reflect.get(target, property, receiver);
+        },
+      });
+      return { envelope: { markdown: "content", segments: list }, reads: () => reads };
+    };
+    const stacked = (rows: number): PageImage => ({
+      ...page,
+      layout: {
+        ...page.layout!,
+        rows: Array.from({ length: rows }, (_, at) => row("left", 60, 250, 100 + at * 20, 120 + at * 20)),
+      },
+    });
+    const single = counted([left, right]);
+    const many = counted([left, right]);
+    segmentOnPage(single.envelope, stacked(1), 100 / 600, 110 / 800, 0, 1);
+    segmentOnPage(many.envelope, stacked(40), 100 / 600, 110 / 800, 0, 1);
+    expect(many.reads()).toBe(single.reads());
+  });
 });

@@ -43,6 +43,13 @@ export interface HwpEditorContextValue {
   ) => Promise<boolean>;
   /** Re-read + re-render the current document after an external change. */
   refresh: () => Promise<void>;
+  /**
+   * The editor's document generation. It moves when a load starts and when
+   * the compose flow hands a document back, so an async flow captures it
+   * before it awaits and refuses its own result once it has moved on: a slow
+   * compose must not replace the file the host selected meanwhile.
+   */
+  loadEpoch: () => number;
   /** Open the compose panel (new-document flow). */
   openCompose: () => void;
   /**

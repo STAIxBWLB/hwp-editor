@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import type { JSX } from "react";
 import type { ParagraphAlignment, ParaShapeKey, SelectionRefusal, Segment } from "@hwp-editor/core";
-import { compareSegments, formatAddresses, isSectionDefinitionParagraph, paragraphAddress, paragraphRuns, resolveSelection, segmentAtRef, segmentPath, segmentRef, segmentText, selectSimilar, selectedParagraphs, selectionAction } from "@hwp-editor/core";
+import { compareSegments, formatAddresses, hasOwnRef, isSectionDefinitionParagraph, paragraphAddress, paragraphRuns, resolveSelection, segmentAtRef, segmentPath, segmentRef, segmentText, selectSimilar, selectedParagraphs, selectionAction } from "@hwp-editor/core";
 import { plainSegmentText } from "./text.js";
 import { useHwpEditorContext } from "./context.js";
 import type { MessageKey } from "./messages.js";
@@ -42,6 +42,10 @@ export function SegmentInspector(): JSX.Element {
   // ranges that start at its own offset.
   const paragraphs = (envelope?.segments.filter(candidate => {
     if (candidate.kind !== "para") return false;
+    // A nested paragraph with no id of its own would be offered under a ref
+    // that names its host, so a click would select the host and an op would
+    // edit it.
+    if (!hasOwnRef(candidate)) return false;
     const key = candidate.id ?? `${candidate.section}:${candidate.para}`;
     if (paragraphKeys.has(key)) return false;
     paragraphKeys.add(key);
