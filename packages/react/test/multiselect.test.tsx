@@ -73,18 +73,19 @@ describe.each([["en", en], ["ko", ko]] as const)("paragraph multi-selection (%s)
     fireEvent.click(options[1]!, { ctrlKey: true });
     expect(screen.getAllByRole("option").filter((option) => option.getAttribute("aria-selected") === "true")).toHaveLength(2);
 
-    fireEvent.click(screen.getByRole("option", { name: "Paragraph one" }));
+    const choice = (index: number, text: string): string => messages["segment.choiceLabel"]({ index, text });
+    fireEvent.click(screen.getByRole("option", { name: choice(1, "Paragraph one") }));
     fireEvent.click(screen.getByRole("button", { name: messages["segment.similarChar"] }));
     const chosen = screen.getAllByRole("option").filter((option) => option.getAttribute("aria-selected") === "true");
     expect(chosen).toHaveLength(2);
-    expect(chosen.map((option) => option.textContent)).toEqual(["Paragraph one", "Paragraph three"]);
+    expect(chosen.map((option) => option.textContent)).toEqual([choice(1, "Paragraph one"), choice(3, "Paragraph three")]);
     expect(screen.getByText(messages["segment.selectedCount"]({ count: 2 }))).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: messages["segment.similarPara"] }));
     expect(screen.getAllByRole("option").filter((option) => option.getAttribute("aria-selected") === "true")).toHaveLength(4);
     expect(screen.getByText(messages["segment.selectedCount"]({ count: 4 }))).toBeTruthy();
 
-    fireEvent.keyDown(screen.getByRole("option", { name: "Paragraph two" }), { key: "Enter", ctrlKey: true });
+    fireEvent.keyDown(screen.getByRole("option", { name: choice(2, "Paragraph two") }), { key: "Enter", ctrlKey: true });
     expect(screen.getAllByRole("option").filter((option) => option.getAttribute("aria-selected") === "true")).toHaveLength(5);
   });
 });

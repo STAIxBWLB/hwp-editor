@@ -77,7 +77,9 @@ describe.each([["en", en], ["ko", ko]] as const)("canvas multi-selection (%s)", 
     clickAt(2, { ctrlKey: true });
     await waitFor(() => expect(selectedBands()).toBe(4));
     expect(screen.getByText(messages["segment.selectedCount"]({ count: 4 }))).toBeTruthy();
-    expect(screen.getByText(messages["segment.selectedPara"]({ section: 0, para: 2 }))).toBeTruthy();
+    // Toggling paragraph 2 off removes it from the selection, so the primary falls back to
+    // the first remaining paragraph rather than describing a paragraph that is no longer selected.
+    expect(screen.getByText(messages["segment.selectedPara"]({ section: 0, para: 0 }))).toBeTruthy();
 
     clickAt(2, { metaKey: true });
     await waitFor(() => expect(selectedBands()).toBe(5));

@@ -169,12 +169,13 @@ export function SegmentInspector(): JSX.Element {
           aria-multiselectable="true"
           style={{ maxHeight: "12rem", overflowY: "auto" }}
         >
-          {paragraphs.map((candidate) => {
+          {paragraphs.map((candidate, index) => {
             const isSelected = selected.some((item) => item === candidate ||
               (item.id !== undefined && item.id === candidate.id) ||
               (item.id === undefined && candidate.id === undefined && item.section === candidate.section && item.para === candidate.para));
             const snippet = plainSegmentText(segmentText(envelope!, candidate)).trim().replace(/\s+/g, " ");
-            const label = snippet.length > 96 ? `${snippet.slice(0, 93)}...` : snippet || t("segment.emptyPara");
+            const text = snippet.length > 96 ? `${snippet.slice(0, 93)}...` : snippet || t("segment.emptyPara");
+            const label = t("segment.choiceLabel", { index: index + 1, text });
             return (
               <button
                 key={candidate.id ?? `${candidate.section}:${candidate.para}`}

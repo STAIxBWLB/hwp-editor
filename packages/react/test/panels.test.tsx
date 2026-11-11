@@ -152,8 +152,11 @@ describe("SegmentInspector op emission (TEST-03)", () => {
       screen.getByLabelText(messages["segment.hyperlinkUrlAria"]),
       screen.getByLabelText(messages["segment.hyperlinkTextAria"]),
     ];
+    // Paragraph options and the anchor inputs work on an argv-only host: selection is
+    // navigation and anchors ride the argv channel, so neither is an addressed edit.
+    const argvControls = [...anchorInputs, ...Array.from(panel.querySelectorAll('[role="option"]'))];
     for (const control of Array.from(panel.querySelectorAll("input, textarea, button"))) {
-      expect((control as HTMLButtonElement).disabled).toBe(!anchorInputs.includes(control as HTMLElement));
+      expect((control as HTMLButtonElement).disabled).toBe(!argvControls.includes(control as HTMLElement));
       fireEvent.click(control);
     }
     expect(screen.getByLabelText(messages["toolbar.pendingEdits"]({ count: 0 }), { exact: true })).toBeTruthy();

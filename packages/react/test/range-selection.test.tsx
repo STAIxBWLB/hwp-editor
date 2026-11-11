@@ -42,7 +42,7 @@ async function selectRange(textarea: HTMLTextAreaElement, start: number, end: nu
 }
 
 async function selectFirstParagraph(messages: MessageTable): Promise<HTMLTextAreaElement> {
-  const options = await screen.findAllByRole("option", { name: "Bold😀!" });
+  const options = await screen.findAllByRole("option");
   fireEvent.click(options[0]!);
   const textarea = await screen.findByRole("textbox", { name: messages["segment.rangeTextAria"] }) as HTMLTextAreaElement;
   await waitFor(() => expect(textarea.disabled).toBe(false));
@@ -100,7 +100,7 @@ describe.each([["en", en], ["ko", ko]] as const)("Markdown run range selection (
 
   it("explains in the active locale when run metadata is absent", async () => {
     render(<HwpEditor engine={createMockEngine({ envelope: noRunEnvelope() })} file={file} locale={locale} />);
-    fireEvent.click(await screen.findByRole("option", { name: "Bold😀!" }));
+    fireEvent.click(await screen.findByRole("option"));
     const textarea = await screen.findByRole("textbox", { name: messages["segment.rangeTextAria"] }) as HTMLTextAreaElement;
     expect(textarea.disabled).toBe(true);
     expect(screen.getByText(messages["segment.rangeUnavailable"])).toBeTruthy();

@@ -24,6 +24,16 @@ import { clientYForPara, createMockEngine, makeEnvelope } from "./mock-engine.js
 
 afterEach(cleanup);
 
+/**
+ * The paragraph's plain text is shown in the inspector quote and, once run
+ * metadata exists, again in the whole-run range textarea. Assert on the quote
+ * so "the inspector shows this paragraph" stays one element.
+ */
+function findByQuote(text: string | RegExp): Promise<HTMLElement> {
+  return screen.findByText((content, element) => element?.classList.contains("hwped-quote") === true &&
+    (typeof text === "string" ? content === text : text.test(content)));
+}
+
 const tables: Record<Locale, MessageTable> = { en, ko };
 const LOCALES = ["en", "ko"] as const;
 
@@ -149,7 +159,7 @@ describe.each(LOCALES)("HwpEditor keyboard shortcuts — locale=%s", (locale) =>
       name: t["page.label"]({ page: 1 }),
     });
     fireEvent.click(page, { clientY: clientYForPara(makeEnvelope(), 1) });
-    await screen.findByText("2026년 8월 정기 회의");
+    await findByQuote("2026년 8월 정기 회의");
 
     fireEvent.change(screen.getByLabelText(t["segment.replaceLabel"]), {
       target: { value: "2026년 9월 정기 회의" },
@@ -167,7 +177,7 @@ describe.each(LOCALES)("HwpEditor keyboard shortcuts — locale=%s", (locale) =>
 
     // Select again, then Escape clears the inspector back to the hint.
     fireEvent.click(page, { clientY: clientYForPara(makeEnvelope(), 1) });
-    await screen.findByText("2026년 8월 정기 회의");
+    await findByQuote("2026년 8월 정기 회의");
     fireEvent.keyDown(root, { key: "Escape" });
     await screen.findByText(t["segment.hint"]);
   });
@@ -577,7 +587,7 @@ describe("HwpEditor fields flow", () => {
 
     // Jump-to selects the containing segment.
     fireEvent.click(await screen.findByRole("button", { name: "date" }));
-    await screen.findByText(/다음 회의는/);
+    await findByQuote(/다음 회의는/);
 
     fireEvent.click(screen.getByRole("tab", { name: en["tabs.fields"] }));
     fireEvent.change(
