@@ -14,9 +14,11 @@ import type {
   CatEnvelope,
   DocumentHandle,
   HwpEngine,
+  EditOp,
+  ImageAsset,
   ValidationReport,
 } from "@hwp-editor/core";
-import { createStore, segmentAtRef } from "@hwp-editor/core";
+import { createStore, segmentAtRef, validateImageAssets, HwpEngineError } from "@hwp-editor/core";
 import type { EditorError, EditorStore } from "@hwp-editor/core";
 import { HwpEditorContext } from "./context.js";
 import type { HwpEditorContextValue } from "./context.js";
@@ -26,6 +28,8 @@ import { TableGrid } from "./TableGrid.js";
 import { FieldsPanel } from "./FieldsPanel.js";
 import { TemplatePanel } from "./TemplatePanel.js";
 import { LintPanel } from "./LintPanel.js";
+import { DocumentPanel } from "./DocumentPanel.js";
+import { ImagePanel } from "./ImagePanel.js";
 import { ComposePanel } from "./ComposePanel.js";
 import { isTableSlice } from "./tables.js";
 import { ErrorLine } from "./ErrorLine.js";
@@ -107,7 +111,7 @@ export interface HwpEditorHandle {
   openCompose(): void;
 }
 
-type SideTab = "para" | "table" | "fields" | "templates" | "lint";
+type SideTab = "para" | "table" | "fields" | "templates" | "lint" | "document" | "images";
 
 /**
  * Every render goes straight to the engine. The former client-side
@@ -192,6 +196,11 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     const loadGeneration = useRef(0);
     const [tab, setTab] = useState<SideTab>("para");
     const [composing, setComposing] = useState(false);
+    const imageAssets = useRef(new Map<EditOp, ImageAsset>());
+    useEffect(() => {
+      const active = new Set(state.pendingOps);
+      for (const op of imageAssets.current.keys()) if (!active.has(op)) imageAssets.current.delete(op);
+    }, [state.pendingOps]);
 
     // Load the document whenever the engine/file pair changes.
     useEffect(() => {
@@ -239,6 +248,20 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     const editableRef = useRef(editable);
     editableRef.current = editable;
 
+    const queueImage = useCallback((op: Extract<EditOp, { kind: "insert-image" }>, asset: ImageAsset): void => {
+      const snapshot = store.getState();
+      if (!editable || envelope === null || snapshot.document === null || snapshot.status === "applying") return;
+      if (capabilities?.imageAssets !== "v1") throw new HwpEngineError("unavailable", "This host does not accept image bytes; configure an image-upload-capable HTTP adapter and retry.");
+      if (op.path !== asset.name) throw new HwpEngineError("bad_request", "Image reference does not match the asset; select the image again and retry.");
+      const active = snapshot.pendingOps.flatMap(pending => {
+        const stored = imageAssets.current.get(pending);
+        return stored === undefined ? [] : [stored];
+      });
+      validateImageAssets([...active, asset]);
+      imageAssets.current.set(op, { name: asset.name, data: asset.data.slice() });
+      store.dispatch({ type: "queueOp", op });
+    }, [editable, envelope, capabilities, store]);
+
     // Follow selection to the relevant tab.
     useEffect(() => {
       if (envelope === null || state.selection === null) return;
@@ -268,8 +291,13 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       store.dispatch({ type: "applyStarted" });
       return (async () => {
         try {
+          const assets = snapshot.pendingOps.flatMap(op => {
+            const asset = imageAssets.current.get(op);
+            return asset === undefined ? [] : [asset];
+          });
           const next = await engine.edit(snapshot.document!, snapshot.pendingOps, {
             verify: true,
+            ...(assets.length ? { assets } : {}),
           });
           const [nextEnvelope, pages, report] = await Promise.all([
             engine.read(next),
@@ -432,6 +460,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         validation,
         applyPendingOps,
         replaceDocument,
+        queueImage,
         refresh,
         openCompose,
         t,
@@ -450,6 +479,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         validation,
         applyPendingOps,
         replaceDocument,
+        queueImage,
         refresh,
         openCompose,
         t,
@@ -614,6 +644,8 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
                     ["fields", t("tabs.fields")],
                     ["templates", t("tabs.templates")],
                     ["lint", t("tabs.lint")],
+                    ["document", t("tabs.document")],
+                    ["images", t("tabs.images")],
                   ] as [SideTab, string][]
                 ).map(([value, label]) => (
                   <button
@@ -636,6 +668,8 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
               {tab === "fields" && <FieldsPanel />}
               {tab === "templates" && <TemplatePanel />}
               {tab === "lint" && <LintPanel />}
+              {tab === "document" && <DocumentPanel />}
+              {tab === "images" && <ImagePanel />}
             </aside>
           </div>
 

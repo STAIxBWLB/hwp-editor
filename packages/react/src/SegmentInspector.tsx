@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { JSX } from "react";
-import type { CatEnvelope, EditAddress, ParagraphAlignment, Segment } from "@hwp-editor/core";
+import type { CatEnvelope, EditAddress, ParagraphAlignment, ParaShapeKey, Segment } from "@hwp-editor/core";
 import { segmentAtRef, segmentText } from "@hwp-editor/core";
 import { plainSegmentText } from "./text.js";
 import { useHwpEditorContext } from "./context.js";
@@ -16,6 +16,14 @@ const ALIGNMENTS: { value: ParagraphAlignment; key: MessageKey }[] = [
   { value: "center", key: "segment.alignCenter" },
   { value: "right", key: "segment.alignRight" },
   { value: "justify", key: "segment.alignJustify" },
+];
+const SHAPE_KEYS: { value: ParaShapeKey; key: MessageKey }[] = [
+  { value: "line-spacing", key: "segment.shape.lineSpacing" },
+  { value: "indent", key: "segment.shape.indent" },
+  { value: "left", key: "segment.shape.left" },
+  { value: "right", key: "segment.shape.right" },
+  { value: "top", key: "segment.shape.top" },
+  { value: "bottom", key: "segment.shape.bottom" },
 ];
 
 /**
@@ -41,6 +49,11 @@ export function SegmentInspector(): JSX.Element {
   const [bold, setBold] = useState(false);
   const [fontSize, setFontSize] = useState("");
   const [color, setColor] = useState("");
+  const [shapeKey, setShapeKey] = useState<ParaShapeKey>("line-spacing");
+  const [shapeValue, setShapeValue] = useState("");
+  const [lineSpacingUnit, setLineSpacingUnit] = useState<"%" | "pt">("%");
+  const [linkUrl, setLinkUrl] = useState("");
+  const [linkText, setLinkText] = useState("");
 
   // Reset drafts when the selection moves.
   useEffect(() => {
@@ -49,6 +62,9 @@ export function SegmentInspector(): JSX.Element {
     setBold(false);
     setFontSize("");
     setColor("");
+    setShapeValue("");
+    setLinkUrl("");
+    setLinkText("");
   }, [selection]);
 
   if (segment === undefined || selection === null) {
@@ -200,6 +216,35 @@ export function SegmentInspector(): JSX.Element {
             </button>
           ))}
         </div>
+      </div>
+
+      <div className="hwped-field">
+        <span className="hwped-label">{t("segment.paraShapeLabel")}</span>
+        <div className="hwped-row">
+          <select className="hwped-input" value={shapeKey} disabled={disabled} aria-label={t("segment.paraShapeKeyAria")}
+            onChange={(e) => setShapeKey(e.target.value as ParaShapeKey)}>
+            {SHAPE_KEYS.map(({ value, key }) => <option key={value} value={value}>{t(key)}</option>)}
+          </select>
+          <input className="hwped-input" type="number" min="0" step="0.1" value={shapeValue} disabled={disabled} placeholder={shapeKey === "line-spacing" ? (lineSpacingUnit === "%" ? "%" : "pt") : "mm"}
+            aria-label={t("segment.paraShapeValueAria")} onChange={(e) => setShapeValue(e.target.value)} />
+          {shapeKey === "line-spacing"
+            ? <select className="hwped-input" value={lineSpacingUnit} disabled={disabled} aria-label={t("segment.paraShapeUnitAria")} onChange={(e) => setLineSpacingUnit(e.target.value as "%" | "pt")}>
+                <option value="%">{t("segment.unitPercent")}</option><option value="pt">{t("segment.unitPoints")}</option>
+              </select>
+            : <span className="hwped-label">mm</span>}
+          <button type="button" className="hwped-btn" disabled={disabled || shapeValue.trim() === ""}
+            onClick={() => store.dispatch({ type: "queueOp", op: { kind: "set-para", address, key: shapeKey, value: `${shapeValue}${shapeKey === "line-spacing" ? lineSpacingUnit : "mm"}` } })}>{t("segment.setPara")}</button>
+        </div>
+      </div>
+
+      <div className="hwped-field">
+        <span className="hwped-label">{t("segment.hyperlinkLabel")}</span>
+        <input className="hwped-input" type="url" value={linkUrl} disabled={disabled} placeholder={t("segment.hyperlinkUrlPlaceholder")}
+          aria-label={t("segment.hyperlinkUrlAria")} onChange={(e) => setLinkUrl(e.target.value)} />
+        <input className="hwped-input" type="text" value={linkText} disabled={disabled} placeholder={t("segment.hyperlinkTextPlaceholder")}
+          aria-label={t("segment.hyperlinkTextAria")} onChange={(e) => setLinkText(e.target.value)} />
+        <button type="button" className="hwped-btn" disabled={disabled || currentText === "" || linkUrl.trim() === ""}
+          onClick={() => store.dispatch({ type: "queueOp", op: { kind: "create-hyperlink", anchor: currentText, url: linkUrl.trim(), ...(linkText.trim() === "" ? {} : { text: linkText.trim() }) } })}>{t("segment.createHyperlink")}</button>
       </div>
 
       <div className="hwped-field">

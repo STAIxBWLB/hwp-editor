@@ -78,6 +78,18 @@ pnpm -r typecheck
 
 Requires Node >= 22 and pnpm 10.
 
+Run the playground from a clean checkout (Node >= 22, the pinned pnpm version,
+and hwp-cli >= 0.20.0 installed, tested with 1.4.0):
+
+```sh
+pnpm playground
+```
+
+`HWP_EDITOR_BIN=/path/to/hwp pnpm playground` selects a particular binary. The
+command installs locked dependencies, builds the packages, seeds fixtures and
+starts the editor at http://localhost:3100/editor. It does not install system
+tools or change an existing hwp binary.
+
 Playground e2e (real binary; `HWP_EDITOR_BIN` selects it, otherwise `hwp` on PATH):
 
 ```sh
