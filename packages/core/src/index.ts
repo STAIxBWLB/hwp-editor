@@ -73,6 +73,13 @@ export type {
 } from "./tauri.js";
 export type {
   CapabilitiesResponse,
+  CreateRequest,
+  FillResponse,
+  SlotsResponse,
+  LintResponse,
+  TemplatesResponse,
+  TemplateRequest,
+  TemplateResponse,
   ComposeRequest,
   ComposeResponse,
   EditResponse,
@@ -84,3 +91,5 @@ export type {
 } from "./protocol.js";
 
 export { parsePageLayout, parseRenderLayouts, RENDER_LAYOUT_NEXT_STEP } from "./layout.js";
+export { TEMPLATE_MIN_VERSION, TEMPLATE_METHODS, templateVersionSupported, parseTemplateInputs, parseTemplateReport, parseFillReport, parseLintReport, parseEmbeddedTemplates, parseTemplateMethods, reportObject, reportString, reportSchemaVersion, reportCount, reportArray } from "./templates.js";
+export type { TemplateReport, EmbeddedTemplate, FillReport, FillResult, LintFinding, LintProfile, LintReport, TemplateInput, TemplateInputs, TemplateMethod } from "./templates.js";

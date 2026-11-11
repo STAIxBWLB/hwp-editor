@@ -78,6 +78,12 @@ export type EditorAction =
   | { type: "undo" };
 
 export function reducer(state: EditorState, action: EditorAction): EditorState {
+  // Keep the transaction locked until it completes. Queue changes must not
+  // turn applying into dirty/clean and enable a second apply or undo.
+  if (state.status === "applying" && (
+    action.type === "queueOp" || action.type === "dequeueOp" ||
+    action.type === "clearOps" || action.type === "applyStarted" || action.type === "undo"
+  )) return state;
   switch (action.type) {
     case "load":
       return {

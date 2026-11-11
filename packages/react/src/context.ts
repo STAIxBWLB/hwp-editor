@@ -6,6 +6,7 @@ import { createContext, useContext } from "react";
 import type {
   Capabilities,
   CatEnvelope,
+  DocumentHandle,
   EditorState,
   EditorStore,
   HwpEngine,
@@ -26,6 +27,12 @@ export interface HwpEditorContextValue {
   validation: ValidationReport | null;
   /** Queue of pending ops length convenience. */
   applyPendingOps: () => void;
+  /** Replace the current document as one undoable transition. The producer
+   * receives the captured current document; results are discarded if it or
+   * the loaded file changes while the operation is in flight. */
+  replaceDocument: (
+    produce: (current: DocumentHandle) => Promise<DocumentHandle>,
+  ) => Promise<void>;
   /** Re-read + re-render the current document after an external change. */
   refresh: () => Promise<void>;
   /** Open the compose panel (new-document flow). */

@@ -175,3 +175,25 @@ describe("createStore", () => {
     expect(calls).toBe(2);
   });
 });
+
+describe("applying transaction lock", () => {
+  it("refuses queue plus reentrant apply without adding a second snapshot", () => {
+    const applying=reducer(loaded,{type:"applyStarted"});
+    let next=reducer(applying,{type:"queueOp",op:{kind:"set-field",name:"date",value:"2026-11-11"}});
+    next=reducer(next,{type:"applyStarted"});
+    expect(next).toBe(applying);
+    expect(next.pendingOps).toEqual([]);
+    expect(next.snapshots).toHaveLength(1);
+    const applied=reducer(next,{type:"applySucceeded",document:doc("a.hwpx","v2")});
+    const undone=reducer(applied,{type:"undo"});
+    expect(undone.document).toBe(loaded.document);
+    expect(undone.snapshots).toEqual([]);
+  });
+  it("keeps other queue mutations and undo from releasing the applying lock", () => {
+    const queued=reducer(loaded,{type:"queueOp",op:{kind:"set-field",name:"date",value:"x"}});
+    const applying=reducer(queued,{type:"applyStarted"});
+    for (const action of [{type:"clearOps"},{type:"dequeueOp",index:0},{type:"undo"}] as const) {
+      expect(reducer(applying,action)).toBe(applying);
+    }
+  });
+});

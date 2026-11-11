@@ -153,7 +153,7 @@ describe("createTauriEngine commands", () => {
     const caps = { version: "0.16.0", editable: true, formats: ["hwp", "hwpx"] };
     const { invoke, calls } = mockInvoke({ hwped_capabilities: caps });
     const engine = createTauriEngine(invoke);
-    await expect(engine.capabilities()).resolves.toEqual(caps);
+    await expect(engine.capabilities()).resolves.toEqual({ ...caps, templateMethods: [] });
     expect(calls[0]).toEqual({ cmd: "hwped_capabilities", args: {} });
   });
 });
