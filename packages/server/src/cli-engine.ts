@@ -1,5 +1,5 @@
 import { createTemplateCommands } from "./template-engine.js";
-import { classifyEditRefusal, classifyInsertionRefusal, editRefusalMarker, insertionRefusalLine, STOPPED_WITHOUT_DIAGNOSTIC, type EditRefusalKind, type InsertionRefusal, TEMPLATE_METHODS, templateVersionSupported, parseEditReport, withCallerName, presetBatchOptions, readPresetBatch, type EditReport, type TemplateInputs, type FillResult, type LintReport, type LintProfile, type EmbeddedTemplate, type TemplateSpecV1, type TemplateDataV1 } from "@hwp-editor/core";
+import { classifyEditRefusal, classifyInsertionRefusal, editRefusalMarker, insertionRefusalLine, STOPPED_WITHOUT_DIAGNOSTIC, unclassifiedEditLine, type EditRefusalKind, type InsertionRefusal, TEMPLATE_METHODS, templateVersionSupported, parseEditReport, withCallerName, presetBatchOptions, readPresetBatch, type EditReport, type TemplateInputs, type FillResult, type LintReport, type LintProfile, type EmbeddedTemplate, type TemplateSpecV1, type TemplateDataV1 } from "@hwp-editor/core";
 /**
  * CliEngine — HwpEngine implementation that shells out to the hwp-cli binary.
  *
@@ -740,15 +740,31 @@ function rethrowInsertBlocksRefusal(error: unknown, insertion: boolean, workDir:
  * same one (#80). The wrapper keeps the original reason, which `routes.ts`
  * turns into the wire code, and the engine's stderr and detail.
  */
-function rethrowUnmatchedEditRefusal(error: unknown): never {
+function rethrowUnmatchedEditRefusal(error: unknown, workDir?: string): never {
   if (error instanceof HwpCliError && error.reason === "failed" && error.stderr !== undefined) {
     const kind = classifyEditRefusal(error.stderr);
     if (kind !== undefined) {
       throw new HwpCliError(error.reason, `${error.message}: ${editRefusalMarker(kind)}`, error.stderr, error.detail, kind, error.insertion);
     }
+    // No wrapper named a cause: show the engine's own first Error: line,
+    // paths removed, then the step, the same line the Tauri client prints
+    // (#88). Display only; nothing classifies from it.
+    if (BARE_EDIT_EXIT.test(error.message) && error.stderr.trim() !== "") {
+      throw new HwpCliError(
+        error.reason,
+        `${error.message}: ${unclassifiedEditLine(error.stderr, workDir)}`,
+        error.stderr,
+        error.detail,
+        undefined,
+        error.insertion,
+      );
+    }
   }
   throw error;
 }
+
+/** runCliOk's edit exit line with nothing after it. */
+const BARE_EDIT_EXIT = /^hwp edit failed \(exit -?\d+\)$/u;
 
 /**
  * Refuse a batch a preset dragged through with `--allow-partial` intact.
@@ -1420,7 +1436,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         await runCliOk(bin, args, timeoutMs, opts.locale, call?.signal).catch(options.assets?.length
           ? error => rethrowUploadedImageFailure(error, ops.every(op => op.kind === "insert-image"))
           : rethrowProtected).catch(error => rethrowInsertBlocksRefusal(error, ops.some(op => op.kind === "insert-blocks"), dir))
-          .catch(rethrowUnmatchedEditRefusal);
+          .catch(error => rethrowUnmatchedEditRefusal(error, dir));
         const data = new Uint8Array(await readFile(output));
         if (!wantsReport) return { name: document.name, data };
         let report: EditReport | undefined;

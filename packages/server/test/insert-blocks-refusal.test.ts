@@ -99,19 +99,21 @@ describe("insert_blocks refusal classification", () => {
     expect(error.detail).toContain("결재란 셀");
   });
 
-  it("still names the class when the engine gives no width at all", async () => {
+  it("names the insertion width alone when no column sum is printed (#88: the real line always carries the container width)", async () => {
     const error = await failure(
-      "Error: insert_blocks 블록/스타일/목록 정의가 유효하지 않습니다: layout_overflow",
+      // The engine's real line always carries the fixed tail; this issue names no width.
+      "Error: insert_blocks 블록/스타일/목록 정의가 유효하지 않습니다: layout_overflow at $.sections[0].blocks[0].width_mm: " +
+        "image width exceeds the page" + ". DocumentSpec v1 정의를 수정한 뒤 다시 시도하세요 (삽입 위치의 폭은 46.4mm입니다)",
       INSERT,
     );
 
-    expect(error.message).toBe("hwp edit failed (exit 3): insert_blocks refused: layout_overflow");
-    expect(error.message).not.toContain("mm");
+    expect(error.message).toBe("hwp edit failed (exit 3): insert_blocks refused: layout_overflow (insertion point 46.40 mm)");
+    expect(error.message).not.toContain("block ");
   });
 
   it("falls back to the invalid-definition class for any other insert_blocks refusal", async () => {
     const error = await failure(
-      "Error: insert_blocks 블록/스타일/목록 정의가 유효하지 않습니다: $.sections[0].blocks[0]",
+      "Error: insert_blocks 블록/스타일/목록 정의가 유효하지 않습니다: invalid_value at $.sections[0].blocks[0]: rows must not be empty" + ". DocumentSpec v1 정의를 수정한 뒤 다시 시도하세요 (삽입 위치의 폭은 46.4mm입니다)",
       INSERT,
     );
 
@@ -169,10 +171,12 @@ describe("insert_blocks refusal classification", () => {
     expect(error.message).not.toContain("/tmp");
   });
 
-  it("leaves a batch with no insertion on the bare exit line", async () => {
+  it("gives a batch with no insertion no class, only the engine's line and the step (#88)", async () => {
     const error = await failure(WIDTH_REFUSAL, DELETE);
 
-    expect(error.message).toBe("hwp edit failed (exit 3)");
+    expect(error.insertion).toBeUndefined();
+    expect(error.message).toMatch(/^hwp edit failed \(exit 3\): insert_blocks 블록\/스타일\/목록 정의가 유효하지 않습니다: /u);
+    expect(error.message).toMatch(/Fix or remove the pending edit it names, then apply again\.$/u);
     expect(error.stderr).toBe(WIDTH_REFUSAL);
   });
 });

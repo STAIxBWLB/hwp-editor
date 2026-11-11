@@ -188,6 +188,8 @@ export {
   insertionRefusalLine,
   isInsertionRefusal,
   STOPPED_WITHOUT_DIAGNOSTIC,
+  UNCLASSIFIED_EDIT_STEP,
+  unclassifiedEditLine,
   withoutPaths,
 } from "./insertion-refusals.js";
 export type { InsertionRefusal } from "./insertion-refusals.js";

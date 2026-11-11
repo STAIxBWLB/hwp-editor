@@ -547,11 +547,14 @@ describe("Tauri edit refusal classification (#80)", () => {
     expect(err.cause).toBe(raw);
   });
 
-  it("words an unclassified edit failure as HTTP does: the exit line, no raw stderr (#88)", async () => {
+  it("words an unclassified edit failure as HTTP does: the engine's Error: line and the step (t37-a2)", async () => {
     const raw = `hwp_failed: hwp edit failed (exit 3): ${MIXED_CONFLICT}`;
     const err = (await createTauriEngine(reject(raw)).edit(doc, [{ kind: "replace", find: "a", replace: "b" }])
       .then(() => null, (e: unknown) => e)) as HwpEngineError;
-    expect(err.message).toBe("hwped_edit failed: hwp edit failed (exit 3)");
+    expect(err.message).toBe(
+      "hwped_edit failed: hwp edit failed (exit 3): 주소 지정 편집이 서로 충돌합니다. " +
+      "Fix or remove the pending edit it names, then apply again.",
+    );
     expect(err.cause).toBe(raw);
     expect(err.refusal).toBeUndefined();
   });
@@ -592,7 +595,8 @@ describe("Tauri insert_blocks parity with HTTP (#88)", () => {
   }];
 
   it("sets insertion and writes the server's cause line, with no raw stderr", async () => {
-    const stderr = "Error: 스타일 '결재란 셀'을 대상 문서에서 찾을 수 없습니다. /tmp/stage/in.hwpx";
+    const stderr = "note: staged /tmp/stage/in.hwpx\nError: 스타일 '결재란 셀'을 대상 문서에서 찾을 수 없습니다. " +
+      "styles 정의를 제공하고 missing_style=create로 다시 시도하거나 hwp styles에서 기존 스타일을 선택하세요";
     const err = (await createTauriEngine(reject(`hwp_failed: hwp edit failed (exit 3): ${stderr}`)).edit(doc, INSERT)
       .then(() => null, (e: unknown) => e)) as HwpEngineError;
     expect(err.insertion).toEqual({ kind: "unknown_style", style: "결재란 셀" });
@@ -604,5 +608,23 @@ describe("Tauri insert_blocks parity with HTTP (#88)", () => {
     const err = (await createTauriEngine(reject("hwp_failed: hwp edit failed (exit 1): ")).edit(doc, INSERT)
       .then(() => null, (e: unknown) => e)) as HwpEngineError;
     expect(err.message).toBe(`hwped_edit failed: hwp edit failed (exit 1): ${STOPPED_WITHOUT_DIAGNOSTIC}`);
+  });
+});
+
+describe("Tauri unclassified edit failures keep no path (t37-a2)", () => {
+  const reject = (detail: string): TauriInvoke => <T>(cmd: string): Promise<T> =>
+    cmd === "hwped_capabilities"
+      ? Promise.resolve({ version: "0.20.0", editable: true, formats: ["hwp", "hwpx"], editOps: "v1" } as T)
+      : Promise.reject(detail);
+
+  it("redacts a staged path with spaces through its file name", async () => {
+    const raw = "hwp_failed: hwp edit failed (exit 1): Error: failed to read /Users/a b/Library/Caches/in.hwpx at byte 3";
+    const err = (await createTauriEngine(reject(raw)).edit(doc, [{ kind: "replace", find: "a", replace: "b" }])
+      .then(() => null, (e: unknown) => e)) as HwpEngineError;
+    expect(err.message).toBe(
+      "hwped_edit failed: hwp edit failed (exit 1): failed to read <path> at byte 3. Fix or remove the pending edit it names, then apply again.",
+    );
+    expect(err.message).not.toMatch(/Users|Library|b\//u);
+    expect(err.cause).toBe(raw);
   });
 });

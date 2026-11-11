@@ -1,19 +1,15 @@
 /**
- * The `insert_blocks` refusal classes, shared by every transport (#88). The
- * HTTP server and the Tauri client both build the same one-line cause from
- * the engine's stderr and attach the class as a structured field, so the
- * editor picks its sentence from the field and never from message text,
- * which on an unclassified failure can carry what the user typed.
+ * The `insert_blocks` refusal classes and the display line for an edit
+ * failure, shared by every transport (#88). The HTTP server and the Tauri
+ * client build the same text from the engine's stderr and attach the class
+ * as a structured field, so the editor picks its sentence from the field and
+ * never from message text.
  *
- * The engine writes these diagnostics in Korean under every locale (`--lang`
- * localizes clap help only; measured on ahwp 1.6.0), so the markers are
- * Korean and permanent, like `PROTECTED_MARKERS`.
- *
- * The invalid-definition class is keyed on the engine's schema sentence, not
- * on the `insert_blocks` token: that token also appears in refusals that say
- * nothing about the component (before a section's definition paragraph, an
- * address that is not a body paragraph or a cell). Those carry no class and
- * keep the engine's own line, with paths replaced.
+ * Only the engine's FIRST `Error:` line is classified, and each class is
+ * matched on that line's fixed head and fixed tail (measured on ahwp 1.6.1),
+ * so a value the user typed (an anchor, a style name) can sit inside a line
+ * but cannot choose a class. The engine writes these diagnostics in Korean
+ * under every locale, so the markers are Korean and permanent.
  */
 
 /** The class of an `insert_blocks` refusal, with what the engine measured. */
@@ -22,35 +18,55 @@ export type InsertionRefusal =
   | { kind: "unknown_style"; style: string }
   | { kind: "invalid_definition" };
 
-const STYLE_LINE = /스타일 '(.*)'을 대상 문서에서 찾을 수 없습니다/u;
-const INVALID_DEFINITION = "블록/스타일/목록 정의가 유효하지 않습니다";
+/** The engine's first `Error:` line: each refusal is one anyhow line. */
+function firstErrorLine(stderr: string): string | undefined {
+  return stderr.split(/\r?\n/u).find(line => line.startsWith("Error: "));
+}
 
-function millimetres(stderr: string, pattern: RegExp): number | undefined {
-  const raw = pattern.exec(stderr)?.[1];
+/**
+ * insert_blocks.rs:374. The name runs greedily between the fixed head and the
+ * fixed tail, so a name holding `'` or the tail's own words stays whole and a
+ * line that only embeds the sentence (an add_table anchor) does not match.
+ */
+const UNKNOWN_STYLE_LINE =
+  /^Error: 스타일 '(.+)'을 대상 문서에서 찾을 수 없습니다\. styles 정의를 제공하고 missing_style=create로 다시 시도하거나 hwp styles에서 기존 스타일을 선택하세요$/u;
+
+/**
+ * insert_blocks.rs:497: the fixed head, the validation issue list
+ * (document_spec.rs Display: `code at path: message` joined by `; `), and the
+ * fixed tail that names the insertion point's width.
+ */
+const INVALID_DEFINITION_LINE =
+  /^Error: insert_blocks 블록\/스타일\/목록 정의가 유효하지 않습니다: (.*)\. DocumentSpec v1 정의를 수정한 뒤 다시 시도하세요 \(삽입 위치의 폭은 (\d+(?:\.\d+)?)mm입니다\)$/u;
+
+/** A layout_overflow issue, at the start of an issue entry. */
+const OVERFLOW_ISSUE = /(?:^|; )layout_overflow at \$[^\s:;]*: /u;
+
+/** document_spec.rs:1495, the column-sum overflow, in its own issue entry. */
+const COLUMN_SUM =
+  /(?:^|; )layout_overflow at \$[^\s:;]*\.columns: column widths total (\d+(?:\.\d+)?) mm; body width is \d+(?:\.\d+)? mm(?=; |$)/u;
+
+function positive(raw: string | undefined): number | undefined {
   if (raw === undefined) return undefined;
   const value = Number(raw);
-  return Number.isFinite(value) ? value : undefined;
+  return Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
 /**
  * The class an `insert_blocks` refusal's stderr names, or undefined when it
- * is not one of the three. Read only from the engine's `Error:` line on, so a
- * value echoed before it cannot decide the class.
+ * is not one of the three.
  */
 export function classifyInsertionRefusal(stderr: string): InsertionRefusal | undefined {
-  const at = stderr.search(/^Error: /mu);
-  if (at < 0) return undefined;
-  const text = stderr.slice(at);
-  const style = STYLE_LINE.exec(text)?.[1];
-  if (style !== undefined) return { kind: "unknown_style", style };
-  if (!text.includes(INVALID_DEFINITION)) return undefined;
-  if (!text.includes("layout_overflow")) return { kind: "invalid_definition" };
-  // "column widths total 120.00 mm; body width is 46.40 mm" for a column
-  // sum, "exceeds body width 46.40 mm" for the table's own width, and the
-  // destination width again in the Korean tail.
-  const blockMm = millimetres(text, /column widths total ([\d.]+) ?mm/u);
-  const insertionMm = millimetres(text, /body width (?:is )?([\d.]+) ?mm/u) ??
-    millimetres(text, /삽입 위치의 폭은 ([\d.]+)mm/u);
+  const line = firstErrorLine(stderr);
+  if (line === undefined) return undefined;
+  const style = UNKNOWN_STYLE_LINE.exec(line)?.[1];
+  if (style !== undefined && style.trim() !== "") return { kind: "unknown_style", style };
+  const definition = INVALID_DEFINITION_LINE.exec(line);
+  if (definition === null) return undefined;
+  const issues = definition[1]!;
+  if (!OVERFLOW_ISSUE.test(issues)) return { kind: "invalid_definition" };
+  const blockMm = positive(COLUMN_SUM.exec(issues)?.[1]);
+  const insertionMm = positive(definition[2]);
   return {
     kind: "layout_overflow",
     ...(blockMm === undefined ? {} : { blockMm }),
@@ -58,17 +74,23 @@ export function classifyInsertionRefusal(stderr: string): InsertionRefusal | und
   };
 }
 
-/** Narrow an untrusted value (a wire field, a host error) to an insertion class. */
+/**
+ * Narrow an untrusted value (a wire field, a host error) to an insertion
+ * class: a known kind, a non-blank style, and positive finite widths when
+ * present. Anything else is no class at all.
+ */
 export function isInsertionRefusal(value: unknown): value is InsertionRefusal {
-  if (typeof value !== "object" || value === null) return false;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const rec = value as Record<string, unknown>;
-  const optionalMm = (key: string): boolean =>
-    rec[key] === undefined || (typeof rec[key] === "number" && Number.isFinite(rec[key]));
+  const optionalMm = (key: string): boolean => {
+    const mm = rec[key];
+    return mm === undefined || (typeof mm === "number" && Number.isFinite(mm) && mm > 0);
+  };
   switch (rec.kind) {
     case "layout_overflow":
       return optionalMm("blockMm") && optionalMm("insertionMm");
     case "unknown_style":
-      return typeof rec.style === "string" && rec.style !== "";
+      return typeof rec.style === "string" && rec.style.trim() !== "";
     case "invalid_definition":
       return true;
     default:
@@ -76,18 +98,25 @@ export function isInsertionRefusal(value: unknown): value is InsertionRefusal {
   }
 }
 
+/** Extensions a staged or user path ends with; a path with spaces runs to one. */
+const PATH_END = String.raw`\.(?:hwpx|hwp|json|png|jpe?g|gif|bmp|svg|pdf|md|txt|xml|hwpt)\b`;
+const PATH_ROOT = String.raw`(?:[A-Za-z]:[\\/]|\/)`;
+
 /**
  * Text the engine wrote, with no path in it: the given work dir first, then
- * anything else that reads as an absolute path. The replacement fires only
- * where a path can start, so a Korean diagnostic's own `블록/스타일/목록`
- * slashes survive.
+ * absolute paths, POSIX or Windows. A path may hold spaces
+ * (`/Users/a b/Library/x/in.hwpx`, `C:\Users\a b\x.hwpx`), so a quoted path
+ * is redacted through its closing quote, one that reaches a known file
+ * extension through its file name, and any other through its first space.
+ * A replacement fires only where a path can start, so a Korean diagnostic's
+ * own `블록/스타일/목록` slashes survive.
  */
 export function withoutPaths(text: string, workDir?: string): string {
   const withoutWorkDir = workDir === undefined || workDir === "" ? text : text.split(workDir).join("<work dir>");
-  return withoutWorkDir.replace(
-    /(^|[\s"'(\[{])([A-Za-z]:[\\/][^\s"')\]}]*|\/[^\s"')\]}]*)/gu,
-    "$1<path>",
-  );
+  return withoutWorkDir
+    .replace(new RegExp(String.raw`(["'])${PATH_ROOT}[^"'\n]*\1`, "gu"), "$1<path>$1")
+    .replace(new RegExp(String.raw`(^|[\s(\[{:])${PATH_ROOT}[^\n"']*?${PATH_END}`, "gu"), "$1<path>")
+    .replace(new RegExp(String.raw`(^|[\s(\[{:])${PATH_ROOT}[^\s"')\]}]*`, "gu"), "$1<path>");
 }
 
 /**
@@ -110,11 +139,34 @@ export function insertionRefusalLine(stderr: string, workDir?: string): string {
     ];
     return `insert_blocks refused: layout_overflow${widths.length === 0 ? "" : ` (${widths.join(", ")})`}`;
   }
-  const lines = stderr.split(/\r?\n/u).map(entry => entry.trim()).filter(entry => entry !== "");
-  const line = lines.find(entry => /^error:/iu.test(entry)) ?? lines[0] ?? "";
-  // That line opens with the op's own name; the prefix already names it.
-  const reason = withoutPaths(line.replace(/^error:\s*/iu, "").replace(/^insert_blocks\s+/u, ""), workDir);
+  const reason = engineLine(stderr, workDir).replace(/^insert_blocks\s+/u, "");
   return reason === "" ? "insert_blocks refused" : `insert_blocks refused: ${reason}`;
+}
+
+/** The engine's first `Error:` line (or first non-empty line), paths removed. */
+function engineLine(stderr: string, workDir?: string): string {
+  const line = firstErrorLine(stderr) ??
+    stderr.split(/\r?\n/u).map(entry => entry.trim()).find(entry => entry !== "") ?? "";
+  return withoutPaths(line.replace(/^Error:\s*/u, "").trim(), workDir);
+}
+
+/** The step every unclassified edit failure ends with (#88). */
+export const UNCLASSIFIED_EDIT_STEP = "Fix or remove the pending edit it names, then apply again.";
+
+/**
+ * An edit failure no classifier recognised, as both transports print it: the
+ * engine's own first `Error:` line with paths removed, then the step; the
+ * step alone when the engine printed no `Error:` line. Display text only;
+ * nothing classifies from it. The full stderr stays on the error for a log.
+ */
+export function unclassifiedEditLine(stderr: string, workDir?: string): string {
+  // Only a line the engine marked as its error: other output (progress,
+  // stdout chatter) stays off the message, as runCliOk always kept it.
+  const line = firstErrorLine(stderr);
+  const reason = line === undefined
+    ? ""
+    : withoutPaths(line.replace(/^Error:\s*/u, "").trim(), workDir).replace(/[.:\s]+$/u, "");
+  return reason === "" ? UNCLASSIFIED_EDIT_STEP : `${reason}. ${UNCLASSIFIED_EDIT_STEP}`;
 }
 
 /**

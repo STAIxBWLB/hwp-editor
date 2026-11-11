@@ -16,7 +16,7 @@
  *   step included, while the engine-side English reason survives on `detail`.
  */
 import { describe, expect, it } from "vitest";
-import { classifyInsertionRefusal, ComponentError, HwpEngineError } from "@hwp-editor/core";
+import { classifyInsertionRefusal, ComponentError, createHttpEngine, HwpEngineError } from "@hwp-editor/core";
 import type { Blocks, ComponentErrorCode, InsertionRefusal } from "@hwp-editor/core";
 
 import { componentFailure, insertionFailure } from "../src/components-support.js";
@@ -46,7 +46,8 @@ const serverSummary = (widths: boolean): string =>
 /** The engine's own text when a host runs in process: body width, no block width. */
 const engineText =
   "Error: insert_blocks 블록/스타일/목록 정의가 유효하지 않습니다: layout_overflow at " +
-  "$.sections[0].blocks[0].width_mm: table width exceeds body width 46.40 mm.";
+  "$.sections[0].blocks[0].width_mm: table width exceeds body width 46.40 mm. " +
+  "DocumentSpec v1 정의를 수정한 뒤 다시 시도하세요 (삽입 위치의 폭은 46.4mm입니다)";
 
 /**
  * A failure as a transport delivers it: the message for a log, and the class
@@ -180,7 +181,8 @@ describe("insertionFailure", () => {
   it("classifies an in-process host's engine text through core's classifier, not the message", () => {
     // A host wired in process attaches the class with the same core function
     // the transports use; the palette reads the field.
-    const stderr = "Error: 스타일 '결재란 (법인)'을 대상 문서에서 찾을 수 없습니다";
+    const stderr = "Error: 스타일 '결재란 (법인)'을 대상 문서에서 찾을 수 없습니다. styles 정의를 제공하고 " +
+      "missing_style=create로 다시 시도하거나 hwp styles에서 기존 스타일을 선택하세요";
     const error = Object.assign(new Error(stderr), { insertion: classifyInsertionRefusal(stderr) });
     const shown = insertionFailure(error, WIDE, en) as Error;
 
@@ -295,5 +297,35 @@ describe("componentFailure", () => {
   it("passes a non-component throw through", () => {
     const error = new Error("boom");
     expect(componentFailure(error, en)).toBe(error);
+  });
+});
+
+describe("insertion class end to end over HTTP (t37-a4)", () => {
+  it("takes error.insertion from the server body through parseError to the sentence", async () => {
+    const engine = createHttpEngine("/api", {
+      fetch: (() => Promise.resolve(new Response(JSON.stringify({
+        error: {
+          code: "failed",
+          message: "hwp edit failed (exit 3): insert_blocks refused: layout_overflow (block 120.00 mm, insertion point 46.40 mm)",
+          insertion: { kind: "layout_overflow", blockMm: 120, insertionMm: 46.4 },
+        },
+      }), { status: 422 }))) as unknown as typeof fetch,
+    });
+    const failure = await engine.edit({ name: "a.hwpx", data: new Uint8Array([1]) }, [])
+      .then(() => { throw new Error("edit succeeded"); }, (e: unknown) => e);
+    const shown = insertionFailure(failure, WIDE, ko) as Error;
+    expect(shown.message).toBe(ko("components.tooWide", { width: "120 mm", available: "46.4 mm" }));
+  });
+
+  it("shows no class sentence when the body has only the message text", async () => {
+    const engine = createHttpEngine("/api", {
+      fetch: (() => Promise.resolve(new Response(JSON.stringify({
+        error: { code: "failed", message: "hwp edit failed (exit 3): insert_blocks refused: unknown_style; 결재란 셀" },
+      }), { status: 422 }))) as unknown as typeof fetch,
+    });
+    const failure = await engine.edit({ name: "a.hwpx", data: new Uint8Array([1]) }, [])
+      .then(() => { throw new Error("edit succeeded"); }, (e: unknown) => e);
+    const shown = insertionFailure(failure, WIDE, en) as Error;
+    expect(shown.message).not.toBe(en("components.unknownStyle", { style: "결재란 셀" }));
   });
 });

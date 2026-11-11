@@ -1003,15 +1003,18 @@ describe.each([["en", en], ["ko", ko]] as const)("Transport failures end to end 
     expect(await shown(failure)).not.toContain(messages["error.rangeTagRefused"]);
   });
 
-  it("Tauri: an add_table anchor ending in the marker shows no refusal sentence and no raw stderr", async () => {
+  it("Tauri: an add_table anchor ending in the marker shows the engine line, not the refusal sentence", async () => {
     // add_table prints `앵커를 찾을 수 없습니다: {anchor}` (hwp-convert edit.rs:2107).
+    // The engine's line is display text with paths removed (#88); the
+    // marker inside it selects nothing.
     const failure = await failureOf(tauri(
-      "hwp_failed: hwp edit failed (exit 3): Error: 앵커를 찾을 수 없습니다: /tmp/x edit refused: range_tag",
+      "hwp_failed: hwp edit failed (exit 3): progress /tmp/a b/in.hwpx\nError: 앵커를 찾을 수 없습니다: /tmp/x edit refused: range_tag",
     ));
     const text = await shown(failure);
     expect(text).not.toContain(messages["error.rangeTagRefused"]);
-    expect(text).not.toContain("앵커를 찾을 수 없습니다");
+    expect(text).toContain("Fix or remove the pending edit it names, then apply again.");
     expect(text).not.toContain("/tmp/");
+    expect(text).not.toContain("progress");
   });
 
   it("Tauri: a real range-tag stderr shows the range-tag sentence", async () => {

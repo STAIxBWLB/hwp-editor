@@ -1,6 +1,6 @@
 import { parsePageLayout } from "./layout.js";
 import { classifyEditRefusal, editRefusalMarker, isEditRefusalKind } from "./refusals.js";
-import { classifyInsertionRefusal, insertionRefusalLine, isInsertionRefusal, STOPPED_WITHOUT_DIAGNOSTIC } from "./insertion-refusals.js";
+import { classifyInsertionRefusal, insertionRefusalLine, isInsertionRefusal, STOPPED_WITHOUT_DIAGNOSTIC, unclassifiedEditLine } from "./insertion-refusals.js";
 import type { InsertionRefusal } from "./insertion-refusals.js";
 import type { EditRefusalKind } from "./refusals.js";
 /**
@@ -201,9 +201,9 @@ const MARU_EDIT_FAILURE = /^hwp_failed: (hwp edit failed \(exit -?\d+\)): ([\s\S
  * - empty stderr: the exit line plus STOPPED_WITHOUT_DIAGNOSTIC;
  * - a batch carrying an insertion: the exit line plus the insert_blocks
  *   cause line, and `insertion` when the class is known;
- * - anything else: the exit line alone.
- * No raw stderr, staged path or user value reaches the message; the raw
- * rejection stays on the error's `cause` for a log.
+ * - anything else: the engine's first Error: line with paths removed, then
+ *   the step (`unclassifiedEditLine`).
+ * The raw rejection stays on the error's `cause` for a log.
  */
 function editFailure(
   cmd: string,
@@ -226,7 +226,9 @@ function editFailure(
       fields: cls === undefined ? {} : { insertion: cls },
     };
   }
-  return { message: head, fields: {} };
+  // The engine's own first Error: line, paths removed, then the step: the
+  // same display line HTTP prints. Nothing classifies from it.
+  return { message: `${head}: ${unclassifiedEditLine(stderr)}`, fields: {} };
 }
 
 /**
