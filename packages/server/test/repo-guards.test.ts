@@ -1035,47 +1035,101 @@ describe("CI-2: bounded workflows and an explicit gating aggregate", () => {
   });
 });
 
-/** A `uses:` reference to another repository, action and ref captured. */
-const USES = /^(\s*)(?:-\s*)?uses:\s*(\S+)(\s+#\s*(\S+))?\s*$/;
+/**
+ * A `uses:` line, matched LOOSELY: `uses:` and then the rest of the line,
+ * whatever it holds.
+ *
+ * The strict shape is parsed out of that rest by `USES_STRICT` afterwards, and
+ * a rest it cannot read is reported rather than dropped. A single regex doing
+ * both silently skipped any line it did not understand - `uses:
+ * evil/act@v1 # pin later` matched neither the reference-plus-comment form nor
+ * the bare form, so it reached neither the pin check nor the failure list,
+ * which is the opposite of what a fail-closed guard means.
+ */
+const USES_LINE = /^(\s*)(?:-\s*)?uses:[ \t]*(\S.*)?$/;
 
-/** A full commit SHA, which is the only reference that cannot be repointed. */
+/** What may follow `uses:`: the reference, then an optional `# version`. */
+const USES_STRICT = /^(\S+)(?:\s+#\s*(\S+))?\s*$/;
+
+/** A full commit SHA, which is the only action reference that cannot be repointed. */
 const FULL_SHA = /^[0-9a-f]{40}$/;
 
-interface ThirdPartyUse {
+/**
+ * A container image digest, which is the only `docker://` reference that cannot
+ * be repointed. An image is pinned by `@sha256:` rather than by a commit,
+ * because a tag on an image - `docker://alpine:3` - is repointable in exactly
+ * the way a tag on an action is.
+ */
+const IMAGE_DIGEST = /@sha256:[0-9a-f]{64}$/;
+
+interface ActionUse {
+  /** The reference exactly as written, which is what a message quotes. */
+  text: string;
+  /** Repository action, or container image, without its reference. */
   action: string;
+  /** Everything after the last `@`, or "" when the reference names none. */
   ref: string;
   /** Version in the trailing comment, which keeps the pin readable. */
   comment: string | undefined;
+  /** A `docker://` image, whose ref is a digest rather than a commit. */
+  image: boolean;
   where: string;
 }
 
+/** A `uses:` line the strict form does not read. Reported, never skipped. */
+interface UnparsedUse {
+  where: string;
+  raw: string;
+}
+
+interface UseScan {
+  thirdParty: ActionUse[];
+  unparsed: UnparsedUse[];
+}
+
 /**
- * Every `uses:` that names another repository's action, third-party ones first.
+ * Every `uses:` line in the workflows, split into the third-party references
+ * and the lines this scanner could not read.
  *
  * `actions/*` is GitHub's own and stays on its major tag by the owner's decision
  * (#45 item 6 scopes the pinning to third-party actions); a local `./path`
- * action is this repository's own code and has no ref at all.
+ * action is this repository's own code and has no ref at all. `docker://` is
+ * third-party by definition, so it is scanned as an image pin - excluding it
+ * would be one more class of reference that vanishes instead of failing.
  */
-function thirdPartyUses(dir: string): ThirdPartyUse[] {
-  const uses: ThirdPartyUse[] = [];
+function scanUses(dir: string): UseScan {
+  const thirdParty: ActionUse[] = [];
+  const unparsed: UnparsedUse[] = [];
   for (const workflow of readWorkflows(dir)) {
     for (const [index, line] of workflow.lines.entries()) {
-      const match = USES.exec(line);
-      const reference = match?.[2];
-      if (reference === undefined) continue;
-      if (reference.startsWith("./") || reference.startsWith("docker://")) continue;
-      const at = reference.lastIndexOf("@");
-      const action = at === -1 ? reference : reference.slice(0, at);
-      if (action.split("/")[0] === "actions") continue;
-      uses.push({
+      const loose = USES_LINE.exec(line);
+      if (loose === null) continue;
+      const where = `${workflow.name}:${index + 1}`;
+      const raw = (loose[2] ?? "").trim();
+      const strict = USES_STRICT.exec(raw);
+      if (strict === null) {
+        unparsed.push({ where, raw });
+        continue;
+      }
+      const text = strict[1]!;
+      const comment = strict[2];
+      if (text.startsWith("./")) continue;
+      const image = text.startsWith("docker://");
+      const bare = image ? text.slice("docker://".length) : text;
+      const at = bare.lastIndexOf("@");
+      const action = at === -1 ? bare : bare.slice(0, at);
+      if (!image && action.split("/")[0] === "actions") continue;
+      thirdParty.push({
+        text,
         action,
-        ref: at === -1 ? "" : reference.slice(at + 1),
-        comment: match?.[4],
-        where: `${workflow.name}:${index + 1}`,
+        ref: at === -1 ? "" : bare.slice(at + 1),
+        comment,
+        image,
+        where,
       });
     }
   }
-  return uses;
+  return { thirdParty, unparsed };
 }
 
 /**
@@ -1089,25 +1143,36 @@ function thirdPartyUses(dir: string): ThirdPartyUse[] {
  * trailing comment is the version, because a 40-character hash names nothing a
  * reader can check.
  *
- * Fail-closed in the same way as the other guards here: a workflow directory
- * that yields no third-party reference at all throws, so an indentation change
- * that stops this from reading the files reads as a failure rather than a pass.
+ * Fail-closed in two ways. A `uses:` line whose shape this scanner does not
+ * read is a violation rather than a line to skip, so a hand-edited pin cannot
+ * pass by being unparseable. And a workflow directory that yields no `uses:`
+ * line at all throws, so an indentation change that stops this from reading the
+ * files reads as a failure rather than a pass.
  */
 function unpinnedActionViolations(dir: string): string[] {
-  const uses = thirdPartyUses(dir);
-  if (uses.length === 0) {
+  const scan = scanUses(dir);
+  if (scan.thirdParty.length === 0 && scan.unparsed.length === 0) {
     throw new Error(
-      `CI-3 guard found no third-party action reference in ${dir}; the guard did not run.`,
+      `CI-3 guard found no uses: line in ${dir}; the guard did not run.`,
     );
   }
-  const violations: string[] = [];
-  for (const use of uses) {
+  const violations = scan.unparsed.map(
+    ({ where, raw }) =>
+      `${where}: uses: ${raw === "" ? "(nothing)" : raw} does not parse as <action>@<ref> # <version>`,
+  );
+  for (const use of scan.thirdParty) {
+    if (use.image) {
+      if (!IMAGE_DIGEST.test(use.text)) {
+        violations.push(`${use.where}: ${use.text} is not pinned to an @sha256: digest`);
+      }
+      continue;
+    }
     if (!FULL_SHA.test(use.ref)) {
-      violations.push(`${use.where}: ${use.action}@${use.ref} is not a full commit SHA`);
+      violations.push(`${use.where}: ${use.text} is not a full commit SHA`);
       continue;
     }
     if (use.comment === undefined || !/^v?\d/.test(use.comment)) {
-      violations.push(`${use.where}: ${use.action}@${use.ref} has no version comment`);
+      violations.push(`${use.where}: ${use.text} has no version comment`);
     }
   }
   return violations;
@@ -1117,7 +1182,7 @@ describe("CI-3: a third-party action runs only at a pinned commit (#45 item 6)",
   it("pins every third-party action in the workflows to a SHA with its version", () => {
     expect(unpinnedActionViolations(WORKFLOWS_DIR)).toEqual([]);
     // Non-vacuous on this tree: the pin above is one of these.
-    expect(thirdPartyUses(WORKFLOWS_DIR).map((use) => use.action)).toContain(
+    expect(scanUses(WORKFLOWS_DIR).thirdParty.map((use) => use.action)).toContain(
       "pnpm/action-setup",
     );
   });
@@ -1152,7 +1217,44 @@ describe("CI-3: a third-party action runs only at a pinned commit (#45 item 6)",
     ]);
   });
 
-  it("allows a pinned action, an actions/* tag and a local action", () => {
+  it("reports a tag reference whose comment is prose, not a version", () => {
+    // The shape that used to be skipped entire: a tag followed by a comment
+    // with a space in it matches neither form of a single-pattern parser, so
+    // it silently escaped a guard that claims to fail closed.
+    const dir = fixtureDir({
+      "ci.yml": [
+        "jobs:",
+        "  build:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - uses: evil/act@v1 # pin later",
+      ].join("\n"),
+    });
+    expect(unpinnedActionViolations(dir)).toEqual([
+      "ci.yml:5: uses: evil/act@v1 # pin later does not parse as <action>@<ref> # <version>",
+    ]);
+  });
+
+  it("reports a uses: line it cannot read at all, rather than passing it", () => {
+    const dir = fixtureDir({
+      "ci.yml": [
+        "jobs:",
+        "  build:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        `      - uses: evil/act@${"c".repeat(40)}  # trailing spaces before the comment`,
+        "      - uses:",
+      ].join("\n"),
+    });
+    expect(unpinnedActionViolations(dir)).toEqual([
+      "ci.yml:5: uses: evil/act@" +
+        "c".repeat(40) +
+        "  # trailing spaces before the comment does not parse as <action>@<ref> # <version>",
+      "ci.yml:6: uses: (nothing) does not parse as <action>@<ref> # <version>",
+    ]);
+  });
+
+  it("allows a pinned action, an actions/* tag, a local action and a pinned image", () => {
     const dir = fixtureDir({
       "ci.yml": [
         "jobs:",
@@ -1162,12 +1264,28 @@ describe("CI-3: a third-party action runs only at a pinned commit (#45 item 6)",
         `      - uses: pnpm/action-setup@${"b".repeat(40)} # v6.1.1`,
         "      - uses: actions/checkout@v5",
         "      - uses: ./scripts/local-action",
+        `      - uses: docker://alpine:3.20@sha256:${"d".repeat(64)}`,
       ].join("\n"),
     });
     expect(unpinnedActionViolations(dir)).toEqual([]);
   });
 
-  it("fails rather than passing when it reads no third-party reference", () => {
+  it("reports an image named by tag, which its publisher can repoint", () => {
+    const dir = fixtureDir({
+      "ci.yml": [
+        "jobs:",
+        "  build:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - uses: docker://alpine:3",
+      ].join("\n"),
+    });
+    expect(unpinnedActionViolations(dir)).toEqual([
+      "ci.yml:5: docker://alpine:3 is not pinned to an @sha256: digest",
+    ]);
+  });
+
+  it("fails rather than passing when it reads no uses: line", () => {
     const dir = fixtureDir({
       "ci.yml": [
         "jobs:",

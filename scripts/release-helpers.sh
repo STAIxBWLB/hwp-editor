@@ -190,11 +190,12 @@ is_prerelease() {
 # The single derivation behind both the npm dist-tag and the GitHub Release's
 # prerelease flag. `npm publish` defaults to `latest` when no --tag is passed,
 # so an approved RC tag would otherwise put a prerelease on `latest` for every
-# consumer - a direct violation of Phase 1's D-01, and one only a manually
-# authenticated human can undo, because `npm dist-tag` is not among a trusted
-# publisher's allowed actions. The tag is therefore passed explicitly in both
-# cases, so npm's default is never what decides. This matches the `next` the
-# hand-published RC uses (D-01, plan 06-04).
+# consumer - a direct violation of Phase 1's D-01, and one nothing in this
+# workflow corrects: move_next_tag only ever moves `next`, and only for a
+# stable release, so undoing a `latest` still needs a manually authenticated
+# human. The tag is therefore passed explicitly in both cases, so npm's default
+# is never what decides. This matches the `next` the hand-published RC uses
+# (D-01, plan 06-04).
 dist_tag_for() {
   if is_prerelease "$1"; then
     echo next
@@ -253,10 +254,21 @@ publish_package() {
 # NPM_DIST_TAG_TOKEN is that stored token: an npm granular token limited to the
 # three packages, kept as an environment secret of npm-publish. It goes into a
 # throwaway userconfig (mktemp, mode 600, removed on exit), never
-# NODE_AUTH_TOKEN or the runner's .npmrc: npm treats either as configured
-# credentials and would then skip the OIDC exchange a publish needs (release.yml
-# header point 3). That is also why release.yml calls this only after the last
-# publish.
+# NODE_AUTH_TOKEN or the runner's .npmrc: a configured credential is what makes
+# npm skip the OIDC exchange a publish needs (release.yml header point 3). That
+# is also why release.yml calls this only after the last publish.
+#
+# The fallback runs with the OIDC inputs REMOVED from its environment, and the
+# userconfig is not enough on its own. `npm dist-tag add` calls #oidc before
+# every fetch and before every PUT (npm's lib/commands/dist-tag.js), and with
+# the job's `id-token: write` the exchange succeeds - setOidcToken writes the
+# result at the `cli` config layer (lib/utils/oidc.js), which outranks
+# --userconfig. The PUT would then carry the identity the same per-package
+# switch just denied, fail with the same E403, and leave `next` where it was
+# while release.yml's continue-on-error kept the job green. With no OIDC input
+# in the environment there is no exchange and the userconfig is what npm
+# authenticates with. The first two names are the workflow's own inputs;
+# NPM_ID_TOKEN is npm's alternative spelling of the same token.
 #
 # No token and no OIDC permission is a warning and a skip, not a failure: the
 # packages are already published, and the manual commands in RELEASING.md step 7
@@ -271,7 +283,11 @@ move_next_tag() {
   trap 'rm -f "$mnt_log" ${mnt_cfg:+"$mnt_cfg"}' EXIT
   mnt_oidc=1
   for mnt_pkg in core react server; do
-    if npm dist-tag add "@hwp-editor/$mnt_pkg@$mnt_version" next >>"$mnt_log" 2>&1; then
+    # NPM_DIST_TAG_TOKEN is stripped here too: it is not an input to this
+    # attempt, and an attempt that needs no credential should not have one in
+    # reach.
+    if env -u NPM_DIST_TAG_TOKEN \
+      npm dist-tag add "@hwp-editor/$mnt_pkg@$mnt_version" next >>"$mnt_log" 2>&1; then
       echo "[ok] @hwp-editor/$mnt_pkg next -> $mnt_version (OIDC)"
     else
       mnt_oidc=0
@@ -298,7 +314,8 @@ move_next_tag() {
   chmod 600 "$mnt_cfg"
   printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_DIST_TAG_TOKEN" > "$mnt_cfg"
   for mnt_pkg in core react server; do
-    npm --userconfig "$mnt_cfg" dist-tag add "@hwp-editor/$mnt_pkg@$mnt_version" next
+    env -u ACTIONS_ID_TOKEN_REQUEST_URL -u ACTIONS_ID_TOKEN_REQUEST_TOKEN -u NPM_ID_TOKEN \
+      npm --userconfig "$mnt_cfg" dist-tag add "@hwp-editor/$mnt_pkg@$mnt_version" next
     echo "[ok] @hwp-editor/$mnt_pkg next -> $mnt_version (token)"
   done
   rm -f "$mnt_cfg"

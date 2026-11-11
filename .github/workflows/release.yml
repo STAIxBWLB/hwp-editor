@@ -133,6 +133,13 @@ name: release
 #   throwaway userconfig by move_next_tag - never NODE_AUTH_TOKEN or the
 #   runner's .npmrc, which would make npm skip the OIDC exchange (point 3).
 #   REL-02's guard allows this one reference in this one place and nothing else.
+#
+#   That fallback runs with the OIDC inputs removed from its environment (`env
+#   -u` on the two request variables and NPM_ID_TOKEN). The userconfig alone
+#   would not decide it: `npm dist-tag` runs the exchange itself on every call
+#   whenever those inputs are set, and the token it installs outranks
+#   --userconfig, so the write would be refused exactly as the first attempt
+#   was and `next` would silently not move behind continue-on-error.
 
 on:
   push:
@@ -163,8 +170,9 @@ concurrency:
   # That is the better of the two failures, because they are not symmetric. A
   # dropped pending run published nothing and spent no version number; it shows
   # as `cancelled` in Actions and is recovered by re-running it. A `latest` moved
-  # backward cannot be recovered by this workflow at all: `npm dist-tag` is
-  # outside a trusted publisher's allowed actions, so undoing it needs a human
+  # backward is corrected by nothing in this workflow: move_next_tag only moves
+  # `next`, and only for a stable release, and it needs one of the two
+  # credentials RELEASING.md step 7 describes. Undoing a `latest` needs a human
   # with an authenticated, 2FA-gated npm session. RELEASING.md carries the
   # operational half - do not push a release tag while another is pending.
   cancel-in-progress: false

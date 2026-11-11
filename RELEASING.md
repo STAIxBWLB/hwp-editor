@@ -62,10 +62,10 @@ member cancels the pending one even when cancellation is off, so a third tag pus
 release runs and another waits drops the middle one. The constant group is still the right
 trade, and `release.yml`'s concurrency comment records why: a per-ref group lets two releases
 overlap, and with an approval gate that is ordinary rather than exotic - an older run finishing
-last moves `latest` backward, which this workflow cannot undo, because `npm dist-tag` is
-outside a trusted publisher's allowed actions and reversing it needs a 2FA-authenticated human.
-A dropped pending run, by contrast, published nothing, spent no version number, and is
-recovered by re-running it.
+last moves `latest` backward, which nothing in this workflow corrects, since step 7's
+`move_next_tag` moves `next` only, and only for a stable release. Reversing a `latest` needs a
+2FA-authenticated human. A dropped pending run, by contrast, published nothing, spent no
+version number, and is recovered by re-running it.
 
 ### 3. Watch the `verify` job
 
@@ -175,6 +175,13 @@ publish permission:
   and creating a new one, which re-mints the binding with the environment name (release.yml
   header point 5).
 
+**When the token goes away.** #45's decision of 2026-11-09 is that `NPM_DIST_TAG_TOKEN` and the
+fallback that uses it are deleted once a stable release logs the `(OIDC)` path for all three
+packages. That log is the whole test: the three `[ok] ... (OIDC)` lines are the only readable
+evidence that the per-package switch is on, because the setting is not queryable from the
+workflow. Until such a release, keep both - with the switch off and the secret gone, every
+stable release leaves `next` behind a warning.
+
 Until then npm refuses with E403 and the step logs `::group::npm dist-tag output (OIDC
 attempt)` with the message, then falls back to `NPM_DIST_TAG_TOKEN`:
 
@@ -186,6 +193,11 @@ attempt)` with the message, then falls back to `NPM_DIST_TAG_TOKEN`:
 - `move_next_tag` hands it to npm through a throwaway userconfig, never `NODE_AUTH_TOKEN`.
   That, and running only after the last publish, keeps it out of reach of every publish,
   which would otherwise skip the OIDC exchange (release.yml header point 3).
+- That fallback runs with `ACTIONS_ID_TOKEN_REQUEST_URL`, `ACTIONS_ID_TOKEN_REQUEST_TOKEN` and
+  `NPM_ID_TOKEN` removed from its environment. A userconfig alone would not be enough: npm
+  performs the OIDC exchange by itself whenever those inputs are set, on every `dist-tag` call,
+  and installs the result above `--userconfig` - so the write would carry the same identity the
+  first attempt was refused for.
 - `repo-guards.test.ts` allows this one reference in that one place and no other secret
   anywhere.
 
