@@ -57,7 +57,9 @@ const TABLE: StyleTable = {
 /**
  * A preset batch's report, as the engine writes it. `pieces` is what the engine
  * measured: 0 means the switch was already in place (byte-identical output),
- * which is how the panel knows not to stage an undo entry for it.
+ * which is how the panel knows not to stage an undo entry for it. The batch is
+ * the panel's own two ops, so `failed` models the measured table-less answer:
+ * the style op lands, `style_tables` is pushed to unapplied.
  */
 function presetReport(status: "applied" | "failed", pieces = 1): EditReport {
   return {
@@ -65,15 +67,18 @@ function presetReport(status: "applied" | "failed", pieces = 1): EditReport {
     contract: "hwp-edit-report-v1",
     output: "x.hwpx",
     dry_run: false,
-    ops: [{
-      index: 0,
-      op: "style_tables",
-      status,
-      pieces_touched: status === "failed" ? 0 : pieces,
-      changed: [],
-      reason: status === "failed" ? "style_tables: no styleable table" : null,
-    }],
-    applied_count: status === "applied" ? 1 : 0,
+    ops: [
+      { index: 0, op: "update_style", status: "applied", pieces_touched: pieces, changed: [], reason: null },
+      {
+        index: 1,
+        op: "style_tables",
+        status,
+        pieces_touched: status === "failed" ? 0 : pieces,
+        changed: [],
+        reason: status === "failed" ? "style_tables: no styleable table" : null,
+      },
+    ],
+    applied_count: status === "applied" ? 2 : 1,
     failed_count: status === "failed" ? 1 : 0,
   };
 }
@@ -97,6 +102,33 @@ function envelopeWithIds(): CatEnvelope {
   };
 }
 
+/**
+ * The shared envelope with the DIRECT level changed, which is what the promote
+ * reads: it describes the paragraph as it renders, not the style it inherits.
+ */
+function envelopeWithDirect(shape: { italic?: boolean; alignment?: string }): CatEnvelope {
+  const base = envelopeWithIds();
+  return {
+    ...base,
+    segments: base.segments.map((segment) => {
+      const direct = segment.direct;
+      if (direct === undefined) return segment;
+      return {
+        ...segment,
+        direct: {
+          ...direct,
+          ...(direct.char === undefined || shape.italic === undefined
+            ? {}
+            : { char: { ...direct.char, italic: shape.italic } }),
+          ...(direct.para === undefined || shape.alignment === undefined
+            ? {}
+            : { para: { ...direct.para, alignment: shape.alignment } }),
+        },
+      };
+    }),
+  };
+}
+
 interface StyleHarness {
   engine: HwpEngine;
   edits: { ops: EditOp[]; options: EditOptions | undefined }[];
@@ -116,6 +148,8 @@ function styleEngine(
     version?: string;
     table?: StyleTable;
     report?: EditReport;
+    /** The envelope the panel reads, when a test needs shapes the default lacks. */
+    envelope?: CatEnvelope;
     /**
      * Per-call answers. A promise at index `n` holds the nth read open until
      * it settles, which is how a test reaches the state a document switch
@@ -124,7 +158,7 @@ function styleEngine(
     pending?: (Promise<StyleTable> | undefined)[];
   } = {},
 ): StyleHarness {
-  const base = createMockEngine({ envelope: envelopeWithIds() });
+  const base = createMockEngine({ envelope: opts.envelope ?? envelopeWithIds() });
   const edits: StyleHarness["edits"] = [];
   const styleReads: DocumentHandle[] = [];
   const documentReads: DocumentHandle[] = [];
@@ -419,6 +453,44 @@ describe("styles tab operations (en)", () => {
   });
 
   /**
+   * A base clone carries the STYLE's shapes, so what the paragraph adds as its
+   * own direct override has to travel in the create op or it is lost: italic
+   * and a percentage line height are both readable here and both writable.
+   */
+  it("promotes the paragraph's own italic and percentage line height", async () => {
+    const harness = await openPanel(styleEngine({ envelope: envelopeWithDirect({ italic: true }) }));
+    fireEvent.click(await screen.findByRole("button", { name: /바탕글/ }));
+    fireEvent.change(screen.getByLabelText(en["styles.promoteName"]), { target: { value: "인용" } });
+    fireEvent.click(screen.getByRole("button", { name: en["styles.promoteSubmit"] }));
+
+    const items = screen.getByRole("list", { name: en["toolbar.pendingList"] }).querySelectorAll("li").length;
+    fireEvent.click(screen.getByRole("button", { name: en["toolbar.applyWithCount"]({ count: items }) }));
+    await waitFor(() => expect(harness.edits).toHaveLength(1));
+
+    const create = harness.edits[0]!.ops.find((op) => op.kind === "create-style");
+    expect(create).toMatchObject({ italic: true, lineSpacingPct: "160" });
+  });
+
+  /**
+   * `divide` is a value the document can carry and this editor cannot write.
+   * Mapping it to justify would rewrite the paragraph's alignment to one it
+   * never had, so the create op says nothing about alignment instead.
+   */
+  it("does not invent justify for an alignment it cannot write", async () => {
+    const harness = await openPanel(styleEngine({ envelope: envelopeWithDirect({ alignment: "divide" }) }));
+    fireEvent.click(await screen.findByRole("button", { name: /바탕글/ }));
+    fireEvent.change(screen.getByLabelText(en["styles.promoteName"]), { target: { value: "인용" } });
+    fireEvent.click(screen.getByRole("button", { name: en["styles.promoteSubmit"] }));
+
+    const items = screen.getByRole("list", { name: en["toolbar.pendingList"] }).querySelectorAll("li").length;
+    fireEvent.click(screen.getByRole("button", { name: en["toolbar.applyWithCount"]({ count: items }) }));
+    await waitFor(() => expect(harness.edits).toHaveLength(1));
+
+    const create = harness.edits[0]!.ops.find((op) => op.kind === "create-style");
+    expect(create).not.toHaveProperty("align");
+  });
+
+  /**
    * n4: two rows can share a name in styles-v1, and a name can be empty, while
    * `edit-ops-v1` reads a style reference by name as ambiguous. The row id is
    * the row, so an edit addresses that.
@@ -474,6 +546,112 @@ describe("styles tab operations (en)", () => {
     await waitFor(() => expect(root.getAttribute("data-status")).toBe("clean"));
     expect(harness.documentReads).toHaveLength(readsBefore);
     expect((screen.getByRole("button", { name: en["toolbar.revert"] }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  /**
+   * t12-a13. On a table-less document the preset stays unapplied on every
+   * press and the style op reports `pieces_touched: 0` from the second press
+   * on. The unapplied preset is still not a change, so reading it as one adds
+   * an undo entry per press that restores the document to itself.
+   */
+  it("stages no undo entry when a table-less document's preset is already in place", async () => {
+    const harness = await openPanel(styleEngine({ report: presetReport("failed", 0) }));
+    const readsBefore = harness.documentReads.length;
+    const root = document.querySelector("[data-status]")!;
+    fireEvent.click(screen.getByRole("button", { name: en["styles.presetSubmit"] }));
+
+    await waitFor(() => expect(harness.edits).toHaveLength(1));
+    await waitFor(() => expect(root.getAttribute("data-status")).toBe("clean"));
+    expect(harness.documentReads).toHaveLength(readsBefore);
+    expect((screen.getByRole("button", { name: en["toolbar.revert"] }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  /**
+   * t12-a11. A no-op switch holds "applying" while the host switches file. The
+   * switched-to load fails, and a failed load dispatches nothing, so no later
+   * transition ends "applying" — the release above is the only one that can,
+   * and it used to return early because the generation had moved. The reducer
+   * then refuses queue, undo and apply until another successful load.
+   */
+  it("leaves applying when a switched-to load fails during a no-op switch", async () => {
+    const engineHarness = styleEngine();
+    let releaseEdit = (): void => undefined;
+    const gate = new Promise<void>((resolve) => { releaseEdit = resolve; });
+    const attempts: string[] = [];
+    const engine: HwpEngine = {
+      ...engineHarness.engine,
+      edit: async (document, ops, options) => {
+        await gate;
+        const edited = await engineHarness.engine.edit(document, ops, options);
+        return { ...edited, report: presetReport("applied", 0) };
+      },
+      read: async (document) => {
+        // The attempt itself, because this read never reaches the shared
+        // recorder: it is the one that fails.
+        attempts.push(document.name);
+        if (document.name === "y.hwpx") throw new Error("load failed");
+        return engineHarness.engine.read(document);
+      },
+    };
+    const { rerender } = renderEditor(engine);
+    fireEvent.click(await screen.findByRole("tab", { name: en["tabs.styles"] }));
+    const root = document.querySelector("[data-status]")!;
+    fireEvent.click(screen.getByRole("button", { name: en["styles.presetSubmit"] }));
+    await waitFor(() => expect(root.getAttribute("data-status")).toBe("applying"));
+
+    // The host switches file; the new load fails, so `load` never runs and the
+    // store keeps the document the switch started from.
+    rerender(<HwpEditor engine={engine} file={{ name: "y.hwpx", data: new Uint8Array([2]) }} locale="en" />);
+    await waitFor(() => expect(attempts).toContain("y.hwpx"));
+
+    releaseEdit();
+    await waitFor(() => expect(root.getAttribute("data-status")).toBe("clean"));
+  });
+
+  /**
+   * t12-a12. A preset switch replaces the document, so it is refused while a
+   * load is in flight — and that refusal used to reach only a host listening
+   * on `onError`, which the playground does not pass: the click did nothing.
+   */
+  it("shows a preset switch refused during a load on the notice line", async () => {
+    const engineHarness = styleEngine();
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const engine: HwpEngine = {
+      ...engineHarness.engine,
+      read: async (document) => {
+        if (document.name === "y.hwpx") await gate;
+        return engineHarness.engine.read(document);
+      },
+    };
+    const { rerender } = renderEditor(engine);
+    fireEvent.click(await screen.findByRole("tab", { name: en["tabs.styles"] }));
+    expect(await screen.findByRole("button", { name: en["styles.presetSubmit"] })).toBeTruthy();
+
+    rerender(<HwpEditor engine={engine} file={{ name: "y.hwpx", data: new Uint8Array([2]) }} locale="en" />);
+    fireEvent.click(screen.getByRole("button", { name: en["styles.presetSubmit"] }));
+
+    // The sentence is on the editor's own status line, not only in a callback.
+    expect(await screen.findByText(en["error.loadingReplacement"])).toBeTruthy();
+    // Refused before the engine saw a batch: nothing was edited.
+    expect(engineHarness.edits).toHaveLength(0);
+    release();
+  });
+
+  /**
+   * t12-a12. The other half of the same refusal: the state the user can see
+   * and clear. Queued edits would be lost by a replacement, so the switch is
+   * off and says what stands in its way.
+   */
+  it("disables the preset switch while edits are queued, and says why", async () => {
+    await openPanel(styleEngine());
+    fireEvent.click(await screen.findByRole("button", { name: /바탕글/ }));
+    fireEvent.change(screen.getByLabelText(en["styles.size"]), { target: { value: "15" } });
+    fireEvent.click(screen.getByRole("button", { name: en["styles.updateSubmit"] }));
+
+    const button = screen.getByRole("button", { name: en["styles.presetSubmit"] }) as HTMLButtonElement;
+    await waitFor(() => expect(button.disabled).toBe(true));
+    expect(screen.getByText(en["styles.pendingEdits"])).toBeTruthy();
   });
 
   /**

@@ -67,6 +67,15 @@ function alignmentOf(value: string): ParagraphAlignment {
   return (ALIGNMENTS as readonly string[]).includes(value) ? (value as ParagraphAlignment) : "justify";
 }
 
+/**
+ * The same test without the fallback, for a caller that must NOT invent one:
+ * the engine publishes `divide` and its own spellings, and writing `justify`
+ * for either rewrites the paragraph's alignment to a value it never had.
+ */
+function writableAlignment(value: string): ParagraphAlignment | undefined {
+  return (ALIGNMENTS as readonly string[]).includes(value) ? (value as ParagraphAlignment) : undefined;
+}
+
 /** The first font family a shape carries, in the engine's own spelling. */
 function firstFace(shape: StyleInfo["attrs"]): string | undefined {
   return shape.char?.faces.find((face): face is string => face !== null);
@@ -229,9 +238,11 @@ export function StylesPanel(): JSX.Element {
    * table's `used_by` join — not on the highlighted list row. The highlight
    * can be a character row, a row whose kind the document does not answer, or
    * simply a row this paragraph does not use, and `create_style` clones its
-   * base's shapes: everything the promote op does not set (line spacing,
-   * indent, the fields this form has no control for) would then come from that
-   * unrelated row.
+   * base's shapes: everything the promote op does not set (the fields this
+   * form has no control for) would then come from that unrelated row. What the
+   * paragraph carries as its own direct override — italic, a percentage line
+   * height — travels in the op, so the paragraph's look is not lost to the
+   * clone either.
    */
   const queuePromote = (): void => {
     const name = promoteName.trim();
@@ -249,6 +260,7 @@ export function StylesPanel(): JSX.Element {
         const segment = segmentAtRef(envelope, ref);
         return segment === undefined ? [] : [paragraphAddress(segment)];
       });
+    const align = shape.para === undefined ? undefined : writableAlignment(shape.para.alignment);
     store.dispatch({
       type: "queueOps",
       ops: [
@@ -257,10 +269,21 @@ export function StylesPanel(): JSX.Element {
           name,
           ...(shape.char === undefined ? {} : {
             bold: shape.char.bold,
+            italic: shape.char.italic,
             size: String(shape.char.size_pt),
             color: shape.char.color,
           }),
-          ...(shape.para === undefined ? {} : { align: alignmentOf(shape.para.alignment) }),
+          // Only an alignment this editor can write: `divide` and a host's own
+          // spelling are not justify, and the style inherits the base's
+          // alignment rather than being given one the paragraph never had.
+          ...(align === undefined ? {} : { align }),
+          // A percentage line height is published as the percentage with type
+          // 0, which is the unit `line_spacing_pct` takes. Any other type is a
+          // value this editor cannot read back as a unit it may write, so the
+          // style keeps the base's spacing instead of a converted guess.
+          ...(shape.para === undefined || shape.para.line_spacing_type !== 0
+            ? {}
+            : { lineSpacingPct: String(shape.para.line_spacing) }),
           ...(own === undefined ? {} : { basedOn: own.id }),
           ...(face === undefined ? {} : { font: face }),
         },
@@ -275,8 +298,10 @@ export function StylesPanel(): JSX.Element {
    * The preset switch: ONE engine call carrying the body-style update and the
    * `style_tables` op, inside one `replaceDocument` transaction — one
    * snapshot, one `applySucceeded`, therefore one undo entry. A refusal
-   * (queued edits, a load in flight) is already reported by the editor, so
-   * this awaits rather than repeating it.
+   * (queued edits, a load in flight) is put on the notice line by
+   * `replaceDocument` itself, so this awaits rather than repeating it; the
+   * button is disabled while edits are queued, which is the state the user
+   * can see and clear.
    *
    * The preset's outcome is read from the report the engine returns, through
    * the same core rule every transport obeys. "No styleable table" is not a
@@ -452,10 +477,16 @@ export function StylesPanel(): JSX.Element {
           >
             {STYLE_TABLE_PRESETS.map((value) => <option key={value} value={value}>{t(PRESET_LABEL[value])}</option>)}
           </select>
-          <button type="button" className="hwped-btn" disabled={disabled || styles === null} onClick={switchPreset}>
+          <button
+            type="button"
+            className="hwped-btn"
+            disabled={disabled || styles === null || state.pendingOps.length > 0}
+            onClick={switchPreset}
+          >
             {t("styles.presetSubmit")}
           </button>
         </div>
+        {state.pendingOps.length > 0 && <p className="hwped-hint">{t("styles.pendingEdits")}</p>}
       </div>
     </div>
   );

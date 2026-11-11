@@ -604,15 +604,17 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         // The store keeps the previous document until a load resolves, so a
         // caller that produced a result from it would replace the file the
         // host has already switched to. Refused, not silently dropped: the
-        // caller's result is worthless, and only the message says why.
+        // caller's result is worthless, and only the message says why. The
+        // sentence goes on the notice line as well as to `onError`: a host
+        // that passes no callback would otherwise see a click do nothing.
         if (generation !== loadedGeneration.current) {
           const refusal = new Error(t("error.loadingReplacement"));
-          emitError(refusal);
+          noteRefusal(refusal.message, refusal);
           return Promise.reject(refusal);
         }
         if (snapshot.pendingOps.length > 0) {
           const refusal = new Error(t("error.pendingReplacement"));
-          emitError(refusal);
+          noteRefusal(refusal.message, refusal);
           return Promise.reject(refusal);
         }
         store.dispatch({ type: "applyStarted" });
@@ -622,15 +624,18 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
             const next = await produce(current);
             // A producer hands back the document it was given when the edit
             // changed nothing: there is nothing to replace, and the snapshot
-            // applyStarted staged would undo the document to itself.
+            // applyStarted staged would undo the document to itself. Whatever
+            // the generation says, the snapshot stack is this attempt's — a
+            // load that moved the generation and then failed, or a null file,
+            // dispatches nothing, so only this release ends "applying".
             if (next === current) {
               const latest = store.getState();
               if (
-                generation !== loadGeneration.current ||
-                latest.document !== current ||
-                latest.snapshots !== replacementSnapshots
-              ) return false;
-              store.dispatch({ type: "applyUnchanged" });
+                latest.document === current &&
+                latest.snapshots === replacementSnapshots
+              ) {
+                store.dispatch({ type: "applyUnchanged" });
+              }
               return false;
             }
             const [nextEnvelope, pages, report] = await Promise.all([
@@ -679,7 +684,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           }
         })();
       },
-      [emitChange, emitError, engine, store, t],
+      [emitChange, emitError, engine, noteRefusal, store, t],
     );
 
     /** Ids of an insertion belong to one document; a new file retires them. */

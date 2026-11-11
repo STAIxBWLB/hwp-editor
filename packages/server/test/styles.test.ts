@@ -18,7 +18,7 @@
  * real-binary suites.
  */
 import { expect, it } from "vitest";
-import { bodyStyle, type DocumentSpecV2, type EditOp } from "@hwp-editor/core";
+import { bodyStyle, readPresetBatch, type DocumentSpecV2, type EditOp } from "@hwp-editor/core";
 import { createCliEngine } from "../src/cli-engine.js";
 import { BIN, describeBin } from "./helpers.js";
 
@@ -207,6 +207,37 @@ describeBin("named styles (real hwp)", () => {
     // And the render moved with the shapes: the size change is visible.
     const afterRender = await engine.render(updated, { pages: "1", format: "svg" });
     expect(Buffer.from(afterRender[0]!.data).equals(Buffer.from(beforeRender[0]!.data))).toBe(false);
+  });
+
+  /**
+   * t12-a13. On a table-less document the preset can never apply, so every
+   * press after the first is the style op reporting `pieces_touched: 0` beside
+   * an unapplied preset. That is the engine's own statement that the press
+   * changed nothing, and reading it as a change is what turned a re-press into
+   * an undo entry that restores the document to itself.
+   */
+  it("t12-a13: a second press on a table-less document reports no change", async () => {
+    const composed = await engine.compose(NO_TABLE_SPEC, "no-table.hwpx");
+    const document = composed.document;
+    const body = bodyStyle(await engine.styles(document), await engine.read(document))!;
+    const batch: EditOp[] = [
+      { kind: "update-style", style: body.id, size: String((body.attrs.char?.size_pt ?? 12) + 1) },
+      { kind: "style-tables", preset: "official" },
+    ];
+    // The first press really does move the style; the second is the same batch
+    // against a document that already carries it.
+    const once = await engine.edit(document, batch, { verify: true });
+    expect(readPresetBatch(once.report).unchanged).toBe(false);
+
+    const twice = await engine.edit(once, batch, { verify: true });
+    expect(Buffer.from(twice.data).equals(Buffer.from(once.data))).toBe(true);
+    const applied = twice.report?.ops.filter((outcome) => outcome.status === "applied") ?? [];
+    expect(applied.length).toBeGreaterThan(0);
+    for (const outcome of applied) expect(outcome.pieces_touched).toBe(0);
+    const reading = readPresetBatch(twice.report);
+    expect(reading.refusal).toBeNull();
+    expect(reading.unstyledTable).toBe(true);
+    expect(reading.unchanged).toBe(true);
   });
 
   it("AC7: the same preset twice is byte-identical", async () => {

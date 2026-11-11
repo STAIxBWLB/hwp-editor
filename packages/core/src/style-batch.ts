@@ -19,7 +19,9 @@
  * "no styleable table" with exit 0; a second unapplied op alongside it also
  * exits 0. Applying an already-applied preset reports every op `applied` with
  * `pieces_touched: 0` and writes byte-identical output, which is how a switch
- * that changes nothing is known before it becomes an undo entry.
+ * that changes nothing is known before it becomes an undo entry. A table-less
+ * document reports the same thing on every press after the first: the style
+ * op applies with nothing touched and the preset stays unapplied.
  */
 import type { EditReport } from "./edit-report.js";
 import type { EditOptions } from "./engine.js";
@@ -73,10 +75,13 @@ export function readPresetBatch(report: EditReport | undefined): PresetBatchRead
   const unstyledTable = report.ops.some((outcome) => outcome.op === "style_tables" && outcome.status === "failed");
   const refused = report.ops.filter((outcome) => outcome.status === "failed" && outcome.op !== "style_tables");
   if (refused.length === 0) {
-    // Every op applied and none of them touched a piece: the switch was
-    // already in place, so replacing the document would add an undo entry
-    // that restores it to itself.
-    const unchanged = report.ops.length > 0 && report.ops.every((outcome) => outcome.status === "applied" && outcome.pieces_touched === 0);
+    // No applied op touched a piece: the switch was already in place, so
+    // replacing the document would add an undo entry that restores it to
+    // itself. The preset's own table styling may still be the request the
+    // engine skipped — a table-less document answers that way on every press
+    // after the first — and an op that changed nothing changes nothing here.
+    const unchanged = report.ops.length > 0 &&
+      !report.ops.some((outcome) => outcome.status === "applied" && outcome.pieces_touched > 0);
     return { refusal: null, unstyledTable, unchanged };
   }
   const reasons = [...new Set(refused.map((outcome) => outcome.reason ?? outcome.op))].join("; ");

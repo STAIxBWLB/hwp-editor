@@ -153,6 +153,10 @@ test("AC6: a body-style size change moves every body paragraph and leaves direct
     expect(segment, `the envelope does not carry the paragraph ${id} its own style table names`).toBeDefined();
     expect(segment!.kind).toBe("para");
     expect(segment!.style?.char?.size_pt).toBe(14);
+    // The paragraph's own level as well as the style it inherits: the style
+    // level agrees with the row by construction, so only this one is the
+    // document's own answer that the edit reached the paragraph.
+    expect(segment!.direct?.char?.size_pt).toBe(14);
   }
 
   // The run whose size was set directly kept it, which is AC6's second clause,

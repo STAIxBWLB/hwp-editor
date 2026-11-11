@@ -48,6 +48,27 @@ function plain<K extends keyof typeof en>(table: typeof en | typeof ko, key: K):
   if (typeof value !== "string") throw new Error(`${String(key)} is not plain text`);
   return value;
 }
+
+/** The mock envelope with a direct level that differs from the style's. */
+function envelopeWithDirectFormatting() {
+  const base = makeEnvelope();
+  const char = {
+    bold: false,
+    italic: false,
+    size_pt: 10,
+    color: "#000000",
+    faces: ["함초롬바탕", null, null, null, null, null, null],
+    face_ids: [1, 0, 0, 0, 0, 0, 0],
+  };
+  return {
+    ...base,
+    segments: base.segments.map((segment) => ({
+      ...segment,
+      style: { char, charShapeId: 0 },
+      direct: { char: { ...char, size_pt: 14 }, charShapeId: 1 },
+    })),
+  };
+}
 function queued(store: ReturnType<typeof createStore>): EditOp[] {
   return store.getState().pendingOps;
 }
@@ -307,5 +328,16 @@ describe.each(locales)("table rows and legacy field creation (%s)", (locale, mes
     expect((button as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(button);
     expect(queued(metadata)).toEqual([]);
+  });
+  /**
+   * A segment whose two levels differ has overrides to clear, and clearing
+   * them needs the style's row. The harness engine is 1.3.1, below the styles
+   * floor, so the cause is the version - not an unlisted paragraph, whose
+   * remedy ("reload the document") can never work here.
+   */
+  it.each(locales)("names the engine version when it publishes no style names (%s)", (locale, messages) => {
+    renderPanel(locale, "segment", true, true, envelopeWithDirectFormatting());
+    expect(screen.getByText(plain(messages, "segment.directStyleUnavailable"))).toBeTruthy();
+    expect(screen.queryByText(plain(messages, "segment.directStyleUnknown"))).toBeNull();
   });
 });

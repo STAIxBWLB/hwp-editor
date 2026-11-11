@@ -487,6 +487,7 @@ export const en = {
   "styles.presetLabel": "Preset",
   "styles.presetHint": "One undo step: rewrites the body style and restyles tables under the preset in one edit.",
   "styles.presetSubmit": "Apply preset",
+  "styles.pendingEdits": "Apply or clear the queued edits first: switching the preset replaces the whole document, so an edit waiting to be applied would be lost.",
   "styles.noTableToStyle": "The preset's style change was applied; this document has no multi-column table to restyle.",
   "styles.needsParagraph": "Select a paragraph first.",
   "segment.directFormatting": "Direct formatting",
@@ -494,7 +495,8 @@ export const en = {
   "segment.clearDirect": "Clear direct formatting",
   "segment.directStyleUnknown": "The document's style table does not list this paragraph, so its style name is unknown here and the overrides cannot be cleared safely. Reload the document; if it stays unlisted, the host's styles command does not name it.",
   "segment.directStyleLoading": "The style table is still loading, so this paragraph's style name is not known yet.",
-  "segment.directStyleFailed": "The style table could not be read, so this paragraph's style name is unknown and the overrides cannot be cleared safely.",
+  "segment.directStyleFailed": "The style table could not be read, so this paragraph's style name is unknown and the overrides cannot be cleared safely. Reload the document to read it again.",
+  "segment.directStyleUnavailable": "This engine does not publish style names: the styles command needs hwp-cli 1.4.0 or newer, so the overrides cannot be cleared safely here.",
 
 };
 
@@ -935,6 +937,7 @@ export const ko: MessageTable = {
   "styles.presetLabel": "프리셋",
   "styles.presetHint": "되돌리기 한 단계입니다. 본문 스타일과 표 서식을 한 번의 편집으로 함께 바꿉니다.",
   "styles.presetSubmit": "프리셋 적용",
+  "styles.pendingEdits": "대기 중인 편집을 먼저 적용하거나 지우세요. 프리셋을 바꾸면 문서 전체를 교체하므로 아직 적용하지 않은 편집은 사라집니다.",
   "styles.noTableToStyle": "프리셋의 스타일 변경은 적용했습니다. 이 문서에는 서식을 바꿀 여러 열 표가 없습니다.",
   "styles.needsParagraph": "먼저 문단을 선택하세요.",
   "segment.directFormatting": "직접 서식",
@@ -942,7 +945,8 @@ export const ko: MessageTable = {
   "segment.clearDirect": "직접 서식 지우기",
   "segment.directStyleUnknown": "문서의 스타일 표에 이 문단이 없어 스타일 이름을 알 수 없습니다. 덮어쓴 값을 안전하게 지울 수 없습니다. 문서를 다시 불러오고, 그래도 없으면 호스트의 스타일 명령이 이 문단을 알려주지 않는 것입니다.",
   "segment.directStyleLoading": "스타일 표를 아직 읽는 중이라 이 문단의 스타일 이름을 알 수 없습니다.",
-  "segment.directStyleFailed": "스타일 표를 읽지 못해 이 문단의 스타일 이름을 알 수 없습니다. 덮어쓴 값을 안전하게 지울 수 없습니다.",
+  "segment.directStyleFailed": "스타일 표를 읽지 못해 이 문단의 스타일 이름을 알 수 없습니다. 덮어쓴 값을 안전하게 지울 수 없습니다. 문서를 다시 불러와 표를 다시 읽으세요.",
+  "segment.directStyleUnavailable": "이 엔진은 스타일 이름을 알려주지 않습니다. 스타일 명령에는 hwp-cli 1.4.0 이상이 필요하므로 여기서는 덮어쓴 값을 안전하게 지울 수 없습니다.",
 
 };
 

@@ -119,6 +119,32 @@ describe("readPresetBatch", () => {
     expect(reading.unchanged).toBe(false);
   });
 
+  /**
+   * t12-a13. On a table-less document the preset stays unapplied on every
+   * press, so the style op is the only thing that can change — and after the
+   * first press it reports `pieces_touched: 0`. The unapplied preset alone is
+   * therefore not a change: reading it as one adds an undo entry per press
+   * that restores the document to itself.
+   */
+  it("counts a re-pressed preset on a table-less document as unchanged", () => {
+    const reading = readPresetBatch(report([
+      { op: "update_style", status: "applied", pieces: 0 },
+      { op: "style_tables", status: "failed", reason: "style_tables: no styleable table" },
+    ]));
+    expect(reading.refusal).toBeNull();
+    expect(reading.unstyledTable).toBe(true);
+    expect(reading.unchanged).toBe(true);
+  });
+
+  it("does not call a table-less batch unchanged while the style op still changes something", () => {
+    const reading = readPresetBatch(report([
+      { op: "update_style", status: "applied", pieces: 2 },
+      { op: "style_tables", status: "failed", reason: "style_tables: no styleable table" },
+    ]));
+    expect(reading.unstyledTable).toBe(true);
+    expect(reading.unchanged).toBe(false);
+  });
+
   it("does not read a report with no ops as a no-op", () => {
     expect(readPresetBatch(report([])).unchanged).toBe(false);
   });

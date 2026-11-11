@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import type { JSX } from "react";
 import type { ParagraphAlignment, ParaShapeKey, SelectionRefusal, Segment } from "@hwp-editor/core";
-import { compareSegments, formatAddresses, hasDirectFormatting, hasOwnRef, isSectionDefinitionParagraph, paragraphAddress, paragraphRuns, resolveSelection, segmentAtRef, segmentPath, segmentRef, segmentText, selectSimilar, selectedParagraphs, selectionAction } from "@hwp-editor/core";
+import { compareSegments, formatAddresses, hasDirectFormatting, hasOwnRef, isSectionDefinitionParagraph, paragraphAddress, paragraphRuns, resolveSelection, segmentAtRef, segmentPath, segmentRef, segmentText, selectSimilar, selectedParagraphs, selectionAction, stylesVersionSupported } from "@hwp-editor/core";
 import { plainSegmentText } from "./text.js";
 import { useHwpEditorContext } from "./context.js";
 import type { MessageKey } from "./messages.js";
@@ -77,15 +77,18 @@ export function SegmentInspector(): JSX.Element {
   /**
    * Why there is no name to clear with, when there is none. A table still on
    * its way, one that failed to read, a host that advertises the command and
-   * has no engine method for it, and a table that simply does not list this
-   * paragraph are four different situations with four different remedies, and
-   * telling the user the engine "does not publish" the name is wrong for all
-   * of them.
+   * has no engine method for it, an engine below the styles floor, a host
+   * still being asked, and a table that simply does not list this paragraph
+   * are six different situations with six different remedies, and telling the
+   * user the engine "does not publish" the name is wrong for most of them.
    */
   const directStyleWhy: MessageKey | null = directStyleRow !== undefined ? null
     : stylesStatus === "loading" ? "segment.directStyleLoading"
     : stylesStatus === "failed" ? "segment.directStyleFailed"
     : stylesStatus === "unsupported" ? "styles.unavailableHost"
+    : capabilities === null ? "styles.checkingHost"
+    : capabilities.styles !== "v1"
+      ? (stylesVersionSupported(capabilities.version) ? "styles.unavailableHost" : "segment.directStyleUnavailable")
     : "segment.directStyleUnknown";
   // One table of reasons serves both the current selection and a refused
   // click, so a segment kind names its own obstacle either way.
