@@ -52,6 +52,32 @@ describe("opsToArgv", () => {
     ]);
   });
 
+  it("rejects hyperlink separator values on argv while keeping JSON payloads literal", () => {
+    const badOps: EditOp[] = [
+      { kind: "create-hyperlink", anchor: "a=>b", text: "label", url: "https://a.b" },
+      { kind: "create-hyperlink", anchor: "anchor", text: "a=>b", url: "https://a.b" },
+      { kind: "create-hyperlink", anchor: "anchor", text: "label", url: "https://a.b/=>c" },
+    ];
+    for (const [op, field] of badOps.map((op, index) => [op, ["anchor", "text", "url"][index]!] as const)) {
+      let failure: unknown;
+      try {
+        opsToArgv([op]);
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(HwpEngineError);
+      expect((failure as HwpEngineError).code).toBe("bad_request");
+      expect((failure as HwpEngineError).message).toContain(`create-hyperlink ${field}`);
+      expect((failure as HwpEngineError).message).toContain("upgrade the host");
+      expect((failure as HwpEngineError).cause).toBeInstanceOf(Error);
+    }
+    expect(JSON.parse(opsToJson(badOps))).toEqual([
+      { op: "create_hyperlink", anchor: "a=>b", display: "label", url: "https://a.b" },
+      { op: "create_hyperlink", anchor: "anchor", display: "a=>b", url: "https://a.b" },
+      { op: "create_hyperlink", anchor: "anchor", display: "label", url: "https://a.b/=>c" },
+    ]);
+  });
+
   it("serializes image and seal ops (EditArgs.insert_image, .seal)", () => {
     const ops: EditOp[] = [
       // --insert-image "anchor=>path@WxH" (mm)
@@ -352,19 +378,25 @@ describe("opsToJson", () => {
   });
 
   it("rejects unit values outside the edit-ops-v1 grammar with a cause and next step", () => {
-    for (const value of ["-5", ".5", "1e2", "12in"]) {
+    for (const [op, field] of [
+      [{ kind: "set-page", key: "width", value: "-5" }, "set_page.width_mm"],
+      [{ kind: "set-format", find: "t", props: { size: ".5" } }, "set_format.size"],
+      [{ kind: "set-para", find: "t", key: "indent", value: "1e2" }, "set_para.indent_mm"],
+      [{ kind: "set-para", find: "t", key: "indent", value: "12in" }, "set_para.indent_mm"],
+    ] as const) {
       let failure: unknown;
       try {
-        opsToJson([{ kind: "set-para", find: "t", key: "indent", value }]);
+        opsToJson([op]);
       } catch (error) {
         failure = error;
       }
       expect(failure).toBeInstanceOf(HwpEngineError);
-      expect(failure).toMatchObject({
-        code: "bad_request",
-        message: expect.stringContaining("provide a nonnegative decimal"),
-        cause: expect.any(Error),
-      });
+      const engineError = failure as HwpEngineError;
+      expect(engineError.code).toBe("bad_request");
+      expect(engineError.message).toContain(field);
+      expect(engineError.message).toContain("provide a nonnegative decimal");
+      expect(engineError.cause).toBeInstanceOf(Error);
+      expect((engineError.cause as Error).message).toContain(field);
     }
   });
 
@@ -380,11 +412,19 @@ describe("opsToJson", () => {
       { op: "seal", anchor: "x", path: "s.png", size_mm: "0.0000001mm" },
     ]);
 
-    for (const op of [
+    for (const [op, field] of [
       { kind: "insert-image", anchor: "x", path: "p.png", width: -5, height: 20 },
       { kind: "seal", anchor: "x", path: "s.png", size: Number.POSITIVE_INFINITY },
-    ] satisfies EditOp[]) {
-      expect(() => opsToJson([op])).toThrow(HwpEngineError);
+    ].map((op, index) => [op, index === 0 ? "insert_image.width_mm" : "seal.size_mm"] as const)) {
+      let failure: unknown;
+      try {
+        opsToJson([op as EditOp]);
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(HwpEngineError);
+      expect((failure as HwpEngineError).message).toContain(field);
+      expect((failure as HwpEngineError).cause).toBeInstanceOf(Error);
     }
   });
 });

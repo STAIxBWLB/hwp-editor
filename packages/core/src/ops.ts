@@ -212,6 +212,16 @@ function opValue(op: LegacyEditOp): string {
     case "create-bookmark":
       return `${op.anchor}=>${op.name}`;
     case "create-hyperlink":
+      for (const [field, value] of [["anchor", op.anchor], ["text", op.text], ["url", op.url]] as const) {
+        if (value?.includes("=>")) {
+          const cause = new Error(`create-hyperlink ${field} contains the argv separator "=>"`);
+          throw new HwpEngineError(
+            "bad_request",
+            `${cause.message}; remove the separator or upgrade the host to the edit-ops-v1 JSON transport.`,
+            { cause },
+          );
+        }
+      }
       return op.text === undefined
         ? `${op.anchor}=>${op.url}`
         : `${op.anchor}=>${op.text}=>${op.url}`;
@@ -310,10 +320,10 @@ type OpsEntry = Record<string, unknown>;
  * Bare nonnegative plain decimals gain the unit the CLI flag on this path
  * implies. Suffixed values must match the edit-ops-v1 unit grammar exactly.
  */
-function withUnit(value: string, unit: "mm" | "pt" | "%"): string {
+function withUnit(value: string, unit: "mm" | "pt" | "%", field: string): string {
   if (/^\d+(\.\d+)?$/.test(value)) return `${value}${unit}`;
   if (/^\d+(\.\d+)?(mm|pt|%)$/.test(value)) return value;
-  const cause = new Error(`Invalid unit value ${JSON.stringify(value)}`);
+  const cause = new Error(`Invalid unit value ${JSON.stringify(value)} for ${field}`);
   throw new HwpEngineError(
     "bad_request",
     `${cause.message}; provide a nonnegative decimal with an optional mm, pt, or % suffix.`,
@@ -336,16 +346,16 @@ function plainDecimal(value: number): string {
 }
 
 /** Numeric dimensions use a plain decimal JSON unit even for tiny/large numbers. */
-function numericUnit(value: number, unit: "mm"): string {
-  if (!Number.isFinite(value) || value < 0) return withUnit(String(value), unit);
-  return withUnit(plainDecimal(value), unit);
+function numericUnit(value: number, unit: "mm", field: string): string {
+  if (!Number.isFinite(value) || value < 0) return withUnit(String(value), unit, field);
+  return withUnit(plainDecimal(value), unit, field);
 }
 
 /** set-format props: same keys as the CLI flag; only `size` needs a unit. */
 function formatPropsEntry(props: Record<string, string>): OpsEntry {
   const out: OpsEntry = {};
   for (const [key, value] of Object.entries(props)) {
-    out[key] = key === "size" ? withUnit(value, "pt") : value;
+    out[key] = key === "size" ? withUnit(value, "pt", "set_format.size") : value;
   }
   return out;
 }
@@ -355,35 +365,35 @@ function paraShapeEntry(key: ParaShapeKey, value: string): OpsEntry {
   switch (key) {
     case "line-spacing":
       return value.endsWith("pt")
-        ? { line_spacing_pt: withUnit(value, "pt") }
-        : { line_spacing_pct: withUnit(value, "%") };
+        ? { line_spacing_pt: withUnit(value, "pt", "set_para.line_spacing_pt") }
+        : { line_spacing_pct: withUnit(value, "%", "set_para.line_spacing_pct") };
     case "indent":
-      return { indent_mm: withUnit(value, "mm") };
+      return { indent_mm: withUnit(value, "mm", "set_para.indent_mm") };
     case "left":
-      return { left_mm: withUnit(value, "mm") };
+      return { left_mm: withUnit(value, "mm", "set_para.left_mm") };
     case "right":
-      return { right_mm: withUnit(value, "mm") };
+      return { right_mm: withUnit(value, "mm", "set_para.right_mm") };
     case "top":
-      return { top_mm: withUnit(value, "mm") };
+      return { top_mm: withUnit(value, "mm", "set_para.top_mm") };
     case "bottom":
-      return { bottom_mm: withUnit(value, "mm") };
+      return { bottom_mm: withUnit(value, "mm", "set_para.bottom_mm") };
   }
 }
 
 function pageSetupEntry(key: PageSetupKey, value: string): OpsEntry {
   switch (key) {
     case "width":
-      return { width_mm: withUnit(value, "mm") };
+      return { width_mm: withUnit(value, "mm", "set_page.width_mm") };
     case "height":
-      return { height_mm: withUnit(value, "mm") };
+      return { height_mm: withUnit(value, "mm", "set_page.height_mm") };
     case "margin-left":
-      return { margin_left_mm: withUnit(value, "mm") };
+      return { margin_left_mm: withUnit(value, "mm", "set_page.margin_left_mm") };
     case "margin-right":
-      return { margin_right_mm: withUnit(value, "mm") };
+      return { margin_right_mm: withUnit(value, "mm", "set_page.margin_right_mm") };
     case "margin-top":
-      return { margin_top_mm: withUnit(value, "mm") };
+      return { margin_top_mm: withUnit(value, "mm", "set_page.margin_top_mm") };
     case "margin-bottom":
-      return { margin_bottom_mm: withUnit(value, "mm") };
+      return { margin_bottom_mm: withUnit(value, "mm", "set_page.margin_bottom_mm") };
     case "orientation":
       return { orientation: value };
   }
@@ -453,8 +463,8 @@ function opsEntry(op: EditOp): OpsEntry {
         ...(op.width === undefined || op.height === undefined
           ? {}
           : {
-              width_mm: numericUnit(op.width, "mm"),
-              height_mm: numericUnit(op.height, "mm"),
+              width_mm: numericUnit(op.width, "mm", "insert_image.width_mm"),
+              height_mm: numericUnit(op.height, "mm", "insert_image.height_mm"),
             }),
       };
     case "seal":
@@ -462,7 +472,7 @@ function opsEntry(op: EditOp): OpsEntry {
         op: "seal",
         anchor: op.anchor,
         path: op.path,
-        ...(op.size === undefined ? {} : { size_mm: numericUnit(op.size, "mm") }),
+        ...(op.size === undefined ? {} : { size_mm: numericUnit(op.size, "mm", "seal.size_mm") }),
       };
     case "set-format":
       // Reserved fields LAST: props is a free Record, so a caller-supplied

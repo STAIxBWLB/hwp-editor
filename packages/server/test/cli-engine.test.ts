@@ -5,13 +5,38 @@
  * the dev binary moves ahead of the floor as hwp-cli ships.
  */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
+import { HwpEngineError } from "@hwp-editor/core";
 import type { DocumentHandle, DocumentSpecV2, EditOp } from "@hwp-editor/core";
 
 import { createCliEngine, HwpCliError } from "../src/cli-engine.js";
 import { createHwpEditorHandler } from "../src/routes.js";
 import { BIN, describeBin, multipartRequest, sampleSpec } from "./helpers.js";
+import { createFakeBin, disposeFakeBins } from "./fake-bin.js";
+
+afterEach(disposeFakeBins);
+
+describe("CliEngine unit errors", () => {
+  it("retains the core error and its cause when edit rejects an invalid unit", async () => {
+    const { bin } = createFakeBin({ info: "{}" });
+    const failure = await createCliEngine({ bin })
+      .edit({ name: "sample.hwpx", data: new Uint8Array([1]) }, [
+        { kind: "set-page", key: "width", value: "-5" },
+      ])
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(HwpCliError);
+    const cliError = failure as HwpCliError;
+    expect(cliError.reason).toBe("bad_request");
+    expect(cliError.message).toContain("set_page.width_mm");
+    expect(cliError.cause).toBeInstanceOf(HwpEngineError);
+    const engineError = cliError.cause as HwpEngineError;
+    expect(engineError.code).toBe("bad_request");
+    expect(engineError.cause).toBeInstanceOf(Error);
+    expect((engineError.cause as Error).message).toContain("set_page.width_mm");
+  });
+});
 
 const engine = () => createCliEngine({ bin: BIN });
 

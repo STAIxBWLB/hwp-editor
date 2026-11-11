@@ -1239,7 +1239,9 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         try { encodedOps = opsToJson(stagedOps); }
         catch (cause) {
           if (cause instanceof HwpEngineError && cause.code === "bad_request") {
-            throw new HwpCliError("bad_request", cause.message);
+            const error = new HwpCliError("bad_request", cause.message);
+            error.cause = cause;
+            throw error;
           }
           throw cause;
         }
