@@ -8,6 +8,7 @@ import type { DocumentHandle, PageImage } from "./engine.js";
 import type { HwpErrorCode } from "./errors.js";
 import type { EditOp } from "./ops.js";
 import type { SegmentRef } from "./segments.js";
+import type { SelectionRefusal } from "./selection.js";
 
 export type EditorStatus = "clean" | "dirty" | "applying" | "error";
 
@@ -31,6 +32,17 @@ export interface EditorState {
   pages: PageImage[];
   /** Selected source segment, if any. */
   selection: SegmentRef | null;
+  /** Additional unique selected segments; selection remains the active primary. */
+  selections?: SegmentRef[];
+  selectionAnchor?: SegmentRef | null;
+  /**
+   * Why the last modifier click added nothing: a table, an image, a field, a
+   * bookmark or an empty cell has no paragraph of its own to contribute, so the
+   * selection stays as it was. Any action that changes the selection clears it.
+   */
+  selectionRefusal?: SelectionRefusal | null;
+  /** Absolute Markdown Unicode scalar offsets, not source WCHAR coordinates. */
+  range?: MarkdownRangeSelection | null;
   /** Ops queued for the next engine edit call. */
   pendingOps: EditOp[];
   /**
@@ -46,6 +58,14 @@ export interface EditorState {
   error: EditorError | null;
 }
 
+export interface MarkdownRangeSelection {
+  paragraph: SegmentRef;
+  /** Absolute Unicode scalar offset into the emitted Markdown. */
+  start: number;
+  /** Exclusive absolute Unicode scalar offset into the emitted Markdown. */
+  end: number;
+}
+
 /**
  * Undo depth bound (BUG-05, D-11/D-12). Each snapshot retains a full copy of
  * the document bytes, so an unbounded stack grows without limit across a long
@@ -59,6 +79,10 @@ export const initialState: EditorState = {
   document: null,
   pages: [],
   selection: null,
+  selections: [],
+  selectionAnchor: null,
+  selectionRefusal: null,
+  range: null,
   pendingOps: [],
   snapshots: [],
   status: "clean",
@@ -69,7 +93,11 @@ export type EditorAction =
   | { type: "load"; document: DocumentHandle; pages?: PageImage[] }
   | { type: "setPages"; pages: PageImage[] }
   | { type: "select"; selection: SegmentRef | null }
+  | { type: "selectMany"; selections: SegmentRef[]; primary?: SegmentRef; anchor?: SegmentRef }
+  | { type: "refuseSelection"; refusal: SelectionRefusal }
+  | { type: "setRange"; range: MarkdownRangeSelection | null }
   | { type: "queueOp"; op: EditOp }
+  | { type: "queueOps"; ops: EditOp[] }
   | { type: "dequeueOp"; index: number }
   | { type: "clearOps" }
   | { type: "applyStarted" }
@@ -81,7 +109,7 @@ export function reducer(state: EditorState, action: EditorAction): EditorState {
   // Keep the transaction locked until it completes. Queue changes must not
   // turn applying into dirty/clean and enable a second apply or undo.
   if (state.status === "applying" && (
-    action.type === "queueOp" || action.type === "dequeueOp" ||
+    action.type === "queueOp" || action.type === "queueOps" || action.type === "dequeueOp" ||
     action.type === "clearOps" || action.type === "applyStarted" || action.type === "undo"
   )) return state;
   switch (action.type) {
@@ -94,11 +122,40 @@ export function reducer(state: EditorState, action: EditorAction): EditorState {
     case "setPages":
       return { ...state, pages: action.pages };
     case "select":
-      return { ...state, selection: action.selection };
+      return { ...state, selection: action.selection, selections: action.selection ? [action.selection] : [], selectionAnchor: null, selectionRefusal: null, range: null };
+    case "selectMany": {
+      const unique = (refs: SegmentRef[]): SegmentRef[] => {
+        const seen = new Set<string>();
+        return refs.filter((ref) => {
+          const key = ref.id === undefined ? `${ref.section}:${ref.para}` : `id:${ref.id}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      };
+      let selections = unique(action.selections);
+      const primary = action.primary && selections.some((ref) => sameRef(ref, action.primary!))
+        ? action.primary : selections[0] ?? null;
+      if (primary !== null) selections = [primary, ...selections.filter((ref) => !sameRef(ref, primary))];
+      return { ...state, selection: primary, selections, selectionAnchor: action.anchor ?? primary, selectionRefusal: null, range: null };
+    }
+    case "refuseSelection":
+      // The selection does not move: the click had no paragraph of its own to
+      // contribute. The reason travels with the state so every host that shows
+      // the selection can say so, not only the one that received the click.
+      return { ...state, selectionRefusal: action.refusal };
+    case "setRange":
+      return { ...state, range: action.range };
     case "queueOp":
       return {
         ...state,
         pendingOps: [...state.pendingOps, action.op],
+        status: "dirty",
+      };
+    case "queueOps":
+      return action.ops.length === 0 ? state : {
+        ...state,
+        pendingOps: [...state.pendingOps, ...action.ops],
         status: "dirty",
       };
     case "dequeueOp": {
@@ -130,6 +187,10 @@ export function reducer(state: EditorState, action: EditorAction): EditorState {
         pages: action.pages ?? state.pages,
         pendingOps: [],
         selection: null,
+        selections: [],
+        selectionAnchor: null,
+        selectionRefusal: null,
+        range: null,
         status: "clean",
         error: null,
       };
@@ -150,11 +211,21 @@ export function reducer(state: EditorState, action: EditorAction): EditorState {
         snapshots: state.snapshots.slice(0, -1),
         pages: [],
         selection: null,
+        selections: [],
+        selectionAnchor: null,
+        selectionRefusal: null,
+        range: null,
         status: state.pendingOps.length === 0 ? "clean" : "dirty",
         error: null,
       };
     }
   }
+}
+
+function sameRef(a: SegmentRef, b: SegmentRef): boolean {
+  return a.id !== undefined && b.id !== undefined
+    ? a.id === b.id
+    : a.section === b.section && a.para === b.para;
 }
 
 export interface EditorStore {

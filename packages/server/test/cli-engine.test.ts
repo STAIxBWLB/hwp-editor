@@ -59,7 +59,42 @@ function expectVersionAtLeast0200(version: string) {
   expect(ok, `expected hwp-cli >= 0.20.0, got ${version}`).toBe(true);
 }
 
+it("keeps malformed direct-metadata diagnostics actionable at the CLI boundary", async () => {
+  const {bin}=createFakeBin({version:"1.4.0",catStdout:JSON.stringify({
+    contract:"hwp-segment-envelope-v2",schema_version:"1.0",markdown:"x",segments:[{
+      id:"para",kind:"para",path:{section:0,indices:[0]},char_range:{start:0,end:1},
+      direct:{char:{bold:"yes"},para:null},
+    }],
+  })});
+  const failure=await createCliEngine({bin}).read({name:"doc.hwpx",data:new Uint8Array([1])}).catch((error:unknown)=>error);
+  expect(failure).toMatchObject({reason:"failed",message:expect.stringContaining("direct.char"),cause:expect.any(Error)});
+  // The JSON came from the hwp binary on this path, so the remedy is the
+  // hwp-cli version, not an upgrade of some other host adapter.
+  expect((failure as Error).message).toContain("use hwp-cli 0.20.0 or newer");
+  expect((failure as Error).message).not.toContain("host adapter");
+});
+
 describeBin("cli-engine (real hwp-cli binary)", () => {
+  it("AC3: applies spacing to five addressed paragraphs in one edit and restores all with one undo", async () => {
+    const cli = engine();
+    const spec = { version: "2.0", document: { version: "1.0", sections: [{ blocks:
+      Array.from({length:5},(_,index)=>({type:"paragraph",runs:[{type:"text",text:`문단 ${index} 😀`}]})),
+    }] } };
+    const original = (await cli.compose(spec as unknown as DocumentSpecV2, "batch.hwpx")).document;
+    const before = await cli.read(original);
+    const paragraphs = before.segments.filter(segment=>segment.kind === "para");
+    expect(paragraphs).toHaveLength(5);
+    const ops: EditOp[] = paragraphs.map(paragraph=>({kind:"set-para",address:{id:paragraph.id!},key:"line-spacing",value:"200%"}));
+    const edited = await cli.edit(original,ops);
+    const after = await cli.read(edited);
+    expect(after.segments.filter(segment=>segment.kind === "para").map(segment=>segment.directPara?.line_spacing)).toEqual([200,200,200,200,200]);
+    const restored = cli.undo(edited);
+    if (restored === null) throw new Error("missing undo snapshot");
+    expect(restored.data).toEqual(original.data);
+    expect((await cli.read(restored)).segments.filter(segment=>segment.kind === "para").map(segment=>segment.directPara))
+      .toEqual(paragraphs.map(segment=>segment.directPara));
+  });
+
   it("reports a verified >= 0.20.0 version", async () => {
     const info = await engine().binaryInfo();
     expect(info.bin).toBe(BIN);

@@ -85,6 +85,21 @@ const layoutSpecPath = join(fixturesDir, "_layout-demo.spec.json");
 writeFileSync(layoutSpecPath, JSON.stringify(layoutSpec));
 specs.push({ spec: layoutSpecPath, out: "z-layout-demo.hwpx" });
 
+// T3 selection fixture: five paragraphs plus repeated text in distinct formatting runs.
+const selectionSpec = {
+  version: "2.0",
+  document: { version: "1.0", sections: [{ blocks: [
+    { type: "paragraph", runs: [
+      { type: "text", text: "동일문" }, { type: "text", text: " / ", bold: true },
+      { type: "text", text: "동일문", italic: true },
+    ] },
+    ...["둘째 😀문단", "셋째 문단", "넷째 문단", "다섯째 문단"].map(text => ({ type: "paragraph", runs: [{ type: "text", text }] })),
+  ] }] },
+};
+const selectionSpecPath = join(fixturesDir, "_selection-demo.spec.json");
+writeFileSync(selectionSpecPath, JSON.stringify(selectionSpec));
+specs.push({ spec: selectionSpecPath, out: "z-selection-demo.hwpx" });
+
 // T4 autofill fixture: one named slot plus label/value rows. `hwp slots
 // --forms` discovers the table label cells as native form inputs.
 const templateSpec = {
@@ -122,6 +137,7 @@ for (const { spec, out } of specs) {
 rmSync(tableSpecPath, { force: true });
 rmSync(layoutSpecPath, { force: true });
 rmSync(templateSpecPath, { force: true });
+rmSync(selectionSpecPath, { force: true });
 
 // Use the CLI's canonical official template for a stable no-error lint case.
 execFileSync(BIN, ["new", "--template", "gongmun-basic", "-o", join(fixturesDir, "official-demo.hwpx")], {

@@ -19,7 +19,7 @@
 
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import type { CatEnvelope, DocumentHandle, EditOp } from "@hwp-editor/core";
+import type { CatEnvelope, DocumentHandle, EditOp, LayoutRow, PageImage, Segment } from "@hwp-editor/core";
 import tableFixture from "../../core/test/fixtures/cat-segments-table.json";
 import { base64, createTauriEngine, parseCatEnvelope } from "@hwp-editor/core";
 import { targetsSegment } from "../src/PageCanvas.js";
@@ -126,6 +126,38 @@ function clickBtn(key: keyof typeof en): void {
   fireEvent.click(screen.getByRole("button", { name: label }));
 }
 
+/**
+ * A page whose layout carries one row, as the CLI render does. A click inside
+ * that box hit-tests to the row's own segment by id, which is the only way a
+ * cell or bookmark selection is reachable: the paragraph-only fallback never
+ * yields one.
+ */
+function pageWithRow(segment: Segment, kind: LayoutRow["kind"] = "cell"): PageImage {
+  return {
+    ...makePage(),
+    layout: {
+      width_pt: 600,
+      height_pt: 800,
+      truncated: false,
+      rows: [{
+        id: segment.id!,
+        kind,
+        box: { x0: 100, y0: 100, x1: 300, y1: 140 },
+        source_chars: { start: segment.start, end: segment.end },
+      }],
+    },
+  };
+}
+
+/** Click the middle of {@link pageWithRow}'s box, in page pixels. */
+function clickRow(): void {
+  // 200/600 and 120/800 of the 595x842 page the jsdom stub reports.
+  fireEvent.click(screen.getByRole("button", { name: en["page.label"]({ page: 1 }) }), {
+    clientX: (200 / 600) * 595,
+    clientY: (120 / 800) * 842,
+  });
+}
+
 const tableEnvelope = parseCatEnvelope(JSON.stringify(tableFixture));
 
 describe("SegmentInspector op emission (TEST-03)", () => {
@@ -152,8 +184,11 @@ describe("SegmentInspector op emission (TEST-03)", () => {
       screen.getByLabelText(messages["segment.hyperlinkUrlAria"]),
       screen.getByLabelText(messages["segment.hyperlinkTextAria"]),
     ];
+    // Paragraph options and the anchor inputs work on an argv-only host: selection is
+    // navigation and anchors ride the argv channel, so neither is an addressed edit.
+    const argvControls = [...anchorInputs, ...Array.from(panel.querySelectorAll('[role="option"]'))];
     for (const control of Array.from(panel.querySelectorAll("input, textarea, button"))) {
-      expect((control as HTMLButtonElement).disabled).toBe(!anchorInputs.includes(control as HTMLElement));
+      expect((control as HTMLButtonElement).disabled).toBe(!argvControls.includes(control as HTMLElement));
       fireEvent.click(control);
     }
     expect(screen.getByLabelText(messages["toolbar.pendingEdits"]({ count: 0 }), { exact: true })).toBeTruthy();
@@ -300,6 +335,177 @@ describe("SegmentInspector op emission (TEST-03)", () => {
     expect(await applyOps(engine, 1)).toEqual([
       { kind: "set-format", address: { at: { section: 0, paragraph: 0, run: 0 } }, props: { size: "12" } },
     ]);
+  });
+
+  it("edits every paragraph of a selected cell, and refuses the one-paragraph ops", async () => {
+    // A cell carrying two paragraphs of its own, as the CLI emits for a wrapped
+    // cell. The host paragraph holds the table control, so it is never a target.
+    const markdown = "가\n\n나\n";
+    const host: Segment = { id: "cell-host", indices: [2], start: 0, end: 5, kind: "para", section: 0, para: 2 };
+    const table: Segment = { id: "cell-table", indices: [2, 0], start: 0, end: 5, kind: "table", section: 0, para: 2 };
+    const cell: Segment = { id: "cell-two", indices: [2, 0, 0], start: 0, end: 5, kind: "cell", section: 0, para: 2 };
+    const first: Segment = { id: "cell-two-p0", indices: [2, 0, 0, 0], start: 0, end: 1, kind: "para", section: 0, para: 2 };
+    const second: Segment = { id: "cell-two-p1", indices: [2, 0, 0, 1], start: 3, end: 4, kind: "para", section: 0, para: 2 };
+    const envelope: CatEnvelope = { markdown, segments: [host, table, cell, first, second] };
+    const engine = createMockEngine({ envelope });
+    engine.render = async () => [pageWithRow(cell)];
+    render(<HwpEditor engine={engine} file={file} />);
+    await screen.findByRole("button", { name: en["page.label"]({ page: 1 }) });
+    clickRow();
+
+    // The label names the cell by its real nesting path, never the host
+    // paragraph index the whole cell shares.
+    expect(await screen.findByText(en["segment.selectedCell"]({ path: "0/2.0.0", count: 2 }))).toBeTruthy();
+    const panel = screen.getByRole("region", { name: en["segment.panelAria"] });
+    expect(panel.querySelector(".hwped-quote")?.textContent).toContain("나");
+    // Replace, insert and delete address exactly one paragraph, so a cell
+    // selection refuses them - the controls stay in view but dead - and says why.
+    expect(screen.getByText(en["segment.cellSelectionRefused"])).toBeTruthy();
+    expect((screen.getByRole("button", { name: en["segment.deletePara"] }) as HTMLButtonElement).disabled).toBe(true);
+    // Alignment reaches both paragraphs of the cell, not only the first.
+    clickBtn("segment.alignCenter");
+    expect(await applyOps(engine, 2)).toEqual([
+      { kind: "set-align", address: { id: "cell-two-p0" }, alignment: "center" },
+      { kind: "set-align", address: { id: "cell-two-p1" }, alignment: "center" },
+    ]);
+  });
+
+  it("turns paragraph edits off when a selected cell carries no paragraph", async () => {
+    const envelope = parseCatEnvelope(JSON.stringify(tableFixture));
+    const cell = envelope.segments.filter((s) => s.kind === "cell").at(-1)!;
+    // An empty cell's paragraph is not in the read, so nothing inside the cell
+    // is addressable; the host paragraph is not a substitute for it.
+    envelope.segments = envelope.segments.filter((s) => !(s.indices !== undefined &&
+      s.indices.length > cell.indices!.length &&
+      cell.indices!.every((index, at) => s.indices![at] === index)));
+    const engine = createMockEngine({ envelope });
+    engine.render = async () => [pageWithRow(cell)];
+    render(<HwpEditor engine={engine} file={file} />);
+    await screen.findByRole("button", { name: en["page.label"]({ page: 1 }) });
+    clickRow();
+
+    expect(await screen.findByText(en["segment.cellSelectionRefused"])).toBeTruthy();
+    expect(screen.queryByRole("button", { name: en["segment.deletePara"] })).toBeNull();
+    expect(screen.getByLabelText(en["toolbar.pendingEdits"]({ count: 0 }), { exact: true })).toBeTruthy();
+    expect(engine.calls.edit).toHaveLength(0);
+  });
+
+  it("starts a paragraph selection over when a run-level selection is toggled or extended", async () => {
+    const plain = { bold: false, italic: false, size_pt: 10, color: "#000000", faces: Array(7).fill("A"), face_ids: Array(7).fill(0) };
+    const bold = { ...plain, bold: true };
+    const envelope: CatEnvelope = { markdown: "xy\n\nxy\n\nz", segments: [
+      { id: "P0", indices: [0], start: 0, end: 2, kind: "para", section: 0, para: 0, directChar: bold },
+      { id: "r00", indices: [0, 0], start: 0, end: 1, kind: "run", section: 0, para: 0, directChar: plain },
+      { id: "r01", indices: [0, 1], start: 1, end: 2, kind: "run", section: 0, para: 0, directChar: bold },
+      { id: "P1", indices: [1], start: 4, end: 6, kind: "para", section: 0, para: 1, directChar: plain },
+      { id: "r10", indices: [1, 0], start: 4, end: 5, kind: "run", section: 0, para: 1, directChar: plain },
+      { id: "r11", indices: [1, 1], start: 5, end: 6, kind: "run", section: 0, para: 1, directChar: bold },
+      { id: "P2", indices: [2], start: 8, end: 9, kind: "para", section: 0, para: 2, directChar: plain },
+      { id: "r20", indices: [2, 0], start: 8, end: 9, kind: "run", section: 0, para: 2, directChar: plain },
+    ] };
+    const openSimilar = async (): Promise<Engine> => {
+      cleanup();
+      const engine = createMockEngine({ envelope });
+      render(<HwpEditor engine={engine} file={file} />);
+      fireEvent.click((await screen.findAllByRole("option"))[0]!);
+      clickBtn("segment.similarChar");
+      return engine;
+    };
+
+    // Two runs are selected, and the panel names both the obstacle and what a
+    // modifier click will do next.
+    const toggling = await openSimilar();
+    expect(screen.getByText(en["segment.selectedRunCount"]({ count: 2 }))).toBeTruthy();
+    expect(screen.getByText(en["segment.runTextEditHint"])).toBeTruthy();
+    expect(screen.getByText(en["segment.runSelectionTerminal"])).toBeTruthy();
+    // Ctrl-clicking a paragraph starts over at paragraph level: r01 and r11 are
+    // gone, and P2's own run is what the format op addresses.
+    fireEvent.click(screen.getAllByRole("option")[2]!, { ctrlKey: true });
+    expect(await screen.findByText(en["segment.selectedCount"]({ count: 1 }))).toBeTruthy();
+    expect(screen.queryByText(en["segment.selectedRunCount"]({ count: 3 }))).toBeNull();
+    fireEvent.click(screen.getByLabelText(en["segment.bold"]));
+    clickBtn("segment.formatSubmit");
+    expect(await applyOps(toggling, 1)).toEqual([
+      { kind: "set-format", address: { id: "r20" }, props: { bold: "on" } },
+    ]);
+
+    // Shift does the same, so the run list is never ordered against a run it
+    // did not contain: P1 and its own two runs, nothing from P0 or P2.
+    const extending = await openSimilar();
+    fireEvent.click(screen.getAllByRole("option")[1]!, { shiftKey: true });
+    expect(await screen.findByText(en["segment.selectedCount"]({ count: 1 }))).toBeTruthy();
+    fireEvent.click(screen.getByLabelText(en["segment.bold"]));
+    clickBtn("segment.formatSubmit");
+    expect(await applyOps(extending, 2)).toEqual([
+      { kind: "set-format", address: { id: "r10" }, props: { bold: "on" } },
+      { kind: "set-format", address: { id: "r11" }, props: { bold: "on" } },
+    ]);
+  });
+
+  it("keeps a paragraph selection when a modifier click lands on a table", async () => {
+    const markdown = "가나\n";
+    const host: Segment = { id: "t-host", indices: [2], start: 0, end: 2, kind: "para", section: 0, para: 2 };
+    const table: Segment = { id: "t-table", indices: [2, 0], start: 0, end: 2, kind: "table", section: 0, para: 2 };
+    const engine = createMockEngine({ envelope: { markdown, segments: [host, table] } });
+    engine.render = async () => [pageWithRow(table, "table")];
+    render(<HwpEditor engine={engine} file={file} />);
+    const option = (await screen.findAllByRole("option"))[0]!;
+    fireEvent.click(option);
+    expect(screen.getByText(en["segment.selectedPara"]({ path: "0/2" }))).toBeTruthy();
+
+    // A table carries no paragraph of its own, so a modifier click adds nothing:
+    // the paragraph stays selected and the click reports the obstacle instead of
+    // making the unusable table ref primary.
+    fireEvent.click(screen.getByRole("button", { name: en["page.label"]({ page: 1 }) }), {
+      clientX: (200 / 600) * 595,
+      clientY: (120 / 800) * 842,
+      ctrlKey: true,
+    });
+    expect(await screen.findByText(en["segment.tableSelectionRefused"])).toBeTruthy();
+    expect(screen.getByText(en["segment.selectedCount"]({ count: 1 }))).toBeTruthy();
+    expect(
+      (screen.getByRole("button", { name: en["segment.deletePara"] }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+    expect(engine.calls.edit).toHaveLength(0);
+  });
+
+  it("lists and numbers paragraphs by path, not by the order the envelope emitted", async () => {
+    const envelope: CatEnvelope = { markdown: "ab\n\ncd", segments: [
+      { id: "P0", indices: [0], start: 0, end: 2, kind: "para", section: 0, para: 0 },
+      { id: "P2", indices: [2], start: 4, end: 6, kind: "para", section: 0, para: 2 },
+      // A v2 point paragraph is emitted after the ranges that start at its own
+      // offset, so envelope order puts it after P2.
+      { id: "P1", indices: [1], start: 4, end: 4, kind: "para", section: 0, para: 1 },
+    ] };
+    render(<HwpEditor engine={createMockEngine({ envelope })} file={file} />);
+    const options = await screen.findAllByRole("option");
+    expect(options.map((option) => option.textContent)).toEqual([
+      en["segment.choiceLabel"]({ index: 1, text: "ab" }),
+      en["segment.choiceLabel"]({ index: 2, text: en["segment.emptyPara"] }),
+      en["segment.choiceLabel"]({ index: 3, text: "cd" }),
+    ]);
+  });
+
+  it("gives a bookmark selection no paragraph target, so Delete never reaches the host text", async () => {
+    const base = parseCatEnvelope(JSON.stringify(tableFixture));
+    // A bookmark control sits inside a text run: its range is the host
+    // paragraph's, which is why resolving it to that paragraph would put the
+    // host's text behind a delete.
+    const bookmark: Segment = { id: "bmk.1.0", indices: [1, 0], start: 14, end: 28, kind: "bookmark", section: 0, para: 1 };
+    const envelope: CatEnvelope = { markdown: base.markdown, segments: [...base.segments, bookmark] };
+    const engine = createMockEngine({ envelope });
+    // The layout row kind for an image or a field does not exist, so the
+    // bookmark path stands in for all three; core/selection.test.ts covers the
+    // three kinds themselves.
+    engine.render = async () => [pageWithRow(bookmark, "bookmark")];
+    render(<HwpEditor engine={engine} file={file} />);
+    await screen.findByRole("button", { name: en["page.label"]({ page: 1 }) });
+    clickRow();
+
+    expect(await screen.findByText(en["segment.containerSelectionRefused"])).toBeTruthy();
+    expect(screen.queryByRole("button", { name: en["segment.deletePara"] })).toBeNull();
+    expect(screen.queryByRole("button", { name: en["segment.replaceSubmit"] })).toBeNull();
+    expect(screen.queryByText("2026년 8월 정기 회의")).toBeNull();
   });
 
   it("queues set-format with all three props when all three are set", async () => {

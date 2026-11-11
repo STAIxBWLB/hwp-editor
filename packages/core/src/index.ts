@@ -48,13 +48,17 @@ export type {
 } from "./ops.js";
 export {
   offsetToRef,
+  markdownLength,
   parseCatEnvelope,
   segmentAtOffset,
   segmentAtRef,
   segmentRef,
   segmentText,
+  validateProjectedMetadata,
 } from "./segments.js";
-export type { CatEnvelope, Segment, SegmentKind, SegmentRef } from "./segments.js";
+export type { CatEnvelope, DirectChar, DirectPara, Segment, SegmentKind, SegmentRef } from "./segments.js";
+export { compareSegments, formatAddresses, paragraphAddress, paragraphRuns, resolveSelection, segmentPath, selectedParagraphs, selectSimilar, selectionAction } from "./selection.js";
+export type { SelectionRefusal, SelectionTargets } from "./selection.js";
 export type {
   DocumentSpecV2,
   TemplateDataV1,
@@ -71,6 +75,7 @@ export type {
   EditorState,
   EditorStatus,
   EditorStore,
+  MarkdownRangeSelection,
 } from "./state.js";
 export { base64, createHttpEngine } from "./http-engine.js";
 export type { HttpEngineOptions } from "./http-engine.js";

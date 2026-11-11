@@ -1,7 +1,7 @@
 import { useMemo } from "react";
-import type { JSX, MouseEvent } from "react";
+import type { JSX, KeyboardEvent, MouseEvent } from "react";
 import type { CatEnvelope, EditOp, PageImage, Segment } from "@hwp-editor/core";
-import { base64, segmentAtRef, segmentRef, segmentText } from "@hwp-editor/core";
+import { base64, segmentAtRef, segmentText, selectionAction } from "@hwp-editor/core";
 import { segmentOnPage, bandsOnPage } from "./geometry.js";
 import { sanitizeSvg } from "./sanitize.js";
 import { plainSegmentText } from "./text.js";
@@ -22,10 +22,14 @@ export function PageCanvas(): JSX.Element {
     [envelope, pendingOps],
   );
 
-  const selectedSegment =
-    envelope !== null && selection !== null
-      ? segmentAtRef(envelope, selection)
-      : undefined;
+  const selectedSegments = new Set<Segment>();
+  if (envelope !== null) {
+    const refs = state.selections?.length ? state.selections : selection === null ? [] : [selection];
+    for (const ref of refs) {
+      const segment = segmentAtRef(envelope, ref);
+      if (segment !== undefined) selectedSegments.add(segment);
+    }
+  }
 
   if (pages.length === 0) {
     return (
@@ -35,11 +39,12 @@ export function PageCanvas(): JSX.Element {
     );
   }
 
-  const selectAt = (pageIndex: number, xFraction: number, yFraction: number): void => {
+  const selectAt = (pageIndex: number, xFraction: number, yFraction: number, modifiers?: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean }): void => {
     if (envelope === null) return;
     const segment = segmentOnPage(envelope, pages[pageIndex]!, xFraction, yFraction, pageIndex, pages.length);
     if (segment !== undefined) {
-      store.dispatch({ type: "select", selection: segmentRef(segment) });
+      const mode = modifiers?.shiftKey ? "extend" : modifiers?.metaKey || modifiers?.ctrlKey ? "toggle" : "single";
+      store.dispatch(selectionAction(envelope, store.getState(), segment, mode));
     }
   };
 
@@ -50,20 +55,22 @@ export function PageCanvas(): JSX.Element {
           key={page.page}
           page={page}
           onClick={(e: MouseEvent<HTMLDivElement>) => {
+            if (e.shiftKey || e.metaKey || e.ctrlKey) e.preventDefault();
             const rect = e.currentTarget.getBoundingClientRect();
             selectAt(
               pageIndex,
               rect.width > 0 ? (e.clientX - rect.left) / rect.width : 0.5,
               rect.height > 0 ? (e.clientY - rect.top) / rect.height : 0.5,
+              e,
             );
           }}
-          onActivate={() => selectAt(pageIndex, 0.5, 0.5)}
+          onActivate={event => selectAt(pageIndex, 0.5, 0.5, event)}
           bands={bandsForPage(
             envelope,
             page,
             pageIndex,
             pages.length,
-            selectedSegment,
+            selectedSegments,
             pendingSegments,
           )}
         />
@@ -86,14 +93,15 @@ function bandsForPage(
   page: PageImage,
   pageIndex: number,
   pageCount: number,
-  selected: Segment | undefined,
+  selected: Set<Segment>,
   pendingKeys: Set<string>,
 ): Band[] {
   if (envelope === null) return [];
   const bands: Band[] = [];
+  const selectedIds = new Set([...selected].flatMap(segment => segment.id === undefined ? [] : [segment.id]));
   for (const segment of envelope.segments) {
     const key = segment.id ?? `${segment.section}:${segment.para}`;
-    const isSelected = selected === segment;
+    const isSelected = selected.has(segment) || (segment.id !== undefined && selectedIds.has(segment.id));
     const isPending = !isSelected && pendingKeys.has(key);
     if (!isSelected && !isPending) continue;
     for (const [index, band] of bandsOnPage(envelope, segment, page, pageIndex, pageCount).entries()) {
@@ -112,7 +120,7 @@ function bandsForPage(
 function PageView(props: {
   page: PageImage;
   onClick: (e: MouseEvent<HTMLDivElement>) => void;
-  onActivate: () => void;
+  onActivate: (event: KeyboardEvent<HTMLDivElement>) => void;
   bands: Band[];
 }): JSX.Element {
   const { page, onClick, onActivate, bands } = props;
@@ -144,7 +152,7 @@ function PageView(props: {
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          onActivate();
+          onActivate(e);
         }
       }}
     >

@@ -994,7 +994,21 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
     const inspection = await withWorkDir(async (dir) => {
       const file = await stage(dir, document);
       const cat = await runCliOk(bin, ["cat", file, "--format", "markdown", "--with-segments", "--segments", "v2"], timeoutMs, opts.locale, signal);
-      const envelope = parseCatEnvelope(cat.stdout);
+      let envelope: CatEnvelope;
+      try { envelope = parseCatEnvelope(cat.stdout); }
+      catch (cause) {
+        // The JSON on this path came out of the hwp binary, so the remedy names
+        // hwp-cli and its accepted version. The shared parser can only say
+        // "upgrade the host adapter", which is the right advice for a projected
+        // envelope and wrong here.
+        const problem = cause instanceof Error && cause.message.startsWith("segments envelope:")
+          ? cause.message.slice("segments envelope: ".length).split("; ")[0]!
+          : "invalid segment JSON";
+        const message = `hwp cat returned segment data this client cannot read (${problem}); check hwp --version and use hwp-cli ${MIN_VERSION.join(".")} or newer below ${MAX_VERSION_EXCLUSIVE.join(".")}, then reload.`;
+        const failure = new HwpCliError("failed", message);
+        failure.cause = cause;
+        throw failure;
+      }
       // Best-effort extras: a document that cats fine but fails fields should
       // still read; the extras inform editing UI, not the wire contract.
       const [fields, bookmarks, slots, info] = await Promise.all([

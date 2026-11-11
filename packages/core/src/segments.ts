@@ -2,7 +2,7 @@
  * Types and parser for the v2 segment envelope:
  * `hwp cat --format markdown --with-segments --segments v2`, the published
  * `segment-envelope-v2` contract (`contract: "hwp-segment-envelope-v2"`,
- * `schema_version: "1.0"`). The engine opts in with `--segments v2`, so this
+ * schema major 1). The engine opts in with `--segments v2`, so this
  * parser handles that one shape only and never branches on envelope version.
  *
  * Segment shape verified against the hwp-cli v0.20.0 release binary: both
@@ -15,17 +15,15 @@
  * char_range: {start, end}, style, direct}` per segment, with ranges that
  * NEST (a run inside its para, a cell inside its table). What this module
  * publishes is the projection the rest of the editor already consumes: the
- * `CatEnvelope` projection retains `id`, with `start`/`end`
-
- * from `char_range`, `section` from `path.section`, and `para` from
+ * `CatEnvelope` projection retains `id`, with `start`/`end` from
+ * `char_range`, `section` from `path.section`, and `para` from
  * `path.indices[0]` (the top-level paragraph index, the coordinate
  * `SegmentRef` uses as a fallback for older host projections). Checksummed IDs
- * and nesting indices are retained for exact layout joins and editing; per-level
- * styles are not projected.
+ * and nesting indices are retained for exact layout joins and editing. Direct
+ * character/paragraph attributes are validated and retained; inherited style levels are not projected.
  *
- * Offset caveat, unchanged from v1: `char_range` counts Unicode scalars into
- * `markdown`, while JS string indexing counts UTF-16 code units. The two
- * agree on the BMP, which is all the current fixtures exercise.
+ * `char_range`, `Segment.start`, and `Segment.end` use Unicode scalar offsets.
+ * `segmentText` converts those boundaries to JS UTF-16 offsets only when slicing.
  */
 
 /** The seven segment kinds the v2 envelope defines. */
@@ -53,9 +51,9 @@ export interface Segment {
   id?: string;
   /** Full v2 nesting path, including run index for run segments. */
   indices?: number[];
-  /** Start character offset into `markdown` (inclusive), from `char_range.start`. */
+  /** Start Unicode scalar offset into `markdown` (inclusive). */
   start: number;
-  /** End character offset into `markdown` (exclusive), from `char_range.end`. */
+  /** End Unicode scalar offset into `markdown` (exclusive). */
   end: number;
   /** What the range is; the v2 envelope emits all seven kinds. */
   kind: SegmentKind;
@@ -63,6 +61,26 @@ export interface Segment {
   section: number;
   /** 0-based top-level paragraph index within the section, from `path.indices[0]`. */
   para: number;
+  /** Published direct character properties used for structural similarity. */
+  directChar?: DirectChar;
+  /** Published direct paragraph properties used for structural similarity. */
+  directPara?: DirectPara;
+}
+
+export interface DirectChar {
+  bold: boolean;
+  italic: boolean;
+  size_pt: number;
+  color: string;
+  faces: (string | null)[];
+  face_ids: number[];
+}
+
+export interface DirectPara {
+  alignment: string;
+  indent: number;
+  line_spacing: number;
+  line_spacing_type: number;
 }
 
 export interface CatEnvelope {
@@ -85,9 +103,9 @@ function isNumberArray(v: unknown): v is number[] {
 /** Validate one wire segment and project it to the published shape. */
 function projectSegment(raw: unknown): Segment {
   if (typeof raw !== "object" || raw === null) {
-    throw new Error("segments envelope: malformed segment");
+    throw new Error("segments envelope: malformed segment path or range; upgrade the host adapter to emit valid segment-envelope-v2 data, then reload.");
   }
-  const { id, kind, path, char_range } = raw as Record<string, unknown>;
+  const { id, kind, path, char_range, direct } = raw as Record<string, unknown>;
   const range = char_range as Record<string, unknown> | undefined;
   const p = path as Record<string, unknown> | undefined;
   if (
@@ -95,14 +113,26 @@ function projectSegment(raw: unknown): Segment {
     typeof kind !== "string" ||
     !SEGMENT_KINDS.includes(kind as SegmentKind) ||
     typeof p !== "object" || p === null ||
-    typeof p.section !== "number" ||
-    !isNumberArray(p.indices) || p.indices.length === 0 ||
+    typeof p.section !== "number" || !Number.isInteger(p.section) || p.section < 0 ||
+    !isNumberArray(p.indices) || p.indices.length === 0 || p.indices.some(index => !Number.isInteger(index) || index < 0) ||
     typeof range !== "object" || range === null ||
     typeof range.start !== "number" ||
     typeof range.end !== "number"
   ) {
-    throw new Error("segments envelope: malformed segment");
+    throw new Error("segments envelope: malformed segment path or range; upgrade the host adapter to emit valid segment-envelope-v2 data, then reload.");
   }
+  const d = direct as Record<string, unknown> | undefined;
+  if (direct !== undefined && (typeof direct !== "object" || direct === null || Array.isArray(direct))) {
+    throw new Error("segments envelope: malformed direct properties; upgrade the host adapter to project valid v2 metadata.");
+  }
+  const char = d?.char as Record<string, unknown> | null | undefined;
+  const para = d?.para as Record<string, unknown> | null | undefined;
+  if ((d?.char !== undefined && d.char !== null && (typeof d.char !== "object" || Array.isArray(d.char))) ||
+      (d?.para !== undefined && d.para !== null && (typeof d.para !== "object" || Array.isArray(d.para)))) {
+    throw new Error("segments envelope: malformed direct properties; upgrade the host adapter to project valid v2 metadata.");
+  }
+  const directChar = char == null ? undefined : projectDirectChar(char);
+  const directPara = para == null ? undefined : projectDirectPara(para);
   return {
     id,
     indices: p.indices,
@@ -111,7 +141,40 @@ function projectSegment(raw: unknown): Segment {
     kind: kind as SegmentKind,
     section: p.section,
     para: p.indices[0]!,
+    ...(directChar === undefined ? {} : { directChar }),
+    ...(directPara === undefined ? {} : { directPara }),
   };
+}
+
+function projectDirectChar(value: unknown): DirectChar {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("segments envelope: malformed direct.char properties; upgrade the host adapter to project valid v2 metadata.");
+  }
+  const v = value as Record<string, unknown>;
+  const { bold, italic, size_pt, color, faces, face_ids } = v;
+  if (typeof bold !== "boolean" || typeof italic !== "boolean" ||
+      typeof size_pt !== "number" || !Number.isFinite(size_pt) ||
+      typeof color !== "string" || !/^#[0-9a-fA-F]{6}$/.test(color) || !Array.isArray(faces) || faces.length !== 7 ||
+      !faces.every((x) => typeof x === "string" || x === null) || !isNumberArray(face_ids) || face_ids.length !== 7 ||
+      face_ids.some((x) => !Number.isInteger(x) || x < 0)) {
+    throw new Error("segments envelope: malformed direct.char properties; upgrade the host adapter to project valid v2 metadata.");
+  }
+  return { bold, italic, size_pt, color, faces, face_ids };
+}
+
+function projectDirectPara(value: unknown): DirectPara {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("segments envelope: malformed direct.para properties; upgrade the host adapter to project valid v2 metadata.");
+  }
+  const v = value as Record<string, unknown>;
+  const { alignment, indent, line_spacing, line_spacing_type } = v;
+  if (typeof alignment !== "string" || !["justify", "left", "right", "center", "distribute", "divide", "unknown"].includes(alignment) ||
+      typeof indent !== "number" || !Number.isInteger(indent) ||
+      typeof line_spacing !== "number" || !Number.isInteger(line_spacing) ||
+      typeof line_spacing_type !== "number" || !Number.isInteger(line_spacing_type) || line_spacing_type < 0 || line_spacing_type > 255) {
+    throw new Error("segments envelope: malformed direct.para properties; upgrade the host adapter to project valid v2 metadata.");
+  }
+  return { alignment, indent, line_spacing, line_spacing_type };
 }
 
 /**
@@ -122,16 +185,83 @@ function projectSegment(raw: unknown): Segment {
 export function parseCatEnvelope(json: string): CatEnvelope {
   const raw: unknown = JSON.parse(json);
   if (typeof raw !== "object" || raw === null) {
-    throw new Error("segments envelope: not an object");
+    throw new Error("segments envelope: not an object; upgrade the host adapter to emit segment-envelope-v2 JSON, then reload.");
   }
   const { schema_version, contract, markdown, segments } = raw as Record<string, unknown>;
-  if (contract !== "hwp-segment-envelope-v2" || schema_version !== "1.0") {
-    throw new Error("segments envelope: not a v2 envelope");
+  if (contract !== "hwp-segment-envelope-v2" || typeof schema_version !== "string" || !/^1[.][0-9]+$/.test(schema_version)) {
+    throw new Error("segments envelope: not a v2 envelope (contract or schema major); upgrade the host adapter to emit segment-envelope-v2 schema 1.x, then reload.");
   }
   if (typeof markdown !== "string" || !Array.isArray(segments)) {
-    throw new Error("segments envelope: missing markdown string or segments array");
+    throw new Error("segments envelope: missing markdown string or segments array; upgrade the host adapter to emit complete segment-envelope-v2 data, then reload.");
   }
-  return { markdown, segments: segments.map(projectSegment) };
+  const projected = segments.map(projectSegment);
+  const envelope = { markdown, segments: projected };
+  boundaryInfo(envelope);
+  return envelope;
+}
+
+interface BoundaryInfo {
+  scalarLength: number;
+  utf16ByScalar: Map<number, number>;
+}
+
+const boundaryCache = new WeakMap<CatEnvelope, BoundaryInfo>();
+
+/** Resolve only scalar boundaries used by this envelope's segment ranges. */
+function boundaryInfo(envelope: CatEnvelope): BoundaryInfo {
+  const cached = boundaryCache.get(envelope);
+  if (cached !== undefined) return cached;
+  const wanted = new Set<number>();
+  for (const segment of envelope.segments) {
+    if (!Number.isInteger(segment.start) || !Number.isInteger(segment.end) || segment.start < 0 || segment.end < segment.start) {
+      throw new Error("segments envelope: malformed character range; upgrade the host adapter to emit nonnegative scalar offsets, then reload.");
+    }
+    wanted.add(segment.start);
+    wanted.add(segment.end);
+  }
+  wanted.add(0);
+  const utf16ByScalar = new Map<number, number>();
+  let scalar = 0;
+  let utf16 = 0;
+  if (wanted.has(0)) utf16ByScalar.set(0, 0);
+  for (const point of envelope.markdown) {
+    scalar++;
+    utf16 += point.length;
+    if (wanted.has(scalar)) utf16ByScalar.set(scalar, utf16);
+  }
+  for (const offset of wanted) {
+    if (!utf16ByScalar.has(offset)) throw new Error("segments envelope: character range exceeds markdown; upgrade the host adapter to emit offsets into its own Markdown, then reload.");
+  }
+  const info = { scalarLength: scalar, utf16ByScalar };
+  boundaryCache.set(envelope, info);
+  return info;
+}
+
+/** Return the Markdown length in the envelope's Unicode scalar coordinate system. */
+export function markdownLength(envelope: CatEnvelope): number {
+  return boundaryInfo(envelope).scalarLength;
+}
+
+/** Revalidate optional metadata from a projected transport envelope before it drives behavior. */
+export function validateProjectedMetadata(envelope: CatEnvelope): CatEnvelope {
+  // A host can project offsets that run past its own Markdown. Fail the read
+  // with the boundary message here, rather than crashing render in
+  // segmentText, where no error boundary catches it.
+  boundaryInfo(envelope);
+  let changed = false;
+  const segments = envelope.segments.map((segment) => {
+    const nullable = segment as Segment & { directChar?: DirectChar | null; directPara?: DirectPara | null };
+    let normalized = segment;
+    if (nullable.directChar === null || nullable.directPara === null) {
+      normalized = { ...segment };
+      if (nullable.directChar === null) { delete normalized.directChar; changed = true; }
+      if (nullable.directPara === null) { delete normalized.directPara; changed = true; }
+    }
+    if (normalized.directChar !== undefined) projectDirectChar(normalized.directChar);
+    if (normalized.directPara !== undefined) projectDirectPara(normalized.directPara);
+    return normalized;
+  });
+  return changed ? { ...envelope, segments } : envelope;
 }
 
 /** Extract the source coordinate of a segment. */
@@ -165,7 +295,11 @@ export function segmentAtRef(
 
 /** Slice the markdown text covered by a segment. */
 export function segmentText(envelope: CatEnvelope, segment: Segment): string {
-  return envelope.markdown.slice(segment.start, segment.end);
+  const info = boundaryInfo(envelope);
+  const start = info.utf16ByScalar.get(segment.start);
+  const end = info.utf16ByScalar.get(segment.end);
+  if (start === undefined || end === undefined) throw new Error("segments envelope: segment range is not in this envelope; reload the document before selecting it again.");
+  return envelope.markdown.slice(start, end);
 }
 
 /** Map a markdown offset to its source coordinate, if inside a segment. */
