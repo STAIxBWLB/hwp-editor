@@ -768,6 +768,43 @@ describe("ComponentsPanel (TEST-03)", () => {
     ]);
   });
 
+  it("selects the paragraphs an insertion created", async () => {
+    // The ids exist only in the report, so the selection can be built only
+    // against the envelope that reads the new document back.
+    const base = addressableEnvelope();
+    const text = "새문단";
+    const insertedPara: Segment = {
+      id: insertedId,
+      indices: [2],
+      start: base.markdown.length,
+      end: base.markdown.length + text.length,
+      kind: "para",
+      section: 0,
+      para: 2,
+    };
+    const after: CatEnvelope = {
+      markdown: `${base.markdown}${text}\n\n`,
+      segments: [...base.segments, insertedPara],
+    };
+    const engine = composedEngine();
+    let reads = 0;
+    engine.read = async () => (reads++ === 0 ? base : after);
+    await selectPara(engine, 1, base);
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) }),
+    );
+
+    // The report named one paragraph, so that paragraph is what the editor now
+    // shows: the selection moved off the paragraph the op was addressed to, and
+    // its path is the engine's, not one guessed from the request.
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.para"] }));
+    expect(await screen.findByText(en["segment.selectedPara"]({ path: "0/2" }))).toBeTruthy();
+    const panel = screen.getByRole("region", { name: en["segment.panelAria"] });
+    expect(panel.querySelector(".hwped-quote")?.textContent).toContain(text);
+    expect(panel.querySelector('[aria-selected="true"]')?.textContent).toContain(text);
+  });
+
   it("disables insertion with a localized reason below hwp-cli 1.4.0", async () => {
     const engine = createMockEngine({ envelope: addressableEnvelope() });
     await selectPara(engine, 1, addressableEnvelope());

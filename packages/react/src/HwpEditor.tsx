@@ -22,7 +22,7 @@ import type {
   Segment,
   ValidationReport,
 } from "@hwp-editor/core";
-import { createStore, insertedParagraphIds, segmentAtRef, validateImageAssets, HwpEngineError, MAX_IMAGE_ASSETS, MAX_IMAGE_ASSETS_TOTAL_BYTES, STARTER_COMPONENTS } from "@hwp-editor/core";
+import { createStore, insertedParagraphIds, segmentAtRef, segmentRef, validateImageAssets, HwpEngineError, MAX_IMAGE_ASSETS, MAX_IMAGE_ASSETS_TOTAL_BYTES, STARTER_COMPONENTS } from "@hwp-editor/core";
 import type { EditorError, EditorStore } from "@hwp-editor/core";
 import { HwpEditorContext } from "./context.js";
 import type { HwpEditorContextValue } from "./context.js";
@@ -245,11 +245,37 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
      * document it just wrote, so a new load invalidates every one of them.
      */
     const [inserted, setInserted] = useState<InsertedComponent[]>([]);
+    /**
+     * Ids one insertion reported, held until the re-read envelope carries them.
+     * The paragraphs do not exist in the envelope the op was sent with, so the
+     * selection is built from the envelope that reads them back, in real paths
+     * rather than guessed ones.
+     */
+    const [pendingInserted, setPendingInserted] = useState<string[]>([]);
     const imageAssets = useRef(new Map<EditOp, ImageAsset>());
     useEffect(() => {
       const active = new Set(state.pendingOps);
       for (const op of imageAssets.current.keys()) if (!active.has(op)) imageAssets.current.delete(op);
     }, [state.pendingOps]);
+
+    // Select the paragraphs an insertion created. `insert_blocks` names them
+    // only in the edit report, so a ref for one can be built only against the
+    // envelope that reads the new document back, whose paths are the engine's.
+    useEffect(() => {
+      if (pendingInserted.length === 0 || envelope === null) return;
+      const paragraphs = pendingInserted.flatMap((id) => {
+        const segment = segmentAtRef(envelope, { id, section: 0, para: 0 });
+        return segment === undefined || segment.kind !== "para" ? [] : [segment];
+      });
+      if (paragraphs.length === 0) return;
+      setPendingInserted([]);
+      store.dispatch({
+        type: "selectMany",
+        selections: paragraphs.map(segmentRef),
+        primary: segmentRef(paragraphs[0]!),
+        anchor: segmentRef(paragraphs[0]!),
+      });
+    }, [envelope, pendingInserted, store]);
 
     // Load the document whenever the engine/file pair changes.
     useEffect(() => {
@@ -319,9 +345,11 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       if (envelope === null || state.selection === null) return;
       const segment = segmentAtRef(envelope, state.selection);
       if (segment === undefined) return;
-      setTab(
-        isTableSlice(segmentText(envelope, segment)) ? "table" : "para",
-      );
+      const next: SideTab = isTableSlice(segmentText(envelope, segment)) ? "table" : "para";
+      // The palette keeps its tab: the selection an insertion produces is its
+      // own result, and leaving its rows behind for the tab it created is not
+      // the jump the user asked for. Every other tab still follows.
+      setTab((current) => current === "components" ? current : next);
     }, [envelope, state.selection]);
 
     // Dirty-change callback.
@@ -486,6 +514,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           if (outcome.status !== "applied") return;
           const ids = insertedParagraphIds(outcome);
           setInserted((previous) => [...previous, ...ids.map((id) => ({ id, name: component.name }))]);
+          setPendingInserted(ids);
         })();
       },
       [emitError, engine, envelope, replaceDocument, store, t],

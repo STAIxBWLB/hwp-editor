@@ -100,6 +100,16 @@ test("AC8: a component inserted after the selected paragraph is rendered there",
     panel.getByRole("button", { name: en["components.remove"]({ name }), exact: true }),
   ).toBeVisible();
   await expect(page.locator(".hwped").getByRole("alert")).toHaveCount(0);
+
+  // The paragraphs the report named are the selection, so the editor points at
+  // what the insertion created instead of the paragraph it was sent. The box is
+  // a table, and its host paragraph carries the cell text, so the quote reads
+  // the inserted box and not the heading the click selected.
+  await page.getByRole("tab", { name: en["tabs.para"], exact: true }).click();
+  const inspected = page.getByRole("region", { name: en["segment.panelAria"], exact: true });
+  await expect(inspected.locator(".hwped-quote")).toContainText("기안자");
+  await expect(inspected.locator(".hwped-quote")).not.toContainText("표 편집 데모");
+  await expect(inspected.locator('[aria-selected="true"]').first()).toBeVisible();
 });
 
 test("AC9: a document composed from the assembly keeps its order and params", async ({ page }) => {
