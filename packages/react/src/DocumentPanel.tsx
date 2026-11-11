@@ -23,7 +23,8 @@ export function DocumentPanel(): JSX.Element {
   const [meta, setMeta] = useState<Record<MetaKey, string>>({ title: "", author: "", subject: "", keywords: "" });
   const [pageKey, setPageKey] = useState<PageSetupKey>("width");
   const [pageValue, setPageValue] = useState("");
-  const validPage = pageKey === "orientation" || isPlainDecimal(pageValue);
+  const pageDimension = pageKey === "width" || pageKey === "height";
+  const validPage = pageKey === "orientation" || (isPlainDecimal(pageValue) && (!pageDimension || Number(pageValue) > 0));
   const disabled = !editable || state.document === null || envelope === null || state.status === "applying";
 
   return <div className="hwped-panel" role="region" aria-label={t("document.panelAria")}>
@@ -51,7 +52,7 @@ export function DocumentPanel(): JSX.Element {
         <button type="button" className="hwped-btn" disabled={disabled || !validPage}
           onClick={() => store.dispatch({ type: "queueOp", op: { kind: "set-page", key: pageKey, value: pageValue.trim() || "portrait" } })}>{t("document.setPage")}</button>
       </div>
-      {!validPage && pageValue !== "" && <p role="alert" className="hwped-hint">{t("unit.invalid")}</p>}
+      {!validPage && pageValue !== "" && <p role="alert" className="hwped-hint">{t(pageDimension && isPlainDecimal(pageValue) ? "document.invalidDimension" : "unit.invalid")}</p>}
     </div>
   </div>;
 }

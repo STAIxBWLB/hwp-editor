@@ -87,6 +87,7 @@ export function SegmentInspector(): JSX.Element {
   const addressedUnavailable = capabilities?.editOps !== "v1";
   const disabled = !editable || addressedUnavailable || state.status === "applying";
   const anchorDisabled = !editable || state.status === "applying";
+  const legacyLinkSeparator = capabilities?.editOps !== "v1" && [currentText, linkText, linkUrl].some(value => value.includes("=>"));
   const validShape = isPlainDecimal(shapeValue);
   const validFontSize = fontSize.trim() === "" || isPlainDecimal(fontSize);
   const formatTargets = formatAddresses(envelope!, segment);
@@ -245,11 +246,12 @@ export function SegmentInspector(): JSX.Element {
       <div className="hwped-field">
         <span className="hwped-label">{t("segment.hyperlinkLabel")}</span>
         <p className="hwped-hint">{t("segment.hyperlinkHint")}</p>
+        {legacyLinkSeparator && <p role="alert" className="hwped-hint">{t("segment.legacyHyperlinkSeparator")}</p>}
         <input className="hwped-input" type="url" value={linkUrl} disabled={anchorDisabled} placeholder={t("segment.hyperlinkUrlPlaceholder")}
           aria-label={t("segment.hyperlinkUrlAria")} onChange={(e) => setLinkUrl(e.target.value)} />
         <input className="hwped-input" type="text" value={linkText} disabled={anchorDisabled} placeholder={t("segment.hyperlinkTextPlaceholder")}
           aria-label={t("segment.hyperlinkTextAria")} onChange={(e) => setLinkText(e.target.value)} />
-        <button type="button" className="hwped-btn" disabled={anchorDisabled || currentText === "" || linkUrl.trim() === ""}
+        <button type="button" className="hwped-btn" disabled={anchorDisabled || legacyLinkSeparator || currentText === "" || linkUrl.trim() === ""}
           onClick={() => store.dispatch({ type: "queueOp", op: { kind: "create-hyperlink", anchor: currentText, url: linkUrl.trim(), ...(linkText.trim() === "" ? {} : { text: linkText.trim() }) } })}>{t("segment.createHyperlink")}</button>
       </div>
 

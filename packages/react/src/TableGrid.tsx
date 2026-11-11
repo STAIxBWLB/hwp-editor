@@ -10,6 +10,16 @@ interface CellCoord {
   col: number;
 }
 
+function tableRows(text: string): string[][] {
+  return text.split("\n").filter(row => row.trim() !== "").map(row => {
+    if (!row.includes("|")) return row.split("\t");
+    const cells = row.split("|").map(cell => cell.trim());
+    while (cells[0] === "") cells.shift();
+    while (cells.at(-1) === "") cells.pop();
+    return cells;
+  }).filter(row => row.length > 0);
+}
+
 /**
  * Table-aware editor for a selected table segment. The cell grid comes from
  * the GFM table in the read() envelope; addressing follows the CLI's
@@ -40,14 +50,15 @@ export function TableGrid(): JSX.Element {
 
   const disabled = !editable || state.document === null || envelope === null || state.status === "applying";
   const queue = store.dispatch.bind(store);
+  const rows = tableRows(newRows);
   const addTablePanel = (
     <div className="hwped-field">
       <label className="hwped-label" htmlFor="hwped-table-anchor">{t("table.anchorAria")}</label>
       <input id="hwped-table-anchor" className="hwped-input" value={tableAnchor} disabled={disabled} placeholder={t("table.anchorPlaceholder")} onChange={(e) => setTableAnchor(e.target.value)} />
       <label className="hwped-label" htmlFor="hwped-table-rows">{t("table.addTableRowsLabel")}</label>
       <textarea id="hwped-table-rows" className="hwped-textarea" rows={3} value={newRows} disabled={disabled} placeholder={t("table.addTableRowPlaceholder")} onChange={(e) => setNewRows(e.target.value)} />
-      <button type="button" className="hwped-btn" disabled={disabled || tableAnchor.trim() === "" || newRows.trim() === ""}
-        onClick={() => queue({ type: "queueOp", op: { kind: "add-table", anchor: tableAnchor.trim(), rows: newRows.split("\n").filter((row) => row.trim() !== "").map((row) => row.split(/[\t|]/)) } })}>{t("table.addTable")}</button>
+      <button type="button" className="hwped-btn" disabled={disabled || tableAnchor.trim() === "" || rows.length === 0}
+        onClick={() => queue({ type: "queueOp", op: { kind: "add-table", anchor: tableAnchor.trim(), rows } })}>{t("table.addTable")}</button>
     </div>
   );
 

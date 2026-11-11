@@ -19,7 +19,7 @@ export function ImagePanel(): JSX.Element {
   const [error, setError] = useState<ReturnType<typeof toEditorError> | null>(null);
   const generation = useRef(0);
   const fileInput = useRef<HTMLInputElement>(null);
-  const uploading = capabilities?.imageAssets === "v1";
+  const uploading = capabilities?.imageAssets === "v1" && queueImage !== undefined;
   const disabled = !editable || state.document === null || envelope === null || state.status === "applying";
   const w = Number(width), h = Number(height);
   const naturalSize = width.trim() === "" && height.trim() === "";
@@ -52,7 +52,7 @@ export function ImagePanel(): JSX.Element {
     } finally { if (generation.current === version) setReading(false); }
   };
   const insert = (): void => {
-    if (disabled || !uploading || chosen === null || !anchor.trim() || !validSize) return;
+    if (disabled || !uploading || chosen === null || !anchor.trim() || !validSize || queueImage === undefined) return;
     try {
       // This is a request correlation key, not a credential or filesystem path.
       const id = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -79,7 +79,8 @@ export function ImagePanel(): JSX.Element {
       <button type="button" className="hwped-btn" disabled={disabled || !uploading || reading || chosen === null || !anchor.trim() || !validSize} onClick={insert}>{t("image.insert")}</button>
       <h3>{t("image.delete")}</h3>
       <label className="hwped-label" htmlFor="hwped-image-delete-anchor">{t("image.deleteAnchor")}</label>
-      <input id="hwped-image-delete-anchor" className="hwped-input" value={deleteAnchor} disabled={disabled} onChange={event => setDeleteAnchor(event.target.value)} />
+      <p id="hwped-image-delete-hint" className="hwped-hint">{t("image.deleteAllHint")}</p>
+      <input aria-describedby="hwped-image-delete-hint" id="hwped-image-delete-anchor" className="hwped-input" value={deleteAnchor} disabled={disabled} onChange={event => setDeleteAnchor(event.target.value)} />
       <button type="button" className="hwped-btn" disabled={disabled || !deleteAnchor.trim()} onClick={() => store.dispatch({ type: "queueOp", op: { kind: "delete-image", anchor: deleteAnchor.trim() } })}>{t("image.delete")}</button>
       {error !== null && <ErrorLine prefix={t("error.prefix.image")} {...error} />}
     </div>

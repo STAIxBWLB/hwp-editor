@@ -4,6 +4,7 @@ import { createStore, initialState } from "@hwp-editor/core";
 import type { EditorState, EditOp } from "@hwp-editor/core";
 import { HwpEditorContext } from "../src/context.js";
 import type { HwpEditorContextValue } from "../src/context.js";
+import { ImagePanel } from "../src/ImagePanel.js";
 import { DocumentPanel } from "../src/DocumentPanel.js";
 import { FieldsPanel } from "../src/FieldsPanel.js";
 import { SegmentInspector } from "../src/SegmentInspector.js";
@@ -14,7 +15,7 @@ import { createMockEngine, makeEnvelope } from "./mock-engine.js";
 afterEach(cleanup);
 
 const locales = [["en", en], ["ko", ko]] as const;
-function renderPanel(locale: "en" | "ko", panel: "document" | "fields" | "segment" | "table", selected = true, addressed = true) {
+function renderPanel(locale: "en" | "ko", panel: "document" | "fields" | "segment" | "table" | "image", selected = true, addressed = true, envelope = makeEnvelope()) {
   const selection = panel === "table" && !selected ? null : { section: 0, para: panel === "table" ? 2 : 0 };
   const store = createStore({ ...initialState, document: { name: "test.hwpx", data: new Uint8Array([1]) }, selection } as EditorState);
   const engine = createMockEngine();
@@ -22,20 +23,19 @@ function renderPanel(locale: "en" | "ko", panel: "document" | "fields" | "segmen
     engine,
     store,
     state: store.getState(),
-    envelope: makeEnvelope(),
-    capabilities: { version: "1.3.1", editable: true, formats: ["hwp", "hwpx"], ...(addressed ? { editOps: "v1" as const } : {}) },
+    envelope,
+    capabilities: { version: "1.3.1", editable: true, formats: ["hwp", "hwpx"], ...(addressed ? { editOps: "v1" as const } : {}), ...(panel === "image" ? { imageAssets: "v1" as const } : {}) },
     editable: true,
     validation: null,
     applyPendingOps: () => undefined,
     replaceDocument: async () => undefined,
-    queueImage: () => undefined,
     refresh: async () => undefined,
     openCompose: () => undefined,
     t: createT(locale),
   } as HwpEditorContextValue;
   const component = panel === "document" ? <DocumentPanel />
     : panel === "fields" ? <FieldsPanel />
-      : panel === "segment" ? <SegmentInspector /> : <TableGrid />;
+      : panel === "segment" ? <SegmentInspector /> : panel === "table" ? <TableGrid /> : <ImagePanel />;
   render(<HwpEditorContext.Provider value={value}>{component}</HwpEditorContext.Provider>);
   return store;
 }
@@ -108,6 +108,8 @@ describe("additional operation controls", () => {
 
   it.each(locales)("queues field and bookmark create/delete ops (%s)", (locale, messages) => {
     const store = renderPanel(locale, "fields");
+    expect(screen.getByText(plain(messages, "fields.deleteAllHint"))).toBeTruthy();
+    expect(screen.getByText(plain(messages, "fields.deleteAllBookmarksHint"))).toBeTruthy();
     fireEvent.change(screen.getByLabelText(plain(messages, "fields.anchorAria")), { target: { value: "회의록" } });
     fireEvent.change(screen.getByLabelText(plain(messages, "fields.nameAria")), { target: { value: "department" } });
     fireEvent.change(screen.getByLabelText(plain(messages, "fields.initialValueAria")), { target: { value: "AI" } });
@@ -130,7 +132,7 @@ describe("additional operation controls", () => {
   it.each(locales)("can queue a table before any table is selected (%s)", (locale, messages) => {
     const store = renderPanel(locale, "table", false);
     fireEvent.change(screen.getByLabelText(plain(messages, "table.anchorAria")), { target: { value: "Budget" } });
-    fireEvent.change(screen.getByLabelText(plain(messages, "table.addTableRowsLabel")), { target: { value: "Item|Value" } });
+    fireEvent.change(screen.getByLabelText(plain(messages, "table.addTableRowsLabel")), { target: { value: "| Item | Value |" } });
     fireEvent.click(screen.getByRole("button", { name: plain(messages, "table.addTable") }));
     expect(queued(store)).toEqual([{ kind: "add-table", anchor: "Budget", rows: [["Item", "Value"]] }]);
   });
@@ -191,5 +193,48 @@ describe.each(locales)("unit controls (%s)", (locale, messages) => {
     fireEvent.click(screen.getByRole("button", { name: plain(messages, "segment.createHyperlink") }));
     expect(queued(store)).toEqual([{kind:"create-hyperlink",anchor:"1. 회의록",url:"https://example.test"}]);
     expect(screen.getByText(plain(messages, "segment.hyperlinkHint"))).toBeTruthy();
+  });
+});
+
+describe.each(locales)("delete scope and hyperlink separators (%s)", (locale, messages) => {
+  it("warns about all image matches and supports providers without queueImage", () => {
+    renderPanel(locale, "image");
+    expect(screen.getByText(plain(messages, "image.deleteAllHint"))).toBeTruthy();
+    expect((screen.getByLabelText(plain(messages, "image.file")) as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getByText(plain(messages, "image.unsupported"))).toBeTruthy();
+  });
+  it.each([false, true])("refuses separator input only on a legacy host (JSON=%s)", addressed => {
+    for (const example of [
+      { anchor: "A=>B", text: "Label", url: "https://example.test" },
+      { anchor: "Safe", text: "A=>B", url: "https://example.test" },
+      { anchor: "Safe", text: "Label", url: "https://example.test/?x=A=>B" },
+    ]) {
+      cleanup();
+      const envelope = { markdown: example.anchor, segments: [{kind: "para" as const, section: 0, para: 0, start: 0, end: example.anchor.length}] };
+      const store = renderPanel(locale, "segment", true, addressed, envelope);
+      fireEvent.change(screen.getByLabelText(plain(messages, "segment.hyperlinkUrlAria")), {target:{value:example.url}});
+      fireEvent.change(screen.getByLabelText(plain(messages, "segment.hyperlinkTextAria")), {target:{value:example.text}});
+      const button = screen.getByRole("button", {name:plain(messages, "segment.createHyperlink")});
+      expect((button as HTMLButtonElement).disabled).toBe(!addressed);
+      fireEvent.click(button);
+      if (addressed) expect(queued(store)).toEqual([{kind:"create-hyperlink",...example}]);
+      else {
+        expect(queued(store)).toEqual([]);
+        expect(screen.getByRole("alert").textContent).toBe(plain(messages,"segment.legacyHyperlinkSeparator"));
+      }
+    }
+  });
+  it("requires positive page width and height while allowing zero margins", () => {
+    const store = renderPanel(locale, "document");
+    for (const key of ["width", "height"]) {
+      fireEvent.change(screen.getByLabelText(plain(messages,"document.pageKeyAria")), {target:{value:key}});
+      fireEvent.change(screen.getByLabelText(plain(messages,"document.pageValueAria")), {target:{value:"0"}});
+      expect((screen.getByRole("button",{name:plain(messages,"document.setPage")}) as HTMLButtonElement).disabled).toBe(true);
+      expect(screen.getByRole("alert").textContent).toBe(plain(messages,"document.invalidDimension"));
+    }
+    fireEvent.change(screen.getByLabelText(plain(messages,"document.pageKeyAria")), {target:{value:"margin-left"}});
+    fireEvent.change(screen.getByLabelText(plain(messages,"document.pageValueAria")), {target:{value:"0"}});
+    fireEvent.click(screen.getByRole("button",{name:plain(messages,"document.setPage")}));
+    expect(queued(store)).toEqual([{kind:"set-page",key:"margin-left",value:"0"}]);
   });
 });

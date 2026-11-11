@@ -602,7 +602,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
                 <li key={index}>
                   {op.kind}: {"address" in op
                     ? JSON.stringify(op.address)
-                    : "find" in op ? op.find : "anchor" in op ? op.anchor : op.kind}
+                    : "find" in op ? op.find : "anchor" in op ? op.anchor : "key" in op ? op.key : "name" in op ? op.name : op.kind}
                   {" "}<button type="button" className="hwped-btn" disabled={state.status === "applying"}
                     onClick={() => store.dispatch({ type: "dequeueOp", index })}>{t("toolbar.removePending", { index: index + 1 })}</button>
                 </li>
