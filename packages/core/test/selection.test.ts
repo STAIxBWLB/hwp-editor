@@ -75,10 +75,16 @@ describe("selection helpers", () => {
       primary: { section: 0, para: 0, id: "p0" },
       anchor: { section: 0, para: 0, id: "p0" },
     });
-    // Shift-clicking the table itself selects the table, never the host paragraph.
+    // Shift-clicking the table itself adds nothing to a paragraph selection:
+    // a table has no paragraph of its own, so the click reports its reason and
+    // the selection stays, rather than widening to the table's host paragraph.
     const fromPara = reducer(initialState, { type: "select", selection: { section: 0, para: 0, id: "p0" } });
-    expect(selectionAction(withEmpty, fromPara, withEmpty.segments.find((s) => s.id === "tbl")!, "extend"))
-      .toEqual({ type: "select", selection: { section: 0, para: 1, id: "tbl" } });
+    const refused = selectionAction(withEmpty, fromPara, withEmpty.segments.find((s) => s.id === "tbl")!, "extend");
+    expect(refused).toEqual({ type: "refuseSelection", refusal: "table" });
+    // The state keeps the paragraph selected and records the reason.
+    const kept = reducer(fromPara, refused);
+    expect(kept.selection).toEqual({ section: 0, para: 0, id: "p0" });
+    expect(kept.selectionRefusal).toBe("table");
   });
 
   it("covers every paragraph of a two-paragraph cell, and refuses the single-paragraph edits", () => {
@@ -102,15 +108,48 @@ describe("selection helpers", () => {
     expect(selectedParagraphs(twoCell, selected).map((p) => p.id)).toEqual(["cell-p0", "cell-p1"]);
     // Character format walks the runs of both, not of the first only.
     expect(formatAddresses(twoCell, resolved.paragraphs, null)).toEqual([{ id: "cell-p0-r0" }, { id: "cell-p1-r0" }]);
-    // Toggling the cell on takes both together, and the anchor becomes the
-    // first paragraph it covers so a later range has something to measure from.
+    // Toggling the cell on takes both together, and the anchor keeps the cell
+    // it came from, so a later range still covers the cell's whole span.
     const empty = reducer(initialState, { type: "select", selection: null });
-    expect(selectionAction(twoCell, empty, cell, "toggle")).toEqual({
+    const onCell = selectionAction(twoCell, empty, cell, "toggle");
+    expect(onCell).toEqual({
       type: "selectMany",
       selections: [{ section: 0, para: 1, id: "cell-p0" }, { section: 0, para: 1, id: "cell-p1" }],
       primary: { section: 0, para: 1, id: "cell-p0" },
-      anchor: { section: 0, para: 1, id: "cell-p0" },
+      anchor: { section: 0, para: 1, id: "cell2" },
     });
+    // A second Ctrl-click takes the cell off: the toggle compares the cell's
+    // paragraphs with the stored ones, so neither half is left behind.
+    const selectedCell = reducer(empty, onCell!);
+    const offCell = reducer(selectedCell, selectionAction(twoCell, selectedCell, cell, "toggle")!);
+    expect(offCell.selections).toEqual([]);
+    expect(offCell.selection).toBeNull();
+  });
+
+  it("extends from a cell anchor by every paragraph of the cell", () => {
+    const withNeighbours: CatEnvelope = { markdown: "a\n\nb\n\nc\n\nd", segments: [
+      { id: "above", indices: [0], start: 0, end: 1, kind: "para", section: 0, para: 0 },
+      { id: "host", indices: [1], start: 3, end: 8, kind: "para", section: 0, para: 1 },
+      { id: "tbl", indices: [1, 0], start: 3, end: 8, kind: "table", section: 0, para: 1 },
+      { id: "cell", indices: [1, 0, 0], start: 3, end: 8, kind: "cell", section: 0, para: 1 },
+      { id: "c0", indices: [1, 0, 0, 0], start: 3, end: 4, kind: "para", section: 0, para: 1 },
+      { id: "c1", indices: [1, 0, 0, 1], start: 6, end: 7, kind: "para", section: 0, para: 1 },
+      { id: "below", indices: [2], start: 9, end: 10, kind: "para", section: 0, para: 2 },
+    ] };
+    const segmentFor = (id: string): Segment => withNeighbours.segments.find((s) => s.id === id)!;
+    const cellSelected = reducer(initialState, selectionAction(withNeighbours, initialState, segmentFor("cell"), "toggle")!);
+    expect(selectedParagraphs(withNeighbours, cellSelected).map((paragraph) => paragraph.id)).toEqual(["c0", "c1"]);
+    // Downwards the cell's span ends at its last paragraph, so extending past
+    // the cell keeps all of it instead of stopping at its first paragraph.
+    const downwards = reducer(cellSelected, selectionAction(withNeighbours, cellSelected, segmentFor("below"), "extend")!);
+    expect(selectedParagraphs(withNeighbours, downwards).map((paragraph) => paragraph.id)).toEqual(["c0", "c1", "below"]);
+    // Upwards from the state that extend left behind, the same span is still
+    // the endpoint, so the second half of the cell is not dropped by the
+    // paragraph above it. The paragraph that holds the table control sits
+    // inside that span in path order and comes with it; it is a paragraph of
+    // the flow, not the cell's text.
+    const upwards = reducer(downwards, selectionAction(withNeighbours, downwards, segmentFor("above"), "extend")!);
+    expect(selectedParagraphs(withNeighbours, upwards).map((paragraph) => paragraph.id)).toEqual(["above", "host", "c0", "c1"]);
   });
 
   it("gives an image, a field and a bookmark no paragraph target at all", () => {
@@ -127,13 +166,44 @@ describe("selection helpers", () => {
       expect(resolveSelection(container, segment))
         .toEqual({ paragraphs: [], paragraph: undefined, refusal: "container" });
     }
-    // A range click on one of them selects the segment it hit, not the host.
+    // A modifier click on one of them adds nothing: a multi-selection holds
+    // paragraphs, and none of these kinds has one of its own.
     const state = reducer(initialState, { type: "select", selection: { section: 0, para: 1, id: "host" } });
     expect(selectionAction(container, state, container.segments[1]!, "toggle"))
+      .toEqual({ type: "refuseSelection", refusal: "container" });
+    expect(selectionAction(container, state, container.segments[1]!, "extend"))
+      .toEqual({ type: "refuseSelection", refusal: "container" });
+    // A plain click still selects the segment it hit, alone, so the inspector
+    // can name its own reason for refusing paragraph edits.
+    expect(selectionAction(container, state, container.segments[1]!, "single"))
       .toEqual({ type: "select", selection: { section: 0, para: 1, id: "img" } });
   });
 
-  it("keeps a run-level selection in runs when a modifier click extends or toggles it", () => {
+  it("never carries a table into a multi-selection, so a paragraph stays primary", () => {
+    // A plain click selects the table; every modifier click after it used to
+    // append to that ref, leaving the table primary and hiding the controls for
+    // the paragraph that was actually clicked.
+    const onTable = reducer(initialState, { type: "select", selection: { section: 0, para: 1, id: "tbl" } });
+    const p2 = env.segments.find((s) => s.id === "p2")!;
+    const first = selectionAction(env, onTable, p2, "toggle");
+    expect(first).toEqual({
+      type: "selectMany",
+      selections: [{ section: 0, para: 2, id: "p2" }],
+      primary: { section: 0, para: 2, id: "p2" },
+      anchor: { section: 0, para: 2, id: "p2" },
+    });
+    const two = reducer(onTable, first!);
+    const three = reducer(two, selectionAction(env, two, env.segments[0]!, "toggle")!);
+    expect(three.selection?.id).toBe("p0");
+    expect(selectedParagraphs(env, three).map((paragraph) => paragraph.id)).toEqual(["p0", "p2"]);
+    // Ctrl-clicking p0 again removes it, and the primary falls to a paragraph
+    // that is still selected, never back to the table ref that started this.
+    const off = reducer(three, selectionAction(env, three, env.segments[0]!, "toggle")!);
+    expect(off.selection?.id).toBe("p2");
+    expect(off.selections?.map((ref) => ref.id)).toEqual(["p2"]);
+  });
+
+  it("starts a fresh paragraph selection from a run-level one, replacing rather than merging", () => {
     const plain = { bold: false, italic: false, size_pt: 10, color: "#000000", faces: Array(7).fill("A"), face_ids: Array(7).fill(0) };
     const bold = { ...plain, bold: true };
     const runs: CatEnvelope = { markdown: "xy\n\nxy\n\nz", segments: [
@@ -153,21 +223,29 @@ describe("selection helpers", () => {
     const similar = selectSimilar(runs, segmentFor("r01"), "char");
     expect(similar.map((ref) => ref.id)).toEqual(["r01", "r11"]);
     const afterSimilar = reducer(initialState, { type: "selectMany", selections: similar, primary: similar[0]!, anchor: similar[0]! });
-    // A modifier click on a paragraph joins the run list; it must not replace
-    // the selection with whole paragraphs, which would format r00 and r10.
+    // A run-level selection is terminal. Run paths and control paths do not
+    // order together, so a modifier click replaces the run list with the
+    // clicked unit's own paragraphs: the bold runs are dropped rather than
+    // mixed with P2's run, which is what pulled a table cell's run into one
+    // range before.
     const toggled = selectionAction(runs, afterSimilar, p2, "toggle");
-    expect(toggled.type).toBe("selectMany");
-    if (toggled.type !== "selectMany") return;
-    expect(toggled.selections.map((ref) => ref.id)).toEqual(["r01", "r11", "r20"]);
-    const toggledSegments = toggled.selections.map((ref) => segmentFor(ref.id!));
-    expect(formatAddresses(runs, toggledSegments)).toEqual([{ id: "r01" }, { id: "r11" }, { id: "r20" }]);
-    // A Shift-extend keeps run identity too, and stays inside the range: the
-    // run before the anchor is not pulled in.
-    const extended = selectionAction(runs, afterSimilar, p2, "extend");
-    expect(extended.type).toBe("selectMany");
-    if (extended.type !== "selectMany") return;
-    expect(extended.selections.map((ref) => ref.id)).toEqual(["r01", "r10", "r11", "r20"]);
-    expect(extended.selections.every((ref) => ref.id?.startsWith("r"))).toBe(true);
+    expect(toggled).toEqual({
+      type: "selectMany",
+      selections: [{ section: 0, para: 2, id: "P2" }],
+      primary: { section: 0, para: 2, id: "P2" },
+      anchor: { section: 0, para: 2, id: "P2" },
+    });
+    expect(selectionAction(runs, afterSimilar, segmentFor("P1"), "extend")).toEqual({
+      type: "selectMany",
+      selections: [{ section: 0, para: 1, id: "P1" }],
+      primary: { section: 0, para: 1, id: "P1" },
+      anchor: { section: 0, para: 1, id: "P1" },
+    });
+    // The state the click leaves holds that one paragraph, so the format op
+    // addresses its runs and nothing from the run list it replaced.
+    const restarted = reducer(afterSimilar, toggled!);
+    expect(selectedParagraphs(runs, restarted).map((paragraph) => paragraph.id)).toEqual(["P2"]);
+    expect(formatAddresses(runs, selectedParagraphs(runs, restarted))).toEqual([{ id: "r20" }]);
   });
 
   it("orders paragraphs by path, not envelope position, so a point paragraph sorts in place", () => {

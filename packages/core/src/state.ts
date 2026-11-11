@@ -8,6 +8,7 @@ import type { DocumentHandle, PageImage } from "./engine.js";
 import type { HwpErrorCode } from "./errors.js";
 import type { EditOp } from "./ops.js";
 import type { SegmentRef } from "./segments.js";
+import type { SelectionRefusal } from "./selection.js";
 
 export type EditorStatus = "clean" | "dirty" | "applying" | "error";
 
@@ -34,6 +35,12 @@ export interface EditorState {
   /** Additional unique selected segments; selection remains the active primary. */
   selections?: SegmentRef[];
   selectionAnchor?: SegmentRef | null;
+  /**
+   * Why the last modifier click added nothing: a table, an image, a field, a
+   * bookmark or an empty cell has no paragraph of its own to contribute, so the
+   * selection stays as it was. Any action that changes the selection clears it.
+   */
+  selectionRefusal?: SelectionRefusal | null;
   /** Absolute Markdown Unicode scalar offsets, not source WCHAR coordinates. */
   range?: MarkdownRangeSelection | null;
   /** Ops queued for the next engine edit call. */
@@ -74,6 +81,7 @@ export const initialState: EditorState = {
   selection: null,
   selections: [],
   selectionAnchor: null,
+  selectionRefusal: null,
   range: null,
   pendingOps: [],
   snapshots: [],
@@ -86,6 +94,7 @@ export type EditorAction =
   | { type: "setPages"; pages: PageImage[] }
   | { type: "select"; selection: SegmentRef | null }
   | { type: "selectMany"; selections: SegmentRef[]; primary?: SegmentRef; anchor?: SegmentRef }
+  | { type: "refuseSelection"; refusal: SelectionRefusal }
   | { type: "setRange"; range: MarkdownRangeSelection | null }
   | { type: "queueOp"; op: EditOp }
   | { type: "queueOps"; ops: EditOp[] }
@@ -113,7 +122,7 @@ export function reducer(state: EditorState, action: EditorAction): EditorState {
     case "setPages":
       return { ...state, pages: action.pages };
     case "select":
-      return { ...state, selection: action.selection, selections: action.selection ? [action.selection] : [], selectionAnchor: null, range: null };
+      return { ...state, selection: action.selection, selections: action.selection ? [action.selection] : [], selectionAnchor: null, selectionRefusal: null, range: null };
     case "selectMany": {
       const unique = (refs: SegmentRef[]): SegmentRef[] => {
         const seen = new Set<string>();
@@ -128,8 +137,13 @@ export function reducer(state: EditorState, action: EditorAction): EditorState {
       const primary = action.primary && selections.some((ref) => sameRef(ref, action.primary!))
         ? action.primary : selections[0] ?? null;
       if (primary !== null) selections = [primary, ...selections.filter((ref) => !sameRef(ref, primary))];
-      return { ...state, selection: primary, selections, selectionAnchor: action.anchor ?? primary, range: null };
+      return { ...state, selection: primary, selections, selectionAnchor: action.anchor ?? primary, selectionRefusal: null, range: null };
     }
+    case "refuseSelection":
+      // The selection does not move: the click had no paragraph of its own to
+      // contribute. The reason travels with the state so every host that shows
+      // the selection can say so, not only the one that received the click.
+      return { ...state, selectionRefusal: action.refusal };
     case "setRange":
       return { ...state, range: action.range };
     case "queueOp":
@@ -175,6 +189,7 @@ export function reducer(state: EditorState, action: EditorAction): EditorState {
         selection: null,
         selections: [],
         selectionAnchor: null,
+        selectionRefusal: null,
         range: null,
         status: "clean",
         error: null,
@@ -198,6 +213,7 @@ export function reducer(state: EditorState, action: EditorAction): EditorState {
         selection: null,
         selections: [],
         selectionAnchor: null,
+        selectionRefusal: null,
         range: null,
         status: state.pendingOps.length === 0 ? "clean" : "dirty",
         error: null,

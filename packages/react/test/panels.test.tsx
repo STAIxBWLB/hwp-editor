@@ -390,7 +390,7 @@ describe("SegmentInspector op emission (TEST-03)", () => {
     expect(engine.calls.edit).toHaveLength(0);
   });
 
-  it("keeps a run-level selection in runs when a modifier click toggles or extends it", async () => {
+  it("starts a paragraph selection over when a run-level selection is toggled or extended", async () => {
     const plain = { bold: false, italic: false, size_pt: 10, color: "#000000", faces: Array(7).fill("A"), face_ids: Array(7).fill(0) };
     const bold = { ...plain, bold: true };
     const envelope: CatEnvelope = { markdown: "xy\n\nxy\n\nz", segments: [
@@ -412,35 +412,61 @@ describe("SegmentInspector op emission (TEST-03)", () => {
       return engine;
     };
 
-    // Ctrl-clicking a paragraph after a run-level selection adds its runs, not
-    // the paragraph: bold reaches r01, r11 and r20, and never r00/r10.
+    // Two runs are selected, and the panel names both the obstacle and what a
+    // modifier click will do next.
     const toggling = await openSimilar();
     expect(screen.getByText(en["segment.selectedRunCount"]({ count: 2 }))).toBeTruthy();
+    expect(screen.getByText(en["segment.runTextEditHint"])).toBeTruthy();
+    expect(screen.getByText(en["segment.runSelectionTerminal"])).toBeTruthy();
+    // Ctrl-clicking a paragraph starts over at paragraph level: r01 and r11 are
+    // gone, and P2's own run is what the format op addresses.
     fireEvent.click(screen.getAllByRole("option")[2]!, { ctrlKey: true });
-    expect(await screen.findByText(en["segment.selectedRunCount"]({ count: 3 }))).toBeTruthy();
+    expect(await screen.findByText(en["segment.selectedCount"]({ count: 1 }))).toBeTruthy();
+    expect(screen.queryByText(en["segment.selectedRunCount"]({ count: 3 }))).toBeNull();
     fireEvent.click(screen.getByLabelText(en["segment.bold"]));
     clickBtn("segment.formatSubmit");
-    expect(await applyOps(toggling, 3)).toEqual([
-      { kind: "set-format", address: { id: "r01" }, props: { bold: "on" } },
-      { kind: "set-format", address: { id: "r11" }, props: { bold: "on" } },
+    expect(await applyOps(toggling, 1)).toEqual([
       { kind: "set-format", address: { id: "r20" }, props: { bold: "on" } },
     ]);
 
-    // Shift-extending keeps run identity and stays inside the range: the run
-    // before the anchor is not pulled in, and no whole paragraph is addressed.
+    // Shift does the same, so the run list is never ordered against a run it
+    // did not contain: P1 and its own two runs, nothing from P0 or P2.
     const extending = await openSimilar();
-    fireEvent.click(screen.getAllByRole("option")[2]!, { shiftKey: true });
-    expect(await screen.findByText(en["segment.selectedRunCount"]({ count: 4 }))).toBeTruthy();
+    fireEvent.click(screen.getAllByRole("option")[1]!, { shiftKey: true });
+    expect(await screen.findByText(en["segment.selectedCount"]({ count: 1 }))).toBeTruthy();
     fireEvent.click(screen.getByLabelText(en["segment.bold"]));
     clickBtn("segment.formatSubmit");
-    const extended = await applyOps(extending, 4);
-    expect(extended).toEqual([
-      { kind: "set-format", address: { id: "r01" }, props: { bold: "on" } },
+    expect(await applyOps(extending, 2)).toEqual([
       { kind: "set-format", address: { id: "r10" }, props: { bold: "on" } },
       { kind: "set-format", address: { id: "r11" }, props: { bold: "on" } },
-      { kind: "set-format", address: { id: "r20" }, props: { bold: "on" } },
     ]);
-    expect(JSON.stringify(extended)).not.toContain('"r00"');
+  });
+
+  it("keeps a paragraph selection when a modifier click lands on a table", async () => {
+    const markdown = "가나\n";
+    const host: Segment = { id: "t-host", indices: [2], start: 0, end: 2, kind: "para", section: 0, para: 2 };
+    const table: Segment = { id: "t-table", indices: [2, 0], start: 0, end: 2, kind: "table", section: 0, para: 2 };
+    const engine = createMockEngine({ envelope: { markdown, segments: [host, table] } });
+    engine.render = async () => [pageWithRow(table, "table")];
+    render(<HwpEditor engine={engine} file={file} />);
+    const option = (await screen.findAllByRole("option"))[0]!;
+    fireEvent.click(option);
+    expect(screen.getByText(en["segment.selectedPara"]({ path: "0/2" }))).toBeTruthy();
+
+    // A table carries no paragraph of its own, so a modifier click adds nothing:
+    // the paragraph stays selected and the click reports the obstacle instead of
+    // making the unusable table ref primary.
+    fireEvent.click(screen.getByRole("button", { name: en["page.label"]({ page: 1 }) }), {
+      clientX: (200 / 600) * 595,
+      clientY: (120 / 800) * 842,
+      ctrlKey: true,
+    });
+    expect(await screen.findByText(en["segment.tableSelectionRefused"])).toBeTruthy();
+    expect(screen.getByText(en["segment.selectedCount"]({ count: 1 }))).toBeTruthy();
+    expect(
+      (screen.getByRole("button", { name: en["segment.deletePara"] }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+    expect(engine.calls.edit).toHaveLength(0);
   });
 
   it("lists and numbers paragraphs by path, not by the order the envelope emitted", async () => {

@@ -36,13 +36,13 @@ Run these passes and tag every finding with its pass:
   a field the engine does not publish is a finding, not a client-side guess.
 - **Envelope projection is validated.** `packages/core/src/segments.ts:89` refuses unknown segment kinds.
   New engine artifacts the client relies on are validated the same way before they drive behavior.
-- **A selection action maps to its own content, never to an enclosing paragraph.** Every canvas and
-  paragraph-list selection goes through `resolveSelection` (`packages/core/src/selection.ts`): a cell
-  yields all of its own paragraphs for align, spacing and format and refuses the one-paragraph edits
-  with a reason, and a table, image, field or bookmark yields no paragraph target at all. A resolver
-  that walks up to the parent paragraph hands the host's text or table to a delete, and a cell
-  narrowed to its first paragraph edits half a cell silently. A field slot's own ref follows the rule
-  in `packages/react/src/fields.ts`, which this one does not cover (#58 item 15).
+- **Check that each selection action maps to exactly the selected content.** Every canvas and
+  paragraph-list selection goes through `selectionAction` and `resolveSelection`
+  (`packages/core/src/selection.ts`): a multi-selection holds paragraphs in document order by path,
+  a cell enters as all of its own paragraphs, a run-level selection is formattable but a modifier
+  click there starts a new paragraph selection, and a table, image, field or bookmark adds nothing
+  and reports its reason instead. A resolver that walks up to the parent paragraph hands the host's
+  text or table to a delete, and a cell narrowed to its first paragraph edits half a cell silently.
 - **Engine report schema versions.** When reviewing report parsers, require supported-major
   matching (`1.x`), never exact minor equality, and reject malformed consumed fields
   (`packages/core/src/templates.ts:reportSchemaVersion`,

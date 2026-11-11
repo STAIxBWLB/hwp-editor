@@ -127,4 +127,16 @@ describe.each([["en", en], ["ko", ko]] as const)("Markdown run range selection (
     expect(await screen.findByText(messages["segment.rangeUnavailable"])).toBeTruthy();
     expect(screen.queryByText(messages["segment.rangeUnavailableNoRuns"])).toBeNull();
   });
+
+  it("names the range, not a missing paragraph, as the reason the text controls are off", async () => {
+    render(<HwpEditor engine={createMockEngine({ envelope: rangeEnvelope() })} file={file} locale={locale} />);
+    const textarea = await selectFirstParagraph(messages);
+    await selectRange(textarea, 0, markdown.length);
+    // The paragraph is selected and one paragraph is what the ops need, so the
+    // remedy is the whole paragraph, which is the button beside the range.
+    expect((screen.getByLabelText(messages["segment.replaceLabel"]) as HTMLInputElement).disabled).toBe(true);
+    expect(await screen.findByText(messages["segment.rangeTextEditHint"])).toBeTruthy();
+    expect(screen.queryByText(messages["segment.runTextEditHint"])).toBeNull();
+    expect(screen.queryByText(messages["segment.multiTextEditHint"])).toBeNull();
+  });
 });

@@ -2,7 +2,7 @@ import { isPlainDecimal } from "./unit-input.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import type { JSX } from "react";
-import type { ParagraphAlignment, ParaShapeKey, Segment } from "@hwp-editor/core";
+import type { ParagraphAlignment, ParaShapeKey, SelectionRefusal, Segment } from "@hwp-editor/core";
 import { compareSegments, formatAddresses, paragraphAddress, paragraphRuns, resolveSelection, segmentAtRef, segmentPath, segmentRef, segmentText, selectSimilar, selectedParagraphs, selectionAction } from "@hwp-editor/core";
 import { plainSegmentText } from "./text.js";
 import { useHwpEditorContext } from "./context.js";
@@ -57,11 +57,15 @@ export function SegmentInspector(): JSX.Element {
   const targets = envelope !== null && segment !== undefined ? resolveSelection(envelope, segment) : undefined;
   const paragraphTargets = targets?.paragraphs ?? [];
   const singleParagraph = targets?.paragraph;
-  const refusalReason = targets === undefined || targets.refusal === null ? null
-    : targets.refusal === "cell" ? t("segment.cellSelectionRefused")
-    : targets.refusal === "table" ? t("segment.tableSelectionRefused")
-    : targets.refusal === "container" ? t("segment.containerSelectionRefused")
-    : t("segment.noParagraphSelection");
+  // One table of reasons serves both the current selection and a refused
+  // click, so a segment kind names its own obstacle either way.
+  const refusalText = (reason: SelectionRefusal | null | undefined): string | null =>
+    reason === null || reason === undefined ? null
+      : reason === "cell" ? t("segment.cellSelectionRefused")
+      : reason === "table" ? t("segment.tableSelectionRefused")
+      : reason === "container" ? t("segment.containerSelectionRefused")
+      : t("segment.noParagraphSelection");
+  const refusalReason = refusalText(targets?.refusal);
   const targetLabel = segment === undefined ? "" : segment.kind === "cell"
     ? t("segment.selectedCell", { path: segmentPath(segment), count: paragraphTargets.length })
     : singleParagraph === undefined ? "" : t("segment.selectedPara", { path: segmentPath(singleParagraph) });
@@ -211,6 +215,14 @@ export function SegmentInspector(): JSX.Element {
             ? t("segment.selectedRunCount", { count: explicitSegments.length })
             : t("segment.selectedCount", { count: selected.length })
         }</p>
+        {// A run-level selection formats runs, and a modifier click from it
+         // starts a paragraph selection over instead of joining the runs.
+        hasRunSelection && <p className="hwped-hint" role="status">{t("segment.runSelectionTerminal")}</p>}
+        {// A modifier click that had no paragraph to add left the selection
+         // alone; say why, unless the selection itself is what was clicked and
+         // its own reason is already below.
+        state.selectionRefusal != null && state.selectionRefusal !== targets?.refusal &&
+          <p className="hwped-hint" role="status">{refusalText(state.selectionRefusal)}</p>}
       </div>
       {segment === undefined || selection === null ? (
         <p className="hwped-hint">{t("segment.hint")}</p>
@@ -218,7 +230,14 @@ export function SegmentInspector(): JSX.Element {
         <p className="hwped-hint" role="status">{refusalReason}</p>
       ) : <>
       {addressedUnavailable && <p className="hwped-hint" role="status">{t("segment.addressedUnavailable")}</p>}
-      {textSelectionRestricted && <p className="hwped-hint" role="status">{t("segment.multiTextEditHint")}</p>}
+      {textSelectionRestricted && <p className="hwped-hint" role="status">{
+        // Name the cause that is actually holding the controls off: a range
+        // waits for the whole paragraph, a run-level selection for a paragraph
+        // at all, and several paragraphs for just one.
+        state.range != null ? t("segment.rangeTextEditHint")
+          : hasRunSelection ? t("segment.runTextEditHint")
+          : t("segment.multiTextEditHint")
+      }</p>}
       {refusalReason !== null && <p className="hwped-hint" role="status">{refusalReason}</p>}
       <div className="hwped-field">
         <span className="hwped-label">{targetLabel}</span>

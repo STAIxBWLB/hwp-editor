@@ -235,17 +235,20 @@ function addressKey(address: EditAddress): string {
 }
 
 /**
- * The units a click contributes to the current selection, at the granularity
- * the selection already has. Paragraph level resolves like an edit target; run
- * level, which matching character format produces, keeps runs as runs so a
- * modifier click never hands the format op a whole paragraph.
+ * The action one click on `target` performs.
+ *
+ * A multi-selection holds paragraphs only: every unit a modifier click adds is
+ * a paragraph, and a cell enters as the paragraphs inside it. A table, an
+ * image, a field, a bookmark or an empty cell adds nothing, so that click
+ * reports its reason and leaves the selection where it was: the primary never
+ * becomes a ref that resolves to no paragraph.
+ *
+ * A run-level selection, which matching character format produces, is the one
+ * terminal state: run paths and control paths are not comparable, so extending
+ * the run list by run pulled in whatever control shared the index range. A
+ * modifier click there starts a fresh paragraph-level selection of the clicked
+ * unit and never merges with the run list.
  */
-function selectionUnits(envelope: CatEnvelope, segment: Segment, runLevel: boolean): Segment[] {
-  if (!runLevel) return resolveSelection(envelope, segment).paragraphs;
-  if (segment.kind === "run") return [segment];
-  return resolveSelection(envelope, segment).paragraphs.flatMap((paragraph) => paragraphRuns(envelope, paragraph));
-}
-
 export function selectionAction(
   envelope: CatEnvelope,
   state: EditorState,
@@ -254,50 +257,59 @@ export function selectionAction(
 ): EditorAction {
   if (mode === "single") return { type: "select", selection: segmentRef(target) };
   const refs = state.selections?.length ? state.selections : state.selection ? [state.selection] : [];
-  const stored = refs.flatMap((ref) => {
+  const segments = refs.flatMap((ref) => {
     const segment = segmentForRef(envelope, ref);
     return segment === undefined ? [] : [segment];
   });
-  // The selection keeps the granularity it was built with: a run-level
-  // selection stays run-level, so extending or toggling it cannot widen to the
-  // paragraphs around those runs.
-  const runLevel = stored.some((segment) => segment.kind === "run");
-  const units = selectionUnits(envelope, target, runLevel);
-  // A table, an image, an empty cell: nothing to extend across, and widening
-  // to the paragraph that encloses it would select that paragraph's text.
-  if (units.length === 0) return { type: "select", selection: segmentRef(target) };
-  const anchorRef = state.selectionAnchor ?? (state.selection ? state.selection : segmentRef(units[0]!));
+  // The selection is paragraph-only, so a stored ref that covers no paragraph
+  // (a table, an image, a field, a bookmark) contributes nothing: it is not
+  // carried into the multi-selection and cannot become its primary.
+  const stored = uniqueSegments(segments.flatMap((segment) => resolveSelection(envelope, segment).paragraphs));
+  // A modifier click contributes the paragraphs of the unit it hit, and a cell
+  // contributes every paragraph of its own, because those are what an op edits.
+  const { paragraphs: units, refusal } = resolveSelection(envelope, target);
+  if (units.length === 0) return { type: "refuseSelection", refusal: refusal ?? "unaddressable" };
+  const fresh = uniqueSegments(units).sort(compareSegments);
+  // A run-level selection never extends by run: the click starts over at
+  // paragraph level, replacing the run list instead of joining it.
+  if (segments.some((segment) => segment.kind === "run")) {
+    return { type: "selectMany", selections: fresh.map(segmentRef), primary: segmentRef(fresh[0]!), anchor: segmentRef(target) };
+  }
+  const anchorRef = state.selectionAnchor ?? (state.selection ? state.selection : segmentRef(target));
   const anchorSegment = segmentForRef(envelope, anchorRef);
-  // An anchor with no unit of its own has nothing to measure a range from, so
-  // the range starts at the click instead of throwing.
-  const anchorUnits = anchorSegment === undefined ? [] : selectionUnits(envelope, anchorSegment, runLevel);
-  const anchor = anchorUnits[0] ?? units[0]!;
-  const unitKeys = new Set(units.map(segmentKey));
+  // An anchor with no paragraph of its own has nothing to measure a range from,
+  // so the range starts at the click instead of throwing. Otherwise the anchor
+  // keeps the ref of the unit that started the selection, which is what lets a
+  // cell anchor keep its whole span across later clicks.
+  const anchorUnits = anchorSegment === undefined ? [] : resolveSelection(envelope, anchorSegment).paragraphs;
+  const anchor = anchorUnits.length === 0 ? segmentRef(target) : anchorRef;
+  const unitKeys = new Set(fresh.map(segmentKey));
   let selected: Segment[];
   if (mode === "toggle") {
-    // Toggling a cell (or a run) takes its whole content, so align and format
-    // reach every unit of it rather than the first one.
+    // Toggling compares the clicked unit's paragraph keys with the stored
+    // paragraphs, so a second click on a cell takes the whole cell off again.
     selected = stored.some((segment) => unitKeys.has(segmentKey(segment)))
       ? stored.filter((segment) => !unitKeys.has(segmentKey(segment)))
-      : [...stored, ...units];
+      : [...stored, ...fresh];
   } else {
-    const ordered = uniqueSegments(envelope.segments.filter((s) => s.kind === (runLevel ? "run" : "para"))).sort(compareSegments);
+    const ordered = uniqueSegments(envelope.segments.filter((s) => s.kind === "para")).sort(compareSegments);
     const position = new Map(ordered.map((unit, index) => [segmentKey(unit), index]));
-    const anchorFirst = position.get(segmentKey(anchor)) ?? -1;
-    const anchorLast = position.get(segmentKey(anchorUnits[anchorUnits.length - 1] ?? anchor)) ?? anchorFirst;
-    const hitFirst = position.get(segmentKey(units[0]!)) ?? -1;
-    const hitLast = position.get(segmentKey(units[units.length - 1]!)) ?? hitFirst;
-    const from = anchorFirst < 0 || hitFirst < 0 ? Math.max(anchorFirst, hitFirst) : Math.min(anchorFirst, hitFirst);
-    const to = anchorFirst < 0 || hitFirst < 0 ? from : Math.max(anchorLast, hitLast);
-    // Both endpoints resolve to units the envelope lists, so this slice is the
-    // range; the `-1` arms only keep an unlisted endpoint selecting itself.
-    selected = from < 0 ? [anchor, ...units] : ordered.slice(from, to + 1);
+    const anchorFirst = anchorUnits.length === 0 ? -1 : position.get(segmentKey(anchorUnits[0]!)) ?? -1;
+    // Both ends of the anchor's span are endpoints, not its first paragraph:
+    // a cell anchor covers several paragraphs and every one of them is in range.
+    const anchorLast = anchorUnits.length === 0 ? -1 : position.get(segmentKey(anchorUnits[anchorUnits.length - 1]!)) ?? -1;
+    const hitFirst = position.get(segmentKey(fresh[0]!)) ?? -1;
+    const hitLast = position.get(segmentKey(fresh[fresh.length - 1]!)) ?? hitFirst;
+    const from = anchorFirst < 0 ? hitFirst : Math.min(anchorFirst, hitFirst);
+    const to = Math.max(anchorLast, hitLast, from);
+    // A paragraph the envelope does not list has no range to measure, so the
+    // click keeps its own span instead of the range vanishing.
+    selected = from < 0 ? fresh : ordered.slice(from, to + 1);
   }
   // The state is the source of the refs, but never of their order: it keeps
   // the primary first, and a selection reads in document order.
   const selectionList = uniqueSegments(selected).sort(compareSegments).map(segmentRef);
-  const primary = segmentRef(units[0]!);
-  return { type: "selectMany", selections: selectionList, primary, anchor: mode === "extend" ? segmentRef(anchor) : anchorRef };
+  return { type: "selectMany", selections: selectionList, primary: segmentRef(fresh[0]!), anchor };
 }
 
 export function selectSimilar(envelope: CatEnvelope, primary: Segment, level: "char" | "para"): SegmentRef[] {
