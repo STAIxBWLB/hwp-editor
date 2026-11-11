@@ -376,6 +376,8 @@ export const en = {
   "table.hint":
     "Select a region containing a table on the page. The current selection is not a table paragraph.",
   "table.tableLabel": (p: { index: number }): string => `Table #${p.index}`,
+  "table.htmlTable": (p: { index: number }): string =>
+    `Table #${p.index} holds a merged cell or a cell with block content, so the engine writes it as HTML and there is no cell grid to show here. Its number still counts every table the engine counts, so the other tables' cells keep addressing the right table; unmerge a cell in a word processor and reopen the document to edit this table here.`,
   "table.cellLabel": (p: { row: number; col: number }): string =>
     `Cell (${p.row}, ${p.col})`,
   "table.setCell": "Set cell",
@@ -895,6 +897,8 @@ export const ko: MessageTable = {
   "table.hint":
     "표가 포함된 영역을 페이지에서 선택하세요. 표가 아닌 문단이 선택되어 있습니다.",
   "table.tableLabel": (p) => `표 #${p.index}`,
+  "table.htmlTable": (p) =>
+    `표 #${p.index}에 병합된 셀이나 셀 안 블록이 있어 엔진이 HTML로 기록하므로 여기에는 셀 격자를 그릴 수 없습니다. 표 번호는 엔진이 세는 모든 표를 그대로 세므로 다른 표의 셀 주소는 바뀌지 않습니다. 워드프로세서에서 셀 병합을 해제한 뒤 문서를 다시 열면 이 표를 여기서 편집할 수 있습니다.`,
   "table.cellLabel": (p) => `셀 (${p.row}, ${p.col})`,
   "table.setCell": "셀 설정",
   "table.mergeAnchor": "병합 기준 지정",

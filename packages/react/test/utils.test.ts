@@ -63,7 +63,7 @@ describe("tables", () => {
 
   it("locates a table by segment ref", () => {
     const table = tableAtRef(envelope, { section: 0, para: 2 });
-    expect(table?.rows[1]).toEqual(["예산", "김철수"]);
+    expect(table?.rows?.[1]).toEqual(["예산", "김철수"]);
   });
 });
 

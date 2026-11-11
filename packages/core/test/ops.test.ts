@@ -149,6 +149,24 @@ describe("opsToArgv", () => {
     ]);
   });
 
+  it("keeps a literal pipe in a set-cell value on both transports", () => {
+    // #94 unescaped `\|` for display, so a cell can now hand back a value that
+    // holds a pipe. Neither transport may read it as structure: the engine
+    // stores what the reader typed (#95).
+    const ops: EditOp[] = [
+      { kind: "set-cell", table: 0, row: 1, col: 0, value: "x | y" },
+      { kind: "set-cell", table: 0, row: 1, col: 1, value: "a | b \\| c" },
+    ];
+    expect(opsToArgv(ops)).toEqual([
+      "--set-cell", "0:1:0=x | y",
+      "--set-cell", "0:1:1=a | b \\| c",
+    ]);
+    expect(JSON.parse(opsToJson(ops))).toEqual([
+      { op: "set_cell", table: 0, row: 1, col: 0, text: "x | y" },
+      { op: "set_cell", table: 0, row: 1, col: 1, text: "a | b \\| c" },
+    ]);
+  });
+
   it("serializes image and seal ops (EditArgs.insert_image, .seal)", () => {
     const ops: EditOp[] = [
       // --insert-image "anchor=>path@WxH" (mm)

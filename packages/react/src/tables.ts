@@ -1,10 +1,15 @@
 /**
- * GFM table extraction from the `hwp cat --with-segments` envelope.
+ * Table extraction from the `hwp cat --with-segments` envelope.
  *
- * The CLI emits one para segment per table, covering the whole markdown
- * table block. Table indices are 0-based in document order, matching the
- * `hwp edit --set-cell "table:row:col=value"` coordinate grammar; within a
- * table, row 0 is the header row and the `---` separator row is skipped.
+ * The CLI emits one `table` segment per table control, covering the whole
+ * markdown that table projects to: a GFM pipe table, or the HTML `<table>` a
+ * merged cell or a block-content cell forces. Both are published, so a table's
+ * index is its position among the `table` segments, which is the order
+ * hwp-cli's own nth-table walk counts (`walk_nth_table_root` visits every
+ * table control in document order). Table indices are 0-based in document
+ * order, matching the `hwp edit --set-cell "table:row:col=value"` coordinate
+ * grammar; within a table, row 0 is the header row and the `---` separator row
+ * is skipped.
  *
  * The row and column numbers this module produces are the ones every table op
  * addresses, so the grid the panel shows and the coordinate it queues come
@@ -21,10 +26,14 @@ export interface TableModel {
   segment: Segment;
   /**
    * Cell grid. Row 0 is the header row; the markdown separator row is not
-   * included. Merged cells cannot be represented in markdown, so spans are
+   * included. Merged cells cannot be represented in a pipe table, so spans are
    * flattened to their anchor cell text.
+   *
+   * `null` when the engine projected this table as HTML instead (a merged cell,
+   * or a cell holding block content). Such a table has no grid to draw here but
+   * still occupies its index slot, because the engine counts it too (#95).
    */
-  rows: string[][];
+  rows: string[][] | null;
 }
 
 /** GFM's delimiter cell: two or more hyphens, with optional alignment colons. */
@@ -116,6 +125,17 @@ export function isTableSlice(slice: string): boolean {
   return parseMarkdownTable(slice) !== null;
 }
 
+/**
+ * True when a segment's slice carries the engine's HTML projection of a table.
+ *
+ * `hwp cat` writes `<table>` in place of a pipe table as soon as one cell is
+ * merged or holds block content, so this is the projection a table the panel
+ * cannot draw arrives in. It is still a table the engine counts (#95).
+ */
+export function isHtmlTableSlice(slice: string): boolean {
+  return /<table[\s>]/.test(slice);
+}
+
 /** Parse a GFM table slice into a cell grid; null when not a table. */
 export function parseMarkdownTable(slice: string): string[][] | null {
   const lines = slice
@@ -127,14 +147,25 @@ export function parseMarkdownTable(slice: string): string[][] | null {
   return sawDelimiter && rows.length > 0 ? rows : null;
 }
 
-/** All tables in the envelope, in document order. */
+/**
+ * Every table in the envelope, in document order, numbered as the engine
+ * numbers them.
+ *
+ * The index comes from the segment's kind, never from whether a grid could be
+ * parsed: the engine's nth-table walk counts a merged-cell table and a plain
+ * one alike, and a panel that skipped the HTML one put every later table one
+ * slot early - set-cell, delete-row, delete-table and clone then reached a
+ * different table than the reader picked (#95).
+ */
 export function findTables(envelope: CatEnvelope): TableModel[] {
   const tables: TableModel[] = [];
   for (const segment of envelope.segments) {
-    const rows = parseMarkdownTable(segmentText(envelope, segment));
-    if (rows !== null) {
-      tables.push({ tableIndex: tables.length, segment, rows });
-    }
+    if (segment.kind !== "table") continue;
+    tables.push({
+      tableIndex: tables.length,
+      segment,
+      rows: parseMarkdownTable(segmentText(envelope, segment)),
+    });
   }
   return tables;
 }
