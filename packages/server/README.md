@@ -210,3 +210,32 @@ pnpm -r typecheck
 ```
 
 Point the suite at a specific binary with `HWP_EDITOR_BIN`.
+
+## Uploaded images
+
+An HTTP host advertising `capabilities().imageAssets === "v1"` accepts PNG/JPEG
+bytes with edits. `EditOptions.assets` holds `{ name, data }` entries; an
+`insert-image` op's `path` is the exact logical asset name, not a server path:
+
+```ts
+await engine.edit(document, [
+  { kind: "insert-image", anchor: "Figure", path: "figure.png", width: 30, height: 20 },
+], { assets: [{ name: "figure.png", data: pngBytes }] });
+```
+
+The HTTP client sends repeated multipart `asset` files using those names. Names
+are ASCII basenames (1-128 characters, starting with a letter or digit, then
+letters, digits, dot, underscore or hyphen), contain no `..`, and end in `.png`,
+`.jpg` or `.jpeg`. Byte signatures must match the extension. The limits are eight
+unique uploads, 10 MiB per image and 40 MiB of image data in total; the existing
+request limit (50 MiB by default) also includes the document and multipart
+headers. Every uploaded name must be referenced; one upload may serve multiple
+insertions.
+
+The CLI adapter writes controlled `asset-<index>` files with mode 0600 inside
+the same private call directory as the input and ops file. Only matched image
+references are rewritten to those staged paths. The directory is removed after
+success or failure. Signature checks admit the supported formats; hwp-cli owns
+image decoding, validation and embedding. HTTP never accepts server-local image
+paths or `seal` operations. The Tauri client does not support uploaded image
+bytes; desktop-local image paths remain a separate host operation.
