@@ -84,6 +84,23 @@ describe("unmatched replace refusal classification", () => {
     expect(error.message).not.toContain("unmatched_replace");
   });
 
+  it("keeps a mixed list whose value holds the closing suffix (#72)", async () => {
+    // The engine closes the list with "(--allow-partial...", and a find text may
+    // carry that same text. Ending the list at its first occurrence cuts the
+    // item in half and swallows the separator, so a batch with a missed
+    // `replace` and a missed `set_field` reads as one replace and sends the
+    // user whose field edit missed the wrong remedy.
+    const error = await failure(
+      "Error: 적용되지 않은 편집 요청이 있습니다: " +
+      'replace address=0.0 from="see (--allow-partial in the help)" to="x", ' +
+      'set_field name="missing_field" ' +
+      "(--allow-partial로 일치한 요청만 적용 가능)",
+    );
+
+    expect(error.message).toBe("hwp edit failed (exit 3)");
+    expect(error.message).not.toContain("unmatched_replace");
+  });
+
   it("still classifies a find text that carries a comma of its own", async () => {
     // Items are comma separated and a quoted value may hold one, so the split
     // respects double quotes rather than counting separators.
