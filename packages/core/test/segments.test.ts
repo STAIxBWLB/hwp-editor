@@ -26,15 +26,18 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  documentFormat,
   markdownLength,
   offsetToRef,
   parseCatEnvelope,
+  runCoverage,
   segmentAtOffset,
   segmentAtRef,
   segmentRef,
   segmentText,
   validateProjectedMetadata,
 } from "../src/segments.js";
+import type { CatEnvelope, DirectChar, DocumentFormat, Segment } from "../src/segments.js";
 
 const fixture = (name: string) =>
   readFileSync(join(import.meta.dirname, "fixtures", name), "utf8");
@@ -45,27 +48,48 @@ describe("parseCatEnvelope", () => {
     wire.schema_version = schema_version;
     expect(parseCatEnvelope(JSON.stringify(wire)).segments).toHaveLength(5);
   });
-  it("parses the real schema 1.1 envelope, whose per-run source_chars it ignores", () => {
+  it("parses the real schema 1.1 envelope and projects its per-run source_chars", () => {
     const wire = JSON.parse(fixture("cat-segments-runs.json"));
     expect(wire.schema_version).toBe("1.1");
     const env = parseCatEnvelope(fixture("cat-segments-runs.json"));
     expect(env.markdown).toBe("앞 **굵게** 뒤\n\n");
     expect(env.segments.map((s) => s.kind)).toEqual(["para", "run", "run", "run"]);
     // char_range counts the emitted markdown, emphasis markers included: the
-    // bold run covers its two `**` while its source_chars span only `굵게`.
-    // The projection keeps the published scalar offsets and drops source_chars,
-    // which no consumer reads yet (a host below 1.6.1 does not send it).
+    // bold run covers its two `**` while its sourceChars span only `굵게`.
     expect(env.segments.map((s) => [s.start, s.end])).toEqual([
       [0, 12], [0, 2], [2, 8], [8, 10],
     ]);
-    expect(env.segments.some((s) => "source_chars" in s)).toBe(false);
+    expect(env.segments.map((s) => s.sourceChars)).toEqual([
+      undefined, { start: 0, end: 2 }, { start: 2, end: 4 }, { start: 4, end: 6 },
+    ]);
   });
-  it("projects the 1.1 envelope to what its 1.0 spelling yields", () => {
+  it("projects the 1.1 envelope to the 1.0 spelling plus the source offsets", () => {
     const wire = JSON.parse(fixture("cat-segments-runs.json"));
     const oneOne = parseCatEnvelope(JSON.stringify(wire));
     for (const segment of wire.segments) delete segment.source_chars;
     const oneZero = parseCatEnvelope(JSON.stringify({ ...wire, schema_version: "1.0" }));
-    expect(oneOne).toEqual(oneZero);
+    // The field's presence is the feature gate: a 1.0 host omits it, and its
+    // absence — not a version number — is what a consumer checks.
+    expect(oneZero.segments.some((segment) => segment.sourceChars !== undefined)).toBe(false);
+    expect(oneOne.segments.map((segment) => segment.sourceChars !== undefined))
+      .toEqual([false, true, true, true]);
+    expect(oneOne.segments.map(({ sourceChars: _source, ...rest }) => rest)).toEqual(oneZero.segments);
+  });
+  it.each([
+    ["a zero-length range", { start: 2, end: 2 }],
+    ["a reversed range", { start: 4, end: 2 }],
+    ["a negative bound", { start: -1, end: 2 }],
+    ["a fractional bound", { start: 0.5, end: 2 }],
+    ["a non-object", [0, 2]],
+  ])("rejects source_chars with %s", (_label, source_chars) => {
+    const wire = JSON.parse(fixture("cat-segments-runs.json"));
+    wire.segments[1].source_chars = source_chars;
+    expect(() => parseCatEnvelope(JSON.stringify(wire))).toThrow("source_chars");
+  });
+  it("rejects source_chars on a segment that is not a run", () => {
+    const wire = JSON.parse(fixture("cat-segments-runs.json"));
+    wire.segments[0].source_chars = { start: 0, end: 2 };
+    expect(() => parseCatEnvelope(JSON.stringify(wire))).toThrow("outside a run segment");
   });
   it.each([-1, 0.5])("rejects malformed path indices %s before selection", index => {
     const wire = JSON.parse(fixture("cat-segments-basic.json"));
@@ -150,6 +174,20 @@ describe("parseCatEnvelope", () => {
     expect(validateProjectedMetadata(oldHost)).toBe(oldHost);
     const malformed = { ...oldHost, segments: [{ ...oldHost.segments[0]!, directChar: { bold: "yes" } as never }] };
     expect(() => validateProjectedMetadata(malformed)).toThrow(/malformed direct[.]char properties; upgrade the host adapter/);
+  });
+
+  it("revalidates projected run source offsets and drops a null one", () => {
+    const run = { start: 0, end: 1, kind: "run" as const, section: 0, para: 0, sourceChars: { start: 3, end: 5 } };
+    const kept = { markdown: "x", segments: [run] };
+    expect(validateProjectedMetadata(kept)).toBe(kept);
+    const nulled = validateProjectedMetadata({ markdown: "x", segments: [{ ...run, sourceChars: null as never }] });
+    expect(nulled.segments[0]).not.toHaveProperty("sourceChars");
+    for (const sourceChars of [{ start: 5, end: 5 }, { start: 5, end: 3 }, { start: -1, end: 2 }, { start: 0.5, end: 2 }]) {
+      expect(() => validateProjectedMetadata({ markdown: "x", segments: [{ ...run, sourceChars }] }))
+        .toThrow(/malformed source_chars/);
+    }
+    expect(() => validateProjectedMetadata({ markdown: "x", segments: [{ start: 0, end: 1, kind: "para", section: 0, para: 0,
+      sourceChars: { start: 0, end: 1 } }] })).toThrow(/outside a run segment/);
   });
 
   it("fails an out-of-range projected offset at the boundary, not later in render", () => {
@@ -248,3 +286,342 @@ describe("segment coordinate helpers", () => {
     expect(segmentAtRef(env, { section: 0, para: 99 })).toBeUndefined();
   });
 });
+
+describe("documentFormat", () => {
+  it("reads the extension the handle carries, and answers nothing else", () => {
+    // `DocumentHandle.name` is the only place the format reaches the editor,
+    // and the two rules it chooses between differ by one character, so a name
+    // that says neither extension gets the answer with no allowance.
+    expect(documentFormat("demo.hwp")).toBe("hwp");
+    expect(documentFormat("demo.HWP")).toBe("hwp");
+    expect(documentFormat("demo.hwpx")).toBe("hwpx");
+    expect(documentFormat("dir/demo.HwPx")).toBe("hwpx");
+    expect(documentFormat(undefined)).toBe("unknown");
+    expect(documentFormat("")).toBe("unknown");
+    expect(documentFormat("demo.txt")).toBe("unknown");
+    expect(documentFormat("demo.hwp.bak")).toBe("unknown");
+  });
+});
+
+/**
+ * The markdown-to-source mapping behind a sub-run address.
+ *
+ * Every case starts from a shape the engine was measured to emit: a plain run
+ * whose fragment is its text, a bold/italic run wrapped in its markers, and a
+ * run whose block control splits it into one segment per piece.
+ */
+describe("runCoverage", () => {
+  const directChar = (bold = false, italic = false): DirectChar => ({
+    bold, italic, size_pt: 10, color: "#000000",
+    faces: [null, null, null, null, null, null, null],
+    face_ids: [0, 0, 0, 0, 0, 0, 0],
+  });
+  /** A window outcome, spelled out so each case reads as an answer, not an array. */
+  const window = (start: number, end: number) => ({ kind: "window", range: [start, end] });
+  const whole = { kind: "whole" };
+  const none = { kind: "none" };
+  /**
+   * One coverage answer, with the format the caller would have to name.
+   *
+   * The default is `unknown`, which is the strictest answer there is: no
+   * allowance, so every piece has to publish exactly the width it shows. A
+   * case that needs the HWP5 break allowance says `"hwp"` at the call.
+   */
+  const cover = (
+    envelope: CatEnvelope,
+    segment: Segment,
+    start: number,
+    end: number,
+    format: DocumentFormat = "unknown",
+  ) => runCoverage(envelope, segment, start, end, format);
+  const run = (
+    markdown: string,
+    start: number,
+    end: number,
+    sourceChars: [number, number] | undefined,
+    direct = directChar(),
+  ): { envelope: CatEnvelope; segment: Segment } => {
+    const segment: Segment = {
+      id: `r${start}`,
+      indices: [1, 0],
+      start,
+      end,
+      kind: "run",
+      section: 0,
+      para: 1,
+      directChar: direct,
+      ...(sourceChars === undefined ? {} : { sourceChars: { start: sourceChars[0], end: sourceChars[1] } }),
+    };
+    // The host paragraph belongs to the fixture because the one-unit
+    // allowance is decided per paragraph: a piece that is not exact is named
+    // whole even when a sibling piece in the same document maps.
+    const paragraph: Segment = { id: `p${start}`, indices: [1], start, end, kind: "para", section: 0, para: 1 };
+    return { envelope: { markdown, segments: [paragraph, segment] }, segment };
+  };
+
+  it("maps a window inside a plain run, counting a surrogate pair as two source units", () => {
+    // Two visible characters of the seven-unit source: the run shows six
+    // scalars in seven UTF-16 units, the surrogate pair counting twice.
+    const { envelope, segment } = run("둘째 😀문단\n", 0, 6, [0, 7]);
+    expect(cover(envelope, segment, 0, 2)).toEqual(window(0, 2));
+    expect(cover(envelope, segment, 2, 4)).toEqual(window(2, 5));
+    expect(cover(envelope, segment, 3, 4)).toEqual(window(3, 5));
+    expect(cover(envelope, segment, 4, 6)).toEqual(window(5, 7));
+    // The span is the UTF-16 width of the text, so no allowance is needed and
+    // both formats read it: the pair's two units are in the span as well.
+    expect(cover(envelope, segment, 0, 2, "hwpx")).toEqual(window(0, 2));
+    // An empty or out-of-piece window names nothing, and is not a whole run.
+    expect(cover(envelope, segment, 2, 2)).toEqual(none);
+    expect(cover(envelope, segment, 0, 7)).toEqual(none);
+    // A window covering the piece is the whole piece, without arithmetic.
+    expect(cover(envelope, segment, 0, 6)).toEqual(whole);
+  });
+
+  it("counts a surrogate pair inside an emphasized run in source units, not markdown ones", () => {
+    // The first head summed UTF-16 lengths into a scalar offset, so a window
+    // that reached the closing marker indexed past the end of the text and
+    // threw inside render, which unmounted the editor. Every number below is
+    // an answer rather than an exception.
+    const bold = run("**😀가**\n", 0, 6, [0, 3], directChar(true));
+    expect(cover(bold.envelope, bold.segment, 2, 3)).toEqual(window(0, 2));
+    expect(cover(bold.envelope, bold.segment, 2, 4)).toEqual(window(0, 3));
+    expect(cover(bold.envelope, bold.segment, 2, 6)).toEqual(window(0, 3));
+    expect(cover(bold.envelope, bold.segment, 0, 6)).toEqual(whole);
+  });
+
+  it("reads an emphasis wrapper back only when the properties vouch for it", () => {
+    const bold = run("앞 **굵게** 뒤\n", 2, 8, [2, 4], directChar(true));
+    expect(cover(bold.envelope, bold.segment, 4, 5)).toEqual(window(2, 3));
+    expect(cover(bold.envelope, bold.segment, 5, 6)).toEqual(window(3, 4));
+    // A window is drawn over the rendered markdown, so its edge lands on a
+    // marker: it is clamped to the characters the run shows rather than
+    // refused, because the same drag formatted something before #71.
+    expect(cover(bold.envelope, bold.segment, 3, 5)).toEqual(window(2, 3));
+    expect(cover(bold.envelope, bold.segment, 2, 6)).toEqual(window(2, 4));
+    // A window that covers only the closing marker covers no character at all.
+    expect(cover(bold.envelope, bold.segment, 6, 8)).toEqual(none);
+    const italic = run("*굵게*\n", 0, 4, [0, 2], directChar(false, true));
+    expect(cover(italic.envelope, italic.segment, 1, 2)).toEqual(window(0, 1));
+    const both = run("***굵게***\n", 0, 8, [0, 2], directChar(true, true));
+    expect(cover(both.envelope, both.segment, 3, 5)).toEqual(window(0, 2));
+    // The engine trims the wrapped text and leaves edge whitespace outside
+    // the markers: a bold " / " projects as " **/** ", so the word inside
+    // maps, and the edge whitespace joins the window only when the selection
+    // covers it.
+    const spaced = run(" **/** \n", 0, 7, [0, 3], directChar(true));
+    expect(cover(spaced.envelope, spaced.segment, 3, 4)).toEqual(window(1, 2));
+    expect(cover(spaced.envelope, spaced.segment, 0, 1)).toEqual(none);
+    expect(cover(spaced.envelope, spaced.segment, 0, 4)).toEqual(window(0, 2));
+    // The trailing space is the third source unit, so covering it ends at 3.
+    expect(cover(spaced.envelope, spaced.segment, 3, 7)).toEqual(window(1, 3));
+    // A literal `*Note*` in a plain run is text, not a marker: the direct
+    // level says plain, and the fragment is the source verbatim.
+    const literal = run("*Note*\n", 0, 6, [0, 6]);
+    expect(cover(literal.envelope, literal.segment, 1, 5)).toEqual(window(1, 5));
+    // Properties that claim emphasis the fragment does not carry are named
+    // whole: the fragment cannot be read back, so nothing narrower is offered.
+    const missing = run("굵게\n", 0, 2, [0, 2], directChar(true));
+    expect(cover(missing.envelope, missing.segment, 0, 1)).toEqual(whole);
+    // A host that publishes no direct level cannot be told apart from a
+    // literal marker, so it is named whole rather than guessed.
+    const noDirect = run("굵게\n", 0, 2, [0, 2]);
+    delete noDirect.segment.directChar;
+    expect(cover(noDirect.envelope, noDirect.segment, 0, 1)).toEqual(whole);
+  });
+
+
+  it("accepts the paragraph break an HWP5 last piece publishes, and only there", () => {
+    // Measured on ahwp 1.6.1: a `.hwp` paragraph stores its break as the
+    // paragraph's last character, so its last piece ends one unit past the
+    // text it shows - "동일문 안내" publishes (0, 7) for six characters in
+    // every paragraph of the document. The window still stops at the last
+    // character shown, so the break is never formatted.
+    const markdown = "동일문 안내\n\n동일문 다른\n";
+    const para1: Segment = { id: "p1", indices: [1], start: 0, end: 6, kind: "para", section: 0, para: 1 };
+    const run1: Segment = { id: "hwp1", indices: [1, 0], start: 0, end: 6, kind: "run", section: 0, para: 1,
+      directChar: directChar(), sourceChars: { start: 0, end: 7 } };
+    const para2: Segment = { id: "p2", indices: [2], start: 8, end: 14, kind: "para", section: 0, para: 2 };
+    const run2: Segment = { id: "hwp2", indices: [2, 0], start: 8, end: 14, kind: "run", section: 0, para: 2,
+      directChar: directChar(), sourceChars: { start: 0, end: 7 } };
+    const hwp: CatEnvelope = { markdown, segments: [para1, run1, para2, run2] };
+    expect(cover(hwp, run1, 0, 3, "hwp")).toEqual(window(0, 3));
+    expect(cover(hwp, run1, 3, 6, "hwp")).toEqual(window(3, 6));
+    expect(cover(hwp, run1, 0, 6, "hwp")).toEqual(whole);
+    // The same numbers under an HWPX name are one unit wider than the text
+    // they show, which is exactly the shape an HWPX fragment with a trimmed
+    // edge space publishes: measured on ahwp 1.6.1, " 동일문 안내",
+    // "동일문 안내 " and "\u3000동일문 안내" all report char_range (0, 6) with
+    // source_chars (0, 7). Reading that unit as a break would format the
+    // characters one place to the left of the selection, so the piece is named
+    // whole.
+    expect(cover(hwp, run1, 0, 3, "hwpx")).toEqual(whole);
+    // No format named is no allowance either.
+    expect(cover(hwp, run1, 0, 3)).toEqual(whole);
+    // An earlier piece may not claim that unit: with a later piece in the same
+    // paragraph, only that later piece can be the one that ends at the break.
+    const early: Segment = { id: "two", indices: [1, 0], start: 0, end: 6, kind: "run", section: 0, para: 1,
+      directChar: directChar(), sourceChars: { start: 0, end: 7 } };
+    const late: Segment = { id: "later", indices: [1, 1], start: 7, end: 10, kind: "run", section: 0, para: 1,
+      directChar: directChar(), sourceChars: { start: 7, end: 11 } };
+    const splitPara: Segment = { id: "pboth", indices: [1], start: 0, end: 10, kind: "para", section: 0, para: 1 };
+    const twoRuns: CatEnvelope = { markdown: "동일문 안내|동일문\n", segments: [splitPara, early, late] };
+    expect(cover(twoRuns, early, 0, 3, "hwp")).toEqual(whole);
+    expect(cover(twoRuns, late, 7, 9, "hwp")).toEqual(window(7, 9));
+    // And one unit is the whole allowance: two of them is a rewrite.
+    const longer = run("동일문 안내\n", 0, 6, [0, 8]);
+    expect(cover(longer.envelope, longer.segment, 0, 3, "hwp")).toEqual(whole);
+  });
+
+  it("reads an HWPX span that is one unit wider than its text as whole (t30-c1)", () => {
+    // The round-3 head asked the envelope whether the document stores its
+    // breaks, and answered by agreement: every paragraph's last piece had to
+    // read one unit longer. An HWPX document whose (only) paragraph starts
+    // with a space answers yes to that - the trimmed space is counted in the
+    // span - and the allowance then shifted every window by one. Measured on
+    // ahwp 1.6.1: selecting 동일문 in " 동일문 안내" answered chars [0, 3),
+    // which bolds "동일" where the user selected "동일문". The format is the
+    // answer, so the same numbers are a window for HWP5 and whole for HWPX.
+    const leading = run("동일문 안내\n", 0, 6, [0, 7]);
+    expect(cover(leading.envelope, leading.segment, 0, 3, "hwpx")).toEqual(whole);
+    expect(cover(leading.envelope, leading.segment, 0, 3, "hwp")).toEqual(window(0, 3));
+    // Two paragraphs, each starting with U+3000, are two pieces the old
+    // agreement accepted - the reviewer measured "　가. 동일문 안내" twice,
+    // each publishing one unit past its nine visible characters, and the
+    // count said one target with no whole note.
+    const markdown = "가. 동일문 안내\n\n가. 동일문 안내\n";
+    const one: Segment = { id: "p1", indices: [1], start: 0, end: 9, kind: "para", section: 0, para: 1 };
+    const piece1: Segment = { id: "q1", indices: [1, 0], start: 0, end: 9, kind: "run", section: 0, para: 1,
+      directChar: directChar(), sourceChars: { start: 0, end: 10 } };
+    const two: Segment = { id: "p2", indices: [2], start: 11, end: 20, kind: "para", section: 0, para: 2 };
+    const piece2: Segment = { id: "q2", indices: [2, 0], start: 11, end: 20, kind: "run", section: 0, para: 2,
+      directChar: directChar(), sourceChars: { start: 0, end: 10 } };
+    const hwpx: CatEnvelope = { markdown, segments: [one, piece1, two, piece2] };
+    expect(cover(hwpx, piece1, 0, 2, "hwpx")).toEqual(whole);
+    expect(cover(hwpx, piece2, 11, 13, "hwpx")).toEqual(whole);
+    expect(cover(hwpx, piece1, 0, 2, "hwp")).toEqual(window(0, 2));
+  });
+
+  it("keeps an HWP5 document's windows when one paragraph is not exact (t30-c4)", () => {
+    // The round-3 agreement was document-wide, so one paragraph whose span was
+    // not exactly one unit wider - a .hwp paragraph with an edge space, whose
+    // trimmed space and stored break both sit in the span - turned windows off
+    // for every other paragraph of the file. The format answers the question
+    // now, and a piece that is not exact is named whole on its own.
+    const markdown = "동일문 안내\n\n 동일문\n";
+    const para1: Segment = { id: "p1", indices: [1], start: 0, end: 6, kind: "para", section: 0, para: 1 };
+    const run1: Segment = { id: "r1", indices: [1, 0], start: 0, end: 6, kind: "run", section: 0, para: 1,
+      directChar: directChar(), sourceChars: { start: 0, end: 7 } };
+    const para2: Segment = { id: "p2", indices: [2], start: 8, end: 12, kind: "para", section: 0, para: 2 };
+    const run2: Segment = { id: "r2", indices: [2, 0], start: 8, end: 12, kind: "run", section: 0, para: 2,
+      directChar: directChar(), sourceChars: { start: 0, end: 6 } };
+    const hwp: CatEnvelope = { markdown, segments: [para1, run1, para2, run2] };
+    expect(cover(hwp, run1, 0, 3, "hwp")).toEqual(window(0, 3));
+    expect(cover(hwp, run2, 8, 10, "hwp")).toEqual(whole);
+  });
+
+  it("keeps each piece of a block-control-split run on its own source span", () => {
+    // The engine's own measurement (hwp-cli tests/segment_source_chars.rs):
+    // "앞" publishes (0, 1) and "뒤" (9, 11) - the table anchor's 8 WCHAR sit
+    // between the pieces and belong to neither, and the last piece carries the
+    // paragraph break.
+    const para: Segment = { id: "psplit", indices: [1], start: 0, end: 6, kind: "para", section: 0, para: 1 };
+    const first: Segment = { id: "split", indices: [1, 0], start: 0, end: 3, kind: "run", section: 0, para: 1,
+      directChar: directChar(), sourceChars: { start: 0, end: 3 } };
+    const second: Segment = { id: "split", indices: [1, 1], start: 4, end: 6, kind: "run", section: 0, para: 1,
+      directChar: directChar(), sourceChars: { start: 11, end: 14 } };
+    const envelope: CatEnvelope = { markdown: "abc|de\n", segments: [para, first, second] };
+    expect(cover(envelope, first, 1, 3, "hwp")).toEqual(window(1, 3));
+    expect(cover(envelope, second, 4, 5, "hwp")).toEqual(window(11, 12));
+    expect(cover(envelope, second, 5, 6, "hwp")).toEqual(window(12, 13));
+    // A range covering the last piece is the piece itself: the caller keeps
+    // the span the engine published, break included, instead of a window.
+    expect(cover(envelope, second, 4, 6)).toEqual(whole);
+    // The interrupting control's own characters belong to no piece: a window
+    // that reaches back over it is outside the piece's own range.
+    expect(cover(envelope, second, 3, 5)).toEqual(none);
+  });
+
+  it("names nothing for a window that stops on half of a shared marker pair (t30-c2)", () => {
+    // A bold run a control splits publishes one id per piece, and the engine's
+    // marker pair straddles them: the first piece is "**굵", the second "게**".
+    // Neither is a wrapper `runWindowText` can read, so the round-3 head
+    // answered "whole" for both and a drag that stopped on the opening "**"
+    // formatted the run - measured on .hwpx, where selecting only the opening
+    // pair of a bold "굵게" named the 굵 piece.
+    const para: Segment = { id: "p", indices: [1], start: 0, end: 7, kind: "para", section: 0, para: 1 };
+    const first: Segment = { id: "bold", indices: [1, 0], start: 0, end: 3, kind: "run", section: 0, para: 1,
+      directChar: directChar(true), sourceChars: { start: 0, end: 1 } };
+    const second: Segment = { id: "bold", indices: [1, 1], start: 3, end: 6, kind: "run", section: 0, para: 1,
+      directChar: directChar(true), sourceChars: { start: 1, end: 2 } };
+    const envelope: CatEnvelope = { markdown: "**굵게**\n", segments: [para, first, second] };
+    // The opening pair shows no character of the first piece.
+    expect(cover(envelope, first, 0, 2, "hwpx")).toEqual(none);
+    // The closing pair shows none of the second piece either, even though the
+    // window ends past the text.
+    expect(cover(envelope, second, 4, 6, "hwpx")).toEqual(none);
+    // A window that does reach the text is still named whole: a half pair
+    // cannot be read back character for character.
+    expect(cover(envelope, first, 2, 3, "hwpx")).toEqual(whole);
+    expect(cover(envelope, second, 3, 5, "hwpx")).toEqual(whole);
+  });
+
+  it("names a rewritten fragment whole, however well its length matches", () => {
+    // Measured on ahwp 1.6.1: `가$xy$나` projects as an equation, a hard break
+    // as two spaces before the newline, a footnote as `[^N]`, an image as
+    // `![](…)` and a link as `[text](url)`. Every fixture below publishes a
+    // span EQUAL to the fragment it shows, which is exactly the coincidence a
+    // length comparison cannot see.
+    const equation = run("가$xy$나\n", 0, 6, [0, 6]);
+    expect(cover(equation.envelope, equation.segment, 0, 1)).toEqual(whole);
+    const hardBreak = run("가  \n나\n", 0, 5, [0, 5]);
+    expect(cover(hardBreak.envelope, hardBreak.segment, 0, 1)).toEqual(whole);
+    const footnote = run("본문[^1]\n", 0, 6, [0, 6]);
+    expect(cover(footnote.envelope, footnote.segment, 0, 2)).toEqual(whole);
+    const image = run("![](a)\n", 0, 6, [0, 6]);
+    expect(cover(image.envelope, image.segment, 0, 2)).toEqual(whole);
+    // The wrappers that do not appear in `directChar` are refused the same way.
+    const underline = run("<u>x</u>\n", 0, 8, [0, 8]);
+    expect(cover(underline.envelope, underline.segment, 3, 4)).toEqual(whole);
+    const strike = run("~~x~~\n", 0, 5, [0, 5]);
+    expect(cover(strike.envelope, strike.segment, 2, 3)).toEqual(whole);
+    const escaped = run("a&amp;b\n", 0, 7, [0, 7]);
+    expect(cover(escaped.envelope, escaped.segment, 0, 1)).toEqual(whole);
+    // A literal `&`, `<` or `\` is published verbatim from a body paragraph on
+    // 1.6.1 - `a\b a&b a<b` comes back with a span equal to its text - so the
+    // allow-list refuses these for being wider than the engine is, not because
+    // the characters are rewritten (t30-c5). The cost is a whole-run format,
+    // and the range hint says so.
+    const literal = run("a\\b\n", 0, 4, [0, 4]);
+    expect(cover(literal.envelope, literal.segment, 0, 1)).toEqual(whole);
+    const ampersand = run("a&b\n", 0, 4, [0, 4]);
+    expect(cover(ampersand.envelope, ampersand.segment, 0, 1)).toEqual(whole);
+    // An inline control counted in the source span shrinks it instead: the
+    // span and the text disagree, and nothing converts between them.
+    const inlineControl = run("ab\n", 0, 2, [0, 4]);
+    expect(cover(inlineControl.envelope, inlineControl.segment, 0, 1)).toEqual(whole);
+    // No published source offsets: there is no source coordinate to map to,
+    // and a schema 1.0 host keeps the whole-run behavior.
+    const noSource = run("ab\n", 0, 2, undefined);
+    expect(cover(noSource.envelope, noSource.segment, 0, 1)).toEqual(whole);
+  });
+
+  it("names whole a run whose text a field, a bookmark or an image rewrites", () => {
+    // Measured on ahwp 1.6.1: a hyperlink projects as `[여기](https://…)` and
+    // the envelope publishes a `field` segment over the run that shows it, so
+    // the fragment's length has nothing to do with the source characters. A
+    // coincidence of lengths is the case that matters, so this one is equal.
+    const coincidence: Segment = { id: "link", indices: [1, 0], start: 0, end: 9, kind: "run",
+      section: 0, para: 1, directChar: directChar(), sourceChars: { start: 0, end: 9 } };
+    const field: Segment = { id: "fld", indices: [1, 0], start: 0, end: 9, kind: "field", section: 0, para: 1 };
+    const markdown = "abcdefghi\n";
+    expect(cover({ markdown, segments: [coincidence, field] }, coincidence, 0, 1)).toEqual(whole);
+    const bookmark: Segment = { ...field, id: "bmk", kind: "bookmark" };
+    expect(cover({ markdown, segments: [coincidence, bookmark] }, coincidence, 0, 1)).toEqual(whole);
+    const image: Segment = { ...field, id: "img", kind: "image" };
+    expect(cover({ markdown, segments: [coincidence, image] }, coincidence, 0, 1)).toEqual(whole);
+    // The same numbers read back as text once nothing covers them, which is
+    // what says the nested-segment check - not the length - is what refuses.
+    expect(cover({ markdown, segments: [coincidence] }, coincidence, 0, 1)).toEqual(window(0, 1));
+  });
+});
+

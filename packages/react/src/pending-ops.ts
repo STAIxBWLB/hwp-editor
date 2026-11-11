@@ -133,7 +133,15 @@ export function pendingTargetLabel(
   t: TFunction,
   resolvers: PendingTargetResolvers = {},
 ): string {
-  if ("address" in op) return pendingAddressLabel(op.address, t);
+  if ("address" in op) {
+    // A `set-format` op that carries an id and no source window formats that
+    // whole run, so the row says so: "element <id>" reads like a paragraph
+    // target, and a reader deciding what to drop from the queue has to know
+    // that characters outside their selection go with it.
+    return op.kind === "set-format" && op.address.id !== undefined && op.address.chars === undefined
+      ? t("pending.target.wholeRun", { id: op.address.id })
+      : pendingAddressLabel(op.address, t);
+  }
   // A style reference is an id (number) or a name this batch creates (string);
   // the row is resolved back to a name the document shows.
   const style = (op as Record<string, unknown>).style;

@@ -86,11 +86,14 @@ writeFileSync(layoutSpecPath, JSON.stringify(layoutSpec));
 specs.push({ spec: layoutSpecPath, out: "z-layout-demo.hwpx" });
 
 // T3 selection fixture: five paragraphs plus repeated text in distinct formatting runs.
+// The first occurrence sits inside one run LONGER than the three characters
+// #46 AC2 selects ("동일문 안내"), so the e2e proves a sub-run address rather
+// than a whole-run one that happens to match the selection.
 const selectionSpec = {
   version: "2.0",
   document: { version: "1.0", sections: [{ blocks: [
     { type: "paragraph", runs: [
-      { type: "text", text: "동일문" }, { type: "text", text: " / ", bold: true },
+      { type: "text", text: "동일문 안내" }, { type: "text", text: " / ", bold: true },
       { type: "text", text: "동일문", italic: true },
     ] },
     ...["둘째 😀문단", "셋째 문단", "넷째 문단", "다섯째 문단"].map(text => ({ type: "paragraph", runs: [{ type: "text", text }] })),
@@ -99,6 +102,22 @@ const selectionSpec = {
 const selectionSpecPath = join(fixturesDir, "_selection-demo.spec.json");
 writeFileSync(selectionSpecPath, JSON.stringify(selectionSpec));
 specs.push({ spec: selectionSpecPath, out: "z-selection-demo.hwpx" });
+
+// The same sub-run case in HWP5, because the two formats publish different
+// bounds: a `.hwp` paragraph stores its break as the paragraph's last
+// character, so the first paragraph's only run ends ONE unit past the six
+// characters it shows. That is the piece a partial selection lands in, and the
+// second paragraph's `동일문` proves the other occurrence stays untouched.
+const hwpSelectionSpec = {
+  version: "2.0",
+  document: { version: "1.0", sections: [{ blocks: [
+    { type: "paragraph", runs: [{ type: "text", text: "동일문 안내" }] },
+    { type: "paragraph", runs: [{ type: "text", text: "동일문 다른 문단" }] },
+  ] }] },
+};
+const hwpSelectionSpecPath = join(fixturesDir, "_subrun-hwp-demo.spec.json");
+writeFileSync(hwpSelectionSpecPath, JSON.stringify(hwpSelectionSpec));
+specs.push({ spec: hwpSelectionSpecPath, out: "z-subrun-demo.hwp" });
 
 // T4 autofill fixture: one named slot plus label/value rows. `hwp slots
 // --forms` discovers the table label cells as native form inputs.
@@ -204,6 +223,7 @@ rmSync(tableSpecPath, { force: true });
 rmSync(layoutSpecPath, { force: true });
 rmSync(templateSpecPath, { force: true });
 rmSync(selectionSpecPath, { force: true });
+rmSync(hwpSelectionSpecPath, { force: true });
 rmSync(stylesSpecPath, { force: true });
 rmSync(stylesPlainSpecPath, { force: true });
 

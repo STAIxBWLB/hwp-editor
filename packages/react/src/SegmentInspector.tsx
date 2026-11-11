@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import type { JSX } from "react";
 import type { ParagraphAlignment, ParaShapeKey, SelectionRefusal, Segment } from "@hwp-editor/core";
-import { compareSegments, formatAddresses, hasDirectFormatting, hasOwnRef, isSectionDefinitionParagraph, paragraphAddress, paragraphRuns, resolveSelection, segmentAtRef, segmentPath, segmentRef, segmentText, selectSimilar, selectedParagraphs, selectionAction, stylesVersionSupported } from "@hwp-editor/core";
+import { compareSegments, documentFormat, formatTargets as collectFormatTargets, hasDirectFormatting, hasOwnRef, isSectionDefinitionParagraph, paragraphAddress, paragraphRuns, resolveSelection, segmentAtRef, segmentPath, segmentRef, segmentText, selectSimilar, selectedParagraphs, selectionAction, stylesVersionSupported } from "@hwp-editor/core";
 import { plainSegmentText } from "./text.js";
 import { useHwpEditorContext } from "./context.js";
 import type { MessageKey } from "./messages.js";
@@ -118,7 +118,15 @@ export function SegmentInspector(): JSX.Element {
     return positions;
   }, [markdownText]);
   const rangeInput = useRef<HTMLTextAreaElement>(null);
-  const [rangeInvalid, setRangeInvalid] = useState(false);
+  /**
+   * A range whose edge fell inside a surrogate pair.
+   *
+   * The textarea reports UTF-16 offsets, and half a pair has no scalar to
+   * address, so the selection cannot be placed at all: a state of its own,
+   * because the sentence that says "select inside one run" describes a
+   * different mistake.
+   */
+  const [rangeSplit, setRangeSplit] = useState(false);
   const [replaceWith, setReplaceWith] = useState("");
   const [insertText, setInsertText] = useState("");
   const [bold, setBold] = useState(false);
@@ -133,7 +141,7 @@ export function SegmentInspector(): JSX.Element {
 
   // Reset drafts when the selection moves.
   useEffect(() => {
-    setRangeInvalid(false);
+    setRangeSplit(false);
     setReplaceWith("");
     setInsertText("");
     setBold(false);
@@ -221,12 +229,16 @@ export function SegmentInspector(): JSX.Element {
   // The state keeps the primary first; the ops read in document order.
   const formatInputs = envelope === null ? [] : explicitSegments.flatMap(item =>
     item.kind === "run" ? [item] : resolveSelection(envelope, item).paragraphs).sort(compareSegments);
-  const formatTargets = envelope === null ? [] : formatAddresses(envelope, formatInputs, state.range);
+  // The format decides the one place the two coordinate spaces may differ by a
+  // character (an HWP5 paragraph break), so it comes from the document handle
+  // and never from the numbers: an HWPX last piece whose edge space was
+  // trimmed publishes the same span an HWP5 break does.
+  const formatTargets = envelope === null ? [] : collectFormatTargets(envelope, formatInputs, state.range, documentFormat(state.document?.name));
   const runs = envelope === null || singleParagraph === undefined ? [] : paragraphRuns(envelope, singleParagraph);
   const rangeAvailable = !multiSelection && runs.some(run => run.id !== undefined || (singleParagraph?.indices?.length === 1 && run.indices?.length === 2));
   const charPrimary = segment?.kind === "run" ? segment
-    : envelope !== null && state.range != null && formatTargets[0]?.id !== undefined
-      ? segmentAtRef(envelope, { id: formatTargets[0].id, section: 0, para: 0 }) ?? singleParagraph
+    : envelope !== null && state.range != null && formatTargets[0]?.address.id !== undefined
+      ? segmentAtRef(envelope, { id: formatTargets[0].address.id, section: 0, para: 0 }) ?? singleParagraph
       : singleParagraph;
 
   /**
@@ -700,17 +712,29 @@ export function SegmentInspector(): JSX.Element {
             const field = event.currentTarget;
             const start = scalarAtUtf16(field.selectionStart, supplementaryStarts);
             const end = scalarAtUtf16(field.selectionEnd, supplementaryStarts);
-            if (start === undefined || end === undefined) { setRangeInvalid(true); return; }
-            setRangeInvalid(false);
+            if (start === undefined || end === undefined) { setRangeSplit(true); return; }
+            setRangeSplit(false);
             store.dispatch({ type: "setRange", range: start === end ? null : {
               paragraph: segmentRef(singleParagraph), start: singleParagraph.start + start, end: singleParagraph.start + end,
             } });
           }} />
-        {(rangeInvalid || (state.range != null && formatTargets.length === 0)) && <p role="alert" className="hwped-hint">{t("segment.rangeInvalid")}</p>}
+        {/* Two causes, two sentences: a selection edge inside a surrogate
+            pair cannot be placed on a character boundary at all, while one
+            that lands on characters and covers none of a run is a selection
+            the user can widen. */}
+        {rangeSplit && <p role="alert" className="hwped-hint">{t("segment.rangeSplit")}</p>}
+        {state.range != null && formatTargets.length === 0 && <p role="alert" className="hwped-hint">{t("segment.rangeInvalid")}</p>}
         {state.range != null && <>
-          <p className="hwped-hint" role="status">{t("segment.rangeRunCount", { count: formatTargets.length })}</p>
+          {formatTargets.length > 0 &&
+            <p className="hwped-hint" role="status">{t("segment.rangeRunCount", { count: formatTargets.length })}</p>}
+          {/* A target the range was widened to formats the whole run, and the
+              coverage answer says so: a split run emits every piece with its
+              own window, so the op shape cannot tell the two apart. */}
+          {formatTargets.some(target => target.whole) &&
+            <p className="hwped-hint">{t("segment.rangeWholeRunTargets",
+              { count: formatTargets.filter(target => target.whole).length })}</p>}
           <button type="button" className="hwped-btn" onClick={() => {
-            setRangeInvalid(false); rangeInput.current?.setSelectionRange(0, 0);
+            setRangeSplit(false); rangeInput.current?.setSelectionRange(0, 0);
             if (hasRunSelection) store.dispatch({ type: "select", selection: segmentRef(singleParagraph) });
             else store.dispatch({ type: "setRange", range: null });
           }}>{t("segment.rangeClear")}</button>
@@ -766,7 +790,7 @@ export function SegmentInspector(): JSX.Element {
             type="button"
             className="hwped-btn"
             disabled={
-              disabled || rangeInvalid || !validFontSize || formatTargets.length === 0 ||
+              disabled || rangeSplit || !validFontSize || formatTargets.length === 0 ||
               (!bold && fontSize.trim() === "" && color === "")
             }
             onClick={() => {
@@ -774,7 +798,7 @@ export function SegmentInspector(): JSX.Element {
               if (bold) props["bold"] = "on";
               if (fontSize.trim() !== "") props["size"] = fontSize.trim();
               if (color !== "") props["color"] = color;
-              store.dispatch({ type: "queueOps", ops: formatTargets.map((target) => ({ kind: "set-format" as const, address: target, props })) });
+              store.dispatch({ type: "queueOps", ops: formatTargets.map((target) => ({ kind: "set-format" as const, address: target.address, props })) });
             }}
           >
             {t("segment.formatSubmit")}

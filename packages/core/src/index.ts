@@ -51,11 +51,13 @@ export type {
   StyleRef,
 } from "./ops.js";
 export {
+  documentFormat,
   offsetToRef,
   markdownLength,
   parseCatEnvelope,
   hasDirectFormatting,
   projectShapeAttrs,
+  runCoverage,
   segmentAtOffset,
   segmentAtRef,
   segmentRef,
@@ -66,6 +68,8 @@ export type {
   CatEnvelope,
   DirectChar,
   DirectPara,
+  DocumentFormat,
+  RunCoverage,
   Segment,
   SegmentKind,
   SegmentRef,
@@ -86,8 +90,8 @@ export {
   readPresetBatch,
 } from "./style-batch.js";
 export type { PresetBatchReading, PresetBatchRefusal } from "./style-batch.js";
-export { compareSegments, formatAddresses, hasOwnRef, isSectionDefinitionParagraph, paragraphAddress, paragraphRuns, resolveSelection, segmentPath, selectedParagraphs, selectSimilar, selectionAction } from "./selection.js";
-export type { SelectionRefusal, SelectionTargets } from "./selection.js";
+export { compareSegments, formatAddresses, formatTargets, hasOwnRef, isSectionDefinitionParagraph, paragraphAddress, paragraphRuns, resolveSelection, segmentPath, selectedParagraphs, selectSimilar, selectionAction } from "./selection.js";
+export type { FormatTarget, SelectionRefusal, SelectionTargets } from "./selection.js";
 export type {
   DocumentSpecV2,
   TemplateDataV1,

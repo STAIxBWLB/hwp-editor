@@ -1,6 +1,6 @@
 import type { EditAddress, ParagraphAddress } from "./ops.js";
-import type { CatEnvelope, Segment, SegmentRef } from "./segments.js";
-import { markdownLength, segmentRef } from "./segments.js";
+import type { CatEnvelope, DocumentFormat, Segment, SegmentRef } from "./segments.js";
+import { markdownLength, runCoverage, segmentRef } from "./segments.js";
 import type { EditorAction, EditorState, MarkdownRangeSelection } from "./state.js";
 
 function segmentKey(segment: Segment): string {
@@ -190,11 +190,43 @@ export function paragraphRuns(envelope: CatEnvelope, paragraph: Segment, range?:
   });
 }
 
+/**
+ * One address a Markdown range formats, and whether the range covers it whole.
+ *
+ * `whole` is `runCoverage`'s answer, not the shape of the address: a piece the
+ * range covers entirely is emitted with its own source window, because an edit
+ * op that names only the id of a split run formats every piece of it. So a
+ * target can carry `chars` and still be the whole piece, and a reader that
+ * counted missing `chars` would label nothing exactly where the selection was
+ * widened.
+ */
+export interface FormatTarget {
+  address: EditAddress;
+  whole: boolean;
+}
+
 export function formatAddresses(
   envelope: CatEnvelope,
   paragraphs: readonly Segment[],
   range?: MarkdownRangeSelection | null,
+  format: DocumentFormat = "unknown",
 ): EditAddress[] {
+  return formatTargets(envelope, paragraphs, range, format).map((target) => target.address);
+}
+
+/**
+ * The addresses a selection formats, with each one's coverage answer.
+ *
+ * `format` decides the one place the two coordinate spaces may differ by a
+ * character (an HWP5 paragraph break), so a caller that does not know the
+ * document's format gets no allowance rather than a guess.
+ */
+export function formatTargets(
+  envelope: CatEnvelope,
+  paragraphs: readonly Segment[],
+  range?: MarkdownRangeSelection | null,
+  format: DocumentFormat = "unknown",
+): FormatTarget[] {
   if (range !== undefined && range !== null) {
     if (paragraphs.length !== 1 || !Number.isInteger(range.start) || !Number.isInteger(range.end) ||
         range.start < 0 || range.start >= range.end || range.end > markdownLength(envelope)) return [];
@@ -204,25 +236,25 @@ export function formatAddresses(
       ? paragraph.id === range.paragraph.id
       : paragraph.section === range.paragraph.section && paragraph.para === range.paragraph.para;
     if (!matches || range.start < paragraph.start || range.end > paragraph.end) return [];
-    return addressesForRuns(envelope, paragraphRuns(envelope, paragraph, range), paragraph, false);
+    return addressesForRuns(envelope, paragraphRuns(envelope, paragraph, range), paragraph, false, range, format);
   }
-  const out: EditAddress[] = [];
+  const out: FormatTarget[] = [];
   const targets = new Set<string>();
   for (const selected of paragraphs) {
     if (selected.kind === "run") {
       const address = addressForSelectedRun(envelope, selected);
       if (address === undefined) continue;
       const key = addressKey(address);
-      if (!targets.has(key)) { targets.add(key); out.push(address); }
+      if (!targets.has(key)) { targets.add(key); out.push({ address, whole: true }); }
       continue;
     }
     if (selected.kind !== "para") continue;
     const paragraph = selected;
-    for (const address of addressesForRuns(envelope, paragraphRuns(envelope, paragraph), paragraph, true)) {
-      const key = addressKey(address);
+    for (const target of addressesForRuns(envelope, paragraphRuns(envelope, paragraph), paragraph, true)) {
+      const key = addressKey(target.address);
       if (targets.has(key)) continue;
       targets.add(key);
-      out.push(address);
+      out.push(target);
     }
   }
   return out;
@@ -245,8 +277,15 @@ function addressForSelectedRun(envelope: CatEnvelope, run: Segment): EditAddress
   return undefined;
 }
 
-function addressesForRuns(envelope: CatEnvelope, runs: Segment[], paragraph: Segment, allowLegacyFallback: boolean): EditAddress[] {
-  const out: EditAddress[] = [];
+function addressesForRuns(
+  envelope: CatEnvelope,
+  runs: Segment[],
+  paragraph: Segment,
+  allowLegacyFallback: boolean,
+  range?: MarkdownRangeSelection | null,
+  format: DocumentFormat = "unknown",
+): FormatTarget[] {
+  const out: FormatTarget[] = [];
   const targets = new Set<string>();
   const legacyProjection = paragraph.indices === undefined && runs.every((run) => run.indices === undefined);
   // A legacy paragraph carries no run indices, so its runs are addressed by
@@ -264,19 +303,78 @@ function addressesForRuns(envelope: CatEnvelope, runs: Segment[], paragraph: Seg
       address = { at: { section: run.section, paragraph: run.para, run: run.indices[1]! } };
     }
     if (address === undefined) continue;
+    let whole = true;
+    if (range !== undefined && range !== null) {
+      const narrow = narrowToRange(envelope, run, range, format);
+      // A piece the range overlaps only through a marker or its edge
+      // whitespace shows nothing the selection covers, so it names no target
+      // at all: widening it to the whole run would format characters the
+      // selection never touched, including in another occurrence of the run.
+      if (narrow === "none") continue;
+      if (narrow === "whole") {
+        // A split run publishes one id per piece, and an op that names only the
+        // id formats the whole run (edit-ops-v1), so a covered piece names its
+        // own span instead. The published span is what the resolver accepts,
+        // paragraph break included. The target is still a WHOLE piece: the
+        // window is the piece's own, not the selection's.
+        const span = run.sourceChars;
+        if (span !== undefined && run.id !== undefined && envelope.segments.some((sibling) =>
+          sibling !== run && sibling.kind === "run" && sibling.id === run.id)) {
+          address = { ...address, chars: [span.start, span.end] };
+        }
+      } else {
+        address = { ...address, chars: narrow };
+        whole = false;
+      }
+    }
     const key = addressKey(address);
     if (targets.has(key)) continue;
     targets.add(key);
-    out.push(address);
+    out.push({ address, whole });
   }
   if (allowLegacyFallback && runs.length === 0 && paragraph.indices === undefined) {
-    out.push({ at: { section: paragraph.section, paragraph: paragraph.para, run: 0 } });
+    out.push({ address: { at: { section: paragraph.section, paragraph: paragraph.para, run: 0 } }, whole: true });
   }
   return out;
 }
 
+/**
+ * What a markdown range selects inside one run piece.
+ *
+ * - `"none"` — the range overlaps the piece only through a marker or the edge
+ *   whitespace the marker pair sits inside, so it covers no character the
+ *   piece shows. The piece names no target; it is not widened to the run,
+ *   which would format the characters the selection did not reach.
+ * - `"whole"` — the range covers the piece; the piece publishes no
+ *   `source_chars` (a schema `1.0` host); or the fragment is outside the
+ *   allow-list `runCoverage` maps (a rewrite form, a nested field/image, a
+ *   span that is not the text it shows). The last two keep the pre-#71
+ *   behavior of snapping the selection to the whole run, which is what the
+ *   range hint promises, rather than formatting source characters the user did
+ *   not select: a guess is the failure AC2 names, and a whole run is not one.
+ * - a `[start, end)` source window — the range covers part of a piece that
+ *   publishes where its characters are, and `runCoverage` read the window back
+ *   exactly. A window whose edge lands on a marker or on the edge whitespace
+ *   is clamped to the characters the run shows.
+ */
+function narrowToRange(
+  envelope: CatEnvelope,
+  run: Segment,
+  range: MarkdownRangeSelection,
+  format: DocumentFormat,
+): "none" | "whole" | [number, number] {
+  const coverage = runCoverage(envelope, run, Math.max(range.start, run.start), Math.min(range.end, run.end), format);
+  if (coverage.kind === "window") return coverage.range;
+  return coverage.kind;
+}
+
 function addressKey(address: EditAddress): string {
-  return "id" in address ? `id:${address.id}` : `${address.at.section}:${address.at.paragraph}:${address.at.run}`;
+  const base = "id" in address
+    ? `id:${address.id}`
+    : `${address.at.section}:${address.at.paragraph}:${address.at.run}`;
+  // A split run publishes one id per piece, so the source window is part of
+  // the identity: two windows of the same run are two ops, not a duplicate.
+  return address.chars === undefined ? base : `${base}@${address.chars[0]}-${address.chars[1]}`;
 }
 
 /**

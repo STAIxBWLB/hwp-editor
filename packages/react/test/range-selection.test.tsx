@@ -174,6 +174,88 @@ describe.each([["en", en], ["ko", ko]] as const)("Markdown run range selection (
     expect(JSON.stringify(engine.calls.edit[0]?.ops)).not.toContain('"ir"');
   });
 
+  it("addresses characters inside one run with the run id and its source window", async () => {
+    // A schema 1.1 host publishes where the run's characters are, so three of
+    // six are addressed as a window instead of widening to the whole run.
+    const text = "동일문 안내";
+    const envelope: CatEnvelope = {
+      markdown: `${text}\n\n`,
+      segments: [
+        { id: "para-one", indices: [0], start: 0, end: 6, kind: "para", section: 0, para: 0 },
+        { id: "run-one", indices: [0, 0], start: 0, end: 6, kind: "run", section: 0, para: 0,
+          directChar: runChar(), sourceChars: { start: 0, end: 6 } },
+      ],
+    };
+    const engine = createMockEngine({ envelope });
+    render(<HwpEditor engine={engine} file={file} locale={locale} />);
+    const textarea = await selectFirstParagraph(messages);
+    await selectRange(textarea, 0, 3);
+    expect(await screen.findByText(messages["segment.rangeRunCount"]({ count: 1 }))).toBeTruthy();
+    fireEvent.click(screen.getByLabelText(messages["segment.bold"]));
+    fireEvent.click(screen.getByRole("button", { name: messages["segment.formatSubmit"] }));
+    fireEvent.click(await screen.findByRole("button", { name: messages["toolbar.applyWithCount"]({ count: 1 }) }));
+    await waitFor(() => expect(engine.calls.edit).toHaveLength(1));
+    expect(engine.calls.edit[0]?.ops).toEqual([
+      { kind: "set-format", address: { id: "run-one", chars: [0, 3] }, props: { bold: "on" } },
+    ]);
+    // A mapped window is not a whole-run target, so the row does not say it is.
+    expect(screen.queryByText(messages["segment.rangeWholeRunTargets"]({ count: 1 }))).toBeNull();
+  });
+
+  it("labels a widened target as the whole run in the pending row", async () => {
+    // The published span is not the text this run shows, which puts it outside
+    // the allow-list: the selection widens to the whole run, and the row says
+    // so before anything is applied rather than leaving the count to imply a
+    // character-level edit.
+    const text = "abcdef";
+    const envelope: CatEnvelope = {
+      markdown: `${text}\n\n`,
+      segments: [
+        { id: "para-one", indices: [0], start: 0, end: 6, kind: "para", section: 0, para: 0 },
+        { id: "run-one", indices: [0, 0], start: 0, end: 6, kind: "run", section: 0, para: 0,
+          directChar: runChar(), sourceChars: { start: 0, end: 4 } },
+      ],
+    };
+    const engine = createMockEngine({ envelope });
+    render(<HwpEditor engine={engine} file={file} locale={locale} />);
+    const textarea = await selectFirstParagraph(messages);
+    await selectRange(textarea, 0, 3);
+    expect(await screen.findByText(messages["segment.rangeWholeRunTargets"]({ count: 1 }))).toBeTruthy();
+    fireEvent.click(screen.getByLabelText(messages["segment.bold"]));
+    fireEvent.click(screen.getByRole("button", { name: messages["segment.formatSubmit"] }));
+    fireEvent.click(await screen.findByRole("button", { name: messages["toolbar.applyWithCount"]({ count: 1 }) }));
+    await waitFor(() => expect(engine.calls.edit).toHaveLength(1));
+    expect(engine.calls.edit[0]?.ops).toEqual([{ kind: "set-format", address: { id: "run-one" }, props: { bold: "on" } }]);
+  });
+
+  it("names no target when a drag stops on a run's opening marker", async () => {
+    // The AC2 shape: a plain run, a bold " / " and an italic copy of the first
+    // word. A drag that ends on the italic run's `*` touches the run and
+    // covers none of its characters, so that run is not a target at all -
+    // widening it would reformat the second occurrence.
+    const markdown = "동일문 안내 **/** *동일문*";
+    const envelope: CatEnvelope = {
+      markdown: `${markdown}\n\n`,
+      segments: [
+        { id: "para-one", indices: [0], start: 0, end: 18, kind: "para", section: 0, para: 0 },
+        { id: "run-plain", indices: [0, 0], start: 0, end: 6, kind: "run", section: 0, para: 0,
+          directChar: runChar(), sourceChars: { start: 0, end: 6 } },
+        { id: "run-slash", indices: [0, 1], start: 6, end: 13, kind: "run", section: 0, para: 0,
+          directChar: runChar(true), sourceChars: { start: 6, end: 9 } },
+        { id: "run-italic", indices: [0, 2], start: 13, end: 18, kind: "run", section: 0, para: 0,
+          directChar: runChar(false, true), sourceChars: { start: 9, end: 12 } },
+      ],
+    };
+    const engine = createMockEngine({ envelope });
+    render(<HwpEditor engine={engine} file={file} locale={locale} />);
+    const textarea = await selectFirstParagraph(messages);
+    await selectRange(textarea, 13, 14);
+    expect((await screen.findByRole("alert")).textContent).toContain(messages["segment.rangeInvalid"]);
+    expect(screen.queryByText(messages["segment.rangeRunCount"]({ count: 1 }))).toBeNull();
+    expect((screen.getByRole("button", { name: messages["segment.formatSubmit"] }) as HTMLButtonElement).disabled).toBe(true);
+    expect(engine.calls.edit).toHaveLength(0);
+  });
+
   it("maps an emoji-only UTF-16 range to its whole run and rejects a half-surrogate", async () => {
     const engine = createMockEngine({ envelope: rangeEnvelope() });
     render(<HwpEditor engine={engine} file={file} locale={locale} />);
@@ -195,9 +277,95 @@ describe.each([["en", en], ["ko", ko]] as const)("Markdown run range selection (
     render(<HwpEditor engine={halfEngine} file={file} locale={locale} />);
     const halfTextarea = await selectFirstParagraph(messages);
     await selectRange(halfTextarea, 8, 9);
-    expect((await screen.findByRole("alert")).textContent).toContain(messages["segment.rangeInvalid"]);
+    // Half of a surrogate pair has no scalar boundary to land on, which is a
+    // different mistake from a selection that lands on characters and covers
+    // none of a run, so it gets its own sentence.
+    expect((await screen.findByRole("alert")).textContent).toContain(messages["segment.rangeSplit"]);
+    expect((await screen.findByRole("alert")).textContent).not.toContain(messages["segment.rangeInvalid"]);
     expect((screen.getByRole("button", { name: messages["segment.formatSubmit"] }) as HTMLButtonElement).disabled).toBe(true);
     expect(halfEngine.calls.edit).toHaveLength(0);
+  });
+
+  it("reads the range against the document's own format (t30-c1)", async () => {
+    // Measured on ahwp 1.6.1: "동일문 안내" publishes source_chars (0, 7) for
+    // six characters as an HWP5 last run (its stored break), and an HWPX run
+    // whose edge space was trimmed publishes the same numbers. Only the file
+    // name tells the two apart, so the name is what the panel reads.
+    const envelope: CatEnvelope = {
+      markdown: "동일문 안내\n\n",
+      segments: [
+        { id: "para-one", indices: [0], start: 0, end: 6, kind: "para", section: 0, para: 0 },
+        { id: "run-one", indices: [0, 0], start: 0, end: 6, kind: "run", section: 0, para: 0,
+          directChar: runChar(), sourceChars: { start: 0, end: 7 } },
+      ],
+    };
+    const hwpFile: DocumentHandle = { name: "break.hwp", data: new Uint8Array([1]) };
+    const engine = createMockEngine({ envelope });
+    render(<HwpEditor engine={engine} file={hwpFile} locale={locale} />);
+    const textarea = await selectFirstParagraph(messages);
+    await selectRange(textarea, 0, 3);
+    expect(screen.queryByText(messages["segment.rangeWholeRunTargets"]({ count: 1 }))).toBeNull();
+    fireEvent.click(screen.getByLabelText(messages["segment.bold"]));
+    fireEvent.click(screen.getByRole("button", { name: messages["segment.formatSubmit"] }));
+    fireEvent.click(await screen.findByRole("button", { name: messages["toolbar.applyWithCount"]({ count: 1 }) }));
+    await waitFor(() => expect(engine.calls.edit).toHaveLength(1));
+    expect(engine.calls.edit[0]?.ops).toEqual([
+      { kind: "set-format", address: { id: "run-one", chars: [0, 3] }, props: { bold: "on" } },
+    ]);
+
+    cleanup();
+    // The same numbers under an HWPX name: no allowance, so the run is named
+    // whole - and the panel says so before anything is queued, rather than
+    // counting a target the user thinks is three characters wide.
+    const hwpxEngine = createMockEngine({ envelope });
+    render(<HwpEditor engine={hwpxEngine} file={file} locale={locale} />);
+    const hwpxTextarea = await selectFirstParagraph(messages);
+    await selectRange(hwpxTextarea, 0, 3);
+    expect(await screen.findByText(messages["segment.rangeWholeRunTargets"]({ count: 1 }))).toBeTruthy();
+    fireEvent.click(screen.getByLabelText(messages["segment.bold"]));
+    fireEvent.click(screen.getByRole("button", { name: messages["segment.formatSubmit"] }));
+    fireEvent.click(await screen.findByRole("button", { name: messages["toolbar.applyWithCount"]({ count: 1 }) }));
+    await waitFor(() => expect(hwpxEngine.calls.edit).toHaveLength(1));
+    expect(hwpxEngine.calls.edit[0]?.ops).toEqual([
+      { kind: "set-format", address: { id: "run-one" }, props: { bold: "on" } },
+    ]);
+  });
+
+  it("labels a widened target that still carries a window (t30-c3)", async () => {
+    // A split run emits every piece with its own source window, because an op
+    // carrying the id alone would format both pieces. So a piece the range was
+    // widened to looks exactly like one it mapped, and the label has to come
+    // from the coverage answer. This piece holds an ampersand, which the
+    // client never maps character for character (t30-c5).
+    const envelope: CatEnvelope = {
+      markdown: "a&b|c\n\n",
+      segments: [
+        { id: "para-one", indices: [0], start: 0, end: 5, kind: "para", section: 0, para: 0 },
+        { id: "amp", indices: [0, 0], start: 0, end: 3, kind: "run", section: 0, para: 0,
+          directChar: runChar(), sourceChars: { start: 0, end: 3 } },
+        { id: "amp", indices: [0, 1], start: 4, end: 5, kind: "run", section: 0, para: 0,
+          directChar: runChar(), sourceChars: { start: 3, end: 4 } },
+      ],
+    };
+    const engine = createMockEngine({ envelope });
+    render(<HwpEditor engine={engine} file={file} locale={locale} />);
+    const textarea = await selectFirstParagraph(messages);
+    await selectRange(textarea, 0, 1);
+    expect(await screen.findByText(messages["segment.rangeRunCount"]({ count: 1 }))).toBeTruthy();
+    expect(screen.getByText(messages["segment.rangeWholeRunTargets"]({ count: 1 }))).toBeTruthy();
+    fireEvent.click(screen.getByLabelText(messages["segment.bold"]));
+    fireEvent.click(screen.getByRole("button", { name: messages["segment.formatSubmit"] }));
+    // The queued row names the window it will edit, so the count and the row
+    // agree about which characters go with the op.
+    const pending = await screen.findByRole("list", { name: messages["toolbar.pendingList"] });
+    expect(pending.textContent).toContain(messages["pending.target.chars"]({
+      range: messages["pending.target.id"]({ id: "amp" }), start: 0, end: 3,
+    }));
+    fireEvent.click(await screen.findByRole("button", { name: messages["toolbar.applyWithCount"]({ count: 1 }) }));
+    await waitFor(() => expect(engine.calls.edit).toHaveLength(1));
+    expect(engine.calls.edit[0]?.ops).toEqual([
+      { kind: "set-format", address: { id: "amp", chars: [0, 3] }, props: { bold: "on" } },
+    ]);
   });
 
   it("explains in the active locale why a range is off, without blaming the host for an empty paragraph", async () => {
