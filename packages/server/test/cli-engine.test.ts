@@ -89,6 +89,23 @@ describeBin("cli-engine (real hwp-cli binary)", () => {
     expect((await cli.render(edited, { format: "png", pages: "1" })).length).toBeGreaterThan(0);
   });
 
+  it("preserves the engine failure for a mixed upload batch whose formatting target is missing", async () => {
+    const cli = engine();
+    const { document } = await cli.compose(sampleSpec() as unknown as DocumentSpecV2, "mixed-upload.hwpx");
+    const image = new Uint8Array(Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==", "base64",
+    ));
+    const failure = await cli.edit(document, [
+      { kind: "insert-image", anchor: "안녕하세요", path: "figure.png", width: 20, height: 15 },
+      { kind: "set-format", find: "missing-format-target", props: { bold: "on" } },
+    ], { assets: [{ name: "figure.png", data: image }] }).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(HwpCliError);
+    expect(failure).toMatchObject({ reason: "failed", message: expect.stringMatching(/hwp edit failed \(exit [0-9]+\).*operation targets and values/) });
+    expect((failure as HwpCliError).message).not.toMatch(/Image insertion failed|re-export/);
+    expect((failure as HwpCliError).stderr).toBeTruthy();
+    expect((failure as HwpCliError).detail).toContain((failure as HwpCliError).stderr!.trim());
+  });
+
   it("rejects direct API asset references before resolving or spawning the binary", async () => {
     const missing = createCliEngine({ bin: "/no/such/hwp-binary" });
     await expect(missing.edit({ name: "doc.hwpx", data: new Uint8Array() }, [

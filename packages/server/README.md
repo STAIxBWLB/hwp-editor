@@ -114,8 +114,8 @@ Post-buffer, before the binary spawns:
    zip whose first entry is a STORED `mimetype` reading `application/hwp+zip`
    (HWPX). Anything else is 400. About ninety bytes are read and nothing is
    decompressed.
-6. **Op path filter**: an `edit` whose ops include `insert-image` or `seal` is
-   refused 400 `path_traversal`.
+6. **Op path filter**: `seal` is refused 400 `path_traversal`. `insert-image`
+   requires matching uploaded PNG/JPEG assets; server-local paths are refused.
 
 Two operational consequences worth knowing before you deploy:
 
@@ -123,11 +123,11 @@ Two operational consequences worth knowing before you deploy:
   that re-frames uploads as `Transfer-Encoding: chunked` will therefore break
   every upload. The alternative, counting bytes as they arrive, would have to
   read the body first, which is exactly the cost the gate exists to avoid.
-- **`insert-image` and `seal` are unavailable over HTTP.** Both name a path on
-  the server's own filesystem, so over HTTP a client could otherwise ask the
-  binary to embed any file the server process can read. Both remain available on
-  the Tauri transport, which is a local application. A staged-asset upload flow
-  that makes them usable here is planned but not shipped.
+- **HTTP refuses `seal`; `insert-image` requires matching uploaded assets.**
+  Image names refer only to staged PNG/JPEG uploads, never server-local files.
+  The [uploaded images contract](#uploaded-images) describes names and limits.
+  Tauri remains a local application transport with desktop-local paths; its
+  client does not support uploaded image bytes.
 
 ## Deployment assumptions
 

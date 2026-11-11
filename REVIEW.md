@@ -22,6 +22,11 @@ Run these passes and tag every finding with its pass:
 
 ## Repo focus
 
+- **Failure wrappers keep the engine cause.** When rewriting engine `failed` errors,
+  retain the original cause or name only the specific command known to have failed
+  (`packages/server/src/cli-engine.ts`, `rethrowUploadedImageFailure`); a mixed edit
+  batch must not receive an image-only remedy just because it contains uploads.
+
 - **hwp-cli is the only document engine.** The server drives the released `hwp` binary and gates its
   version (`packages/server/src/cli-engine.ts:54` minimum, `:72` exclusive maximum). Wire shapes come
   from hwp-cli contracts (`segment-envelope-v2`, `render-layout-v1`, `edit-ops-v1`, `edit-report-v1`);

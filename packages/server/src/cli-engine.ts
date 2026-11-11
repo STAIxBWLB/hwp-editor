@@ -671,11 +671,14 @@ function rethrowProtected(error: unknown): never {
   throw error;
 }
 
-function rethrowUploadedImageFailure(error: unknown): never {
+function rethrowUploadedImageFailure(error: unknown, imageOnly: boolean): never {
   try { return rethrowProtected(error); }
   catch (failure) {
     if (failure instanceof HwpCliError && failure.reason === "failed") {
-      throw new HwpCliError("failed", "Image insertion failed; re-export valid PNG/JPEG image bytes and confirm the anchor text exists, then retry.", failure.stderr, failure.detail);
+      const nextStep = imageOnly
+        ? "Image insertion failed; re-export valid PNG/JPEG image bytes and confirm the anchor text exists, then retry."
+        : "Check the edit batch's operation targets and values, then retry.";
+      throw new HwpCliError("failed", `${failure.message}; ${nextStep}`, failure.stderr, failure.detail);
     }
     throw failure;
   }
@@ -1236,7 +1239,9 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         const args = ["edit", input, "-o", output, "--ops", opsPath];
         if (options.verify !== false) args.push("--verify");
         if (options.allowPartial === true) args.push("--allow-partial");
-        await runCliOk(bin, args, timeoutMs, opts.locale, call?.signal).catch(options.assets?.length ? rethrowUploadedImageFailure : rethrowProtected);
+        await runCliOk(bin, args, timeoutMs, opts.locale, call?.signal).catch(options.assets?.length
+          ? error => rethrowUploadedImageFailure(error, ops.every(op => op.kind === "insert-image"))
+          : rethrowProtected);
         return new Uint8Array(await readFile(output));
       });
       // Pre-edit snapshot keyed by the edited hash SALTED WITH THIS CALL'S

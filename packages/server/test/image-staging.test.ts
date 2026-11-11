@@ -27,7 +27,7 @@ fs.writeFileSync(args[args.indexOf('-o')+1],Buffer.from([2,3]));
       const call=createCliEngine({bin}).edit({name:"doc.hwpx",data:new Uint8Array([1])},[
         {kind:"insert-image",anchor:"x",path:"client.png"},{kind:"insert-image",anchor:"y",path:"client.png"},
       ],{assets:[{name:"client.png",data:new Uint8Array([137,80,78,71,13,10,26,10])}]});
-      if(failure)await expect(call).rejects.toThrow(/Image insertion failed.*PNG\/JPEG.*retry/); else await expect(call).resolves.toMatchObject({name:"doc.hwpx"});
+      if(failure)await expect(call).rejects.toThrow(/hwp edit failed \(exit 1\).*Image insertion failed.*PNG\/JPEG.*retry/); else await expect(call).resolves.toMatchObject({name:"doc.hwpx"});
       const record=JSON.parse(readFileSync(witness,"utf8"));
       expect(record.image).toBe(join(record.dir,"asset-0.png"));
       expect(record.mode).toBe(384);

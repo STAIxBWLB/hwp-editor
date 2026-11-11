@@ -16,8 +16,9 @@ import { TEMPLATE_METHODS, templateVersionSupported, parseTemplateInputs, parseF
  * Two further checks run after the bytes are in hand, in this order: the
  * magic-byte sniff at the single buffering site (`sniffFormat`, refusing
  * anything that is not an HWP or HWPX document, SEC-07), and the op-path
- * filter in the edit path (refusing `insert-image` and `seal`, which name a
- * file on the server's own disk, SEC-05). Both still precede the engine call.
+ * filter in the edit path (refusing `seal` and allowing `insert-image` only
+ * with matching uploaded PNG/JPEG assets, never server-local paths, SEC-05).
+ * Both still precede the engine call.
  *
  * Archive limits — declared entry sizes, decompressed byte ceilings and
  * compression-ratio caps — are NOT reimplemented here. They are hwp-cli's
