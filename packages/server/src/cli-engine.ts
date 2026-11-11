@@ -1012,7 +1012,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       const command = args[0] ?? "template";
       const failureMessage = (): string => {
         if (command === "slots" || command === "fields") {
-          return `hwp ${command} could not inspect this document; open and save it with hwp-cli 1.4.0, then retry.`;
+          return `hwp ${command} could not inspect this document with hwp-cli 1.4.0; check that it opens with hwp info, then retry.`;
         }
         if (command === "fill") {
           return "hwp fill could not fill this document; check the form values and open an HWPX template with hwp-cli 1.4.0, then retry.";
@@ -1024,12 +1024,12 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
           return "hwp edit could not set the named fields; check that the field names exist and the document is editable, then retry.";
         }
         if (command === "new" && args[1] === "--list-templates") {
-          return "hwp new --list-templates could not list embedded templates; verify hwp-cli 1.4.0 is installed, then retry.";
+          return "hwp new --list-templates could not list embedded templates; check hwp --version and use hwp-cli 1.4.0, then retry.";
         }
         if (command === "new") {
           return "hwp new could not create the embedded template; choose an id from hwp new --list-templates, then retry.";
         }
-        return "hwp lint could not inspect this document; open and save it with hwp-cli 1.4.0, then retry.";
+        return "hwp lint could not inspect this document with hwp-cli 1.4.0; check that it opens with hwp info, then retry.";
       };
       const result = args[0] === "lint"
         ? await runCli(resolveBin(), args, timeoutMs, opts.locale, call?.signal)

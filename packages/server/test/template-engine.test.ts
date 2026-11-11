@@ -72,11 +72,11 @@ describeTemplates("template commands (requires real hwp-cli >= 1.4.0)", () => {
 describe("template CLI failure guidance", () => {
   const document = { name: "sample.hwpx", data: new Uint8Array([1]) };
   const cases = [
-    ["slots", (engine: ReturnType<typeof createCliEngine>) => engine.slots(document), "open and save it"],
-    ["fields", (engine: ReturnType<typeof createCliEngine>) => engine.slots(document), "open and save it"],
+    ["slots", (engine: ReturnType<typeof createCliEngine>) => engine.slots(document), "hwp info"],
+    ["fields", (engine: ReturnType<typeof createCliEngine>) => engine.slots(document), "hwp info"],
     ["fill", (engine: ReturnType<typeof createCliEngine>) => engine.fill(document, { title: "Hello" }), "form values"],
     ["template", (engine: ReturnType<typeof createCliEngine>) => engine.template(templateSpec, { version: "1.0", values: { title: "Hello" } }, "out.hwpx"), "TemplateSpec"],
-    ["lint", (engine: ReturnType<typeof createCliEngine>) => engine.lint(document), "open and save it"],
+    ["lint", (engine: ReturnType<typeof createCliEngine>) => engine.lint(document), "hwp info"],
     ["list-templates", (engine: ReturnType<typeof createCliEngine>) => engine.listTemplates(), "hwp new --list-templates"],
     ["create", (engine: ReturnType<typeof createCliEngine>) => engine.create("gongmun-basic", "out.hwpx"), "hwp new --list-templates"],
     ["edit", (engine: ReturnType<typeof createCliEngine>) => engine.fill(document, { approval: "ok" }), "field names exist"],
