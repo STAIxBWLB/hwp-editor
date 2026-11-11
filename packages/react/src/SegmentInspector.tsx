@@ -96,6 +96,7 @@ export function SegmentInspector(): JSX.Element {
   const [lineSpacingUnit, setLineSpacingUnit] = useState<"%" | "pt">("%");
   const [linkUrl, setLinkUrl] = useState("");
   const [linkText, setLinkText] = useState("");
+  const [placeholderName, setPlaceholderName] = useState("");
 
   // Reset drafts when the selection moves.
   useEffect(() => {
@@ -108,6 +109,7 @@ export function SegmentInspector(): JSX.Element {
     setShapeValue("");
     setLinkUrl("");
     setLinkText("");
+    setPlaceholderName("");
   }, [selection]);
 
   const find = currentText;
@@ -193,6 +195,118 @@ export function SegmentInspector(): JSX.Element {
     : envelope !== null && state.range != null && formatTargets[0]?.id !== undefined
       ? segmentAtRef(envelope, { id: formatTargets[0].id, section: 0, para: 0 }) ?? singleParagraph
       : singleParagraph;
+
+  /**
+   * Whether the selected runs can become a `{{name}}` placeholder.
+   *
+   * `replace` matches the paragraph's own DOCUMENT text and rewrites every
+   * match there, and edit-ops-v1 addresses it by paragraph alone, so the find
+   * string is the only selector it has. The client cannot rebuild that text
+   * from Markdown in general: the projection trims each fragment, joins what a
+   * control held, escapes `&` and `<` inside a cell, and renders emphasis,
+   * links and fields to something other than the text the engine matches. So
+   * this is an ALLOW list. A paragraph qualifies only when the projection is
+   * the identity on it and nothing in it can hide or move a match; refusing a
+   * paragraph that would have worked is the accepted cost of never rewriting
+   * text the user did not select.
+   */
+  const plainParagraph = ((): { runs: Segment[]; texts: string[]; text: string } | undefined => {
+    if (envelope === null || singleParagraph === undefined) return undefined;
+    // (1) A top-level body paragraph. A cell and a text box report a deeper
+    // path (and a container holding this range), and a list's projected
+    // lead-in is not text, so all three are out.
+    const depth = singleParagraph.indices?.length;
+    if (depth !== undefined && depth !== 1) return undefined;
+    const inContainer = envelope.segments.some(item =>
+      (item.kind === "table" || item.kind === "cell") &&
+      item.start <= singleParagraph.start && item.end >= singleParagraph.end);
+    if (inContainer) return undefined;
+    // The paragraph's projection ends with its separator, which is structure.
+    const points = [...markdownText.replace(/[\r\n]+$/, "")];
+    const contentEnd = singleParagraph.start + points.length;
+    // A field, image or bookmark here holds text of its own, and an edit
+    // addressed to this paragraph can write over it: out.
+    const holdsControl = envelope.segments.some(item =>
+      (item.kind === "field" || item.kind === "image" || item.kind === "bookmark") &&
+      item.start < contentEnd && item.end > singleParagraph.start);
+    if (holdsControl) return undefined;
+    // The runs must tile the paragraph exactly. A gap is text the projection
+    // does not show, so a find cut from it would not be the engine's text.
+    const ordered = paragraphRuns(envelope, singleParagraph);
+    const texts: string[] = [];
+    let cursor = singleParagraph.start;
+    for (const run of ordered) {
+      if (run.start !== cursor || run.end < run.start || run.end > contentEnd) return undefined;
+      cursor = run.end;
+      const runText = wholeRunText(run, points.slice(run.start - singleParagraph.start, run.end - singleParagraph.start).join(""));
+      if (runText === undefined) return undefined;
+      texts.push(runText);
+    }
+    if (ordered.length === 0 || cursor !== contentEnd) return undefined;
+    // (2) Plain text only. The characters below are the ones the projection
+    // writes as themselves; everything Markdown gives a second meaning to is
+    // refused, and so is any edge or doubled space, which a trimmed fragment
+    // cannot be told apart from.
+    const text = texts.join("");
+    if (text === "" || text.trim() !== text || text.includes("  ")) return undefined;
+    if (!/^[\p{L}\p{N} .,:;'"!?()\-]*$/u.test(text)) return undefined;
+    if (/^(?:[-+]|\d{1,3}[.)])\s/u.test(text)) return undefined;
+    return { runs: ordered, texts, text };
+  })();
+  const rangeRuns = envelope !== null && singleParagraph !== undefined && state.range != null
+    ? paragraphRuns(envelope, singleParagraph, state.range)
+    : [];
+  const rangeFrom = rangeRuns.length === 0 ? -1 : Math.min(...rangeRuns.map(item => item.start));
+  const rangeTo = rangeRuns.length === 0 ? -1 : Math.max(...rangeRuns.map(item => item.end));
+  const wholeRuns = state.range != null && rangeRuns.length > 0 &&
+    rangeFrom === state.range.start && rangeTo === state.range.end;
+  const firstCoveredAt = plainParagraph === undefined || rangeRuns.length === 0
+    ? -1
+    : plainParagraph.runs.findIndex(item => item.start === rangeRuns[0]!.start);
+  const rangeContiguous = plainParagraph !== undefined && firstCoveredAt >= 0 &&
+    rangeRuns.every((item, at) => plainParagraph.runs[firstCoveredAt + at]?.start === item.start);
+  // `find` is the engine's text for the selected runs, which (2) has already
+  // made identical to their projection.
+  const findText = plainParagraph === undefined || !wholeRuns || !rangeContiguous
+    ? ""
+    : plainParagraph.texts.slice(firstCoveredAt, firstCoveredAt + rangeRuns.length).join("");
+  const paragraphText = plainParagraph?.text ?? "";
+  const expectedAt = plainParagraph === undefined || firstCoveredAt <= 0
+    ? 0
+    : plainParagraph.texts.slice(0, firstCoveredAt).reduce((total, item) => total + item.length, 0);
+  // (3) No edge whitespace of its own, and (4) exactly one match counting
+  // overlaps, starting where the selection starts: a single match elsewhere
+  // would rewrite text never selected.
+  const occurrences: number[] = [];
+  for (let at = 0; findText !== "" && at + findText.length <= paragraphText.length; at += 1) {
+    if (paragraphText.startsWith(findText, at)) occurrences.push(at);
+  }
+  const uniqueAtSelection = occurrences.length === 1 && occurrences[0] === expectedAt;
+  // (5) Any queued op can change this document's text — a `set-field` writes its
+  // value into a paragraph, a `set-cell` replaces a cell's — so the control
+  // waits for an empty queue rather than for one class of op.
+  const queuedEdits = state.pendingOps.length > 0;
+  const placeholderRefused = plainParagraph === undefined || !wholeRuns || !rangeContiguous ||
+    findText === "" || findText.trim() !== findText || !uniqueAtSelection || queuedEdits;
+
+  const placeholderNameTrimmed = placeholderName.trim();
+  const placeholderNameEmpty = placeholderNameTrimmed === "";
+  const placeholderNameValid = !placeholderNameEmpty &&
+    !/[{}]/.test(placeholderNameTrimmed) && !/[\u0000-\u001f\u007f-\u009f]/.test(placeholderNameTrimmed);
+  const placeholderReason = placeholderRefused ? t("segment.placeholderRefused") : "";
+  const placeholderNameReason = placeholderNameEmpty
+    ? t("segment.placeholderNameEmpty")
+    : placeholderNameValid ? "" : t("segment.placeholderNameInvalid");
+  const placeholderDisabled = disabled || address === undefined ||
+    placeholderReason !== "" || placeholderNameReason !== "";
+
+  const makePlaceholder = (): void => {
+    if (placeholderDisabled || address === undefined) return;
+    store.dispatch({
+      type: "queueOp",
+      op: { kind: "replace", address, find: findText, replace: `{{${placeholderNameTrimmed}}}` },
+    });
+  };
 
   const activateSelection = (target: Segment, mode: "single" | "toggle" | "extend"): void => {
     if (envelope === null) return;
@@ -547,6 +661,19 @@ export function SegmentInspector(): JSX.Element {
           }}>{t("segment.rangeClear")}</button>
         </>}
       </div>}
+      {singleParagraph !== undefined && <div className="hwped-field">
+        <span className="hwped-label">{t("segment.placeholderLabel")}</span>
+        <p className="hwped-hint">{t("segment.placeholderHint")}</p>
+        <input className="hwped-input" type="text" value={placeholderName} disabled={disabled}
+          placeholder={t("segment.placeholderNamePlaceholder")} aria-label={t("segment.placeholderNameAria")}
+          onChange={(e) => setPlaceholderName(e.target.value)} />
+        <button type="button" className="hwped-btn" disabled={placeholderDisabled} onClick={makePlaceholder}>
+          {t("segment.placeholderCreate")}
+        </button>
+        {placeholderReason !== "" && <p className="hwped-hint" role="status">{placeholderReason}</p>}
+        {placeholderReason === "" && placeholderNameReason !== "" &&
+          <p role="alert" className="hwped-hint">{placeholderNameReason}</p>}
+      </div>}
       <div className="hwped-field">
         <span className="hwped-label">{t("segment.formatLabel")}</span>
         <p className="hwped-hint">{t("segment.formatRunCount", { count: formatTargets.length })}</p>
@@ -615,4 +742,25 @@ function scalarAtUtf16(offset: number, supplementaryStarts: readonly number[]): 
   }
   if (supplementaryStarts[low] !== undefined && supplementaryStarts[low]! + 1 === offset) return undefined;
   return offset - low;
+}
+
+/**
+ * One run's document text, or undefined when its markers cannot be trusted.
+ *
+ * hwp-cli wraps a whole run in `**` when it is bold and `*` when it is italic,
+ * and it does not escape a literal `*`, so a run whose text is literally
+ * `*Note*` projects exactly like an italic one. The run's own published
+ * `directChar` is what tells them apart: a marker is stripped only when the
+ * formatting says it is one, and any disagreement — or a missing `directChar`,
+ * which an older host may omit — refuses the paragraph.
+ */
+function wholeRunText(run: Segment, markdown: string): string | undefined {
+  const bold = /^\*\*([\s\S]+)\*\*$/u.exec(markdown);
+  const italic = bold === null ? /^\*([\s\S]+)\*$/u.exec(markdown) : null;
+  const direct = run.directChar;
+  if (direct === undefined) return undefined;
+  if (bold !== null) return direct.bold && !direct.italic ? bold[1]! : undefined;
+  if (italic !== null) return direct.italic && !direct.bold ? italic[1]! : undefined;
+  // No marker, so the run has to be plain: a bold or italic run carries one.
+  return direct.bold || direct.italic ? undefined : markdown;
 }

@@ -42,7 +42,7 @@ import type { InsertPosition } from "./ComponentsPanel.js";
 import { componentFailure, insertionFailure, insertionPreflight } from "./components-support.js";
 import { isTableSlice } from "./tables.js";
 import { ErrorLine } from "./ErrorLine.js";
-import { toEditorError } from "./errors.js";
+import { isUnmatchedReplaceRefusal, toEditorError } from "./errors.js";
 import { createT } from "./messages.js";
 import type { HwpEditorMessages, Locale } from "./messages.js";
 import { segmentText } from "@hwp-editor/core";
@@ -441,11 +441,20 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           store.dispatch({ type: "applySucceeded", document: next, pages });
           emitChange(next);
         } catch (e) {
-          store.dispatch({ type: "applyFailed", error: toEditorError(e) });
+          // A find that matched nothing leaves nothing applied, and the engine's
+          // own line for it is Korean prose naming staged paths, so the error
+          // line carries the localized sentence. The host still hears the
+          // failure as it arrived — code, status and cause intact — because a
+          // wrapper that drops them cannot be branched on (`onError`'s contract).
+          const stored = toEditorError(e);
+          store.dispatch({
+            type: "applyFailed",
+            error: isUnmatchedReplaceRefusal(e) ? { ...stored, message: t("error.unmatchedReplace") } : stored,
+          });
           emitError(e);
         }
       })();
-    }, [editable, engine, store]);
+    }, [editable, engine, store, t]);
 
     const replaceDocument = useCallback(
       (

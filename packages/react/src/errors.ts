@@ -35,6 +35,20 @@ export function toEditorError(e: unknown): EditorError {
 }
 
 /**
+ * Whether a failure is the engine refusing an edit whose text did not match,
+ * so nothing was applied.
+ *
+ * The server classifies this before the error crosses a transport: the
+ * engine's own line names the staged work path and its Korean wording is not
+ * part of the client contract, so only the stable `unmatched_replace` marker
+ * travels. This module still only classifies; the sentence lives in the table.
+ */
+export function isUnmatchedReplaceRefusal(e: unknown): boolean {
+  const message = e instanceof Error ? e.message : String(e);
+  return message.includes("unmatched_replace");
+}
+
+/**
  * Badge per code. A total Record on purpose, not a switch with a default:
  * adding a sixteenth HwpErrorCode must fail `tsc --noEmit` here and force
  * an explicit badge decision rather than silently rendering "generic".
