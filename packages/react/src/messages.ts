@@ -462,7 +462,9 @@ export const en = {
 
   "tabs.styles": "Styles",
   "styles.unavailable": (p: { version: string }): string =>
-    `Named styles need hwp-cli 1.4.0 or newer; this engine reports ${p.version}.`,
+    p.version === ""
+      ? "Named styles need hwp-cli 1.4.0 or newer, and this engine reports no version. Upgrade hwp-cli on the host, then retry."
+      : `Named styles need hwp-cli 1.4.0 or newer; this engine reports ${p.version}. Upgrade hwp-cli on the host, then retry.`,
   "styles.unavailableHost": "This host does not serve the styles command; update the engine adapter on the host, then retry.",
   "styles.checkingHost": "Checking whether this host supports named styles...",
   "styles.loading": "Reading styles...",
@@ -489,6 +491,7 @@ export const en = {
   "styles.presetSubmit": "Apply preset",
   "styles.pendingEdits": "Apply or clear the queued edits first: switching the preset replaces the whole document, so an edit waiting to be applied would be lost.",
   "styles.noTableToStyle": "The preset's style change was applied; this document has no multi-column table to restyle.",
+  "styles.noTableToStyleNoChange": "Nothing changed: this document has no multi-column table to restyle, and its body style already matches the preset.",
   "styles.needsParagraph": "Select a paragraph first.",
   "segment.directFormatting": "Direct formatting",
   "segment.directFormattingHint": "This paragraph's formatting differs from its style. Clearing it keeps the style and removes the overrides.",
@@ -913,7 +916,9 @@ export const ko: MessageTable = {
 
   "tabs.styles": "스타일",
   "styles.unavailable": (p: { version: string }): string =>
-    `스타일 기능은 hwp-cli 1.4.0 이상이 필요합니다. 이 엔진은 ${p.version}입니다.`,
+    p.version === ""
+      ? "스타일 기능은 hwp-cli 1.4.0 이상이 필요합니다. 이 엔진은 버전을 보고하지 않습니다. 호스트의 hwp-cli를 업그레이드한 뒤 다시 시도하세요."
+      : `스타일 기능은 hwp-cli 1.4.0 이상이 필요합니다. 이 엔진은 ${p.version}입니다. 호스트의 hwp-cli를 업그레이드한 뒤 다시 시도하세요.`,
   "styles.unavailableHost": "이 호스트는 스타일 명령을 제공하지 않습니다. 호스트의 엔진 어댑터를 업데이트한 뒤 다시 시도하세요.",
   "styles.checkingHost": "이 호스트가 스타일을 지원하는지 확인하는 중...",
   "styles.loading": "스타일 읽는 중...",
@@ -939,6 +944,7 @@ export const ko: MessageTable = {
   "styles.presetSubmit": "프리셋 적용",
   "styles.pendingEdits": "대기 중인 편집을 먼저 적용하거나 지우세요. 프리셋을 바꾸면 문서 전체를 교체하므로 아직 적용하지 않은 편집은 사라집니다.",
   "styles.noTableToStyle": "프리셋의 스타일 변경은 적용했습니다. 이 문서에는 서식을 바꿀 여러 열 표가 없습니다.",
+  "styles.noTableToStyleNoChange": "바뀐 것이 없습니다. 이 문서에는 서식을 바꿀 여러 열 표가 없고, 본문 스타일은 이미 프리셋과 같습니다.",
   "styles.needsParagraph": "먼저 문단을 선택하세요.",
   "segment.directFormatting": "직접 서식",
   "segment.directFormattingHint": "이 문단의 서식이 스타일과 다릅니다. 직접 서식을 지우면 스타일은 그대로 두고 덮어쓴 값만 제거합니다.",

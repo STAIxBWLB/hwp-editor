@@ -18,11 +18,12 @@
  * document does not answer, is listed but carries no actions rather than
  * offering a button the engine always refuses.
  */
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { JSX } from "react";
 import {
   HwpEngineError,
   paragraphAddress,
+  presetBatchOptions,
   presetStyleOps,
   readPresetBatch,
   resolveSelection,
@@ -98,7 +99,7 @@ interface Seed {
 export function StylesPanel(): JSX.Element {
   const {
     store, engine, state, envelope, editable, capabilities,
-    styles, stylesStatus, replaceDocument, noteNotice, t,
+    styles, stylesStatus, replaceDocument, noteNotice, fileName, t,
   } = useHwpEditorContext();
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [size, setSize] = useState("");
@@ -109,6 +110,53 @@ export function StylesPanel(): JSX.Element {
   const [promoteName, setPromoteName] = useState("");
   const [preset, setPreset] = useState<StyleTablePreset>("official");
   const [seed, setSeed] = useState<Seed>({ size: "", font: "", bold: false, align: "justify" });
+
+  /**
+   * Put the definition form back on a row's own values. The table is re-read
+   * after every applied edit, undo and file switch, so a seed taken at click
+   * time describes a style that has since changed: after Apply the form would
+   * offer to re-send the value it just replaced, and undo would leave it
+   * showing a value the document no longer carries.
+   */
+  const seedFrom = useCallback((item: StyleInfo): void => {
+    const char = item.attrs.char;
+    const para = item.attrs.para;
+    const seeded: Seed = {
+      size: char === undefined ? "" : String(char.size_pt),
+      font: (char === undefined ? undefined : firstFace(item.attrs)) ?? "",
+      bold: char === undefined ? false : char.bold,
+      align: para === undefined ? "justify" : alignmentOf(para.alignment),
+    };
+    setSeed(seeded);
+    setSize(seeded.size);
+    setFont(seeded.font);
+    setBold(seeded.bold);
+    setAlign(seeded.align);
+    setSpacing("");
+  }, []);
+
+  // Every hook sits above the capability returns: a host that answers its
+  // capabilities a beat late would otherwise change the hook count mid-mount.
+  useEffect(() => {
+    if (selectedId === null) return;
+    const named = styles?.styles.find((item) => item.id === selectedId);
+    if (named !== undefined) {
+      seedFrom(named);
+      return;
+    }
+    // The highlight names a row this table does not carry. While a read is in
+    // flight (`styles === null`) the rows are simply not here yet, so the
+    // highlight stays; once a table has arrived without it, the style is gone.
+    if (styles !== null) setSelectedId(null);
+  }, [seedFrom, selectedId, styles]);
+
+  // Another FILE retires the highlight: an id belongs to the document it was
+  // read from, and the next document's row with the same id is another style.
+  // An edit keeps the host's file, so it keeps the highlight and the re-seed
+  // above follows the values.
+  useEffect(() => {
+    setSelectedId(null);
+  }, [fileName]);
 
   // Before 1.4.0 the command family does not exist. Each way of not having it
   // names its own cause and its own next step: a host still being asked, an
@@ -163,20 +211,7 @@ export function StylesPanel(): JSX.Element {
    */
   const choose = (item: StyleInfo): void => {
     setSelectedId(item.id);
-    const char = item.attrs.char;
-    const para = item.attrs.para;
-    const seeded: Seed = {
-      size: char === undefined ? "" : String(char.size_pt),
-      font: (char === undefined ? undefined : firstFace(item.attrs)) ?? "",
-      bold: char === undefined ? false : char.bold,
-      align: para === undefined ? "justify" : alignmentOf(para.alignment),
-    };
-    setSeed(seeded);
-    setSize(seeded.size);
-    setFont(seeded.font);
-    setBold(seeded.bold);
-    setAlign(seeded.align);
-    setSpacing("");
+    seedFrom(item);
     if (envelope === null || item.used_by.length === 0) return;
     const refs = item.used_by.flatMap((id) => {
       // The id is the whole coordinate; `section`/`para` are placeholders the
@@ -319,9 +354,15 @@ export function StylesPanel(): JSX.Element {
       ...presetStyleOps(styles, preset, envelope),
       { kind: "style-tables", preset },
     ];
+    const before = state.document;
     let unstyled = false;
+    let changed = false;
     void replaceDocument(async (current) => {
-      const styled = await engine.edit(current, batch, { verify: true });
+      // The options travel through the shared rule rather than being spelled
+      // here: a host-supplied engine that never saw `presetBatchOptions`
+      // answers such a batch with no readable report, which the reader below
+      // then refuses as an unknowable outcome.
+      const styled = await engine.edit(current, batch, presetBatchOptions(batch, { verify: true }));
       const reading = readPresetBatch(styled.report);
       // The transports refuse this themselves; a host that supplies its own
       // engine may not, and the caller here is the one that knows the batch is
@@ -330,9 +371,19 @@ export function StylesPanel(): JSX.Element {
         throw new HwpEngineError(reading.refusal.code, reading.refusal.message);
       }
       unstyled = reading.unstyledTable;
+      changed = !reading.unchanged;
       return reading.unchanged ? current : styled;
     })
-      .then((applied) => { if (applied && unstyled) noteNotice(t("styles.noTableToStyle")); })
+      .then((applied) => {
+        if (!unstyled) return;
+        // Only when this attempt still owns the document: an unchanged switch
+        // leaves the one it started from, and a result a load superseded says
+        // nothing about the document now on screen.
+        if (!applied && store.getState().document !== before) return;
+        // A switch that changed nothing says so too: a second press on a
+        // table-less document would otherwise look like a dead button.
+        noteNotice(t(changed ? "styles.noTableToStyle" : "styles.noTableToStyleNoChange"));
+      })
       .catch(() => undefined);
   };
 

@@ -511,6 +511,9 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         return Promise.resolve();
       }
       const generation = loadGeneration.current;
+      // A new attempt retires the previous attempt's notice: "this document
+      // has no table to style" describes the document this edit is moving.
+      setNotice(null);
       store.dispatch({ type: "applyStarted" });
       // The stack `applyStarted` staged, so a drop can tell whether this
       // attempt's transaction is still the one the store holds.
@@ -882,6 +885,10 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       const previous = snapshot.snapshots[snapshot.snapshots.length - 1];
       if (snapshot.status === "applying" || previous === undefined) return Promise.resolve();
       return (async () => {
+        // Undo moves to another document, so the previous attempt's notice
+        // ("this document has no table to style") describes a state that no
+        // longer holds.
+        setNotice(null);
         try {
           // BUG-02: the badge described the document being undone away, so
           // re-validate the restored one. Same shape as applyPendingOps; a
@@ -937,6 +944,13 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     const loadEpoch = useCallback(() => loadGeneration.current, []);
 
     /**
+     * The sentence a failed table read put on the notice line, captured as it
+     * was recorded: the notice holds text, so the read that finally succeeds
+     * compares against the words that went up rather than the locale's current
+     * ones, and a locale switch between the two reads still retires it.
+     */
+    const stylesFailureSentence = useRef("");
+    /**
      * Read the named styles once per document. Every applied edit, undo and
      * new file replaces `state.document`, which is the only signal that makes
      * the table stale; a host without `styles` (or an engine below 1.4.0,
@@ -950,7 +964,12 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       }
       let cancelled = false;
       engine.styles(document).then(
-        (table) => { if (!cancelled) setStylesLoad({ document, table, failed: false }); },
+        (table) => {
+          if (cancelled) return;
+          setStylesLoad({ document, table, failed: false });
+          // The read that works ends the condition the failure described.
+          setNotice((current) => (current === stylesFailureSentence.current ? null : current));
+        },
         (error: unknown) => {
           if (cancelled) return;
           // The document stays editable: what failed is the table the Styles
@@ -958,7 +977,9 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           // failure is recorded against its document, so the tab can name the
           // cause rather than looking like a read that never finished.
           setStylesLoad({ document, table: null, failed: true });
-          noteNotice(t("styles.loadFailed"), error);
+          const sentence = t("styles.loadFailed");
+          stylesFailureSentence.current = sentence;
+          noteNotice(sentence, error);
         },
       );
       return () => { cancelled = true; };
@@ -989,6 +1010,10 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         openCompose,
         loadEpoch,
         t,
+        // The host's own file, named: an applied edit replaces the document
+        // handle but not this, so a panel can tell "the same document, edited"
+        // from "another document".
+        fileName: file?.name ?? null,
         // Always defined now, and stable: a widening, since every consumer
         // already calls it as `onError?.(e)` and it no-ops when the host
         // supplied no callback. The payload is unchanged.
@@ -1012,6 +1037,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         openCompose,
         loadEpoch,
         t,
+        file,
       ],
     );
 

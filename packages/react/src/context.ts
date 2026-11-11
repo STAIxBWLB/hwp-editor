@@ -88,6 +88,12 @@ export interface HwpEditorContextValue {
    */
   noteNotice: (text: string, error?: unknown) => void;
   /**
+   * The file the host handed over, by name. An applied edit replaces the
+   * document handle but keeps this, so a panel can tell the same document after
+   * an edit from another document: a style id means different styles in each.
+   */
+  fileName: string | null;
+  /**
    * Message lookup bound to the active locale and host overrides. Every
    * panel localizes through this one channel; a panel that cannot reach `t`
    * cannot be localized at all.

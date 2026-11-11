@@ -147,6 +147,12 @@ function styleEngine(
     styles?: boolean;
     version?: string;
     table?: StyleTable;
+    /**
+     * Per-read tables, the last repeating. The panel re-reads after every
+     * applied edit, undo and file switch, so a test that pins what the form is
+     * re-seeded from has to say what each read answers.
+     */
+    tables?: StyleTable[];
     report?: EditReport;
     /** The envelope the panel reads, when a test needs shapes the default lacks. */
     envelope?: CatEnvelope;
@@ -176,8 +182,12 @@ function styleEngine(
     },
     styles: async (document) => {
       styleReads.push(document);
-      const held = opts.pending?.[styleReads.length - 1];
-      return held === undefined ? (opts.table ?? TABLE) : await held;
+      const at = styleReads.length - 1;
+      const held = opts.pending?.[at];
+      if (held !== undefined) return await held;
+      const tables = opts.tables;
+      if (tables !== undefined && tables.length > 0) return tables[Math.min(at, tables.length - 1)]!;
+      return opts.table ?? TABLE;
     },
     edit: async (document, ops, options) => {
       edits.push({ ops, options });
@@ -209,6 +219,21 @@ describe.each([["en", en], ["ko", ko]] as const)("styles tab (%s)", (locale, mes
     // Nothing is read and no control is offered: the tab is a sentence.
     expect(styleReads).toHaveLength(0);
     expect(screen.queryByRole("button", { name: messages["styles.presetSubmit"] })).toBeNull();
+  });
+
+  /**
+   * n8: an engine that answers no version at all is still below the floor, and
+   * the sentence has to end with what to do rather than trail off after "this
+   * engine reports .".
+   */
+  it("names the upgrade as the next step when the engine reports no version", async () => {
+    const { engine } = styleEngine({ styles: false, version: "" });
+    renderEditor(engine, locale);
+    fireEvent.click(await screen.findByRole("tab", { name: messages["tabs.styles"] }));
+    const sentence = messages["styles.unavailable"]({ version: "" });
+    expect(await screen.findByText(sentence)).toBeTruthy();
+    expect(sentence).toContain("1.4.0");
+    expect(document.body.textContent ?? "").not.toMatch(/reports\s*\./);
   });
 
   /**
@@ -386,6 +411,9 @@ describe("styles tab operations (en)", () => {
       },
       { kind: "style-tables", preset: "official" },
     ]);
+    // n10: the options travel through the shared rule, so a host-supplied
+    // engine is asked for the report the outcome is read from.
+    expect(harness.edits[0]!.options).toMatchObject({ verify: true, allowPartial: true, report: true });
     // One replacement, therefore one snapshot: undo returns the document the
     // switch started from in a single step.
     const undo = await screen.findByRole("button", { name: en["toolbar.revert"] });
@@ -655,6 +683,150 @@ describe("styles tab operations (en)", () => {
   });
 
   /**
+   * n9: a notice describes a state, so it goes when that state does. Undo
+   * returns the document the "no table to style" sentence was about, and the
+   * read that finally works retires the sentence a failed read put up.
+   */
+  it("retires the no-table notice when undo returns the other document", async () => {
+    const harness = await openPanel(styleEngine({ report: presetReport("failed") }));
+    fireEvent.click(screen.getByRole("button", { name: en["styles.presetSubmit"] }));
+    expect(await screen.findByText(en["styles.noTableToStyle"])).toBeTruthy();
+
+    const undo = screen.getByRole("button", { name: en["toolbar.revert"] }) as HTMLButtonElement;
+    await waitFor(() => expect(undo.disabled).toBe(false));
+    fireEvent.click(undo);
+    await waitFor(() => expect(screen.queryByText(en["styles.noTableToStyle"])).toBeNull());
+    expect(harness.edits).toHaveLength(1);
+  });
+
+  /**
+   * t12-a13. The table is re-read after every applied edit, undo and file
+   * switch, so a seed taken at click time describes a style that has since
+   * changed. Apply would offer to re-send the value it just replaced, and undo
+   * would leave the form showing a value the document no longer carries.
+   */
+  it("re-seeds the definition form from the style after Apply and after undo", async () => {
+    const at = (sizePt: number): StyleTable => ({
+      version: "1.0",
+      styles: TABLE.styles.map((row) => row.id === BODY_ID
+        ? { ...row, attrs: { ...row.attrs, char: { ...row.attrs.char!, size_pt: sizePt } } }
+        : row),
+    });
+    // Read 1 is the document as loaded, read 2 the one the edit produced, read
+    // 3 the one undo restored.
+    const harness = await openPanel(styleEngine({ tables: [at(12), at(14), at(12)] }));
+    fireEvent.click(await screen.findByRole("button", { name: /바탕글/ }));
+    const size = () => screen.getByLabelText(en["styles.size"]) as HTMLInputElement;
+    const button = () => screen.getByRole("button", { name: en["styles.updateSubmit"] }) as HTMLButtonElement;
+    expect(size().value).toBe("12");
+    expect(button().disabled).toBe(true);
+
+    fireEvent.change(size(), { target: { value: "14" } });
+    expect(button().disabled).toBe(false);
+    fireEvent.click(button());
+    await applyQueued(harness, 1);
+
+    // After Apply the form is on the row's new value, and an untouched form
+    // offers nothing: with the stale 12 seed this button would still say the
+    // user changed something, and typing 12 back would be a no-op.
+    await waitFor(() => expect(size().value).toBe("14"));
+    expect(button().disabled).toBe(true);
+    fireEvent.change(size(), { target: { value: "12" } });
+    expect(button().disabled).toBe(false);
+    fireEvent.click(button());
+    fireEvent.click(await screen.findByRole("button", { name: en["toolbar.applyWithCount"]({ count: 1 }) }));
+    await waitFor(() => expect(harness.edits).toHaveLength(2));
+    expect(harness.edits[1]!.ops).toEqual([{ kind: "update-style", style: BODY_ID, size: "12" }]);
+
+    // Undo takes the style back to 12, and the form follows it there.
+    const undo = screen.getByRole("button", { name: en["toolbar.revert"] }) as HTMLButtonElement;
+    await waitFor(() => expect(undo.disabled).toBe(false));
+    fireEvent.click(undo);
+    await waitFor(() => expect(size().value).toBe("12"));
+    expect(button().disabled).toBe(true);
+  });
+
+  /**
+   * t12-a13. A style id belongs to the document it was read from: the next
+   * document's row with the same id is another style, so a switch to another
+   * file takes the highlight with it instead of reusing the old seed.
+   */
+  it("clears the highlight when the file switches", async () => {
+    const harness = styleEngine({ tables: [TABLE, TABLE] });
+    const view = renderEditor(harness.engine);
+    fireEvent.click(await screen.findByRole("tab", { name: en["tabs.styles"] }));
+    fireEvent.click(await screen.findByRole("button", { name: /바탕글/ }));
+    expect(screen.getByLabelText(en["styles.size"])).toBeTruthy();
+
+    view.rerender(
+      <HwpEditor engine={harness.engine} file={{ name: "y.hwpx", data: new Uint8Array([2]) }} locale="en" />,
+    );
+
+    // The same id is in the new document's table, and it is another style: the
+    // highlight is gone rather than carrying the previous file's seed.
+    await waitFor(() => expect(
+      screen.getByRole("button", { name: /바탕글/ }).getAttribute("aria-pressed"),
+    ).toBe("false"));
+    expect(screen.queryByLabelText(en["styles.size"])).toBeNull();
+  });
+
+  /**
+   * t12-a13, the other half of the same rule: a later read that no longer
+   * carries the highlighted id means the style is gone from this document, so
+   * the selection goes with it. The row is absent from the list either way;
+   * what the selection decides is whether the form reopens on the id when a
+   * following read carries it again, for a style the user has not chosen in
+   * that state of the document.
+   */
+  it("clears the highlight when the table no longer carries the style", async () => {
+    const withoutBody: StyleTable = {
+      version: "1.0",
+      styles: TABLE.styles.filter((row) => row.id !== BODY_ID),
+    };
+    const harness = await openPanel({ ...styleEngine({ tables: [TABLE, withoutBody, TABLE] }) });
+    fireEvent.click(await screen.findByRole("button", { name: /바탕글/ }));
+    fireEvent.change(screen.getByLabelText(en["styles.size"]), { target: { value: "14" } });
+    fireEvent.click(screen.getByRole("button", { name: en["styles.updateSubmit"] }));
+    await applyQueued(harness, 1);
+    await waitFor(() => expect(screen.queryByRole("button", { name: /바탕글/ })).toBeNull());
+    expect(screen.queryByLabelText(en["styles.size"])).toBeNull();
+
+    // Undo returns a table that carries the id again. The highlight was
+    // retired when the row went, so the form stays closed.
+    const undo = screen.getByRole("button", { name: en["toolbar.revert"] }) as HTMLButtonElement;
+    await waitFor(() => expect(undo.disabled).toBe(false));
+    fireEvent.click(undo);
+    const body = await screen.findByRole("button", { name: /바탕글/ });
+    expect(body.getAttribute("aria-pressed")).toBe("false");
+    expect(screen.queryByLabelText(en["styles.size"])).toBeNull();
+  });
+
+  /**
+   * n11: a press that cannot do anything still has to answer. A table-less
+   * document says so on every press, and a document with no paragraph style
+   * sends the preset alone.
+   */
+  it("says nothing changed when a table-less document's preset is pressed again", async () => {
+    await openPanel(styleEngine({ report: presetReport("failed", 0) }));
+    fireEvent.click(screen.getByRole("button", { name: en["styles.presetSubmit"] }));
+    expect(await screen.findByText(en["styles.noTableToStyleNoChange"])).toBeTruthy();
+  });
+
+  it("sends the preset alone, and says so, when the document defines no paragraph style", async () => {
+    const table: StyleTable = {
+      version: "1.0",
+      styles: [{
+        id: 0, name: "강조", english_name: "", kind: "character", next_style: 0, attrs: ATTRS, used_by: ["p2"],
+      }],
+    };
+    const harness = await openPanel(styleEngine({ table, report: presetReport("failed") }));
+    fireEvent.click(await screen.findByRole("button", { name: en["styles.presetSubmit"] }));
+    await waitFor(() => expect(harness.edits).toHaveLength(1));
+    expect(harness.edits[0]!.ops).toEqual([{ kind: "style-tables", preset: "official" }]);
+    expect(await screen.findByText(en["styles.noTableToStyle"])).toBeTruthy();
+  });
+
+  /**
    * n7: a host that advertises the capability and hands over an engine object
    * with no `styles` to call used to sit on "Reading styles..." forever.
    */
@@ -690,5 +862,66 @@ describe("styles tab operations (en)", () => {
 
     release(TABLE);
     expect(await screen.findByRole("button", { name: /바탕글/ })).toBeTruthy();
+  });
+
+  /**
+   * n9: the failed-read sentence goes when a later read works, so the notice
+   * line never keeps describing a table that has since arrived.
+   */
+  it("retires the failed-read notice when a later read works", async () => {
+    const base = createMockEngine({ envelope: envelopeWithIds() });
+    let calls = 0;
+    const engine: HwpEngine = {
+      ...base,
+      capabilities: async () => ({ ...(await base.capabilities()), styles: "v1" as const }),
+      styles: async () => {
+        calls += 1;
+        if (calls === 1) throw new Error("read failed");
+        return TABLE;
+      },
+    };
+    const view = renderEditor(engine);
+    fireEvent.click(await screen.findByRole("tab", { name: en["tabs.styles"] }));
+    // The sentence sits on the notice line and in the panel; both are one
+    // condition, and both go when the read works.
+    await waitFor(() => expect(screen.getAllByText(en["styles.loadFailed"]).length).toBeGreaterThan(0));
+
+    view.rerender(
+      <HwpEditor engine={engine} file={{ name: "y.hwpx", data: new Uint8Array([2]) }} locale="en" />,
+    );
+    expect(await screen.findByRole("button", { name: /바탕글/ })).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText(en["styles.loadFailed"])).toBeNull());
+  });
+
+  /**
+   * n9, the case that only the styles read can end: the SAME document's table
+   * is read again - a host that changes the locale or the message overrides
+   * re-runs it - and this time it answers. No load or edit happened, so
+   * nothing else retires the sentence, and it was recorded in the previous
+   * locale's words.
+   */
+  it("retires the failed-read notice when a re-read of the same document works", async () => {
+    const base = createMockEngine({ envelope: envelopeWithIds() });
+    let calls = 0;
+    const engine: HwpEngine = {
+      ...base,
+      capabilities: async () => ({ ...(await base.capabilities()), styles: "v1" as const }),
+      styles: async () => {
+        calls += 1;
+        if (calls === 1) throw new Error("read failed");
+        return TABLE;
+      },
+    };
+    // One file object for both renders: the same document, so no load runs and
+    // the only thing that reads the table again is the locale change.
+    const file = { name: "x.hwpx", data: new Uint8Array([1]) };
+    const view = render(<HwpEditor engine={engine} file={file} locale="en" />);
+    fireEvent.click(await screen.findByRole("tab", { name: en["tabs.styles"] }));
+    await waitFor(() => expect(screen.getAllByText(en["styles.loadFailed"]).length).toBeGreaterThan(0));
+
+    view.rerender(<HwpEditor engine={engine} file={file} locale="ko" />);
+    await waitFor(() => expect(calls).toBe(2));
+    expect(await screen.findByRole("button", { name: /바탕글/ })).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText(en["styles.loadFailed"])).toBeNull());
   });
 });
