@@ -8,6 +8,7 @@
 import { describe, expect, it } from "vitest";
 import { argvToOps, opsToArgv, opsToJson, type EditOp } from "../src/ops.js";
 import { HwpEngineError } from "../src/errors.js";
+import type { Blocks } from "../src/generated/document-spec-v2.js";
 
 describe("opsToArgv", () => {
   it("serializes one --flag value pair per op, in order", () => {
@@ -533,6 +534,24 @@ describe("addressed edit-ops-v1", () => {
     expect(JSON.parse(opsToJson([{ kind: "set-format", address,
       props: { bold: "on", op: "delete_para", address: "bad", pattern: "all" } }]))).toEqual([
       { op: "set_format", address, bold: "on" },
+    ]);
+  });
+  /**
+   * edit-ops-v1 spells this arm `insert_blocks` with `position` (not `before`),
+   * and takes the component's blocks verbatim; measured on ahwp 1.6.0, whose
+   * parser rejects any other spelling before touching the document.
+   */
+  it("serializes insert-blocks with the blocks and the optional style policy", () => {
+    const blocks: Blocks = [{ type: "paragraph", runs: [{ type: "text", text: "요약" }] }];
+    expect(JSON.parse(opsToJson([{ kind: "insert-blocks", address, position: "after", blocks }]))).toEqual([
+      { op: "insert_blocks", address, position: "after", blocks },
+    ]);
+    expect(JSON.parse(opsToJson([{ kind: "insert-blocks", address, position: "before", blocks,
+      styles: { "요약표 머리": { based_on: "바탕글", bold: true } },
+      missingStyle: "refuse" }]))).toEqual([
+      { op: "insert_blocks", address, position: "before", blocks,
+        styles: { "요약표 머리": { based_on: "바탕글", bold: true } },
+        missing_style: "refuse" },
     ]);
   });
 });

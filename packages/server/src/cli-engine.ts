@@ -1,5 +1,5 @@
 import { createTemplateCommands } from "./template-engine.js";
-import { TEMPLATE_METHODS, templateVersionSupported, type TemplateInputs, type FillResult, type LintReport, type LintProfile, type EmbeddedTemplate, type TemplateSpecV1, type TemplateDataV1 } from "@hwp-editor/core";
+import { TEMPLATE_METHODS, templateVersionSupported, parseEditReport, type EditReport, type TemplateInputs, type FillResult, type LintReport, type LintProfile, type EmbeddedTemplate, type TemplateSpecV1, type TemplateDataV1 } from "@hwp-editor/core";
 /**
  * CliEngine — HwpEngine implementation that shells out to the hwp-cli binary.
  *
@@ -42,6 +42,7 @@ import {
   type DocumentSpecV2,
   type EditOp,
   type EditOptions,
+  type EditResult,
   type HwpEngine,
   type HwpErrorCode,
   type PageImage,
@@ -277,7 +278,7 @@ export interface CliEngine extends HwpEngine {
     ops: EditOp[],
     options?: EditOptions,
     call?: CliCallOptions,
-  ): Promise<DocumentHandle>;
+  ): Promise<EditResult>;
   compose(
     spec: DocumentSpecV2,
     name: string,
@@ -1263,19 +1264,35 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         const args = ["edit", input, "-o", output, "--ops", opsPath];
         if (options.verify !== false) args.push("--verify");
         if (options.allowPartial === true) args.push("--allow-partial");
+        // `--report` takes a path on `edit` (unlike compose's bare flag), and
+        // only this file names the segment ids an op created. Read before the
+        // work dir is removed; a truncated or absent file stays absent rather
+        // than becoming empty ids the caller could act on.
+        const reportPath = path.join(dir, "edit-report.json");
+        if (options.report === true) args.push("--report", reportPath);
         await runCliOk(bin, args, timeoutMs, opts.locale, call?.signal).catch(options.assets?.length
           ? error => rethrowUploadedImageFailure(error, ops.every(op => op.kind === "insert-image"))
           : rethrowProtected);
-        return new Uint8Array(await readFile(output));
+        const data = new Uint8Array(await readFile(output));
+        if (options.report !== true) return { name: document.name, data };
+        let report: EditReport | undefined;
+        try {
+          report = parseEditReport(JSON.parse(await readFile(reportPath, "utf8")));
+        } catch {
+          // A host that answers without a readable report is a host whose ids
+          // are unknown, not a failed edit: the document itself was published.
+          report = undefined;
+        }
+        return { name: document.name, data, ...(report === undefined ? {} : { report }) };
       });
       // Pre-edit snapshot keyed by the edited hash SALTED WITH THIS CALL'S
       // SCOPE: undo(edited, same scope) -> original, and no other scope.
-      snapshots.set(cacheKey(call?.scope, edited), { name: document.name, data: document.data });
+      snapshots.set(cacheKey(call?.scope, edited.data), { name: document.name, data: document.data });
       if (snapshots.size > 256) {
         const oldest = snapshots.keys().next().value;
         if (oldest !== undefined) snapshots.delete(oldest);
       }
-      return { name: document.name, data: edited };
+      return edited;
     },
 
     undo(document, call) {

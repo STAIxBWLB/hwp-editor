@@ -3,6 +3,7 @@ export type {
   ComposeResult,
   DocumentHandle,
   EditOptions,
+  EditResult,
   ImageAsset,
   HwpEngine,
   PageImage,
@@ -132,3 +133,6 @@ export {
   OFFICIAL_PROFILE,
 } from "./profiles.js";
 export type { DocumentProfile, ProfileName } from "./profiles.js";
+export { insertedParagraphIds, parseEditReport } from "./edit-report.js";
+export type { EditIdPair, EditOpOutcome, EditReport } from "./edit-report.js";
+export type { Blocks } from "./generated/document-spec-v2.js";

@@ -1,4 +1,5 @@
 import { parsePageLayout } from "./layout.js";
+import { parseEditReport } from "./edit-report.js";
 import { imageAssetMediaType, validateImageAssets } from "./assets.js";
 /**
  * HwpEngine client for the HTTP route contract defined in protocol.ts.
@@ -267,6 +268,7 @@ export function createHttpEngine(
       form.append("ops", JSON.stringify(ops));
       if (options.verify) form.append("verify", "true");
       if (options.allowPartial) form.append("allowPartial", "true");
+      if (options.report) form.append("report", "true");
       if (assets !== undefined) {
         for (const asset of assets) form.append("asset", new Blob([asset.data as BlobPart], { type: imageAssetMediaType(asset.data)! }), asset.name);
       }
@@ -274,7 +276,11 @@ export function createHttpEngine(
         method: "POST",
         body: form,
       });
-      return { name: res.name, data: fromBase64(res.dataBase64) };
+      return {
+        name: res.name,
+        data: fromBase64(res.dataBase64),
+        ...(res.report === undefined ? {} : { report: parseEditReport(res.report) }),
+      };
     },
 
     async compose(spec: DocumentSpecV2, name: string): Promise<ComposeResult> {
