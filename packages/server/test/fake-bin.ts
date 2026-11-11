@@ -136,7 +136,7 @@ export function createFakeBin(opts: FakeBinOptions = {}): { bin: string; log: ()
         : [`  cat) printf '%s' ${JSON.stringify(opts.catStdout)}; exit 0 ;;`]),
       ...(opts.info === undefined ? [] : [`  info) printf '%s' ${JSON.stringify(opts.info)}; exit 0 ;;`]),
       ...(opts.failTemplateCommand === undefined ? [] : [
-        `  slots) ${fail("slots").length ? fail("slots").join("; ") : "printf '%s' '{\"placeholders\":[],\"fields\":[]}'; exit 0"} ;;`,
+        `  slots) ${fail("slots").length ? fail("slots").join("; ") : opts.failTemplateCommand === "fill" ? "printf '%s' '{\"placeholders\":[{\"name\":\"title\",\"occurrences\":1}],\"fields\":[]}'; exit 0" : "printf '%s' '{\"placeholders\":[],\"fields\":[]}'; exit 0"} ;;`,
         `  fields) ${fail("fields").length ? fail("fields").join("; ") : opts.failTemplateCommand === "edit" ? "printf '%s' '[{\"name\":\"approval\",\"kind\":\"text\",\"ctrl_id\":\"1\",\"value\":\"\"}]'; exit 0" : "printf '%s' '[]'; exit 0"} ;;`,
         `  fill) ${fail("fill").length ? fail("fill").join("; ") : "printf '%s' '{\"replaced\":0,\"counts\":{}}'; exit 0"} ;;`,
         `  template) ${fail("template").length ? fail("template").join("; ") : "exit 0"} ;;`,
