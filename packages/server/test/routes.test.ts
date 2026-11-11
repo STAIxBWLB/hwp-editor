@@ -131,6 +131,50 @@ describe("routes (stub engine)", () => {
     expect(body.dataBase64).toBe(Buffer.from([9, 9, 9]).toString("base64"));
   });
 
+  /**
+   * The palette cannot select, reorder or remove what it inserted without the
+   * ids, and they exist only in `edit-report-v1`. The route must therefore
+   * forward the opt-in and carry the report, and must leave the field off —
+   * not empty — when nobody asked, so a client never mistakes `null` ids for
+   * "no segments were created".
+   */
+  it("POST /edit forwards the report opt-in and returns edit-report-v1", async () => {
+    // `output` is path-shaped on purpose: the engine writes the report for the
+    // `-o` path it was given, and that path is inside a work dir. A name must
+    // come back instead, or the response tells a caller where the server
+    // staged the document.
+    const staged = "/var/folders/tmp/hwp-editor-abc123/out.hwpx";
+    const report = {
+      schema_version: "1.0",
+      contract: "hwp-edit-report-v1" as const,
+      output: staged,
+      dry_run: false,
+      ops: [{ index: 0, op: "insert_blocks", status: "applied" as const, pieces_touched: 1,
+        changed: [{ before: null, after: "a84ac20e7a012e4a.0.2" }], reason: null,
+        missing_style: "create" as const }],
+      applied_count: 1,
+      failed_count: 0,
+    };
+    let asked: boolean | undefined;
+    const engine = stubEngine({
+      async edit(_doc, _ops, options) {
+        asked = options?.report;
+        return { name: "sample.hwpx", data: Uint8Array.from([9, 9, 9]), ...(options?.report ? { report } : {}) };
+      },
+    });
+    const handler = createHwpEditorHandler({ engine, sessions: false });
+    const res = await handler(multipartRequest(`${BASE}/edit`, { file: DOC, ops: "[]", report: "true" }));
+    expect(res.status).toBe(200);
+    expect(asked).toBe(true);
+    const answer = (await res.json()) as { report: typeof report };
+    expect(answer.report).toEqual({ ...report, output: "sample.hwpx" });
+    expect(JSON.stringify(answer)).not.toContain("/var/folders/tmp");
+
+    const off = createHwpEditorHandler({ engine, sessions: false });
+    const without = await off(multipartRequest(`${BASE}/edit`, { file: DOC, ops: "[]" }));
+    expect((await without.json()).report).toBeUndefined();
+  });
+
   it("POST /edit with malformed ops JSON is a 400", async () => {
     const handler = createHwpEditorHandler({ engine: stubEngine(), sessions: false });
     for (const bad of ["{nope", "{}", ""]) {

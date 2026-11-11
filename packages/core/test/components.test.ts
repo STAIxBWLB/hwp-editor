@@ -15,7 +15,9 @@ import { join, sep } from "node:path";
 import { describe, expect, it, afterAll } from "vitest";
 
 import {
+  componentStyleMap,
   documentSpecFromComponents,
+  isComponentError,
   loadComponents,
   STARTER_COMPONENTS,
   substituteParams,
@@ -817,14 +819,15 @@ describe("documentSpecFromComponents", () => {
   });
 
   it("refuses to redefine an official profile style, and accepts the same values", () => {
-    const redefining = validateComponent(
+    // Refused at validation, so the message carries the component's own file
+    // rather than its `name`; `componentStyleMap` never sees such a component.
+    expect(() => validateComponent(
       { ...BASE_COMPONENT, styles: { "바탕글": { bold: true } } },
       REFUSAL_SOURCE,
-    );
-    expect(() => documentSpecFromComponents([redefining])).toThrow(
-      "components: 시험: styles.바탕글: redefines the official profile's 바탕글, and a component " +
-        "takes profile values from the table rather than replacing them (#54 Decision " +
-        "2026-11-10); define your style under its own name with based_on 바탕글, then retry",
+    )).toThrow(
+      "components: src/components/broken.json: styles.바탕글: redefines the official profile's 바탕글, " +
+        "and a component takes profile values from the table rather than replacing them (#54 " +
+        "Decision 2026-11-10); define your style under its own name with based_on 바탕글, then retry",
     );
     const restating = validateComponent(
       { ...BASE_COMPONENT, styles: { "바탕글": { ...OFFICIAL_PROFILE["바탕글"] } } },
@@ -959,6 +962,30 @@ describe("documentSpecFromComponents", () => {
     expect(() => documentSpecFromComponents([component])).toThrow(
       /components: 시험: styles\.없음\.based_on: references style 없는 바탕, which no component defines/,
     );
+  });
+
+  it("carries the missing style's name beside the block path that named it", () => {
+    // The field is the block path, which does not spell the name it failed on,
+    // so the name travels as `value` and a localized sentence can print it
+    // without parsing the reason.
+    const component = validateComponent(
+      {
+        ...BASE_COMPONENT,
+        blocks: [{ type: "paragraph", style: "결재란 셀", runs: [{ type: "text", text: "가" }] }],
+      },
+      "시험",
+    );
+    let refusal: unknown;
+    try {
+      documentSpecFromComponents([component]);
+    } catch (error) {
+      refusal = error;
+    }
+    expect(isComponentError(refusal)).toBe(true);
+    if (!isComponentError(refusal)) throw refusal;
+    expect(refusal.code).toBe("component_style");
+    expect(refusal.field).toBe("blocks[0].style");
+    expect(refusal.value).toBe("결재란 셀");
   });
 });
 
@@ -1527,5 +1554,96 @@ describeBin("compose with the real hwp", () => {
 
   afterAll(() => {
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+/**
+ * The insertion side of the same resolver: `insert_blocks` takes a `styles`
+ * map and refuses a block whose style neither it nor the target defines, so a
+ * palette has to send every profile style its component references.
+ */
+describe("componentStyleMap", () => {
+  it("adds the profile styles a component references, through its based_on chain", () => {
+    const styles = componentStyleMap([substituteParams(starter("결재란"))]);
+    // Its own style, the profile style that style is based on, and nothing else:
+    // the map is what a bare target needs, not the whole profile table.
+    expect(Object.keys(styles).sort()).toEqual(["바탕글", "결재란 셀"].sort());
+    expect(styles["결재란 셀"]?.["based_on"]).toBe("바탕글");
+  });
+
+  it("takes profile values from the table rather than a component's copy", () => {
+    const styles = componentStyleMap([substituteParams(starter("붙임"))]);
+    expect(styles["바탕글"]).toEqual(OFFICIAL_PROFILE["바탕글"]);
+    // A copy, not the module's row: editing what a host gets back cannot reach
+    // the profile table.
+    const official = { ...OFFICIAL_PROFILE["바탕글"] };
+    const row = styles["바탕글"] as Record<string, unknown>;
+    row["font_size_pt"] = 999;
+    expect(row["font_size_pt"]).toBe(999);
+    expect(OFFICIAL_PROFILE["바탕글"]).toEqual(official);
+  });
+
+  it("refuses a profile redefinition where the component's own file is the source", () => {
+    // The refusal names what the user can open — the file or URL the component
+    // came from — rather than the component's `name`, which is one field inside
+    // that file (AC3). Validation is where the source is still known.
+    let refusal: unknown;
+    try {
+      validateComponent({
+        name: "시험",
+        description: "시험용 구성요소",
+        params: {},
+        styles: { "바탕글": { font_size_pt: 30 } },
+        blocks: [{ type: "paragraph", style: "바탕글", runs: [{ type: "text", text: "본문" }] }],
+      }, REFUSAL_SOURCE);
+    } catch (error) {
+      refusal = error;
+    }
+    expect(isComponentError(refusal)).toBe(true);
+    if (!isComponentError(refusal)) throw refusal;
+    expect(refusal.code).toBe("component_style");
+    expect(refusal.source).toBe(REFUSAL_SOURCE);
+    expect(refusal.field).toBe("styles.바탕글");
+    expect(refusal.reason).toContain("redefines the official profile's 바탕글");
+  });
+
+  it("refuses a profile redefinition from a component a host assembled in memory", () => {
+    // `componentStyleMap` takes a `Component` a host built itself, which never
+    // passed through `validatedStyle`; the merge applies the same rule, so one
+    // component's copy of a shared profile row cannot reach the engine.
+    let refusal: unknown;
+    try {
+      componentStyleMap([{
+        name: "시험",
+        description: "시험용 구성요소",
+        params: {},
+        styles: { "바탕글": { font_size_pt: 30 } },
+        blocks: [{ type: "paragraph", style: "바탕글", runs: [{ type: "text", text: "본문" }] }],
+      }]);
+    } catch (error) {
+      refusal = error;
+    }
+    expect(isComponentError(refusal)).toBe(true);
+    if (!isComponentError(refusal)) throw refusal;
+    expect(refusal.code).toBe("component_style");
+    expect(refusal.source).toBe("시험");
+    expect(refusal.field).toBe("styles.바탕글");
+    expect(refusal.reason).toContain("redefines the official profile's 바탕글");
+  });
+
+  it("codes a param refusal apart from a shape refusal, so a host can localize it", () => {
+    try {
+      substituteParams(starter("결재란"), { "없는 값": "x" });
+    } catch (error) {
+      expect(isComponentError(error)).toBe(true);
+      if (!isComponentError(error)) throw error;
+      expect(error.code).toBe("component_param");
+      expect(error.field).toBe("params.없는 값");
+      // The one-line form every existing caller logs is unchanged.
+      expect(error.message).toBe(
+        "components: 결재란: params.없는 값: is not a param of this component; use one of its " +
+          "declared params, or add the param to the component, then retry",
+      );
+    }
   });
 });

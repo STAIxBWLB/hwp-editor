@@ -1,6 +1,7 @@
 import type { TemplateDataV1, TemplateSpecV1 } from "./spec.js";
 import type { EmbeddedTemplate, FillResult, LintProfile, LintReport, TemplateInputs, TemplateMethod } from "./templates.js";
 import type { EditOp } from "./ops.js";
+import type { EditReport } from "./edit-report.js";
 import type { CatEnvelope } from "./segments.js";
 import type { DocumentSpecV2 } from "./generated/document-spec-v2.js";
 
@@ -63,6 +64,21 @@ export interface EditOptions {
   allowPartial?: boolean;
   /** Image bytes referenced by insert-image operations. */
   assets?: ImageAsset[];
+  /**
+   * Ask the engine for `edit-report-v1` (`hwp edit --report <FILE>`, hwp-cli
+   * 1.4.0+). Only this report names the segment ids an insertion created, so a
+   * caller that will reorder or remove what it inserted has to ask for it.
+   */
+  report?: boolean;
+}
+
+/**
+ * An edited document, plus the report when one was asked for and returned. The
+ * report stays optional because an older host answers without one; a consumer
+ * must then treat the inserted ids as unknown rather than guess them.
+ */
+export interface EditResult extends DocumentHandle {
+  report?: EditReport;
 }
 
 export interface Capabilities {
@@ -121,7 +137,7 @@ export interface HwpEngine {
     document: DocumentHandle,
     ops: EditOp[],
     options?: EditOptions,
-  ): Promise<DocumentHandle>;
+  ): Promise<EditResult>;
   /** Compose a document from DocumentSpec v2 (`hwp compose`). */
   compose(spec: DocumentSpecV2, name: string): Promise<ComposeResult>;
   /** Structural validation (`hwp validate`). */

@@ -1,4 +1,6 @@
 import { parsePageLayout } from "./layout.js";
+import { parseEditReport } from "./edit-report.js";
+import type { EditReport } from "./edit-report.js";
 import { imageAssetMediaType, validateImageAssets } from "./assets.js";
 /**
  * HwpEngine client for the HTTP route contract defined in protocol.ts.
@@ -267,6 +269,7 @@ export function createHttpEngine(
       form.append("ops", JSON.stringify(ops));
       if (options.verify) form.append("verify", "true");
       if (options.allowPartial) form.append("allowPartial", "true");
+      if (options.report) form.append("report", "true");
       if (assets !== undefined) {
         for (const asset of assets) form.append("asset", new Blob([asset.data as BlobPart], { type: imageAssetMediaType(asset.data)! }), asset.name);
       }
@@ -274,7 +277,23 @@ export function createHttpEngine(
         method: "POST",
         body: form,
       });
-      return { name: res.name, data: fromBase64(res.dataBase64) };
+      // Parsed only when the caller asked for it, and an unreadable answer is
+      // dropped rather than failing an edit whose document was published: the
+      // same rule the Tauri engine applies, so both transports answer one
+      // shape for one request.
+      let report: EditReport | undefined;
+      if (options.report === true && res.report !== undefined) {
+        try {
+          report = parseEditReport(res.report);
+        } catch {
+          report = undefined;
+        }
+      }
+      return {
+        name: res.name,
+        data: fromBase64(res.dataBase64),
+        ...(report === undefined ? {} : { report }),
+      };
     },
 
     async compose(spec: DocumentSpecV2, name: string): Promise<ComposeResult> {

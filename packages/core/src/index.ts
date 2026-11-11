@@ -3,6 +3,7 @@ export type {
   ComposeResult,
   DocumentHandle,
   EditOptions,
+  EditResult,
   ImageAsset,
   HwpEngine,
   PageImage,
@@ -57,7 +58,7 @@ export {
   validateProjectedMetadata,
 } from "./segments.js";
 export type { CatEnvelope, DirectChar, DirectPara, Segment, SegmentKind, SegmentRef } from "./segments.js";
-export { compareSegments, formatAddresses, paragraphAddress, paragraphRuns, resolveSelection, segmentPath, selectedParagraphs, selectSimilar, selectionAction } from "./selection.js";
+export { compareSegments, formatAddresses, isSectionDefinitionParagraph, paragraphAddress, paragraphRuns, resolveSelection, segmentPath, selectedParagraphs, selectSimilar, selectionAction } from "./selection.js";
 export type { SelectionRefusal, SelectionTargets } from "./selection.js";
 export type {
   DocumentSpecV2,
@@ -108,14 +109,18 @@ export { parsePageLayout, parseRenderLayouts, RENDER_LAYOUT_NEXT_STEP } from "./
 export { TEMPLATE_MIN_VERSION, TEMPLATE_METHODS, templateVersionSupported, parseTemplateInputs, parseTemplateReport, parseFillReport, parseLintReport, parseEmbeddedTemplates, parseTemplateMethods, reportObject, reportString, reportSchemaVersion, reportCount, reportArray } from "./templates.js";
 export type { TemplateReport, EmbeddedTemplate, FillReport, FillResult, LintFinding, LintProfile, LintReport, TemplateInput, TemplateInputs, TemplateMethod } from "./templates.js";
 export {
+  componentStyleMap,
   documentSpecFromComponents,
+  isComponentError,
   loadComponents,
   STARTER_COMPONENTS,
   substituteParams,
   validateComponent,
 } from "./components.js";
+export { ComponentError } from "./components.js";
 export type {
   Component,
+  ComponentErrorCode,
   ComponentFetch,
   ComponentFetchResponse,
   ComponentIndex,
@@ -132,3 +137,12 @@ export {
   OFFICIAL_PROFILE,
 } from "./profiles.js";
 export type { DocumentProfile, ProfileName } from "./profiles.js";
+export {
+  EDIT_REPORT_MIN_VERSION,
+  editReportSupported,
+  insertedParagraphIds,
+  parseEditReport,
+  withCallerName,
+} from "./edit-report.js";
+export type { EditIdPair, EditOpOutcome, EditReport } from "./edit-report.js";
+export type { Blocks } from "./generated/document-spec-v2.js";

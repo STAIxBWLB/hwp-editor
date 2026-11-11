@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compareSegments, formatAddresses, paragraphAddress, resolveSelection, segmentPath, selectSimilar, selectionAction, selectedParagraphs } from "../src/selection.js";
+import { compareSegments, formatAddresses, isSectionDefinitionParagraph, paragraphAddress, resolveSelection, segmentPath, selectSimilar, selectionAction, selectedParagraphs } from "../src/selection.js";
 import type { CatEnvelope, Segment } from "../src/segments.js";
 import { initialState, reducer } from "../src/state.js";
 
@@ -368,5 +368,24 @@ describe("selection helpers", () => {
     expect(formatAddresses({ markdown: "hello", segments: [topPara, topRun] }, [topPara])).toEqual([
       { at: { section: 0, paragraph: 3, run: 2 } },
     ]);
+  });
+
+  it("classifies a section's definition paragraph by position, not by text", () => {
+    // Body paragraph 0 of every section carries SectionDef: the engine will not
+    // move it and refuses an insertion before it. It reads as an ordinary
+    // (usually empty) paragraph, so the index is the only signal.
+    const definition: Segment = { id: "def", indices: [0], start: 0, end: 0, kind: "para", section: 0, para: 0 };
+    const body: Segment = { id: "body", indices: [1], start: 0, end: 3, kind: "para", section: 0, para: 1 };
+    const otherSection: Segment = { id: "def2", indices: [0], start: 0, end: 0, kind: "para", section: 1, para: 0 };
+    const inCell: Segment = { id: "cell-p", indices: [1, 0, 0, 0], start: 0, end: 3, kind: "para", section: 0, para: 1 };
+    const run: Segment = { id: "run", indices: [0, 0], start: 0, end: 3, kind: "run", section: 0, para: 0 };
+    const legacy: Segment = { start: 0, end: 3, kind: "para", section: 0, para: 0 };
+    expect(isSectionDefinitionParagraph(definition)).toBe(true);
+    expect(isSectionDefinitionParagraph(otherSection)).toBe(true);
+    expect(isSectionDefinitionParagraph(body)).toBe(false);
+    // A cell's first paragraph is nested, and its host index is not its own.
+    expect(isSectionDefinitionParagraph(inCell)).toBe(false);
+    expect(isSectionDefinitionParagraph(run)).toBe(false);
+    expect(isSectionDefinitionParagraph(legacy)).toBe(false);
   });
 });

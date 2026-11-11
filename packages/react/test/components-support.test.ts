@@ -1,0 +1,254 @@
+/**
+ * The two localization boundaries the palette owns, tested directly rather
+ * than through the DOM so every branch of the sentence has an assertion.
+ *
+ * - An `insert_blocks` width refusal becomes a sentence naming the widths the
+ *   failure measured. Three of them exist because the numbers arrive
+ *   independently: the server summary carries both, a host wired in process
+ *   carries the engine's body width but not the block's, and a refusal with
+ *   neither is still a sentence a user can act on. A blank where a width
+ *   belongs is the bug this pins against.
+ * - The server's two other `insert_blocks` classes — a style the document
+ *   lacks, and a definition the engine rejected without naming a field — each
+ *   become their own sentence, in both locales, with the engine's classified
+ *   tail left on `detail`.
+ * - A `ComponentError` becomes a whole sentence in the user's locale, next
+ *   step included, while the engine-side English reason survives on `detail`.
+ */
+import { describe, expect, it } from "vitest";
+import { ComponentError, HwpEngineError } from "@hwp-editor/core";
+import type { Blocks, ComponentErrorCode } from "@hwp-editor/core";
+
+import { componentFailure, insertionFailure } from "../src/components-support.js";
+import { createT } from "../src/messages.js";
+import type { MessageKey } from "../src/messages.js";
+
+const en = createT("en");
+const ko = createT("ko");
+
+/** A 120 mm table: the widest block the component would insert. */
+const WIDE: Blocks = [{
+  type: "table",
+  width_mm: 120,
+  columns: [{ width_mm: 60 }, { width_mm: 60 }],
+  rows: [{ cells: [{ blocks: [{ type: "paragraph", runs: [{ type: "text", text: "결재" }] }] }] }],
+}];
+
+/** Blocks that carry no measurable width at all. */
+const UNMEASURED: Blocks = [{ type: "paragraph", runs: [{ type: "text", text: "붙임" }] }];
+
+/** What the CLI server's classification puts in the message (no paths). */
+const serverSummary = (widths: boolean): string =>
+  `hwp edit failed (exit 1): insert_blocks refused: layout_overflow${widths
+    ? " (block 120 mm, insertion point 46.4 mm)"
+    : ""}`;
+
+/** The engine's own text when a host runs in process: body width, no block width. */
+const engineText =
+  "Error: insert_blocks 블록/스타일/목록 정의가 유효하지 않습니다: layout_overflow at " +
+  "$.sections[0].blocks[0].width_mm: table width exceeds body width 46.40 mm.";
+
+function overflow(message: string): HwpEngineError {
+  return new HwpEngineError("failed", message, { status: 422 });
+}
+
+describe("insertionFailure", () => {
+  it("names both widths, and keeps the engine code, status and cause", () => {
+    const error = overflow(serverSummary(true));
+    const shown = insertionFailure(error, WIDE, en) as Error & { detail?: string };
+
+    expect(shown.message).toBe(en("components.tooWide", { width: "120 mm", available: "46.4 mm" }));
+    expect((shown as { code?: string }).code).toBe("failed");
+    expect((shown as { status?: number }).status).toBe(422);
+    expect((shown as { cause?: unknown }).cause).toBe(error);
+    // The engine's own diagnostic stays for a log, not for the sentence.
+    expect(shown.detail).toContain("layout_overflow");
+  });
+
+  it("reads the engine's own body width when a host runs in process", () => {
+    const shown = insertionFailure(overflow(engineText), WIDE, en) as Error;
+
+    // Same sentence as the server summary's: the body width is the number
+    // that decides the refusal, whichever transport spelled it.
+    expect(shown.message).toBe(en("components.tooWide", { width: "120 mm", available: "46.4 mm" }));
+  });
+
+  it("names the block width alone when the refusal carries no body width", () => {
+    const shown = insertionFailure(overflow(serverSummary(false)), WIDE, en) as Error;
+
+    expect(shown.message).toBe(en("components.tooWideUnmeasured", { width: "120 mm" }));
+    expect(shown.message).toContain("120 mm");
+    expect(shown.message).not.toContain("only");
+  });
+
+  it("still says something actionable when neither width is known", () => {
+    const shown = insertionFailure(overflow(serverSummary(false)), UNMEASURED, en) as Error;
+
+    expect(shown.message).toBe(en("components.tooWideUnknown"));
+    // No placeholder survived as an empty slot: the sentence ends on a step.
+    expect(shown.message).not.toMatch(/is\s*[.,]|:\s*$/);
+  });
+
+  it("wraps a cause it cannot classify in one localized frame", () => {
+    // The frame names both things a caller can vary; the engine's own line
+    // rides inside it rather than replacing it.
+    const error = new HwpEngineError(
+      "failed",
+      "hwp edit failed (exit 1): 구역 정의 문단 앞에는 삽입할 수 없습니다",
+    );
+    const shown = insertionFailure(error, WIDE, en) as Error & { detail?: string; code?: string };
+
+    expect(shown.message).toBe(en("components.insertionRefused", { reason: "구역 정의 문단 앞에는 삽입할 수 없습니다" }));
+    expect(shown.message).toContain("Check the component and the insertion point, then retry.");
+    expect(shown.detail).toContain("exit 1");
+    expect(shown.code).toBe("failed");
+  });
+
+  it("strips the Tauri transport's own prefixes from the cause", () => {
+    // The bridge refuses with maru's prefix over the engine's own, so the
+    // frame would read as one long chain if the reason were not the last link.
+    const error = new HwpEngineError(
+      "failed",
+      "hwped_edit failed: hwp_failed: Error: insert_blocks 구역 정의 문단 앞에는 삽입할 수 없습니다",
+    );
+    const shown = insertionFailure(error, WIDE, en) as Error;
+
+    expect(shown.message).toBe(
+      en("components.insertionRefused", { reason: "구역 정의 문단 앞에는 삽입할 수 없습니다" }),
+    );
+  });
+
+  it("keeps one line of a multi-line engine refusal", () => {
+    // The frame prints a cause, not a transcript: the engine's first line is
+    // the failure and the rest is context.
+    const error = new HwpEngineError(
+      "failed",
+      "hwped_edit failed: hwp_failed: Error: insert_blocks 구역 정의 문단 앞에는 삽입할 수 없습니다\n" +
+        "Caused by: 0: layout at /tmp/x.hwpx",
+    );
+    const shown = insertionFailure(error, WIDE, en) as Error;
+
+    expect(shown.message).toBe(
+      en("components.insertionRefused", { reason: "구역 정의 문단 앞에는 삽입할 수 없습니다" }),
+    );
+    expect(shown.message).not.toContain("Caused by");
+  });
+
+  it("leaves a failure that is not a refusal with the handling it has", () => {
+    // A timeout is not the engine refusing this component, so it keeps its own
+    // badge and message rather than being relabelled.
+    const error = new HwpEngineError("timeout", "hwp edit failed (exit 124)");
+    expect(insertionFailure(error, WIDE, en)).toBe(error);
+  });
+
+  /**
+   * The two other classes the CLI server names. Its summary is all a caller
+   * receives — the raw stderr names the staged input file — so each class has
+   * to become a whole sentence here, next step included, in both locales.
+   */
+  it("names the style the target document lacks", () => {
+    const error = overflow(
+      "hwp edit failed (exit 1): insert_blocks refused: unknown_style; 결재란 셀",
+    );
+    const shown = insertionFailure(error, WIDE, ko) as Error & { detail?: string; code?: string };
+
+    expect(shown.message).toBe(ko("components.unknownStyle", { style: "결재란 셀" }));
+    expect(shown.message).toContain("결재란 셀");
+    // The engine's classified tail stays technical detail, not the sentence.
+    expect(shown.detail).toContain("insert_blocks refused: unknown_style");
+    expect((shown as { code?: string }).code).toBe("failed");
+  });
+
+  it("keeps a style name that holds a parenthesis or a quote whole", () => {
+    // The server prints the name last on its own line for exactly this: a name
+    // is user text, and the parenthesised form it used before cut one at its
+    // first `)`.
+    const style = "결재란 (법인) '대표'";
+    const error = overflow(`hwp edit failed (exit 1): insert_blocks refused: unknown_style; ${style}`);
+    const shown = insertionFailure(error, WIDE, en) as Error;
+
+    expect(shown.message).toBe(en("components.unknownStyle", { style }));
+  });
+
+  it("reads the engine's own Korean style sentence from an in-process host", () => {
+    // A host wired in process hands over the engine's words, not the server's
+    // summary; the name sits between quotes there.
+    const error = new Error("스타일 '결재란 (법인)'을 대상 문서에서 찾을 수 없습니다");
+    const shown = insertionFailure(error, WIDE, en) as Error;
+
+    expect(shown.message).toBe(en("components.unknownStyle", { style: "결재란 (법인)" }));
+  });
+
+  it("turns an unclassified definition refusal into a sentence with a next step", () => {
+    const error = overflow("hwp edit failed (exit 1): insert_blocks refused: invalid_definition");
+    const shown = insertionFailure(error, WIDE, en) as Error & { detail?: string };
+
+    expect(shown.message).toBe(en("components.invalidDefinition"));
+    expect(shown.message).toContain("then insert it again");
+    expect(shown.detail).toContain("invalid_definition");
+  });
+});
+
+describe("componentFailure", () => {
+  /** Each palette-reachable code and the next-step key it must render. */
+  const steps = [
+    ["component_param", "components.step.param"],
+    ["component_style", "components.step.style"],
+    ["component_invalid", "components.step.invalid"],
+    ["component_load", "components.step.load"],
+  ] as const satisfies ReadonlyArray<readonly [ComponentErrorCode, MessageKey]>;
+
+  it.each(steps)("gives %s its own localized next step", (code, key) => {
+    const error = new ComponentError(code, "src/components/broken.json", "params.기안자", "the reason");
+    const shown = componentFailure(error, ko) as Error & { detail?: string };
+
+    expect(shown.message).toBe(ko("components.refused", {
+      code,
+      source: "src/components/broken.json",
+      field: "params.기안자",
+      value: "",
+      step: ko(key),
+    }));
+    // The step is the localized one, and the parser's English reason is not
+    // part of what the user reads.
+    expect(shown.message).toContain(ko(key));
+    expect(shown.message).not.toContain("the reason");
+    // The English one-line form survives as technical detail.
+    expect(shown.detail).toBe(error.message);
+  });
+
+  it("keeps the empty-field form for a refusal about the source itself", () => {
+    const error = new ComponentError("component_load", "https://example.test/c.json", "", "unreadable");
+    const shown = componentFailure(error, ko) as Error;
+
+    expect(shown.message).toBe(ko("components.refused", {
+      code: "component_load",
+      source: "https://example.test/c.json",
+      field: "",
+      value: "",
+      step: ko("components.step.load"),
+    }));
+  });
+
+  it("prints the offending value beside the field that named it", () => {
+    // A block's style reference is a field such as `blocks[0].style`, which
+    // does not spell the name it failed on; the name is the value, so the
+    // sentence can print it without parsing the reason.
+    const error = new ComponentError(
+      "component_style",
+      "시험",
+      "blocks[0].style",
+      "references style 결재란 셀, which no component defines",
+      "결재란 셀",
+    );
+    const shown = componentFailure(error, en) as Error;
+
+    expect(shown.message).toContain("blocks[0].style = 결재란 셀");
+    expect(shown.message).toContain(en("components.step.style"));
+  });
+
+  it("passes a non-component throw through", () => {
+    const error = new Error("boom");
+    expect(componentFailure(error, en)).toBe(error);
+  });
+});

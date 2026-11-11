@@ -18,6 +18,7 @@
  */
 
 import { HwpEngineError } from "./errors.js";
+import type { Blocks, Style } from "./generated/document-spec-v2.js";
 
 export type ParagraphAlignment =
   | "left"
@@ -150,7 +151,22 @@ export type AddressedEditOp =
   | { kind: "insert-para" | "insert-para-before"; address: ParagraphAddress; text: string }
   | { kind: "delete-para" | "indent-para" | "outdent-para"; address: ParagraphAddress }
   | { kind: "move-para"; address: ParagraphAddress;
-      to: { address: ParagraphAddress; position: "before" | "after" } };
+      to: { address: ParagraphAddress; position: "before" | "after" } }
+  /**
+   * `insert_blocks`: place DocumentSpec v1 blocks beside the addressed
+   * paragraph. Measured on `ahwp 1.6.0`, whose `edit-ops-v1` schema fixes the
+   * entry as `{op, address, position, blocks}` plus the optional `styles`,
+   * `lists` and `missing_style`. `styles` carries the definitions a target may
+   * lack — a component's own `styles` — and a name the target already defines
+   * keeps the target's definition; `missing_style: "refuse"` turns a name
+   * neither side defines into a refusal instead of a silent creation. The
+   * engine answers with an `insert_blocks` outcome whose `changed` pairs carry
+   * `before: null` and the ids of every inserted segment, which is the only
+   * way the caller learns which ids the insertion created.
+   */
+  | { kind: "insert-blocks"; address: ParagraphAddress; position: "before" | "after";
+      blocks: Blocks; styles?: Record<string, Style>;
+      missingStyle?: "create" | "refuse" };
 
 /** Legacy text selectors remain available for explicit search operations. */
 export type EditOp = LegacyEditOp | AddressedEditOp;
@@ -520,6 +536,15 @@ function addressedEntry(op: AddressedEditOp): OpsEntry {
         ...(op.kind === "insert-para-before" ? { before: true } : {}) };
     case "move-para":
       return { op: "move_para", ...target, to: op.to };
+    case "insert-blocks":
+      return {
+        op: "insert_blocks",
+        ...target,
+        position: op.position,
+        blocks: op.blocks,
+        ...(op.styles === undefined ? {} : { styles: op.styles }),
+        ...(op.missingStyle === undefined ? {} : { missing_style: op.missingStyle }),
+      };
     case "delete-para":
     case "indent-para":
     case "outdent-para":

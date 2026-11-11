@@ -18,10 +18,10 @@
  */
 
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import type { CatEnvelope, DocumentHandle, EditOp, LayoutRow, PageImage, Segment } from "@hwp-editor/core";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { CatEnvelope, Component, DocumentHandle, EditOp, EditReport, LayoutRow, PageImage, Segment } from "@hwp-editor/core";
 import tableFixture from "../../core/test/fixtures/cat-segments-table.json";
-import { base64, createTauriEngine, parseCatEnvelope } from "@hwp-editor/core";
+import { base64, createTauriEngine, HwpEngineError, parseCatEnvelope } from "@hwp-editor/core";
 import { targetsSegment } from "../src/PageCanvas.js";
 import { HwpEditor } from "../src/HwpEditor.js";
 import { en, ko } from "../src/messages.js";
@@ -682,5 +682,635 @@ describe("panel edge cases (TEST-03)", () => {
       { kind: "delete-para", address: { at: { section: 0, paragraph: 0 } } },
       { kind: "insert-para", address: { at: { section: 0, paragraph: 0 } }, text: "마지막" },
     ]);
+  });
+});
+
+/**
+ * The components palette (AC8). An insertion's ids exist only in
+ * `edit-report-v1`, so the stub answers with one and the assertions read the
+ * rows the panel built from it — a position guessed from the request would
+ * pass a weaker test and fail against the engine.
+ */
+describe("ComponentsPanel (TEST-03)", () => {
+  const componentName = "결재란";
+  const insertedId = "bbbbbbbbbbbbbbbb.0.1";
+
+  /** A v2 envelope: every segment carries the id an address needs. */
+  function addressableEnvelope(): CatEnvelope {
+    const blocks = ["# **1. 회의록**", "2026년 8월 정기 회의"];
+    let markdown = "";
+    const segments: CatEnvelope["segments"] = [];
+    blocks.forEach((block, para) => {
+      const start = markdown.length;
+      markdown += `${block}\n\n`;
+      segments.push({
+        id: `${"a".repeat(16)}.0.${para}`,
+        indices: [para],
+        start,
+        end: start + block.length,
+        kind: "para",
+        section: 0,
+        para,
+      });
+    });
+    return { markdown, segments };
+  }
+
+  const insertReport: EditReport = {
+    schema_version: "1.0",
+    contract: "hwp-edit-report-v1",
+    output: "edited.hwpx",
+    dry_run: false,
+    ops: [{
+      index: 0,
+      op: "insert_blocks",
+      status: "applied",
+      pieces_touched: 1,
+      // One paragraph plus its run: the nesting the selection must collapse.
+      changed: [{ before: null, after: insertedId }, { before: null, after: `${insertedId}.0` }],
+      reason: null,
+      missing_style: "create",
+    }],
+    applied_count: 1,
+    failed_count: 0,
+  };
+
+  /** Mock engine that honours the report opt-in, at a component-capable version. */
+  function composedEngine(envelope: CatEnvelope = addressableEnvelope()): Engine {
+    const engine = createMockEngine({ envelope });
+    engine.capabilities = async () => ({ version: "1.6.0", editable: true, editOps: "v1", formats: ["hwp", "hwpx"] });
+    const baseEdit = engine.edit.bind(engine);
+    engine.edit = async (document, ops, options) => ({
+      ...(await baseEdit(document, ops, options)),
+      ...(options?.report === true ? { report: insertReport } : {}),
+    });
+    return engine;
+  }
+
+  /**
+   * Render the editor with a catalogue of one-off components and select
+   * paragraph 1, then open the palette. The default catalogue is all
+   * paragraphs and tables, so a refusal only one block type triggers needs a
+   * component built for it.
+   */
+  async function renderPalette(
+    engine: Engine,
+    components: Component[],
+    document: DocumentHandle = file,
+  ): Promise<void> {
+    const envelope = await engine.read(document);
+    render(<HwpEditor engine={engine} file={document} components={components} />);
+    const page = await screen.findByRole("button", { name: en["page.label"]({ page: 1 }) });
+    fireEvent.click(page, { clientY: clientYForPara(envelope, 1) });
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+  }
+
+  it("substitutes the palette's values and sends the profile styles the component needs", async () => {
+    const engine = composedEngine();
+    const envelope = await engine.read(file);
+    await selectPara(engine, 1, envelope);
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+    // The palette shows a component's declared defaults; the user changes one.
+    fireEvent.change(
+      await screen.findByLabelText(en["components.paramLabel"]({ name: componentName, param: "기안자" })),
+      { target: { value: "김기안" } },
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) }),
+    );
+
+    expect(engine.calls.edit).toHaveLength(1);
+    const [op] = engine.calls.edit[0]!.ops;
+    expect(op).toMatchObject({
+      kind: "insert-blocks",
+      address: { id: envelope.segments[1]!.id },
+      position: "after",
+    });
+    // The value the user typed reaches the op, and no placeholder survives: a
+    // `{{param}}` in a document is the bug this substitution exists to prevent.
+    const sent = JSON.stringify(op);
+    expect(sent).toContain("김기안");
+    expect(sent).not.toContain("{{");
+    // The styles travel with the op: the component's own cell style and the
+    // profile style it is based on, which the target may not define.
+    expect(Object.keys((op as { styles?: Record<string, unknown> }).styles ?? {}).sort())
+      .toEqual(["바탕글", "결재란 셀"].sort());
+  });
+
+  it("inserts before the paragraph when the palette is set to before", async () => {
+    const engine = composedEngine();
+    const envelope = await engine.read(file);
+    await selectPara(engine, 1, envelope);
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+    fireEvent.click(await screen.findByRole("button", { name: en["components.positionBefore"] }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) }),
+    );
+    expect(engine.calls.edit[0]!.ops[0]).toMatchObject({
+      kind: "insert-blocks",
+      address: { id: envelope.segments[1]!.id },
+      position: "before",
+    });
+  });
+
+  it("names both widths when the engine refuses the insertion as too wide", async () => {
+    // The engine answers a block wider than its insertion point with its own
+    // diagnostic, in Korean in every locale; the palette replaces it.
+    const engine = composedEngine();
+    engine.edit = () => Promise.reject(new Error(
+        "Error: insert_blocks 블록 정의가 유효하지 않습니다: layout_overflow at " +
+          "$.sections[0].blocks[0].width_mm: table width exceeds body width 46.40 mm.",
+    ));
+    const envelope = await engine.read(file);
+    await selectPara(engine, 1, envelope);
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) }),
+    );
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain(en["components.tooWide"]({ width: "120 mm", available: "46.4 mm" }));
+    // One report, not two: replaceDocument is the only emitter on this path.
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+  });
+
+  it("inserts inside a cell instead of beside the table", async () => {
+    // A cell resolves to its own paragraphs, so the insertion lands in the
+    // cell. The table's host paragraph is a different segment with its own id,
+    // and addressing that one would put the component beside the table.
+    const host: Segment = { id: "cell-host", indices: [2], start: 0, end: 5, kind: "para", section: 0, para: 2 };
+    const table: Segment = { id: "cell-table", indices: [2, 0], start: 0, end: 5, kind: "table", section: 0, para: 2 };
+    const cell: Segment = { id: "cell-two", indices: [2, 0, 0], start: 0, end: 5, kind: "cell", section: 0, para: 2 };
+    const first: Segment = { id: "cell-two-p0", indices: [2, 0, 0, 0], start: 0, end: 1, kind: "para", section: 0, para: 2 };
+    const second: Segment = { id: "cell-two-p1", indices: [2, 0, 0, 1], start: 3, end: 4, kind: "para", section: 0, para: 2 };
+    const envelope: CatEnvelope = { markdown: "가\n\n나\n", segments: [host, table, cell, first, second] };
+    const engine = composedEngine(envelope);
+    engine.render = async () => [pageWithRow(cell)];
+    render(<HwpEditor engine={engine} file={file} />);
+    await screen.findByRole("button", { name: en["page.label"]({ page: 1 }) });
+    clickRow();
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+
+    // No false "no segment ids" reason: the cell is addressable.
+    expect(screen.queryByText(en["components.noAddress"])).toBeNull();
+    fireEvent.click(
+      await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) }),
+    );
+    expect(engine.calls.edit[0]!.ops[0]).toMatchObject({
+      kind: "insert-blocks",
+      address: { id: "cell-two-p1" },
+    });
+  });
+
+  it("anchors an insertion before a cell at the cell's first paragraph", async () => {
+    // "Before" and "after" are different ends of a cell: a cell holds several
+    // paragraphs, and only the cell's own first paragraph precedes all of them.
+    const host: Segment = { id: "cell-host", indices: [2], start: 0, end: 5, kind: "para", section: 0, para: 2 };
+    const table: Segment = { id: "cell-table", indices: [2, 0], start: 0, end: 5, kind: "table", section: 0, para: 2 };
+    const cell: Segment = { id: "cell-two", indices: [2, 0, 0], start: 0, end: 5, kind: "cell", section: 0, para: 2 };
+    const first: Segment = { id: "cell-two-p0", indices: [2, 0, 0, 0], start: 0, end: 1, kind: "para", section: 0, para: 2 };
+    const second: Segment = { id: "cell-two-p1", indices: [2, 0, 0, 1], start: 3, end: 4, kind: "para", section: 0, para: 2 };
+    // Envelope order is not document order: the second paragraph comes first
+    // here, so an anchor that trusted the list would take the wrong end.
+    const envelope: CatEnvelope = { markdown: "가\n\n나\n", segments: [second, host, table, cell, first] };
+    const engine = composedEngine(envelope);
+    engine.render = async () => [pageWithRow(cell)];
+    render(<HwpEditor engine={engine} file={file} />);
+    await screen.findByRole("button", { name: en["page.label"]({ page: 1 }) });
+    clickRow();
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+    fireEvent.click(await screen.findByRole("button", { name: en["components.positionBefore"] }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) }),
+    );
+    expect(engine.calls.edit[0]!.ops[0]).toMatchObject({
+      kind: "insert-blocks",
+      address: { id: "cell-two-p0" },
+      position: "before",
+    });
+  });
+
+  it("names a table as the reason the palette cannot insert", async () => {
+    const host: Segment = { id: "cell-host", indices: [2], start: 0, end: 1, kind: "para", section: 0, para: 2 };
+    const table: Segment = { id: "cell-table", indices: [2, 0], start: 0, end: 1, kind: "table", section: 0, para: 2 };
+    const envelope: CatEnvelope = { markdown: "표\n", segments: [host, table] };
+    const engine = composedEngine(envelope);
+    engine.render = async () => [pageWithRow(table, "table")];
+    render(<HwpEditor engine={engine} file={file} />);
+    await screen.findByRole("button", { name: en["page.label"]({ page: 1 }) });
+    clickRow();
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+    // The reason is the same one a paragraph edit gives for a table, not the
+    // id-less-host sentence that used to appear for every nested selection.
+    expect(await screen.findByText(en["segment.tableSelectionRefused"])).toBeTruthy();
+    expect(
+      (screen.getByRole("button", { name: en["components.insert"]({ name: componentName }) }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
+  it("queues an addressed move for the selected paragraph", async () => {
+    // Reorder acts on the current selection through the paragraph controls, so
+    // the ids an insertion reported never have to be remembered to move it.
+    // Paragraph 0 is the section's definition paragraph and cannot move, so the
+    // move is of paragraph 2 up, beside paragraph 1.
+    const blocks = ["# **1. 회의록**", "2026년 8월 정기 회의", "다음 회의 안건"];
+    let markdown = "";
+    const segments: CatEnvelope["segments"] = [];
+    blocks.forEach((block, para) => {
+      const start = markdown.length;
+      markdown += `${block}\n\n`;
+      segments.push({ id: `${"a".repeat(16)}.0.${para}`, indices: [para], start, end: start + block.length, kind: "para", section: 0, para });
+    });
+    const envelope: CatEnvelope = { markdown, segments };
+    const engine = composedEngine(envelope);
+    await selectPara(engine, 2, envelope);
+    fireEvent.click(await screen.findByRole("button", { name: en["segment.moveUp"] }));
+    const ops = await applyOps(engine, 1);
+    expect(ops).toEqual([
+      expect.objectContaining({
+        kind: "move-para",
+        address: { id: envelope.segments[2]!.id },
+        to: { address: { id: envelope.segments[1]!.id }, position: "before" },
+      }),
+    ]);
+  });
+
+  it("selects the paragraphs an insertion created", async () => {
+    // The ids exist only in the report, so the selection can be built only
+    // against the envelope that reads the new document back.
+    const base = addressableEnvelope();
+    const text = "새문단";
+    const insertedPara: Segment = {
+      id: insertedId,
+      indices: [2],
+      start: base.markdown.length,
+      end: base.markdown.length + text.length,
+      kind: "para",
+      section: 0,
+      para: 2,
+    };
+    const after: CatEnvelope = {
+      markdown: `${base.markdown}${text}\n\n`,
+      segments: [...base.segments, insertedPara],
+    };
+    const engine = composedEngine();
+    let reads = 0;
+    engine.read = async () => (reads++ === 0 ? base : after);
+    await selectPara(engine, 1, base);
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) }),
+    );
+
+    // The report named one paragraph, so that paragraph is what the editor now
+    // shows: the selection moved off the paragraph the op was addressed to, and
+    // its path is the engine's, not one guessed from the request.
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.para"] }));
+    expect(await screen.findByText(en["segment.selectedPara"]({ path: "0/2" }))).toBeTruthy();
+    const panel = screen.getByRole("region", { name: en["segment.panelAria"] });
+    expect(panel.querySelector(".hwped-quote")?.textContent).toContain(text);
+    expect(panel.querySelector('[aria-selected="true"]')?.textContent).toContain(text);
+  });
+
+  it("anchors a second insertion below the whole component the first one added", async () => {
+    // After an insertion the selection is the run the report named, and its
+    // primary is the run's first paragraph. Anchoring on the primary puts the
+    // next component between the first one's heading and its items, so "after"
+    // has to address the run's last paragraph.
+    const base = addressableEnvelope();
+    const ids = ["bbbbbbbbbbbbbbbb.0.2", "cccccccccccccccc.0.3"];
+    const twoParagraphs: EditReport = {
+      ...insertReport,
+      ops: [{
+        ...insertReport.ops[0]!,
+        pieces_touched: 2,
+        changed: ids.map((id) => ({ before: null, after: id })),
+      }],
+    };
+    const added = ["결재란 제목", "결재란 항목"];
+    let markdown = base.markdown;
+    const segments = [...base.segments];
+    added.forEach((text, at) => {
+      const para = at + 2;
+      const start = markdown.length;
+      markdown += `${text}\n\n`;
+      segments.push({ id: ids[at]!, indices: [para], start, end: start + text.length, kind: "para", section: 0, para });
+    });
+    const after: CatEnvelope = { markdown, segments };
+    const engine = composedEngine(base);
+    let reads = 0;
+    engine.read = async () => (reads++ === 0 ? base : after);
+    let edits = 0;
+    const baseEdit = engine.edit.bind(engine);
+    engine.edit = async (document, ops, options) => ({
+      ...(await baseEdit(document, ops, options)),
+      ...(options?.report === true ? { report: edits++ === 0 ? twoParagraphs : insertReport } : {}),
+    });
+
+    await selectPara(engine, 1, base);
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+    const insert = await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) });
+    fireEvent.click(insert);
+    await waitFor(() => expect(engine.calls.edit).toHaveLength(1));
+
+    // Both inserted paragraphs are selected, so the palette is still usable and
+    // the second click goes to the run's last paragraph.
+    const again = await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) });
+    await waitFor(() => expect((again as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(again);
+
+    await waitFor(() => expect(engine.calls.edit).toHaveLength(2));
+    expect(engine.calls.edit[1]!.ops[0]).toMatchObject({
+      kind: "insert-blocks",
+      address: { id: ids[1] },
+      position: "after",
+    });
+  });
+
+  it("refuses to select from a truncated report and says why", async () => {
+    // `changed_total` means the engine capped the id list, so the selection
+    // would cover only part of what was inserted. The document is published
+    // either way: the palette reports the cap and leaves the selection alone.
+    const base = addressableEnvelope();
+    const engine = composedEngine(base);
+    const truncated: EditReport = {
+      ...insertReport,
+      ops: [{ ...insertReport.ops[0]!, changed_total: 4 }],
+    };
+    const baseEdit = engine.edit.bind(engine);
+    engine.edit = async (document, ops, options) => ({
+      ...(await baseEdit(document, ops, options)),
+      ...(options?.report === true ? { report: truncated } : {}),
+    });
+    await selectPara(engine, 1, base);
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) }),
+    );
+
+    const alert = await screen.findByText(en["components.reportTruncated"]);
+    expect(alert.getAttribute("role")).toBe("status");
+    // The document was published, so this is not a failure line.
+    expect(screen.queryAllByRole("alert")).toHaveLength(0);
+    // The replacement cleared the old selection, and the truncated report
+    // selected nothing: no paragraph was picked from a partial id list.
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.para"] }));
+    expect(screen.getByText(en["segment.selectedCount"]({ count: 0 }))).toBeTruthy();
+    expect(screen.queryByText(en["segment.selectedPara"]({ path: "0/2" }))).toBeNull();
+  });
+
+  it("disables insertion with a localized reason below hwp-cli 1.4.0", async () => {
+    const engine = createMockEngine({ envelope: addressableEnvelope() });
+    await selectPara(engine, 1, addressableEnvelope());
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+
+    expect(
+      await screen.findByText(en["components.disabledVersion"]({ version: "1.4.0" })),
+    ).toBeTruthy();
+    const insert = screen.getByRole("button", { name: en["components.insert"]({ name: componentName }) });
+    expect((insert as HTMLButtonElement).disabled).toBe(true);
+    expect(engine.calls.edit).toHaveLength(0);
+  });
+
+  it("offers only the after position beside a section's definition paragraph", async () => {
+    // Paragraph 0 carries SectionDef, and the engine refuses an insertion
+    // before it ("구역 정의 문단 앞에는 삽입할 수 없습니다"), so one position is
+    // off with a reason while the other still works.
+    const engine = composedEngine();
+    const envelope = await engine.read(file);
+    await selectPara(engine, 0, envelope);
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+
+    const before = await screen.findByRole("button", { name: en["components.positionBefore"] });
+    const after = screen.getByRole("button", { name: en["components.positionAfter"] });
+    expect((before as HTMLButtonElement).disabled).toBe(true);
+    expect((after as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByText(en["components.positionBeforeLocked"])).toBeTruthy();
+
+    // "After" still inserts, addressed to the definition paragraph itself.
+    fireEvent.click(after);
+    fireEvent.click(screen.getByRole("button", { name: en["components.insert"]({ name: componentName }) }));
+    await waitFor(() => expect(engine.calls.edit).toHaveLength(1));
+    expect(engine.calls.edit[0]!.ops[0]).toMatchObject({
+      kind: "insert-blocks",
+      address: { id: envelope.segments[0]!.id },
+      position: "after",
+    });
+  });
+
+  it("reports a style the document lacks as a localized sentence", async () => {
+    // The server classifies the refusal and the palette turns that class into
+    // a whole sentence: the raw engine text names the staged input file and
+    // never reaches here.
+    const engine = composedEngine();
+    engine.edit = () => Promise.reject(new HwpEngineError(
+      "failed",
+      "hwp edit failed (exit 3): insert_blocks refused: unknown_style; 결재란 셀",
+      { status: 422 },
+    ));
+    const envelope = await engine.read(file);
+    await selectPara(engine, 1, envelope);
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) }),
+    );
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain(en["components.unknownStyle"]({ style: "결재란 셀" }));
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+  });
+
+  /**
+   * The three refusals the palette can see coming. Each is a component whose
+   * blocks the engine would reject, so the row is off with a sentence naming
+   * the fix and no edit is sent at all.
+   */
+  it("refuses an image component before sending it", async () => {
+    const stamp: Component = {
+      name: "직인",
+      description: "A stamp",
+      params: {},
+      blocks: [{ type: "image", path: "stamp.png", width_mm: 20, height_mm: 20 }],
+    };
+    const engine = composedEngine();
+    await renderPalette(engine, [stamp]);
+
+    const insert = screen.getByRole("button", { name: en["components.insert"]({ name: "직인" }) }) as HTMLButtonElement;
+    expect(insert.disabled).toBe(true);
+    expect(screen.getByText(en["components.preflightImage"])).toBeTruthy();
+    expect(engine.calls.edit).toHaveLength(0);
+  });
+
+  it("refuses a top-level section break inside a component", async () => {
+    const chapter: Component = {
+      name: "새 장",
+      description: "Starts a new section",
+      params: {},
+      blocks: [
+        { type: "break", kind: "section" },
+        { type: "paragraph", runs: [{ type: "text", text: "1. 개요" }] },
+      ],
+    };
+    const engine = composedEngine();
+    await renderPalette(engine, [chapter]);
+
+    const insert = screen.getByRole("button", { name: en["components.insert"]({ name: "새 장" }) }) as HTMLButtonElement;
+    expect(insert.disabled).toBe(true);
+    expect(screen.getByText(en["components.preflightSectionBreak"])).toBeTruthy();
+    expect(engine.calls.edit).toHaveLength(0);
+  });
+
+  it("refuses an equation into a .hwp document only", async () => {
+    const formula: Component = {
+      name: "수식",
+      description: "An equation",
+      params: {},
+      blocks: [{ type: "equation", script: "x^2" }],
+    };
+    const engine = composedEngine();
+    const hwp: DocumentHandle = { ...file, name: "minutes.hwp" };
+    await renderPalette(engine, [formula], hwp);
+
+    expect(screen.getByText(en["components.preflightEquation"]({ name: hwp.name }))).toBeTruthy();
+    expect(
+      (screen.getByRole("button", { name: en["components.insert"]({ name: "수식" }) }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+
+    // The same catalogue in an .hwpx document is insertable: the refusal is
+    // about the output format, not about equations.
+    cleanup();
+    const hwpx = composedEngine();
+    await renderPalette(hwpx, [formula], { ...file, name: "minutes2.hwpx" });
+    expect(screen.queryByText(en["components.preflightEquation"]({ name: "minutes2.hwpx" }))).toBeNull();
+    expect(
+      (screen.getByRole("button", { name: en["components.insert"]({ name: "수식" }) }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+  });
+
+  it("disables the palette while an edit is queued, with the reason", async () => {
+    // An insertion replaces the whole document, so a queued edit would be
+    // lost: the palette says so and stays off until the queue is applied.
+    const engine = composedEngine();
+    const envelope = await engine.read(file);
+    await selectPara(engine, 1, envelope);
+    fireEvent.click(screen.getByRole("button", { name: en["segment.alignCenter"] }));
+    await screen.findByText(en["toolbar.pendingEdits"]({ count: 1 }));
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+
+    const insert = screen.getByRole("button", { name: en["components.insert"]({ name: componentName }) }) as HTMLButtonElement;
+    expect(insert.disabled).toBe(true);
+    expect(screen.getByText(en["components.pendingEdits"])).toBeTruthy();
+    expect(engine.calls.edit).toHaveLength(0);
+  });
+
+  it("shows a component refusal the palette cannot prevent", async () => {
+    // A component whose blocks name a placeholder it does not declare passes
+    // loading and fails substitution: the refusal has to reach the user, not
+    // only the host's onError.
+    const broken: Component = {
+      name: "이름 없는 값",
+      description: "References a param it never declares",
+      params: {},
+      blocks: [{ type: "paragraph", runs: [{ type: "text", text: "기안자: {{기안자}}" }] }],
+    };
+    const engine = composedEngine();
+    await renderPalette(engine, [broken]);
+    fireEvent.click(
+      screen.getByRole("button", { name: en["components.insert"]({ name: "이름 없는 값" }) }),
+    );
+
+    const notice = await screen.findByText((content) => content.includes(en["components.step.invalid"]));
+    expect(notice.getAttribute("role")).toBe("status");
+    // The sentence names the component and the field that has to change.
+    expect(notice.textContent).toContain("이름 없는 값");
+    expect(notice.textContent).toContain("blocks[0].runs[0].text");
+    expect(engine.calls.edit).toHaveLength(0);
+  });
+
+  it("says why when the report records the insertion as failed", async () => {
+    // The document is published, so this is a notice; what the user must not
+    // get is a click that changed nothing and said nothing.
+    const failed: EditReport = {
+      ...insertReport,
+      ops: [{ ...insertReport.ops[0]!, status: "failed", reason: "layout_overflow", changed: [] }],
+      applied_count: 0,
+      failed_count: 1,
+    };
+    const engine = composedEngine();
+    const baseEdit = engine.edit.bind(engine);
+    engine.edit = async (document, ops, options) => ({
+      ...(await baseEdit(document, ops, options)),
+      ...(options?.report === true ? { report: failed } : {}),
+    });
+    const envelope = await engine.read(file);
+    await selectPara(engine, 1, envelope);
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) }),
+    );
+
+    const notice = await screen.findByText(
+      en["components.insertionRefused"]({ reason: "layout_overflow" }),
+    );
+    expect(notice.getAttribute("role")).toBe("status");
+  });
+
+  it("shows a report that lists more paragraphs than it placed", async () => {
+    // Not this contract: the ids cannot be trusted, so nothing is selected and
+    // the sentence saying so is visible.
+    const surplus: EditReport = {
+      ...insertReport,
+      ops: [{ ...insertReport.ops[0]!, pieces_touched: 0 }],
+    };
+    const engine = composedEngine();
+    const baseEdit = engine.edit.bind(engine);
+    engine.edit = async (document, ops, options) => ({
+      ...(await baseEdit(document, ops, options)),
+      ...(options?.report === true ? { report: surplus } : {}),
+    });
+    const envelope = await engine.read(file);
+    await selectPara(engine, 1, envelope);
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) }),
+    );
+
+    const notice = await screen.findByText(
+      (content) => content.includes("reports 0 inserted paragraphs"),
+    );
+    expect(notice.getAttribute("role")).toBe("status");
+  });
+
+  it("drops the notice when another document is loaded", async () => {
+    const engine = composedEngine();
+    engine.edit = async () => ({ name: "edited.hwpx", data: new Uint8Array([9]) });
+    const envelope = await engine.read(file);
+    const view = render(<HwpEditor engine={engine} file={file} />);
+    const page = await screen.findByRole("button", { name: en["page.label"]({ page: 1 }) });
+    fireEvent.click(page, { clientY: clientYForPara(envelope, 1) });
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) }),
+    );
+    expect(await screen.findByText(en["components.noReport"])).toBeTruthy();
+
+    view.rerender(<HwpEditor engine={engine} file={{ name: "second.hwpx", data: new Uint8Array([4]) }} />);
+    await waitFor(() => expect(screen.queryByText(en["components.noReport"])).toBeNull());
+  });
+
+  it("says so when no edit report came back, without calling it a failure", async () => {
+    // A report that cannot be parsed leaves `report` absent by design; what the
+    // user gets is the same notice as a host that answers without one.
+    const engine = composedEngine();
+    engine.edit = async () => ({ name: "edited.hwpx", data: new Uint8Array([9]) });
+    const envelope = await engine.read(file);
+    await selectPara(engine, 1, envelope);
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) }),
+    );
+
+    const notice = await screen.findByText(en["components.noReport"]);
+    expect(notice.getAttribute("role")).toBe("status");
+    expect(screen.queryAllByRole("alert")).toHaveLength(0);
   });
 });

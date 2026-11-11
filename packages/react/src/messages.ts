@@ -80,6 +80,93 @@ export const en = {
   "tabs.fields": "Fields",
   "tabs.templates": "Templates",
   "tabs.lint": "Lint",
+  "tabs.components": "Components",
+
+  // Component palette
+  "components.panelAria": "Component palette",
+  "components.catalogueAria": "Components you can insert",
+  "components.hint":
+    "A component is inserted beside the selected paragraph, with the values below filled in.",
+  "components.insert": (p: { name: string }): string => `Insert ${p.name}`,
+  "components.positionLabel": "Insert at",
+  "components.positionAria": "Insertion position",
+  "components.positionBefore": "Before the paragraph",
+  "components.positionAfter": "After the paragraph",
+  "components.positionBeforeLocked":
+    "The first paragraph of a section holds its page setup, so nothing can be inserted before it. Insert " +
+    "the component after that paragraph, or select another paragraph.",
+  "components.paramAria": (p: { name: string }): string => `${p.name} values`,
+  "components.paramLabel": (p: { name: string; param: string }): string =>
+    `${p.name}: ${p.param}`,
+  "components.moveUp": (p: { name: string }): string => `Move ${p.name} up`,
+  "components.moveDown": (p: { name: string }): string => `Move ${p.name} down`,
+  "components.remove": (p: { name: string }): string => `Remove ${p.name}`,
+  "components.noSelection": "Select a paragraph in the document first.",
+  "components.noAddress":
+    "The selection cannot be addressed: this host's document read reports no segment ids.",
+  "components.disabledVersion": (p: { version: string }): string =>
+    `Inserting components requires hwp-cli ${p.version} or newer, because older engines report no inserted ids.`,
+  "components.disabledChannel":
+    "This host cannot send typed edit operations, so a component cannot be inserted.",
+  "components.noReport":
+    "The component is in the document, but this host returned no edit report, so the editor cannot " +
+    "select what it created; open the paragraph tab and pick the inserted paragraphs to move or remove them.",
+  "components.reportTruncated":
+    "The edit report capped the ids it lists, so the inserted paragraphs cannot be selected; insert a " +
+    "smaller component, or pick the new paragraphs in the paragraph list.",
+  "components.tooWide": (p: { width: string; available: string }): string =>
+    `This component is ${p.width} wide and the insertion point is only ${p.available}, so the engine ` +
+    "refuses it. Insert it where the body is wide enough (beside a top-level paragraph, not inside a " +
+    "cell), or use a narrower component.",
+  "components.tooWideUnmeasured": (p: { width: string }): string =>
+    `This component is ${p.width} wide and the engine refused it as too wide for where it would go. ` +
+    "Insert it beside a top-level paragraph rather than inside a cell, or use a narrower component.",
+  "components.tooWideUnknown":
+    "The engine refused the insertion as too wide for where it would go. Insert it where the body is " +
+    "wide enough, or use a narrower component.",
+  "components.insertionRefused": (p: { reason?: string }): string =>
+    p.reason === undefined || p.reason === ""
+      ? "The engine refused this insertion. Check the component and the insertion point, then retry."
+      : `The engine refused this insertion: ${p.reason}. Check the component and the insertion point, then retry.`,
+  "components.preflightImage":
+    "This component inserts an image, and the palette stages no image bytes, so the engine would refuse " +
+    "the insertion. Insert the image with the Images panel, or change the component to paragraphs and " +
+    "tables.",
+  "components.preflightSectionBreak":
+    "This component starts a section of its own, and a component insertion cannot carry a section break. " +
+    "Use a page or column break inside the component, or start the new section from the document panel.",
+  "components.preflightEquation": (p: { name: string }): string =>
+    `The open document is ${p.name}, an .hwp file, and the engine cannot insert an equation into one. ` +
+    "Save it as .hwpx and insert the component again, or remove the equation.",
+  "components.pendingEdits":
+    "Apply or clear the queued edits first: an insertion replaces the whole document, so an edit " +
+    "waiting to be applied would be lost.",
+  "components.refused": (p: {
+    code: string;
+    source: string;
+    field: string;
+    value: string;
+    step: string;
+  }): string =>
+    (p.field === ""
+      ? `${p.source} was refused (${p.code}). `
+      : `${p.source}: ${p.field}${p.value === "" ? "" : ` = ${p.value}`} was refused (${p.code}). `) +
+    p.step,
+  "components.unknownStyle": (p: { style: string }): string =>
+    `The target document has no style named ${p.style}, so the engine refused the component. Define ` +
+    "that style in the component's own styles, or reference one the document already has, then insert " +
+    "it again.",
+  "components.invalidDefinition":
+    "The engine refused the component's block, style or list definitions. Check the component's blocks, " +
+    "styles and lists, then insert it again.",
+  "components.step.param":
+    "Correct that value in the panel, or fix the component's params, then insert it again.",
+  "components.step.style":
+    "Define the style under its own name based on the profile style, or fix the reference, then insert it again.",
+  "components.step.invalid":
+    "Fix the component's file so every field matches the component contract, then load it again.",
+  "components.step.load":
+    "Check the component file's path or URL and its JSON, then load it again.",
 
   // Error line — the prefix names which operation failed. The `{message}`
   // tail stays engine-authored and is never translated.
@@ -110,6 +197,15 @@ export const en = {
   "compose.submitting": "Creating…",
   /** Filename stem used when the compose form has no title. */
   "compose.defaultFileStem": "New document",
+  "compose.componentsTitle": "Or assemble from components",
+  "compose.componentsHint":
+    "Added components become the document in this order. While the list is not empty, the document type, author and body above are not used.",
+  "compose.componentsEmpty": "No components added.",
+  "compose.componentPicker": "Component to add",
+  "compose.addComponent": "Add",
+  "compose.assemblyAria": "Components in this document, in order",
+  "compose.paramAria": (p: { component: string; param: string }): string =>
+    `${p.param} for ${p.component}`,
 
   // Compose preset labels. The preset PROFILES (font names, sizes) are
   // document data and stay in presets.ts, untranslated.
@@ -138,7 +234,7 @@ export const en = {
     p.count === 1 ? "1 paragraph selected" : `${p.count} paragraphs selected`,
   "segment.selectedRunCount": (p: { count: number }): string =>
     p.count === 1 ? "1 run selected" : `${p.count} runs selected`,
-  "segment.multiTextEditHint": "Text replacement, insertion, and deletion target one paragraph. Select one paragraph to use these controls.",
+  "segment.multiTextEditHint": "Text replacement and insertion target one paragraph. Select one paragraph to use those controls.",
   "segment.rangeTextEditHint": "Use whole paragraph to edit text",
   "segment.runTextEditHint": "Select a paragraph to edit its text",
   "segment.runSelectionTerminal": "Starts a new paragraph selection",
@@ -163,7 +259,14 @@ export const en = {
   "segment.insertPlaceholder": "Paragraph text to insert",
   "segment.insertBefore": "Insert before",
   "segment.insertAfter": "Insert after",
+  "segment.moveUp": "Move up",
+  "segment.moveDown": "Move down",
   "segment.deletePara": "Delete paragraph",
+  "segment.multiReorderRefused":
+    "Move and delete act on one paragraph or on paragraphs next to each other in the same place. Select such a run to move or delete it together.",
+  "segment.sectionDefinitionLocked":
+    "The first paragraph of a section holds the section's page setup, so it cannot be moved or deleted, " +
+    "and no paragraph can be moved above it. Pick another paragraph.",
   "segment.alignLabel": "Alignment",
   "segment.alignGroupAria": "Paragraph alignment",
   "segment.alignLeft": "Left",
@@ -407,6 +510,79 @@ export const ko: MessageTable = {
   "tabs.fields": "필드",
   "tabs.templates": "템플릿",
   "tabs.lint": "문서 검사",
+  "tabs.components": "구성 요소",
+
+  "components.panelAria": "구성 요소 팔레트",
+  "components.catalogueAria": "삽입할 수 있는 구성 요소",
+  "components.hint": "구성 요소는 선택한 문단 옆에 삽입되며, 아래에 채운 값이 반영됩니다.",
+  "components.insert": (p: { name: string }): string => `${p.name} 삽입`,
+  "components.positionLabel": "삽입 위치",
+  "components.positionAria": "삽입 위치",
+  "components.positionBefore": "문단 앞",
+  "components.positionAfter": "문단 뒤",
+  "components.positionBeforeLocked":
+    "구역의 첫 문단은 구역의 용지 설정을 담고 있어 그 앞에는 아무것도 삽입할 수 없습니다. " +
+    "그 문단 뒤에 삽입하거나 다른 문단을 선택하세요.",
+  "components.paramAria": (p: { name: string }): string => `${p.name} 값`,
+  "components.paramLabel": (p: { name: string; param: string }): string =>
+    `${p.name}: ${p.param}`,
+  "components.moveUp": (p: { name: string }): string => `${p.name} 위로 이동`,
+  "components.moveDown": (p: { name: string }): string => `${p.name} 아래로 이동`,
+  "components.remove": (p: { name: string }): string => `${p.name} 삭제`,
+  "components.noSelection": "먼저 문서에서 문단을 선택하세요.",
+  "components.noAddress": "선택 항목의 주소를 알 수 없습니다. 이 호스트의 문서 읽기 결과에 세그먼트 식별자가 없습니다.",
+  "components.disabledVersion": (p: { version: string }): string =>
+    `구성 요소 삽입에는 hwp-cli ${p.version} 이상이 필요합니다. 이전 엔진은 삽입한 식별자를 보고하지 않습니다.`,
+  "components.disabledChannel": "이 호스트는 형식이 지정된 편집 연산을 보낼 수 없어 구성 요소를 삽입할 수 없습니다.",
+  "components.noReport":
+    "구성 요소는 문서에 들어갔지만 이 호스트가 편집 리포트를 주지 않아, 삽입된 문단을 선택할 수 없습니다. " +
+    "문단 탭에서 삽입된 문단을 직접 선택해 옮기거나 삭제하세요.",
+  "components.reportTruncated":
+    "편집 리포트가 나열하는 식별자를 잘라내 삽입된 문단을 선택할 수 없습니다. 더 작은 구성 요소를 넣거나 문단 목록에서 새 문단을 직접 선택하세요.",
+  "components.tooWide": (p: { width: string; available: string }): string =>
+    `이 구성 요소의 너비는 ${p.width}이고 삽입 지점의 너비는 ${p.available}뿐이라 엔진이 거부합니다. ` +
+    "본문이 충분히 넓은 곳(셀 안이 아니라 최상위 문단 옆)에 넣거나 더 좁은 구성 요소를 사용하세요.",
+  "components.tooWideUnmeasured": (p: { width: string }): string =>
+    `이 구성 요소의 너비는 ${p.width}이고, 들어갈 자리에 비해 넓다고 엔진이 거부했습니다. ` +
+    "셀 안이 아니라 최상위 문단 옆에 넣거나 더 좁은 구성 요소를 사용하세요.",
+  "components.tooWideUnknown":
+    "들어갈 자리에 비해 넓다고 엔진이 삽입을 거부했습니다. 본문이 충분히 넓은 곳에 넣거나 더 좁은 구성 요소를 사용하세요.",
+  "components.insertionRefused": (p: { reason?: string }): string =>
+    p.reason === undefined || p.reason === ""
+      ? "엔진이 이 삽입을 거부했습니다. 구성 요소와 삽입 지점을 확인한 뒤 다시 시도하세요."
+      : `엔진이 이 삽입을 거부했습니다: ${p.reason}. 구성 요소와 삽입 지점을 확인한 뒤 다시 시도하세요.`,
+  "components.preflightImage":
+    "이 구성 요소는 그림을 삽입하는데, 팔레트는 그림 바이트를 준비하지 않으므로 엔진이 삽입을 거부합니다. " +
+    "그림 탭에서 그림을 넣거나 구성 요소를 문단과 표로 바꾸세요.",
+  "components.preflightSectionBreak":
+    "이 구성 요소는 자체 구역으로 시작하는데, 구성 요소 삽입은 구역 나누기를 함께 보낼 수 없습니다. " +
+    "구성 요소 안에서는 쪽이나 단 나누기를 쓰거나, 문서 탭에서 새 구역을 시작하세요.",
+  "components.preflightEquation": (p: { name: string }): string =>
+    `열려 있는 문서 ${p.name}은(는) .hwp 파일이고, 엔진은 .hwp에 수식을 삽입할 수 없습니다. ` +
+    ".hwpx로 저장한 뒤 구성 요소를 다시 삽입하거나 수식을 빼세요.",
+  "components.pendingEdits":
+    "먼저 대기 중인 편집을 적용하거나 지우세요. 삽입은 문서 전체를 바꾸므로, 아직 적용되지 않은 편집이 사라집니다.",
+  "components.refused": (p: {
+    code: string;
+    source: string;
+    field: string;
+    value: string;
+    step: string;
+  }): string =>
+    (p.field === ""
+      ? `${p.source}이(가) 거부되었습니다(${p.code}). `
+      : `${p.source}: ${p.field}${p.value === "" ? "" : ` = ${p.value}`}이(가) 거부되었습니다(${p.code}). `) + p.step,
+  "components.unknownStyle": (p: { style: string }): string =>
+    `대상 문서에 '${p.style}' 스타일이 없어 엔진이 구성 요소를 거부했습니다. 그 스타일을 구성 요소의 ` +
+    "styles에 정의하거나 문서에 이미 있는 스타일을 참조한 뒤 다시 삽입하세요.",
+  "components.invalidDefinition":
+    "구성 요소의 블록, 스타일, 목록 정의를 엔진이 거부했습니다. " +
+    "구성 요소의 blocks, styles, lists를 확인한 뒤 다시 삽입하세요.",
+  "components.step.param": "패널에서 그 값을 고치거나 구성 요소의 매개변수를 수정한 뒤 다시 삽입하세요.",
+  "components.step.style":
+    "프로파일 스타일을 based_on으로 두고 자기 이름으로 스타일을 정의하거나 참조를 고친 뒤 다시 삽입하세요.",
+  "components.step.invalid": "구성 요소 파일의 모든 필드가 구성 요소 규약에 맞도록 고친 뒤 다시 불러오세요.",
+  "components.step.load": "구성 요소 파일의 경로나 URL과 JSON을 확인한 뒤 다시 불러오세요.",
 
   "error.prefix.load": "문서 열기 실패",
   "error.prefix.apply": "편집 적용 실패",
@@ -432,6 +608,14 @@ export const ko: MessageTable = {
   "compose.submit": "문서 생성",
   "compose.submitting": "생성 중...",
   "compose.defaultFileStem": "새 문서",
+  "compose.componentsTitle": "또는 구성 요소로 만들기",
+  "compose.componentsHint":
+    "추가한 구성 요소가 이 순서대로 문서가 됩니다. 목록이 비어 있지 않으면 위의 문서 유형, 작성자, 본문은 사용되지 않습니다.",
+  "compose.componentsEmpty": "추가한 구성 요소가 없습니다.",
+  "compose.componentPicker": "추가할 구성 요소",
+  "compose.addComponent": "추가",
+  "compose.assemblyAria": "이 문서의 구성 요소 순서",
+  "compose.paramAria": (p) => `${p.component}의 ${p.param}`,
 
   "presets.official": "공문",
   "presets.report": "보고서",
@@ -455,7 +639,7 @@ export const ko: MessageTable = {
   "segment.rangeClear": "문단 전체 사용",
   "segment.selectedCount": (p) => `선택한 문단 ${p.count}개`,
   "segment.selectedRunCount": (p) => `선택한 run ${p.count}개`,
-  "segment.multiTextEditHint": "텍스트 교체, 삽입, 삭제는 한 문단을 대상으로 합니다. 이 기능을 사용하려면 문단 하나를 선택하세요.",
+  "segment.multiTextEditHint": "텍스트 교체와 삽입은 한 문단을 대상으로 합니다. 이 기능을 사용하려면 문단 하나를 선택하세요.",
   "segment.rangeTextEditHint": "텍스트를 편집하려면 문단 전체를 사용하세요",
   "segment.runTextEditHint": "텍스트를 편집하려면 문단을 선택하세요",
   "segment.runSelectionTerminal": "새 문단 선택이 시작됩니다",
@@ -479,7 +663,13 @@ export const ko: MessageTable = {
   "segment.insertPlaceholder": "삽입할 문단 텍스트",
   "segment.insertBefore": "앞에 삽입",
   "segment.insertAfter": "뒤에 삽입",
+  "segment.moveUp": "위로 이동",
+  "segment.moveDown": "아래로 이동",
   "segment.deletePara": "문단 삭제",
+  "segment.multiReorderRefused":
+    "이동과 삭제는 문단 하나, 또는 같은 자리에서 연속한 문단들을 대상으로 합니다. 그런 문단들을 함께 선택하면 한 번에 옮기거나 삭제할 수 있습니다.",
+  "segment.sectionDefinitionLocked":
+    "구역의 첫 문단은 구역의 용지 설정을 담고 있어 옮기거나 삭제할 수 없고, 그 위로 다른 문단을 옮길 수도 없습니다. 다른 문단을 선택하세요.",
   "segment.alignLabel": "정렬",
   "segment.alignGroupAria": "문단 정렬",
   "segment.alignLeft": "왼쪽",

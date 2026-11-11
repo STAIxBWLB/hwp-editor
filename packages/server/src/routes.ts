@@ -33,6 +33,7 @@ import {
   MAX_IMAGE_ASSETS_TOTAL_BYTES,
   validateImageAssets,
   imageAssetsMatchOps,
+  withCallerName,
   type ImageAsset,
 } from "@hwp-editor/core";
 
@@ -427,6 +428,11 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
     if (verify !== undefined) options.verify = verify;
     const allowPartial = formFlag(form, "allowPartial");
     if (allowPartial !== undefined) options.allowPartial = allowPartial;
+    // Opt-in: the report costs an extra file per edit, and only a caller that
+    // reorders what it inserted needs the ids. A host that cannot produce one
+    // answers without the field rather than with fabricated ids.
+    const reportFlag = formFlag(form, "report");
+    if (reportFlag !== undefined) options.report = reportFlag;
     if (assets.length > 0) options.assets = assets;
 
     // No session is created or written here. The pre-edit copy this path used
@@ -441,7 +447,14 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
       cli !== null
         ? await cli.edit(document, ops, options, { signal: req.signal, scope })
         : await engine.edit(document, ops, options);
-    const body: EditResponse = { name: edited.name, dataBase64: toBase64(edited.data) };
+    const body: EditResponse = {
+      name: edited.name,
+      dataBase64: toBase64(edited.data),
+      // The report names the path the engine wrote to. Whatever produced it —
+      // the CLI engine here or a host's own engine — the field is rewritten at
+      // this boundary, because this is the response a caller can read.
+      ...(edited.report === undefined ? {} : { report: withCallerName(edited.report, edited.name) }),
+    };
     return json(body);
   }
 

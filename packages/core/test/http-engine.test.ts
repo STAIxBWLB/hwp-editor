@@ -371,3 +371,51 @@ describe("combined HTTP capabilities", () => {
     else expect(caps).not.toHaveProperty("imageAssets");
   });
 });
+
+/**
+ * `report` is requested per call and parsed only then. The Tauri engine drops
+ * an unreadable report instead of failing an edit whose document was already
+ * published; both transports answer one shape for one request, so a host that
+ * upgrades ahead of the client cannot turn a successful edit into an error.
+ */
+describe("edit report transport", () => {
+  const edited = {
+    name: "회의록.hwpx",
+    dataBase64: base64.encode(new TextEncoder().encode("edited")),
+  };
+  /** edit-report-v1 with one applied insertion of no addressable paragraph. */
+  const report = {
+    schema_version: "1.0",
+    contract: "hwp-edit-report-v1",
+    output: "out.hwpx",
+    dry_run: false,
+    ops: [{ index: 0, op: "insert_blocks", status: "applied", pieces_touched: 0, changed: [], reason: null }],
+    applied_count: 1,
+    failed_count: 0,
+  };
+  /** A report this client's parser refuses, which is what a newer host sends. */
+  const unreadable = { schema_version: "1.0", contract: "hwp-edit-report-v2", ops: [] };
+
+  const ops: EditOp[] = [{ kind: "delete-para", address: { at: { section: 0, paragraph: 1 } } }];
+
+  it("parses a report the caller asked for", async () => {
+    const engine = createHttpEngine("/api", { fetch: stubFetch(JSON.stringify({ ...edited, report }), { status: 200 }) });
+    const result = await engine.edit(doc, ops, { report: true });
+    expect(result.report).toEqual(report);
+    expect(result.data).toEqual(new TextEncoder().encode("edited"));
+  });
+
+  it("does not parse a report the caller did not ask for", async () => {
+    const engine = createHttpEngine("/api", { fetch: stubFetch(JSON.stringify({ ...edited, report: unreadable }), { status: 200 }) });
+    const result = await engine.edit(doc, ops);
+    expect(result).not.toHaveProperty("report");
+  });
+
+  it("drops an unreadable report while the edit itself still succeeds", async () => {
+    const engine = createHttpEngine("/api", { fetch: stubFetch(JSON.stringify({ ...edited, report: unreadable }), { status: 200 }) });
+    const result = await engine.edit(doc, ops, { report: true });
+    expect(result.name).toBe("회의록.hwpx");
+    expect(result.data).toEqual(new TextEncoder().encode("edited"));
+    expect(result).not.toHaveProperty("report");
+  });
+});

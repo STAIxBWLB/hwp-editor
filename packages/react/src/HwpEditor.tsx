@@ -12,14 +12,19 @@ import type { CSSProperties, JSX, KeyboardEvent } from "react";
 import type {
   Capabilities,
   CatEnvelope,
+  Component,
   DocumentHandle,
+  EditReport,
   HwpEngine,
   EditOp,
   ImageAsset,
+  ParagraphAddress,
+  Segment,
   ValidationReport,
 } from "@hwp-editor/core";
-import { createStore, segmentAtRef, validateImageAssets, HwpEngineError, MAX_IMAGE_ASSETS, MAX_IMAGE_ASSETS_TOTAL_BYTES } from "@hwp-editor/core";
-import type { EditorError, EditorStore } from "@hwp-editor/core";
+import type { AddressedEditOp } from "@hwp-editor/core";
+import { compareSegments, componentStyleMap, createStore, insertedParagraphIds, isSectionDefinitionParagraph, resolveSelection, segmentAtRef, segmentRef, substituteParams, validateImageAssets, HwpEngineError, MAX_IMAGE_ASSETS, MAX_IMAGE_ASSETS_TOTAL_BYTES, STARTER_COMPONENTS } from "@hwp-editor/core";
+import type { EditorError, EditorState, EditorStore } from "@hwp-editor/core";
 import { HwpEditorContext } from "./context.js";
 import type { HwpEditorContextValue } from "./context.js";
 import { PageCanvas } from "./PageCanvas.js";
@@ -31,6 +36,10 @@ import { LintPanel } from "./LintPanel.js";
 import { DocumentPanel } from "./DocumentPanel.js";
 import { ImagePanel } from "./ImagePanel.js";
 import { ComposePanel } from "./ComposePanel.js";
+import { ComponentsPanel } from "./ComponentsPanel.js";
+import { componentsSupportReason } from "./ComponentsPanel.js";
+import type { InsertPosition } from "./ComponentsPanel.js";
+import { componentFailure, insertionFailure, insertionPreflight } from "./components-support.js";
 import { isTableSlice } from "./tables.js";
 import { ErrorLine } from "./ErrorLine.js";
 import { toEditorError } from "./errors.js";
@@ -62,6 +71,12 @@ export interface HwpEditorProps {
    * document the engine reports as protected.
    */
   readOnly?: boolean;
+  /**
+   * Component catalogue the palette offers and the new-document assembly
+   * composes from. Defaults to the shipped starters; a host with its own
+   * library passes what `loadComponents` returned.
+   */
+  components?: readonly Component[];
   /**
    * Called once per completed document load, after both the read and the
    * render resolve, with the document that was loaded. Fires again on every
@@ -111,7 +126,58 @@ export interface HwpEditorHandle {
   openCompose(): void;
 }
 
-type SideTab = "para" | "table" | "fields" | "templates" | "lint" | "document" | "images";
+type SideTab = "para" | "table" | "fields" | "templates" | "components" | "lint" | "document" | "images";
+
+/**
+ * Every paragraph the current selection covers, in document order.
+ *
+ * A selection is a list of refs, not one: a component that inserts several
+ * paragraphs leaves its whole run selected, and `state.selection` is only the
+ * primary (first) paragraph of that run. Resolving the primary alone is what
+ * used to make a second insertion land between the first component's heading
+ * and its items.
+ *
+ * Each unit resolves through `resolveSelection`, so a cell contributes the
+ * paragraphs inside it and a table, image, field or bookmark contributes none.
+ */
+function selectionParagraphs(envelope: CatEnvelope, state: EditorState): Segment[] {
+  const refs = state.selections !== undefined && state.selections.length > 0
+    ? state.selections
+    : state.selection === null ? [] : [state.selection];
+  const seen = new Set<string>();
+  const paragraphs: Segment[] = [];
+  for (const ref of refs) {
+    const segment = segmentAtRef(envelope, ref);
+    if (segment === undefined) continue;
+    for (const paragraph of resolveSelection(envelope, segment).paragraphs) {
+      const key = paragraph.id ?? `${paragraph.section}:${paragraph.para}:${paragraph.start}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      paragraphs.push(paragraph);
+    }
+  }
+  return paragraphs.sort(compareSegments);
+}
+
+/**
+ * Where a component goes: the edge of the paragraphs the same selection
+ * resolves to for an edit, never a guess about the segment's kind.
+ *
+ * `covered` is in document order, so "after" addresses its last paragraph and
+ * "before" its first: a box inserted before a cell's text does not land between
+ * the cell's own paragraphs, and a component inserted after a run of paragraphs
+ * goes below all of them rather than inside them. With nothing covered there is
+ * no anchor, and a paragraph with no id cannot be addressed at all.
+ */
+function insertAnchor(covered: readonly Segment[], position: InsertPosition): ParagraphAddress | null {
+  const paragraph = position === "before" ? covered[0] : covered[covered.length - 1];
+  return paragraph?.id === undefined ? null : { id: paragraph.id };
+}
+
+/** Whatever a refusal path threw, as the `Error` the error line renders. */
+function toError(value: unknown): Error {
+  return value instanceof Error ? value : new Error(String(value));
+}
 
 /**
  * Every render goes straight to the engine. The former client-side
@@ -137,6 +203,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       locale = "en",
       messages,
       readOnly = false,
+      components,
       onReady,
       onError,
       onChange,
@@ -144,6 +211,10 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       className,
       style,
     } = props;
+
+    // One catalogue for both surfaces: the palette and the new-document
+    // assembly must offer the same components.
+    const catalogue = components ?? STARTER_COMPONENTS;
 
     /**
      * Host callbacks are deliberately NON-REACTIVE. They live in this one
@@ -193,19 +264,75 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     // React-internal throw legitimately has none, and synthesizing `internal`
     // would be indistinguishable from a real `internal`.
     const [loadError, setLoadError] = useState<EditorError | null>(null);
+    /**
+     * A sentence about an operation the editor finished differently than the
+     * document did: an insertion whose report names no usable ids, so nothing
+     * can be selected, or one the editor refuses to send at all. Neither is a
+     * failure line, so it is shown here and still reaches the host through
+     * `onError`. A new document load clears it.
+     */
+    const [notice, setNotice] = useState<string | null>(null);
     const loadGeneration = useRef(0);
     const [tab, setTab] = useState<SideTab>("para");
     const [composing, setComposing] = useState(false);
+    /**
+     * Ids one insertion reported, held until the re-read envelope carries them.
+     * The paragraphs do not exist in the envelope the op was sent with, so the
+     * selection is built from the envelope that reads them back, in real paths
+     * rather than guessed ones. They are the only record of an insertion: a
+     * row list would keep ids that describe the document as it was written.
+     */
+    const [pendingInserted, setPendingInserted] = useState<string[]>([]);
+    /**
+     * Show a notice and hand the failure to the host.
+     *
+     * A palette refusal is not an engine failure of the document, so it does
+     * not take the error line; it is shown here (role="status") and `onError`
+     * still hears it. The error travels as it came when there is one, so a
+     * host that branches on a `code` keeps the code.
+     */
+    const noteNotice = useCallback((text: string, error?: unknown): void => {
+      setNotice(text);
+      emitError(error ?? new Error(text));
+    }, [emitError]);
+    /** The envelope an attempt has already been made against, so none repeats. */
+    const insertedTriedFor = useRef<CatEnvelope | null>(null);
     const imageAssets = useRef(new Map<EditOp, ImageAsset>());
     useEffect(() => {
       const active = new Set(state.pendingOps);
       for (const op of imageAssets.current.keys()) if (!active.has(op)) imageAssets.current.delete(op);
     }, [state.pendingOps]);
 
+    // Select the paragraphs an insertion created. `insert_blocks` names them
+    // only in the edit report, so a ref for one can be built only against the
+    // envelope that reads the new document back, whose paths are the engine's.
+    // One attempt per envelope: a host whose ids no paragraph carries leaves
+    // nothing to select, and the ids are dropped rather than retried forever.
+    useEffect(() => {
+      if (pendingInserted.length === 0 || envelope === null) return;
+      if (insertedTriedFor.current === envelope) return;
+      insertedTriedFor.current = envelope;
+      const paragraphs = pendingInserted.flatMap((id) => {
+        const segment = segmentAtRef(envelope, { id, section: 0, para: 0 });
+        return segment === undefined || segment.kind !== "para" ? [] : [segment];
+      });
+      setPendingInserted([]);
+      if (paragraphs.length === 0) return;
+      store.dispatch({
+        type: "selectMany",
+        selections: paragraphs.map(segmentRef),
+        primary: segmentRef(paragraphs[0]!),
+        anchor: segmentRef(paragraphs[0]!),
+      });
+    }, [envelope, pendingInserted, store]);
+
     // Load the document whenever the engine/file pair changes.
     useEffect(() => {
       const generation = ++loadGeneration.current;
       let cancelled = false;
+      // A notice describes one attempt against the document that is going
+      // away, so a load retires it along with that document's ids.
+      setNotice(null);
       if (file === null) {
         setEnvelope(null);
         setCapabilities(null);
@@ -270,9 +397,11 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       if (envelope === null || state.selection === null) return;
       const segment = segmentAtRef(envelope, state.selection);
       if (segment === undefined) return;
-      setTab(
-        isTableSlice(segmentText(envelope, segment)) ? "table" : "para",
-      );
+      const next: SideTab = isTableSlice(segmentText(envelope, segment)) ? "table" : "para";
+      // The palette keeps its tab: the selection an insertion produces is its
+      // own result, and leaving its rows behind for the tab it created is not
+      // the jump the user asked for. Every other tab still follows.
+      setTab((current) => current === "components" ? current : next);
     }, [envelope, state.selection]);
 
     // Dirty-change callback.
@@ -321,7 +450,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     const replaceDocument = useCallback(
       (
         produce: (current: DocumentHandle) => Promise<DocumentHandle>,
-      ): Promise<void> => {
+      ): Promise<boolean> => {
         const snapshot = store.getState();
         const current = snapshot.document;
         const generation = loadGeneration.current;
@@ -329,7 +458,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           current === null ||
           !editableRef.current ||
           snapshot.status === "applying"
-        ) return Promise.resolve();
+        ) return Promise.resolve(false);
         if (snapshot.pendingOps.length > 0) {
           const refusal = new Error(t("error.pendingReplacement"));
           emitError(refusal);
@@ -365,12 +494,13 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
                     : t("error.staleReplacement");
                 throw new Error(refusal);
               }
-              return;
+              return false;
             }
             setEnvelope(nextEnvelope);
             setValidation(report);
             store.dispatch({ type: "applySucceeded", document: next, pages });
             emitChange(next);
+            return true;
           } catch (e) {
             const latest = store.getState();
             if (
@@ -381,11 +511,194 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
               emitError(e);
               throw e;
             }
-            return;
+            return false;
           }
         })();
       },
       [emitChange, emitError, engine, store, t],
+    );
+
+    /** Ids of an insertion belong to one document; a new file retires them. */
+    useEffect(() => {
+      setPendingInserted([]);
+      insertedTriedFor.current = null;
+    }, [file]);
+
+    /**
+     * Insert one component beside the selected paragraph.
+     *
+     * The values the palette shows are substituted here, once, so a
+     * `{{param}}` never reaches the engine, and the styles sent beside the
+     * blocks are the component's own plus every profile style it references
+     * (resolved by the same code compose uses): `insert_blocks` refuses a block
+     * naming a style neither it nor the target defines, and a target document
+     * need not carry 바탕글 or 개요 2 for a component to land in it.
+     *
+     * What the insertion created is read from `edit-report-v1` alone and
+     * becomes the selection; no row list survives it, because those ids
+     * describe the document as it was written and go stale on the next edit.
+     */
+    const insertComponent = useCallback(
+      (component: Component, values: Record<string, string>, position: InsertPosition): void => {
+        const snapshot = store.getState();
+        if (!editableRef.current || snapshot.document === null || envelope === null) return;
+        // A new attempt retires the previous attempt's notice.
+        setNotice(null);
+        // An insertion replaces the document, so a queued edit would be lost:
+        // the replacement is refused, and the refusal has to be visible rather
+        // than reaching only a host that may not be listening. The palette is
+        // disabled for the same reason.
+        if (snapshot.pendingOps.length > 0) {
+          noteNotice(t("components.pendingEdits"));
+          return;
+        }
+        const segment = snapshot.selection === null ? undefined : segmentAtRef(envelope, snapshot.selection);
+        // The selection, not just its primary: a run of inserted paragraphs
+        // anchors at its far edge, so a second insertion does not split it.
+        const covered = selectionParagraphs(envelope, snapshot);
+        const address = segment === undefined ? null : insertAnchor(covered, position);
+        if (address === null) return;
+        // Before a section's first paragraph the engine refuses the insertion
+        // (it holds the section definition); the palette disables it, and this
+        // keeps the rule true for any other caller of this callback.
+        if (position === "before" && covered[0] !== undefined && isSectionDefinitionParagraph(covered[0])) return;
+        let blocks: Component["blocks"];
+        let styles: NonNullable<Extract<AddressedEditOp, { kind: "insert-blocks" }>["styles"]>;
+        try {
+          const filled = substituteParams(component, values, component.name);
+          blocks = filled.blocks;
+          styles = componentStyleMap([filled]);
+        } catch (error) {
+          // A refused param, style reference or redefinition is a sentence for
+          // the user, in their locale, naming the component and the field.
+          // Every refusal is shown, not only handed to the host: a click that
+          // visibly does nothing is the bug this line exists to prevent.
+          const shown = toError(componentFailure(error, t));
+          noteNotice(shown.message, shown);
+          return;
+        }
+        // Three refusals are certain before the document is touched, so they
+        // are answered here rather than by a failed round trip; the palette
+        // disables the same rows with the same sentences.
+        const preflight = insertionPreflight(blocks, snapshot.document.name, t);
+        if (preflight !== "") {
+          noteNotice(preflight);
+          return;
+        }
+        void (async () => {
+          let report: EditReport | undefined;
+          let applied = false;
+          try {
+            applied = await replaceDocument(async (current) => {
+              try {
+                const result = await engine.edit(
+                  current,
+                  [{
+                    kind: "insert-blocks",
+                    address,
+                    position,
+                    blocks,
+                    ...(Object.keys(styles).length === 0 ? {} : { styles }),
+                  }],
+                  { report: true },
+                );
+                report = result.report;
+                return { name: result.name, data: result.data };
+              } catch (error) {
+                // The width refusal becomes a localized sentence naming both
+                // widths before replaceDocument reports it, so one error is
+                // emitted rather than two.
+                throw toError(insertionFailure(error, blocks, t));
+              }
+            });
+          } catch {
+            return;
+          }
+          // A replacement the editor discarded (a load or an undo landed
+          // first) created nothing this state may select.
+          if (!applied) return;
+          // The report lists every op it ran, in request order, spelled with
+          // the engine's own name (`insert_blocks`, not the client's kind), so
+          // the entry this insertion owns is named rather than assumed first.
+          const outcome = report?.ops.find((entry) => entry.op === "insert_blocks");
+          if (outcome === undefined) {
+            // The document was published, so this is a notice rather than a
+            // failure: the editor shows it and the host still hears it.
+            noteNotice(t("components.noReport"));
+            return;
+          }
+          if (outcome.status !== "applied") {
+            // The report says the op did not apply, so the engine's own
+            // content-free reason is the cause: framed like any other refusal
+            // rather than left as a click that changed nothing.
+            noteNotice(t("components.insertionRefused", { reason: outcome.reason ?? "" }));
+            return;
+          }
+          // A capped list means the ids that would name the rest are simply
+          // absent; selecting a partial run would reorder half a component.
+          if (outcome.changed_total !== undefined) {
+            noteNotice(t("components.reportTruncated"));
+            return;
+          }
+          let ids: string[];
+          try {
+            ids = insertedParagraphIds(outcome);
+          } catch (error) {
+            // A report that lists more paragraphs than it touched is not this
+            // contract: say so where the user can read it.
+            noteNotice(toError(error).message, error);
+            return;
+          }
+          setPendingInserted(ids);
+        })();
+      },
+      [emitError, engine, envelope, noteNotice, replaceDocument, store, t],
+    );
+
+    const selectedTargets =
+      envelope === null || state.selection === null
+        ? undefined
+        : (() => {
+            const segment = segmentAtRef(envelope, state.selection);
+            return segment === undefined ? undefined : resolveSelection(envelope, segment);
+          })();
+    /** The paragraphs the palette would insert beside, in document order. */
+    const componentAnchor =
+      envelope === null || state.selection === null ? [] : selectionParagraphs(envelope, state);
+    // Whether the palette can act at all: any position needs an anchor, and the
+    // panel's own before/after choice decides which edge of the selection it is.
+    const selectedAddress = insertAnchor(componentAnchor, "after");
+    // Before a section's definition paragraph the engine refuses an insertion
+    // ("구역 정의 문단 앞에는 삽입할 수 없습니다"), so that one position is off
+    // while "after" still works: the palette names the reason rather than
+    // disabling both.
+    const beforeDisabledReason =
+      componentAnchor[0] !== undefined && isSectionDefinitionParagraph(componentAnchor[0])
+        ? t("components.positionBeforeLocked")
+        : "";
+    const componentDisabled =
+      componentsSupportReason(capabilities, t) ||
+      (state.pendingOps.length > 0 ? t("components.pendingEdits") : "") ||
+      (state.selection === null
+        ? t("components.noSelection")
+        : selectedAddress !== null
+          ? ""
+          : selectedTargets?.refusal === "cell"
+            ? t("segment.cellSelectionRefused")
+            : selectedTargets?.refusal === "table"
+              ? t("segment.tableSelectionRefused")
+              : selectedTargets?.refusal === "container"
+                ? t("segment.containerSelectionRefused")
+                : t("components.noAddress"));
+    /**
+     * Why the palette refuses one component's insertion before sending it, or
+     * "": the rows it refuses are disabled with that sentence, so a component
+     * the engine would certainly reject does not cost a round trip.
+     */
+    const componentRefusal = useCallback(
+      (component: Component): string =>
+        insertionPreflight(component.blocks, state.document?.name ?? "", t),
+      [state.document, t],
     );
 
     const revert = useCallback((): Promise<void> => {
@@ -619,6 +932,9 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           {loadError !== null && (
             <ErrorLine prefix={t("error.prefix.load")} {...loadError} />
           )}
+          {notice !== null && (
+            <p className="hwped-hint" role="status">{notice}</p>
+          )}
 
           <div className="hwped-main">
             {state.document === null ? (
@@ -650,6 +966,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
                     ["table", t("tabs.table")],
                     ["fields", t("tabs.fields")],
                     ["templates", t("tabs.templates")],
+                    ["components", t("tabs.components")],
                     ["lint", t("tabs.lint")],
                     ["document", t("tabs.document")],
                     ["images", t("tabs.images")],
@@ -674,6 +991,16 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
               {tab === "table" && <TableGrid />}
               {tab === "fields" && <FieldsPanel />}
               {tab === "templates" && <TemplatePanel />}
+              {tab === "components" && (
+                <ComponentsPanel
+                  components={catalogue}
+                  disabledReason={componentDisabled}
+                  beforeDisabledReason={beforeDisabledReason}
+                  refusalFor={componentRefusal}
+                  busy={!editable || state.status === "applying"}
+                  onInsert={insertComponent}
+                />
+              )}
               {tab === "lint" && <LintPanel />}
               {tab === "document" && <DocumentPanel />}
               {tab === "images" && <ImagePanel />}
@@ -682,6 +1009,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
 
           {composing && (
             <ComposePanel
+              components={catalogue}
               canCreate={editable && state.status !== "applying"}
               onClose={() => setComposing(false)}
               onComposed={(document) => {

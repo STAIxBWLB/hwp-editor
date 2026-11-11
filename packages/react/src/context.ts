@@ -31,12 +31,16 @@ export interface HwpEditorContextValue {
   queueImage?: (op: Extract<EditOp, { kind: "insert-image" }>, asset: ImageAsset) => void;
   /** Queue of pending ops length convenience. */
   applyPendingOps: () => void;
-  /** Replace the current document as one undoable transition. The producer
+  /**
+   * Replace the current document as one undoable transition. The producer
    * receives the captured current document; results are discarded if it or
-   * the loaded file changes while the operation is in flight. */
+   * the loaded file changes while the operation is in flight, and the answer
+   * says which happened, so a caller never acts on a replacement the editor
+   * threw away.
+   */
   replaceDocument: (
     produce: (current: DocumentHandle) => Promise<DocumentHandle>,
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   /** Re-read + re-render the current document after an external change. */
   refresh: () => Promise<void>;
   /** Open the compose panel (new-document flow). */

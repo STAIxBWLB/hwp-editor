@@ -17,6 +17,16 @@ export { TableGrid } from "./TableGrid.js";
 export { FieldsPanel } from "./FieldsPanel.js";
 export { ComposePanel } from "./ComposePanel.js";
 export type { ComposePanelProps } from "./ComposePanel.js";
+export { ComponentsPanel, componentsSupportReason } from "./ComponentsPanel.js";
+export type { ComponentsPanelProps, InsertPosition } from "./ComponentsPanel.js";
+export {
+  componentFailure,
+  componentRefusalText,
+  insertionFailure,
+  isLayoutOverflow,
+  overflowingBodyMm,
+  widestBlockMm,
+} from "./components-support.js";
 
 export { sanitizeSvg } from "./sanitize.js";
 export { plainSegmentText } from "./text.js";

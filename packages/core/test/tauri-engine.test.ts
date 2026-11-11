@@ -1,4 +1,5 @@
 import { malformedLayouts } from "./fixtures/layout.js";
+import { readFileSync } from "node:fs";
 import { RENDER_LAYOUT_NEXT_STEP } from "../src/layout.js";
 /**
  * createTauriEngine tests with a mock invoke. Pin the bridge contract:
@@ -133,6 +134,47 @@ describe("createTauriEngine commands", () => {
     expect(edit?.args?.["verify"]).toBe(true);
     expect(edit?.args?.["allowPartial"]).toBe(true);
     expect(result).toEqual({ name: doc.name, data: edited });
+  });
+
+  it("forwards the report opt-in, parses the answer, and leaves it absent otherwise", async () => {
+    const edited = new Uint8Array([8]);
+    const report = JSON.parse(
+      readFileSync(new URL("./fixtures/edit-report-insert-table.json", import.meta.url), "utf8"),
+    ) as unknown;
+
+    // Asked for and answered: the flag crosses the bridge and the report comes
+    // back parsed, so a host on Tauri can select what an insertion created.
+    const asked = mockInvoke({
+      hwped_edit: { name: doc.name, dataBase64: base64.encode(edited), report },
+    });
+    const withReport = await createTauriEngine(asked.invoke).edit(doc, [], { report: true });
+    expect(asked.calls.find(call => call.cmd === "hwped_edit")?.args?.["report"]).toBe(true);
+    expect(withReport.report?.contract).toBe("hwp-edit-report-v1");
+    expect(withReport.data).toEqual(edited);
+    // The host's report names where it staged the document, which is no more a
+    // caller's business on this transport than it is over HTTP.
+    expect(withReport.report?.output).toBe(doc.name);
+    expect(JSON.stringify(withReport.report)).not.toContain("/tmp/t21-table.hwpx");
+
+    // Not asked: no flag, and no report invented for the caller.
+    const unasked = mockInvoke({
+      hwped_edit: { name: doc.name, dataBase64: base64.encode(edited), report },
+    });
+    const withoutReport = await createTauriEngine(unasked.invoke).edit(doc, []);
+    expect(unasked.calls.find(call => call.cmd === "hwped_edit")?.args).not.toHaveProperty("report");
+    expect(withoutReport.report).toBeUndefined();
+
+    // Asked but the host answers without one, or with an unreadable one: the
+    // edit still stands and the ids stay unknown.
+    for (const answer of [
+      { name: doc.name, dataBase64: base64.encode(edited) },
+      { name: doc.name, dataBase64: base64.encode(edited), report: { contract: "something-else" } },
+    ]) {
+      const host = mockInvoke({ hwped_edit: answer });
+      const result = await createTauriEngine(host.invoke).edit(doc, [], { report: true });
+      expect(result.report).toBeUndefined();
+      expect(result.data).toEqual(edited);
+    }
   });
 
   it("compose sends the spec verbatim and decodes the document", async () => {

@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import type { JSX } from "react";
-import type { Capabilities, DocumentHandle, EditorError, EmbeddedTemplate } from "@hwp-editor/core";
+import type { Capabilities, Component, DocumentHandle, EditorError, EmbeddedTemplate } from "@hwp-editor/core";
+import { STARTER_COMPONENTS, documentSpecFromComponents } from "@hwp-editor/core";
 import { ErrorLine } from "./ErrorLine.js";
 import { toEditorError } from "./errors.js";
 import { COMPOSE_PRESETS, buildDocumentSpec } from "./presets.js";
+import { componentFailure } from "./components-support.js";
 import type { ComposePreset } from "./presets.js";
 import type { MessageKey } from "./messages.js";
 import { useHwpEditorContext } from "./context.js";
@@ -28,6 +30,8 @@ const PRESET_LABEL_KEYS: Record<ComposePreset, MessageKey> = {
 export interface ComposePanelProps {
   /** False when the current editor surface is read-only. */
   canCreate?: boolean;
+  /** Components the assembly offers; the shipped starters by default. */
+  components?: readonly Component[];
   /** Called with the composed document once engine.compose() succeeds. */
   onComposed: (document: DocumentHandle) => void;
   /** Close without composing. */
@@ -35,19 +39,46 @@ export interface ComposePanelProps {
 }
 
 /**
- * New-document flow: preset picker + guided form (title, author,
- * markdown-ish sections) → DocumentSpec v2 → engine.compose().
+ * One row of the assembly: a component, its catalogue position fixed at the
+ * time it was added, and the param values the user edited for it.
+ */
+interface AssemblyRow {
+  /** Row identity; the same component may be added more than once. */
+  key: number;
+  component: Component;
+  /** Only what the user changed; an untouched param keeps the component's value. */
+  values: Record<string, string>;
+}
+
+/**
+ * New-document flow, from one of two sources:
+ *
+ * - the preset picker plus guided form (title, author, markdown-ish body), or
+ * - an ordered component list, composed through `documentSpecFromComponents`,
+ *   which substitutes each component's params once and merges the styles the
+ *   components define (refusing two different definitions of one name).
+ *
+ * The assembly wins while it holds a row: it is the document's content and
+ * carries its own styles, so the type, author and body fields are switched off
+ * with a hint rather than silently ignored. The title stays: it is the file
+ * name and the document metadata in both sources.
  */
 export function ComposePanel(props: ComposePanelProps): JSX.Element {
   const { engine, t, onError, store, state } = useHwpEditorContext();
+  const components = props.components ?? STARTER_COMPONENTS;
   const [preset, setPreset] = useState<ComposePreset>("official");
   const [title, setTitle] = useState("");
   const [author, setAuthor] = useState("");
   const [body, setBody] = useState("");
+  const [assembly, setAssembly] = useState<AssemblyRow[]>([]);
+  const [catalogue, setCatalogue] = useState(components[0]?.name ?? "");
+  const nextRowKey = useRef(0);
   const [creating, setBusy] = useState(false);
   const busy = creating || state.status === "applying";
+  const assembling = assembly.length > 0;
   const [error, setError] = useState<EditorError | null>(null);
   const canCreate = props.canCreate ?? true;
+  const locked = !canCreate || busy;
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
@@ -88,23 +119,73 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [busy, onClose]);
 
+  // A host that swaps its library must not leave the picker on a component it
+  // no longer offers.
+  useEffect(() => {
+    setCatalogue((current) =>
+      components.some((component) => component.name === current) ? current : components[0]?.name ?? "",
+    );
+  }, [components]);
+
+  const addRow = (): void => {
+    const component = components.find((candidate) => candidate.name === catalogue);
+    if (component === undefined) return;
+    setAssembly((previous) => [
+      ...previous,
+      { key: nextRowKey.current++, component, values: {} },
+    ]);
+  };
+
+  const moveRow = (key: number, direction: -1 | 1): void => {
+    setAssembly((previous) => {
+      const at = previous.findIndex((row) => row.key === key);
+      const target = at + direction;
+      if (at < 0 || target < 0 || target >= previous.length) return previous;
+      const next = [...previous];
+      next[at] = previous[target]!;
+      next[target] = previous[at]!;
+      return next;
+    });
+  };
+
+  const removeRow = (key: number): void => {
+    setAssembly((previous) => previous.filter((row) => row.key !== key));
+  };
+
+  const setParam = (key: number, param: string, value: string): void => {
+    setAssembly((previous) =>
+      previous.map((row) =>
+        row.key === key ? { ...row, values: { ...row.values, [param]: value } } : row,
+      ),
+    );
+  };
+
   const compose = async (): Promise<void> => {
     if (!canCreate || busy) return;
     setBusy(true);
     setError(null);
     try {
-      const spec = buildDocumentSpec(preset, { title, author, body });
-      const stem =
-        title.trim() === "" ? t("compose.defaultFileStem") : title.trim();
+      const written = title.trim();
+      const spec = assembling
+        ? documentSpecFromComponents(
+            assembly.map((row) => ({ component: row.component, values: row.values })),
+            written === "" ? {} : { title: written },
+          )
+        : buildDocumentSpec(preset, { title, author, body });
+      const stem = written === "" ? t("compose.defaultFileStem") : written;
       const result = await engine.compose(spec, `${stem}.hwpx`);
       props.onComposed(result.document);
     } catch (e) {
+      // A component refusal carries a code, the component and the field, and
+      // is rendered as a localized sentence before it reaches the host: the
+      // assembly is what produced it, so this dialog says where to look.
+      const shown = componentFailure(e, t);
       // Compose is one of the two operations that can refuse with
       // `protected`, so this surface needs the code as much as the editor's.
-      setError(toEditorError(e));
+      setError(toEditorError(shown));
       // This panel owns its own error state, so the context passthrough is
       // the only channel by which a compose failure reaches the host.
-      onError?.(e);
+      onError?.(shown);
     } finally {
       setBusy(false);
     }
@@ -167,7 +248,7 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
                   "hwped-preset" +
                   (preset === value ? " hwped-preset-active" : "")
                 }
-                disabled={!canCreate || busy}
+                disabled={locked || assembling}
                 onClick={() => setPreset(value)}
               >
                 {t(PRESET_LABEL_KEYS[value])}
@@ -199,7 +280,7 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
             id="hwped-compose-author"
             className="hwped-input"
             type="text"
-            disabled={!canCreate || busy}
+            disabled={locked || assembling}
             value={author}
             onChange={(e) => setAuthor(e.target.value)}
             placeholder={t("compose.authorPlaceholder")}
@@ -214,12 +295,93 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
             id="hwped-compose-body"
             className="hwped-textarea"
             rows={8}
-            disabled={!canCreate || busy}
+            disabled={locked || assembling}
             value={body}
             onChange={(e) => setBody(e.target.value)}
             placeholder={t("compose.bodyPlaceholder")}
           />
         </div>
+
+        <section className="hwped-field" aria-label={t("compose.componentsTitle")}>
+          <span className="hwped-label">{t("compose.componentsTitle")}</span>
+          <p className="hwped-hint">{t("compose.componentsHint")}</p>
+          <div className="hwped-row">
+            <select
+              className="hwped-input"
+              aria-label={t("compose.componentPicker")}
+              value={catalogue}
+              onChange={(e) => setCatalogue(e.target.value)}
+              disabled={locked || components.length === 0}
+            >
+              {components.map((component) => (
+                <option key={component.name} value={component.name}>
+                  {component.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="hwped-btn"
+              disabled={locked || catalogue === ""}
+              onClick={addRow}
+            >
+              {t("compose.addComponent")}
+            </button>
+          </div>
+          {assembling ? (
+            <ol className="hwped-fields" aria-label={t("compose.assemblyAria")}>
+              {assembly.map((row, index) => (
+                <li key={row.key} className="hwped-field-item">
+                  <strong>{row.component.name}</strong>
+                  {Object.entries(row.component.params).map(([param, fallback]) => (
+                    <label key={param} className="hwped-label">
+                      {param}
+                      <input
+                        className="hwped-input"
+                        type="text"
+                        aria-label={t("compose.paramAria", { component: row.component.name, param })}
+                        disabled={locked}
+                        value={row.values[param] ?? fallback}
+                        onChange={(e) => setParam(row.key, param, e.target.value)}
+                      />
+                    </label>
+                  ))}
+                  <div className="hwped-row">
+                    <button
+                      type="button"
+                      className="hwped-btn"
+                      disabled={locked || index === 0}
+                      aria-label={t("components.moveUp", { name: row.component.name })}
+                      onClick={() => moveRow(row.key, -1)}
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      className="hwped-btn"
+                      disabled={locked || index === assembly.length - 1}
+                      aria-label={t("components.moveDown", { name: row.component.name })}
+                      onClick={() => moveRow(row.key, 1)}
+                    >
+                      ↓
+                    </button>
+                    <button
+                      type="button"
+                      className="hwped-btn"
+                      disabled={locked}
+                      aria-label={t("components.remove", { name: row.component.name })}
+                      onClick={() => removeRow(row.key)}
+                    >
+                      {t("components.remove", { name: row.component.name })}
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="hwped-hint">{t("compose.componentsEmpty")}</p>
+          )}
+        </section>
 
         {error !== null && (
           <ErrorLine prefix={t("error.prefix.compose")} {...error} />
