@@ -11,7 +11,7 @@
  * style.
  */
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type {
   CatEnvelope,
   DocumentHandle,
@@ -979,5 +979,75 @@ describe("styles tab operations (en)", () => {
     );
     expect(await screen.findByRole("button", { name: /바탕글/ })).toBeTruthy();
     await waitFor(() => expect(screen.queryByText(en["styles.loadFailed"])).toBeNull());
+  });
+
+  /**
+   * #53 follow-up 3: the read is the tab's own, so the way back from it must
+   * not cost the user a reload of the file. One press re-reads the table, and
+   * the sentence that described the failure goes with the read that works.
+   */
+  it("retries a failed read from the tab, without reloading the document", async () => {
+    const base = createMockEngine({ envelope: envelopeWithIds() });
+    let calls = 0;
+    const engine: HwpEngine = {
+      ...base,
+      capabilities: async () => ({ ...(await base.capabilities()), styles: "v1" as const }),
+      styles: async () => {
+        calls += 1;
+        if (calls === 1) throw new Error("read failed");
+        return TABLE;
+      },
+    };
+    renderEditor(engine);
+    fireEvent.click(await screen.findByRole("tab", { name: en["tabs.styles"] }));
+
+    // The cause, and the next step the tab itself can carry out.
+    await waitFor(() => expect(screen.getAllByText(en["styles.loadFailed"]).length).toBeGreaterThan(0));
+    expect(screen.queryByRole("button", { name: /바탕글/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: en["styles.retry"] }));
+
+    expect(await screen.findByRole("button", { name: /바탕글/ })).toBeTruthy();
+    expect(calls).toBe(2);
+    await waitFor(() => expect(screen.queryByText(en["styles.loadFailed"])).toBeNull());
+  });
+
+  /**
+   * #53 follow-up 3, the other half: the table is the document's, so a locale
+   * change must not read it again — and the sentence a failed read writes is
+   * the locale the user is reading at that moment, not the one the effect was
+   * created with.
+   */
+  it("writes a failed read's sentence in the locale current when it fails", async () => {
+    const base = createMockEngine({ envelope: envelopeWithIds() });
+    const gates: Array<() => void> = [];
+    let styleReads = 0;
+    const engine: HwpEngine = {
+      ...base,
+      capabilities: async () => ({ ...(await base.capabilities()), styles: "v1" as const }),
+      styles: async () => {
+        styleReads += 1;
+        await new Promise<void>((_resolve, reject) => {
+          gates.push(() => reject(new Error("read failed")));
+        });
+        return TABLE;
+      },
+    };
+    const FILE: DocumentHandle = { name: "x.hwpx", data: new Uint8Array([1]) };
+    const view = render(<HwpEditor engine={engine} file={FILE} locale="en" />);
+    // Every read this tab starts is held, so each one fails after the switch.
+    await waitFor(() => expect(gates.length).toBeGreaterThan(0));
+    await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 0); }); });
+    const readsBefore = styleReads;
+    expect(readsBefore).toBeGreaterThan(0);
+
+    // The same file: only the locale changes, so the load does not restart.
+    view.rerender(<HwpEditor engine={engine} file={FILE} locale="ko" />);
+    // A different locale is not a different document: the table is not re-read.
+    expect(styleReads).toBe(readsBefore);
+
+    await act(async () => { for (const gate of [...gates]) gate(); });
+    await waitFor(() => expect(screen.getAllByText(ko["styles.loadFailed"]).length).toBeGreaterThan(0));
+    expect(screen.queryByText(en["styles.loadFailed"])).toBeNull();
+    expect(styleReads).toBe(readsBefore);
   });
 });

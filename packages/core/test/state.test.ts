@@ -226,3 +226,45 @@ describe("applying transaction lock", () => {
     }
   });
 });
+
+/**
+ * #58 item 22: the host can choose no document, and the store must be able to
+ * follow it there — including out of "applying", which no other action
+ * reaches. Apply, the template panel and Styles all read this store, so an
+ * empty one is what makes them act on nothing.
+ */
+describe("unload", () => {
+  it("empties a store whose document was closed mid-apply", () => {
+    const applying = reducer(loaded, { type: "applyStarted" });
+    expect(applying.status).toBe("applying");
+    expect(applying.snapshots).toHaveLength(1);
+    // Closing a document is the one way out of the lock; the lock itself is
+    // untouched, so a queued op still changes nothing here.
+    expect(
+      reducer(applying, {
+        type: "queueOp",
+        op: { kind: "set-field", name: "date", value: "2026-11-12" },
+      }),
+    ).toBe(applying);
+
+    const closed = reducer(applying, { type: "unload" });
+    expect(closed).toBe(initialState);
+    expect(closed.status).toBe("clean");
+    expect(closed.document).toBeNull();
+    expect(closed.snapshots).toEqual([]);
+  });
+
+  it("drops ops staged against the closed document and their snapshots", () => {
+    let s = reducer(loaded, { type: "applyStarted" });
+    s = reducer(s, { type: "applySucceeded", document: doc("a.hwpx", "v2") });
+    s = reducer(s, {
+      type: "queueOp",
+      op: { kind: "delete-para", text: "gone" },
+    });
+    s = reducer(s, { type: "select", selection: { section: 0, para: 0 } });
+    expect(s.status).toBe("dirty");
+    expect(s.snapshots).toHaveLength(1);
+
+    expect(reducer(s, { type: "unload" })).toBe(initialState);
+  });
+});

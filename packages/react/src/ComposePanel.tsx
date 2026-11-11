@@ -32,8 +32,15 @@ export interface ComposePanelProps {
   canCreate?: boolean;
   /** Components the assembly offers; the shipped starters by default. */
   components?: readonly Component[];
-  /** Called with the composed document once engine.compose() succeeds. */
-  onComposed: (document: DocumentHandle) => void;
+  /**
+   * Called with the composed document once engine.compose() succeeds.
+   *
+   * RETURNING a sentence refuses it: the editor did not take the document, the
+   * dialog stays open with the composition, and the sentence is shown there.
+   * The creating surface owns the screen while it is open, so a refusal that
+   * only reached the editor's notice line would be written behind the modal.
+   */
+  onComposed: (document: DocumentHandle) => string | void;
   /** Close without composing. */
   onClose: () => void;
 }
@@ -64,7 +71,7 @@ interface AssemblyRow {
  * name and the document metadata in both sources.
  */
 export function ComposePanel(props: ComposePanelProps): JSX.Element {
-  const { engine, t, onError, store, state, loadEpoch } = useHwpEditorContext();
+  const { engine, t, onError, store, state, loadEpoch, loadSettled, loadInFlight } = useHwpEditorContext();
   const components = props.components ?? STARTER_COMPONENTS;
   const [preset, setPreset] = useState<ComposePreset>("official");
   const [title, setTitle] = useState("");
@@ -78,7 +85,14 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
   const assembling = assembly.length > 0;
   const [error, setError] = useState<EditorError | null>(null);
   const canCreate = props.canCreate ?? true;
-  const locked = !canCreate || busy;
+  /**
+   * A load in flight is the one state `canCreate` cannot see: the store still
+   * holds the old document until the load resolves, so a created document
+   * would replace the file the host has just chosen. Disabled here, with the
+   * sentence that says why; the flow's own guards still compare the captured
+   * epoch, because this flag is a render hint and can lag a started load.
+   */
+  const locked = !canCreate || busy || loadInFlight;
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
@@ -160,8 +174,32 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
     );
   };
 
+  /**
+   * Refuse a press in the two places this dialog can be answered in: its own
+   * error line, where the user is looking, and the host, which hears every
+   * refusal in this editor so a caller is never left with a press that did
+   * nothing. The sentence is carried as an `Error` when no engine failure
+   * carries it instead, the same shape `noteRefusal` uses.
+   */
+  const refuse = (sentence: string): void => {
+    const shown = new Error(sentence);
+    setError(toEditorError(shown));
+    onError?.(shown);
+  };
+
   const compose = async (): Promise<void> => {
     if (!canCreate || busy) return;
+    // A load in flight would be replaced by what this composes, and it is the
+    // file the host chose. `locked` disables the button, but the hint is a
+    // render behind, so the press itself asks the generations. A composed
+    // document's read raises no hint at all — the dialog is open and enabled
+    // while this editor is still taking that composition on — so the refusal
+    // is said out loud rather than left as a press that did nothing, and it
+    // reaches the host as every other refusal in this editor does.
+    if (!loadSettled()) {
+      refuse(t("error.loadingReplacement"));
+      return;
+    }
     setBusy(true);
     setError(null);
     // Both halves are captured now and checked before the result may replace
@@ -183,7 +221,11 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
       if (loadEpoch() !== epoch || store.getState().document !== source) {
         throw new Error(t("error.staleCompose"));
       }
-      props.onComposed(result.document);
+      // The editor may refuse the document it was handed (a load that started
+      // after this press). It answers with the sentence rather than writing it
+      // on the editor's notice line, which sits behind this dialog.
+      const refused = props.onComposed(result.document);
+      if (typeof refused === "string") refuse(refused);
     } catch (e) {
       // A component refusal carries a code, the component and the field, and
       // is rendered as a localized sentence before it reaches the host: the
@@ -202,6 +244,12 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
 
   const createEmbedded = async (): Promise<void> => {
     if (!canCreate || busy || engine.create === undefined || !createStatus.supported || templateId === "") return;
+    // Same rule as `compose`: a document created now would replace the file
+    // the host has chosen and this editor has not finished reading.
+    if (!loadSettled()) {
+      refuse(t("error.loadingReplacement"));
+      return;
+    }
     const epoch = loadEpoch();
     const source = store.getState().document;
     setBusy(true); setError(null);
@@ -212,7 +260,8 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
       // A load in flight leaves the old document in the store until it
       // resolves, so the document identity alone would still match.
       if (loadEpoch() !== epoch || store.getState().document !== source) throw new Error(t("error.staleCompose"));
-      props.onComposed(next);
+      const refused = props.onComposed(next);
+      if (typeof refused === "string") refuse(refused);
     } catch (e) {
       if (mounted.current) { setError(toEditorError(e)); onError?.(e); }
     } finally { if (mounted.current) setBusy(false); }
@@ -235,10 +284,10 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
             <p className="hwped-hint">{t("templates.disabled", { reason: !embeddedStatus.supported ? templateStatusReason(t, embeddedStatus, "listTemplates") : templateStatusReason(t, createStatus, "create"), remedy: t("templates.remedy") })}</p>
           ) : (
             <div className="hwped-row">
-              <select className="hwped-input" aria-label={t("templates.embeddedPicker")} value={templateId} onChange={(e) => setTemplateId(e.target.value)} disabled={busy || !canCreate || templates.length === 0}>
+              <select className="hwped-input" aria-label={t("templates.embeddedPicker")} value={templateId} onChange={(e) => setTemplateId(e.target.value)} disabled={locked || templates.length === 0}>
                 {templates.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
               </select>
-              <button type="button" className="hwped-btn" disabled={busy || !canCreate || templateId === ""} onClick={() => void createEmbedded()}>{t("templates.createEmbedded")}</button>
+              <button type="button" className="hwped-btn" disabled={locked || templateId === ""} onClick={() => void createEmbedded()}>{t("templates.createEmbedded")}</button>
             </div>
           )}
         </section>
@@ -277,7 +326,7 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
             id="hwped-compose-title"
             className="hwped-input"
             type="text"
-            disabled={!canCreate || busy}
+            disabled={locked}
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder={t("compose.titlePlaceholder")}
@@ -395,6 +444,8 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
           )}
         </section>
 
+        {loadInFlight && <p className="hwped-hint" role="status">{t("compose.loadingInFlight")}</p>}
+
         {error !== null && (
           <ErrorLine prefix={t("error.prefix.compose")} {...error} />
         )}
@@ -412,7 +463,7 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
             type="button"
             className="hwped-btn hwped-btn-primary"
             onClick={() => void compose()}
-            disabled={busy || !canCreate}
+            disabled={locked}
           >
             {busy ? t("compose.submitting") : t("compose.submit")}
           </button>
