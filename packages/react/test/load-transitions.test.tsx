@@ -99,6 +99,16 @@ function editedEnvelope(): CatEnvelope {
   return { ...base, markdown: base.markdown.replace("1. 회의록", "개정된 안건") };
 }
 
+/**
+ * What a RE-READ of the open document answers with: the same envelope with the
+ * heading changed, again in the same number of scalars, so an install is
+ * visible on the page and no segment range moves.
+ */
+function reReadEnvelope(): CatEnvelope {
+  const base = envelopeWithIds();
+  return { ...base, markdown: base.markdown.replace("1. 회의록", "1. 재조회") };
+}
+
 /** A preset batch the engine measured as changing nothing: already in place. */
 function unchangedReport(): EditReport {
   return {
@@ -134,7 +144,7 @@ interface EngineOptions {
   /** Hold the engine edit until `releaseEdit()`. */
   holdEdit?: boolean;
   /** Answer this document's read with its own envelope, so an install is visible. */
-  envelopeFor?: (document: DocumentHandle) => CatEnvelope | undefined;
+  envelopeFor?: (document: DocumentHandle, call: number) => CatEnvelope | undefined;
 }
 
 /**
@@ -164,7 +174,7 @@ function editorEngine(opts: EngineOptions = {}) {
             : resolve);
         });
       }
-      return opts.envelopeFor?.(document) ?? base.read(document);
+      return opts.envelopeFor?.(document, call) ?? base.read(document);
     },
     edit: async (document, ops) => {
       if (opts.holdEdit === true) {
@@ -534,7 +544,8 @@ describe("#58 item 27: a refresh keeps its reading only for the document it star
       holdRead: (document, call) => document.name === file.name && call > 1,
     });
     const ref = createRef<HwpEditorHandle>();
-    render(<HwpEditor ref={ref} engine={h.engine} file={file} />);
+    const onError = vi.fn();
+    render(<HwpEditor ref={ref} engine={h.engine} file={file} onError={onError} />);
     await screen.findByText(file.name);
     await selectAndQueueReplace(en);
 
@@ -555,14 +566,66 @@ describe("#58 item 27: a refresh keeps its reading only for the document it star
     // Rejected rather than resolved: the host asked for a re-read of what is on
     // screen and did not get one.
     expect((outcome as Error).message).toBe(en["error.staleRefreshEdit"]);
+    // The host is told, because it is the only party that asked for the read.
+    expect((onError.mock.calls[0]?.[0] as Error).message).toBe(en["error.staleRefreshEdit"]);
     // The edit's own envelope is still the one installed: the heading the page
     // carries is the edited one, not the pre-edit text the held read returned.
     await selectPara(en, 0);
     expect(await screen.findByText("개정된 안건")).toBeTruthy();
     expect(screen.queryByText("1. 회의록")).toBeNull();
-    // The edit landed on the document on screen, so the discard is said on its
-    // error line as well as to the caller.
-    expect(screen.getByRole("alert").textContent).toContain(en["error.staleRefreshEdit"]);
+    // The edit that overtook the read landed and installed its own envelope and
+    // pages, so nothing on screen is wrong: no alert line is painted.
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("installs a re-read that spanned an apply which failed, and resolves", async () => {
+    const reRead = reReadEnvelope();
+    const h = editorEngine({
+      // The edit runs, and the READ OF ITS OWN RESULT fails: the store keeps
+      // the document it started from, which is the case this guard must not
+      // refuse. `applyStarted` staged a snapshot and `applyFailed` popped it,
+      // so the stack moved twice and the document never did.
+      failRead: (document) => document.name.startsWith("edited-"),
+      // The apply holds its result until the test opens the gate, so the
+      // re-read can start while the snapshot it staged is still on the stack.
+      holdEdit: true,
+      // The first read is the load; the next one of the open document is the
+      // refresh's, and it is held past the apply's failure.
+      holdRead: (document, call) => document.name === file.name && call > 1,
+      // Only that re-read answers with different text, so its install is
+      // visible on the page.
+      envelopeFor: (document, call) => (document.name === file.name && call > 1 ? reRead : undefined),
+    });
+    const ref = createRef<HwpEditorHandle>();
+    const view = render(<HwpEditor ref={ref} engine={h.engine} file={file} />);
+    await screen.findByText(file.name);
+    await selectAndQueueReplace(en);
+
+    // The apply is in flight - its snapshot is staged, its result read is not
+    // answered yet - when the re-read starts.
+    await applyOne(en);
+    await vi.waitFor(() => expect(h.editStarted()).toBe(true));
+    let settled: Promise<unknown> = Promise.resolve();
+    act(() => {
+      settled = handle(ref).refresh().then(() => "resolved", (error: unknown) => error);
+    });
+    await vi.waitFor(() => expect(h.readStarted()).toBe(true));
+
+    // The apply then fails, and its snapshot is popped: the document on screen
+    // is still the one the re-read started from.
+    await act(async () => { h.releaseEdit(); });
+    await vi.waitFor(() => expect(view.container.firstElementChild?.getAttribute("data-status")).toBe("error"));
+
+    await act(async () => { h.releaseRead(); });
+    let outcome: unknown;
+    await act(async () => { outcome = await settled; });
+
+    // Nothing landed, so the reading describes the document still on screen:
+    // installed, and the caller is told the surface was re-read.
+    expect(outcome).toBe("resolved");
+    await selectPara(en, 0);
+    expect(await screen.findByText("1. 재조회")).toBeTruthy();
+    expect(screen.queryByText("1. 회의록")).toBeNull();
   });
 });
 

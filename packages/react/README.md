@@ -76,7 +76,7 @@ rendering in a way a getter read from outside the render cycle cannot.
 | ------ | ------- | ---------- |
 | `apply()` | `Promise<void>` | The queue is empty, no document is loaded, an apply is already in flight, or the editor is read-only. Resolves without touching the engine. |
 | `revert()` | `Promise<void>` | The snapshot stack is empty, or a load is replacing the document its snapshots came from (the refusal fires `onError` and the notice line). Resolves without touching the engine. |
-| `refresh()` | `Promise<void>` | Never a no-op: it re-reads and re-renders the current document after an external change. **Rejects** if the engine fails, after firing `onError` and showing the alert — and also when a load is in flight, or takes the document over while the read runs, because that reading describes a document the editor has left. |
+| `refresh()` | `Promise<void>` | Never a no-op: it re-reads and re-renders the current document after an external change. **Rejects** if the engine fails, after firing `onError` and showing the alert — and also when a load is in flight, or takes the document over while the read runs, because that reading describes a document the editor has left. It rejects the same way, firing `onError` only, when an edit or an undo replaces the document while the read runs: that edit has already put its own envelope and pages on screen, so no alert is shown, and the caller hears that its reading was discarded rather than installed. |
 | `openCompose()` | `void` | Never; it opens the new-document compose dialog. |
 
 Host callbacks are non-reactive: passing a fresh inline arrow on every
