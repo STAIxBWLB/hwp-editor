@@ -15,6 +15,7 @@ export type {
 } from "./engine.js";
 export {
   imageAssetMediaType,
+  imageAssetsMatchOps,
   validateImageAssets,
   MAX_IMAGE_ASSET_BYTES,
   MAX_IMAGE_ASSETS,

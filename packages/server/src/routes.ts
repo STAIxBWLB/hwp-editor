@@ -32,6 +32,7 @@ import {
   MAX_IMAGE_ASSETS,
   MAX_IMAGE_ASSETS_TOTAL_BYTES,
   validateImageAssets,
+  imageAssetsMatchOps,
   type ImageAsset,
 } from "@hwp-editor/core";
 
@@ -250,9 +251,10 @@ async function formDocument(req: Request): Promise<{ form: FormData; document: D
   } catch {
     throw new HwpCliError("bad_request", "expected multipart/form-data with a file field");
   }
-  const file = form.get("file");
-  if (form.getAll("file").length !== 1) throw new HwpCliError("bad_request", 'multipart field "file" must appear exactly once; attach one document');
-  if (file === null || typeof file === "string") {
+  const files = form.getAll("file");
+  if (files.length !== 1) throw new HwpCliError("bad_request", 'multipart field "file" must appear exactly once; attach one document');
+  const file = files[0]!;
+  if (typeof file === "string") {
     throw new HwpCliError("bad_request", 'multipart field "file" is required');
   }
   const blob = file as Blob;
@@ -409,9 +411,7 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
       const reason = cause instanceof Error ? cause.message : "invalid image assets";
       throw new HwpCliError("bad_request", reason);
     }
-    const insertOps = ops.filter((op) => op?.kind === "insert-image");
-    const refs = new Set(insertOps.map((op) => op.path));
-    if (refs.size !== assets.length || [...refs].some((name) => !assets.some((asset) => asset.name === name))) {
+    if (!imageAssetsMatchOps(ops, assets)) {
       return error(400, "path_traversal", "insert-image paths must name exactly the uploaded assets; attach matching PNG/JPEG files instead of server-local paths");
     }
     form.forEach((value, key) => {

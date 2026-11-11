@@ -37,3 +37,14 @@ fs.writeFileSync(args[args.indexOf('-o')+1],Buffer.from([2,3]));
     } finally {rmSync(fixture,{recursive:true,force:true});}
   });
 });
+
+it("names seal's upload restriction before resolving or spawning the binary", async () => {
+  const engine = createCliEngine({ bin: "/no/such/hwp-binary" });
+  const failure = await engine.edit({ name: "doc.hwpx", data: new Uint8Array([1]) }, [
+    { kind: "insert-image", anchor: "x", path: "upload.png" },
+    { kind: "seal", anchor: "signature", path: "local-seal.png" },
+  ], { assets: [{ name: "upload.png", data: new Uint8Array([137,80,78,71,13,10,26,10]) }] })
+    .catch((error: unknown) => error);
+  expect(failure).toMatchObject({ reason: "bad_request", message: expect.stringMatching(/seal.*without uploaded assets.*local host/) });
+  expect((failure as Error).message).not.toContain("do not match");
+});

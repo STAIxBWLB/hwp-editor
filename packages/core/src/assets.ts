@@ -1,5 +1,6 @@
 import { HwpEngineError } from "./errors.js";
 import type { ImageAsset } from "./engine.js";
+import type { EditOp } from "./ops.js";
 
 export const MAX_IMAGE_ASSETS = 8;
 export const MAX_IMAGE_ASSET_BYTES = 10 * 1024 * 1024;
@@ -44,4 +45,11 @@ export function validateImageAssets(assets: readonly ImageAsset[]): void {
       invalid("image asset extension does not match its contents");
     }
   }
+}
+
+/** Every uploaded name must be referenced, and every insertion must name an upload. */
+export function imageAssetsMatchOps(ops: readonly EditOp[], assets: readonly Pick<ImageAsset, "name">[]): boolean {
+  const refs = new Set(ops.filter(op => op?.kind === "insert-image").map(op => op.path));
+  const names = new Set(assets.map(asset => asset.name));
+  return refs.size === assets.length && [...refs].every(name => names.has(name));
 }

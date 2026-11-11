@@ -25,6 +25,8 @@ family-name check).
 
 ## Commands
 
+The Tauri client strips a host's `imageAssets` claim and refuses uploaded image bytes; use an HTTP upload adapter or a desktop-local image path without assets.
+
 Payloads mirror `packages/core/src/protocol.ts`, with two Tauri deltas:
 
 | Command | Payload | Returns |

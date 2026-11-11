@@ -31,6 +31,8 @@ import {
   RENDER_LAYOUT_NEXT_STEP,
   opsToJson,
   validateImageAssets,
+  imageAssetsMatchOps,
+  imageAssetMediaType,
   parseCatEnvelope,
   protectedReasonFromDiagnostics,
   type Capabilities,
@@ -117,8 +119,6 @@ export const HANDSHAKE_FLAGS: readonly string[] = [
 /** Hancom binary .hwp is a CFBF (OLE2) container; .hwpx is a zip. */
 const CFBF_SIGNATURE = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
 
-/** The eight-byte PNG file signature (PNG spec 5.2). */
-const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
 /**
  * The engine half of the published `HwpErrorCode` vocabulary. Derived with
@@ -707,7 +707,7 @@ function positiveSize(width: number, height: number): { width: number; height: n
  */
 export function pngSize(data: Uint8Array): { width: number; height: number } | null {
   if (data.length < 24) return null;
-  if (PNG_SIGNATURE.some((byte, i) => data[i] !== byte)) return null;
+  if (imageAssetMediaType(data) !== "image/png") return null;
   // ASCII "IHDR" must be the first chunk type, at offsets 12-15.
   if (data[12] !== 0x49 || data[13] !== 0x48 || data[14] !== 0x44 || data[15] !== 0x52) return null;
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
@@ -1189,10 +1189,10 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
           const reason = cause instanceof Error ? cause.message : "invalid image assets";
           throw new HwpCliError("bad_request", reason);
         }
-        const insertOps = ops.filter((op) => op?.kind === "insert-image");
-        const refs = new Set(insertOps.map((op) => op.path));
-        if (ops.some((op) => op?.kind === "seal") ||
-          refs.size !== options.assets.length || [...refs].some((name) => !options.assets!.some((asset) => asset.name === name))) {
+        if (ops.some(op => op?.kind === "seal")) {
+          throw new HwpCliError("bad_request", "seal cannot be combined with uploaded assets; run seal without uploaded assets through a local host");
+        }
+        if (!imageAssetsMatchOps(ops, options.assets)) {
           throw new HwpCliError("bad_request", "image upload and insert-image paths do not match; upload matching PNG/JPEG files for the referenced names");
         }
       }
