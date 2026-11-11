@@ -104,6 +104,8 @@ test("AC2: three characters inside a longer run are bolded, the rest and the oth
   await list.getByRole("option").nth(0).click();
   await selectRunRange(page, 0, 3);
   await expect(page.getByText(en["segment.rangeRunCount"]({count:1}),{exact:true})).toBeVisible();
+  // A mapped window is not a whole-run target, so the row does not say it is.
+  await expect(page.getByText(en["segment.rangeWholeRunTargets"]({count:1}),{exact:true})).toHaveCount(0);
   await page.getByLabel(en["segment.bold"],{exact:true}).check();
   await page.getByRole("button",{name:en["segment.formatSubmit"],exact:true}).click();
   const applied=page.waitForResponse(readResponse);
@@ -166,6 +168,29 @@ test("AC2 on .hwp: a sub-run window lands in a paragraph's last run", async ({pa
 });
 
 /**
+ * AC2 against the failure the second review round measured: the first head
+ * took a drag that reached only a formatted run's opening marker and widened
+ * it to the whole run, and the engine's answer shows what that did - a bare
+ * id formats every character of the run, so `*동일문*` became `***동일문***`
+ * and the OTHER occurrence of the word was reformatted too. A piece that shows
+ * nothing the selection covers now names no target at all.
+ */
+test("AC2: a drag that stops on the italic marker names no target for that run", async ({page}) => {
+  const before = await loadSelectionFixture(page);
+  const italic = before.segments.find(segment=>segment.kind==="run" && segment.directChar?.italic)!;
+  expect(segmentText(before, italic)).toBe("*동일문*");
+  const bodies = await recordEdits(page);
+  const list = page.getByRole("listbox",{name:en["segment.paragraphChoices"]});
+  await list.getByRole("option").nth(0).click();
+  // The drag reaches the run through its opening `*` and no further.
+  await selectRunRange(page, italic.start, italic.start + 1);
+  await expect(page.getByText(en["segment.rangeInvalid"],{exact:true})).toBeVisible();
+  await expect(page.getByText(en["segment.rangeRunCount"]({count:1}),{exact:true})).toHaveCount(0);
+  await expect(page.getByRole("button",{name:en["toolbar.applyWithCount"]({count:1}),exact:true})).toHaveCount(0);
+  expect(bodies).toHaveLength(0);
+});
+
+/**
  * The same selection against a schema `1.0` envelope: it carries no
  * `source_chars`, because the field's presence is the feature gate. The range
  * then keeps the pre-#71 behavior and names the whole run, rather than
@@ -187,6 +212,9 @@ test("AC2 fallback: an envelope without source_chars formats the whole run", asy
   await list.getByRole("option").nth(0).click();
   await selectRunRange(page, 0, 3);
   await expect(page.getByText(en["segment.rangeRunCount"]({count:1}),{exact:true})).toBeVisible();
+  // A target with no source window is named as the whole run in the pending
+  // row, so the widening is visible before the op is queued.
+  await expect(page.getByText(en["segment.rangeWholeRunTargets"]({count:1}),{exact:true})).toBeVisible();
   await page.getByLabel(en["segment.bold"],{exact:true}).check();
   await page.getByRole("button",{name:en["segment.formatSubmit"],exact:true}).click();
   await page.getByRole("button",{name:en["toolbar.applyWithCount"]({count:1}),exact:true}).click();

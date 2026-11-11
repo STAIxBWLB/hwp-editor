@@ -708,7 +708,14 @@ export function SegmentInspector(): JSX.Element {
           }} />
         {(rangeInvalid || (state.range != null && formatTargets.length === 0)) && <p role="alert" className="hwped-hint">{t("segment.rangeInvalid")}</p>}
         {state.range != null && <>
-          <p className="hwped-hint" role="status">{t("segment.rangeRunCount", { count: formatTargets.length })}</p>
+          {formatTargets.length > 0 &&
+            <p className="hwped-hint" role="status">{t("segment.rangeRunCount", { count: formatTargets.length })}</p>}
+          {/* A target with no source window formats the whole run: the
+              selection was widened, or covered the run already. Either way the
+              pending row says so before the op is queued. */}
+          {formatTargets.some(target => target.chars === undefined) &&
+            <p className="hwped-hint">{t("segment.rangeWholeRunTargets",
+              { count: formatTargets.filter(target => target.chars === undefined).length })}</p>}
           <button type="button" className="hwped-btn" onClick={() => {
             setRangeInvalid(false); rangeInput.current?.setSelectionRange(0, 0);
             if (hasRunSelection) store.dispatch({ type: "select", selection: segmentRef(singleParagraph) });

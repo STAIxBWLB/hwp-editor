@@ -198,6 +198,62 @@ describe.each([["en", en], ["ko", ko]] as const)("Markdown run range selection (
     expect(engine.calls.edit[0]?.ops).toEqual([
       { kind: "set-format", address: { id: "run-one", chars: [0, 3] }, props: { bold: "on" } },
     ]);
+    // A mapped window is not a whole-run target, so the row does not say it is.
+    expect(screen.queryByText(messages["segment.rangeWholeRunTargets"]({ count: 1 }))).toBeNull();
+  });
+
+  it("labels a widened target as the whole run in the pending row", async () => {
+    // The published span is not the text this run shows, which puts it outside
+    // the allow-list: the selection widens to the whole run, and the row says
+    // so before anything is applied rather than leaving the count to imply a
+    // character-level edit.
+    const text = "abcdef";
+    const envelope: CatEnvelope = {
+      markdown: `${text}\n\n`,
+      segments: [
+        { id: "para-one", indices: [0], start: 0, end: 6, kind: "para", section: 0, para: 0 },
+        { id: "run-one", indices: [0, 0], start: 0, end: 6, kind: "run", section: 0, para: 0,
+          directChar: runChar(), sourceChars: { start: 0, end: 4 } },
+      ],
+    };
+    const engine = createMockEngine({ envelope });
+    render(<HwpEditor engine={engine} file={file} locale={locale} />);
+    const textarea = await selectFirstParagraph(messages);
+    await selectRange(textarea, 0, 3);
+    expect(await screen.findByText(messages["segment.rangeWholeRunTargets"]({ count: 1 }))).toBeTruthy();
+    fireEvent.click(screen.getByLabelText(messages["segment.bold"]));
+    fireEvent.click(screen.getByRole("button", { name: messages["segment.formatSubmit"] }));
+    fireEvent.click(await screen.findByRole("button", { name: messages["toolbar.applyWithCount"]({ count: 1 }) }));
+    await waitFor(() => expect(engine.calls.edit).toHaveLength(1));
+    expect(engine.calls.edit[0]?.ops).toEqual([{ kind: "set-format", address: { id: "run-one" }, props: { bold: "on" } }]);
+  });
+
+  it("names no target when a drag stops on a run's opening marker", async () => {
+    // The AC2 shape: a plain run, a bold " / " and an italic copy of the first
+    // word. A drag that ends on the italic run's `*` touches the run and
+    // covers none of its characters, so that run is not a target at all -
+    // widening it would reformat the second occurrence.
+    const markdown = "동일문 안내 **/** *동일문*";
+    const envelope: CatEnvelope = {
+      markdown: `${markdown}\n\n`,
+      segments: [
+        { id: "para-one", indices: [0], start: 0, end: 18, kind: "para", section: 0, para: 0 },
+        { id: "run-plain", indices: [0, 0], start: 0, end: 6, kind: "run", section: 0, para: 0,
+          directChar: runChar(), sourceChars: { start: 0, end: 6 } },
+        { id: "run-slash", indices: [0, 1], start: 6, end: 13, kind: "run", section: 0, para: 0,
+          directChar: runChar(true), sourceChars: { start: 6, end: 9 } },
+        { id: "run-italic", indices: [0, 2], start: 13, end: 18, kind: "run", section: 0, para: 0,
+          directChar: runChar(false, true), sourceChars: { start: 9, end: 12 } },
+      ],
+    };
+    const engine = createMockEngine({ envelope });
+    render(<HwpEditor engine={engine} file={file} locale={locale} />);
+    const textarea = await selectFirstParagraph(messages);
+    await selectRange(textarea, 13, 14);
+    expect((await screen.findByRole("alert")).textContent).toContain(messages["segment.rangeInvalid"]);
+    expect(screen.queryByText(messages["segment.rangeRunCount"]({ count: 1 }))).toBeNull();
+    expect((screen.getByRole("button", { name: messages["segment.formatSubmit"] }) as HTMLButtonElement).disabled).toBe(true);
+    expect(engine.calls.edit).toHaveLength(0);
   });
 
   it("maps an emoji-only UTF-16 range to its whole run and rejects a half-surrogate", async () => {

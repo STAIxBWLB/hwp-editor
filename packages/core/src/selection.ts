@@ -1,6 +1,6 @@
 import type { EditAddress, ParagraphAddress } from "./ops.js";
 import type { CatEnvelope, Segment, SegmentRef } from "./segments.js";
-import { markdownLength, runSourceRange, segmentRef } from "./segments.js";
+import { markdownLength, runCoverage, segmentRef } from "./segments.js";
 import type { EditorAction, EditorState, MarkdownRangeSelection } from "./state.js";
 
 function segmentKey(segment: Segment): string {
@@ -272,6 +272,11 @@ function addressesForRuns(
     if (address === undefined) continue;
     if (range !== undefined && range !== null) {
       const narrow = narrowToRange(envelope, run, range);
+      // A piece the range overlaps only through a marker or its edge
+      // whitespace shows nothing the selection covers, so it names no target
+      // at all: widening it to the whole run would format characters the
+      // selection never touched, including in another occurrence of the run.
+      if (narrow === "none") continue;
       if (narrow === "whole") {
         // A split run publishes one id per piece, and an op that names only the
         // id formats the whole run (edit-ops-v1), so a covered piece names its
@@ -300,25 +305,30 @@ function addressesForRuns(
 /**
  * What a markdown range selects inside one run piece.
  *
+ * - `"none"` — the range overlaps the piece only through a marker or the edge
+ *   whitespace the marker pair sits inside, so it covers no character the
+ *   piece shows. The piece names no target; it is not widened to the run,
+ *   which would format the characters the selection did not reach.
  * - `"whole"` — the range covers the piece; the piece publishes no
- *   `source_chars` (a schema `1.0` host); or the projection cannot read the
- *   window back character for character. The last two keep the pre-#71
+ *   `source_chars` (a schema `1.0` host); or the fragment is outside the
+ *   allow-list `runCoverage` maps (a rewrite form, a nested field/image, a
+ *   span that is not the text it shows). The last two keep the pre-#71
  *   behavior of snapping the selection to the whole run, which is what the
  *   range hint promises, rather than formatting source characters the user did
  *   not select: a guess is the failure AC2 names, and a whole run is not one.
  * - a `[start, end)` source window — the range covers part of a piece that
- *   publishes where its characters are, and `runSourceRange` read the window
- *   back exactly. A window whose edge lands on a marker or on the edge
- *   whitespace is clamped to the characters the run shows.
+ *   publishes where its characters are, and `runCoverage` read the window back
+ *   exactly. A window whose edge lands on a marker or on the edge whitespace
+ *   is clamped to the characters the run shows.
  */
 function narrowToRange(
   envelope: CatEnvelope,
   run: Segment,
   range: MarkdownRangeSelection,
-): "whole" | [number, number] {
-  if (range.start <= run.start && range.end >= run.end) return "whole";
-  if (run.sourceChars === undefined) return "whole";
-  return runSourceRange(envelope, run, Math.max(range.start, run.start), Math.min(range.end, run.end)) ?? "whole";
+): "none" | "whole" | [number, number] {
+  const coverage = runCoverage(envelope, run, Math.max(range.start, run.start), Math.min(range.end, run.end));
+  if (coverage.kind === "window") return coverage.range;
+  return coverage.kind;
 }
 
 function addressKey(address: EditAddress): string {

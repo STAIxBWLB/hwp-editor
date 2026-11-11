@@ -430,6 +430,32 @@ describe("selection helpers", () => {
     expect(at(3, 4)).toEqual([]);
   });
 
+  it("names no target for a piece a drag touches only through its marker", () => {
+    // The AC2 fixture, addressed directly: a plain run, a bold " / " and an
+    // italic run, with the spans ahwp 1.6.1 publishes for them. A drag that
+    // starts in "안내" and stops on the italic run's opening marker touches
+    // that run and covers none of its characters.
+    const plain = { bold: false, italic: false, size_pt: 10, color: "#000000", faces: Array(7).fill("A"), face_ids: Array(7).fill(0) };
+    const bold = { ...plain, bold: true };
+    const italic = { ...plain, italic: true };
+    const p: Segment = { id: "p", indices: [0], start: 0, end: 18, kind: "para", section: 0, para: 0 };
+    const text: Segment = { id: "plain", indices: [0, 0], start: 0, end: 6, kind: "run", section: 0, para: 0,
+      directChar: plain, sourceChars: { start: 0, end: 6 } };
+    const slash: Segment = { id: "bold", indices: [0, 1], start: 6, end: 13, kind: "run", section: 0, para: 0,
+      directChar: bold, sourceChars: { start: 6, end: 9 } };
+    const repeat: Segment = { id: "italic", indices: [0, 2], start: 13, end: 18, kind: "run", section: 0, para: 0,
+      directChar: italic, sourceChars: { start: 9, end: 12 } };
+    const envelope: CatEnvelope = { markdown: "동일문 안내 **/** *동일문*", segments: [p, text, slash, repeat] };
+    const at = (start: number, end: number) =>
+      formatAddresses(envelope, [p], { paragraph: { section: 0, para: 0, id: "p" }, start, end });
+    // The covered characters of the first piece, the whole of the second (the
+    // drag covers all of it), and nothing for the run the drag only reached
+    // the marker of: widening it to the whole run would reformat the second
+    // occurrence, which is the failure AC2 names.
+    expect(at(3, 14)).toEqual([{ id: "plain", chars: [3, 6] }, { id: "bold" }]);
+    expect(at(13, 14)).toEqual([]);
+  });
+
   it("does not emit top-level addresses for nested no-id runs", () => {
     const paragraph: Segment = { id: "nested-p", indices: [2, 0, 0], start: 0, end: 5, kind: "para", section: 0, para: 2 };
     const nestedRun: Segment = { indices: [2, 0, 0, 1], start: 0, end: 5, kind: "run", section: 0, para: 2 };
