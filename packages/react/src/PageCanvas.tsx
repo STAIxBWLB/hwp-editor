@@ -88,6 +88,20 @@ interface Band {
   width: number;
 }
 
+/**
+ * What tells two segments apart in a React key.
+ *
+ * A run that a block control interrupts is published as two pieces under ONE
+ * id and one nesting path (`crates/hwp-convert/src/segment.rs`, "A fragmented
+ * run"), so the id names the run and the path names where it sits - neither
+ * names a piece. The published `char_range` start does, because each piece is
+ * its own contiguous run of characters, so it joins the key. Without it the two
+ * pieces are two bands under one React key and React keeps the wrong one.
+ */
+export function bandIdentity(segment: Segment): string {
+  return `${segment.section}/${segment.indices?.join(".") ?? segment.para}:${segment.start}`;
+}
+
 function bandsForPage(
   envelope: ReturnType<typeof useHwpEditorContext>["envelope"],
   page: PageImage,
@@ -101,17 +115,13 @@ function bandsForPage(
   const selectedIds = new Set([...selected].flatMap(segment => segment.id === undefined ? [] : [segment.id]));
   for (const segment of envelope.segments) {
     const key = segment.id ?? `${segment.section}:${segment.para}`;
-    // A split run publishes one id per piece, so the id alone does not name a
-    // segment: two pieces would be two bands under one React key. The nesting
-    // path is what tells them apart.
-    const identity = `${segment.section}/${segment.indices?.join(".") ?? segment.para}`;
     const isSelected = selected.has(segment) || (segment.id !== undefined && selectedIds.has(segment.id));
     const isPending = !isSelected && pendingKeys.has(key);
     if (!isSelected && !isPending) continue;
     for (const [index, band] of bandsOnPage(envelope, segment, page, pageIndex, pageCount).entries()) {
       bands.push({
         ...band,
-        key: `${isSelected ? "sel" : "pend"}-${key}-${identity}-${index}`,
+        key: `${isSelected ? "sel" : "pend"}-${key}-${bandIdentity(segment)}-${index}`,
         className: isSelected
           ? "hwped-band hwped-band-selected"
           : "hwped-band hwped-band-pending",

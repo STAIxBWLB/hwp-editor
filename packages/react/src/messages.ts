@@ -79,6 +79,8 @@ export const en = {
     `source characters ${p.start} to ${p.end} (0-based UTF-16, end excluded), of ${p.range}`,
   "pending.target.id": (p: { id: string }): string => `element ${p.id}`,
   "pending.target.wholeRun": (p: { id: string }): string => `the whole run of element ${p.id}`,
+  "pending.target.wholePiece": (p: { id: string }): string =>
+    `the whole piece of element ${p.id}`,
   "pending.target.document": "the whole document",
   "image.deleteAllHint": "Deletes every image in every paragraph containing this text, including matches in other sections, table cells and text boxes. Review the text before applying.",
   "fields.deleteAllHint": "Deletes every field with this name, including repeated fields in templates.",
@@ -276,7 +278,7 @@ export const en = {
   "segment.rangeUnavailable": "Run metadata is unavailable. Update the host to provide segment-envelope-v2 run information, then reload.",
   "segment.rangeUnavailableNoRuns": "This paragraph has no runs of its own, so there is no text range to select inside it. Use the whole paragraph.",
   "segment.rangeInvalid": "This selection covers no character of a run in this paragraph, so there is nothing to format. Select text inside one run, or use the whole paragraph.",
-  "segment.rangeSplit": "This selection starts or ends inside one character that is stored as a surrogate pair (an emoji or another character outside the basic plane), so it has no character boundary to land on. Select inside the character or past it.",
+  "segment.rangeSplit": "This selection starts or ends inside one character that is stored as a surrogate pair (an emoji or another character outside the basic plane), so it has no character boundary to land on. Move the start or end to before or after that character.",
   "segment.rangeRunCount": (p: { count: number }): string =>
     p.count === 1 ? "1 target selected" : `${p.count} targets selected`,
   "segment.rangeWholeRunTargets": (p: { count: number }): string =>
@@ -625,6 +627,7 @@ export const ko: MessageTable = {
   "pending.target.id": (p) => `요소 ${p.id}`,
   "pending.target.wholeRun": (p) => `요소 ${p.id}의 run 전체`,
   "pending.target.document": "문서 전체",
+  "pending.target.wholePiece": (p) => `요소 ${p.id}의 run 조각 전체`,
   "image.deleteAllHint": "이 텍스트를 포함하는 모든 문단의 모든 이미지를 삭제합니다. 다른 구역, 표 셀, 글상자의 일치 항목도 포함합니다. 적용 전에 텍스트를 확인하세요.",
   "fields.deleteAllHint": "이 이름을 가진 모든 필드를 삭제합니다. 템플릿의 반복 필드도 포함합니다.",
   "fields.deleteAllBookmarksHint": "이 이름을 가진 모든 책갈피를 삭제합니다.",
@@ -792,7 +795,7 @@ export const ko: MessageTable = {
   "segment.rangeUnavailable": "run 정보가 없습니다. segment-envelope-v2의 run 정보를 제공하도록 호스트를 업데이트한 뒤 다시 불러오세요.",
   "segment.rangeUnavailableNoRuns": "이 문단에는 자체 run이 없어 안쪽에서 선택할 텍스트 범위가 없습니다. 문단 전체를 사용하세요.",
   "segment.rangeInvalid": "선택한 범위가 이 문단에서 run의 글자를 하나도 덮지 않아 서식을 적용할 대상이 없습니다. 한 run 안에서 텍스트를 선택하거나 문단 전체를 사용하세요.",
-  "segment.rangeSplit": "선택 범위의 시작이나 끝이 서로게이트 쌍으로 저장된 한 글자(이모지 등 기본 평면 밖 문자) 안쪽에 있습니다. 그 위치에는 글자 경계가 없으므로, 그 글자 안쪽이나 지난 위치에서 선택하세요.",
+  "segment.rangeSplit": "선택 범위의 시작이나 끝이 서로게이트 쌍으로 저장된 한 글자(이모지 등 기본 평면 밖 문자) 안쪽에 있습니다. 그 위치에는 글자 경계가 없으므로, 선택 범위의 시작이나 끝을 그 글자 앞이나 뒤로 옮기세요.",
   "segment.rangeRunCount": (p) => p.count === 1 ? "대상 1개 선택" : `대상 ${p.count}개 선택`,
   "segment.rangeWholeRunTargets": (p) => p.count === 1 ? "대상 1개는 run 전체에 적용됩니다" : `대상 ${p.count}개는 run 전체에 적용됩니다`,
   "segment.formatRunCount": (p) => `서식 적용 대상: ${p.count}개`,

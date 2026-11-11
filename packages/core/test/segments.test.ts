@@ -289,9 +289,9 @@ describe("segment coordinate helpers", () => {
 
 describe("documentFormat", () => {
   it("reads the extension the handle carries, and answers nothing else", () => {
-    // `DocumentHandle.name` is the only place the format reaches the editor,
-    // and the two rules it chooses between differ by one character, so a name
-    // that says neither extension gets the answer with no allowance.
+    // With no bytes the name is all there is, and the two rules it chooses
+    // between differ by one character, so a name that says neither extension
+    // gets the answer with no allowance.
     expect(documentFormat("demo.hwp")).toBe("hwp");
     expect(documentFormat("demo.HWP")).toBe("hwp");
     expect(documentFormat("demo.hwpx")).toBe("hwpx");
@@ -301,7 +301,55 @@ describe("documentFormat", () => {
     expect(documentFormat("demo.txt")).toBe("unknown");
     expect(documentFormat("demo.hwp.bak")).toBe("unknown");
   });
+
+  it("reads the format from the document's bytes, so a mislabelled file is not trusted", () => {
+    // hwp-cli reads the format from the content, so an HWPX file saved as
+    // ".hwp" opens fine - and then asked this question by name alone it was
+    // handed the HWP5 allowance, which shifts every window in it by one
+    // character. The container header is what decides.
+    expect(documentFormat("mislabelled.hwp", hwpxBytes())).toBe("unknown");
+    expect(documentFormat("mislabelled.hwpx", hwp5Bytes())).toBe("unknown");
+    // A name that says nothing useful defers to the header, and agreement
+    // answers that one format.
+    expect(documentFormat("download", hwpxBytes())).toBe("hwpx");
+    expect(documentFormat("download", hwp5Bytes())).toBe("hwp");
+    expect(documentFormat("demo.hwpx", hwpxBytes())).toBe("hwpx");
+    expect(documentFormat("demo.hwp", hwp5Bytes())).toBe("hwp");
+    // Bytes the sniff does not recognize are no evidence, so the name answers:
+    // a host that passes a stub handle, or a producer whose package the sniff
+    // does not recognize, keeps the behavior it had.
+    expect(documentFormat("demo.hwpx", new Uint8Array([1, 2, 3]))).toBe("hwpx");
+    expect(documentFormat("demo.hwpx", new Uint8Array())).toBe("hwpx");
+    // A zip that is not an HWPX package (no STORED `mimetype` entry) is not a
+    // disagreement, it is a document this rule cannot identify.
+    expect(documentFormat("demo.hwpx", plainZipBytes())).toBe("hwpx");
+    expect(documentFormat("demo.hwp", plainZipBytes())).toBe("hwp");
+  });
 });
+
+/** The eight bytes every HWP5 file starts with (CFBF/OLE2). */
+function hwp5Bytes(): Uint8Array {
+  return new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0, 0]);
+}
+
+/** An OPC package header: `PK\x03\x04`, a STORED `mimetype` entry, then its value. */
+function hwpxBytes(mimetype = "application/hwp+zip"): Uint8Array {
+  const value = new TextEncoder().encode(mimetype);
+  const bytes = new Uint8Array(38 + value.length);
+  bytes.set([0x50, 0x4b, 0x03, 0x04], 0);
+  const view = new DataView(bytes.buffer);
+  view.setUint16(8, 0, true);   // compression method: STORED
+  view.setUint16(26, 8, true);  // file name length: "mimetype"
+  view.setUint16(28, 0, true);  // extra field length
+  bytes.set(new TextEncoder().encode("mimetype"), 30);
+  bytes.set(value, 38);
+  return bytes;
+}
+
+/** A zip whose first entry is not the HWPX `mimetype`, so the sniff gives up. */
+function plainZipBytes(): Uint8Array {
+  return hwpxBytes("application/zip");
+}
 
 /**
  * The markdown-to-source mapping behind a sub-run address.

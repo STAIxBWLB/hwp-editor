@@ -1356,7 +1356,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
                   {t(pendingKindKey(op.kind))}: {pendingTargetLabel(op, t, {
                     style: styleLabel,
                     preset: (preset) => t(PRESET_LABEL[preset]),
-                  })}
+                  }, envelope)}
                   {" "}<button type="button" className="hwped-btn" disabled={state.status === "applying"}
                     onClick={() => store.dispatch({ type: "dequeueOp", index })}>{t("toolbar.removePending", { index: index + 1 })}</button>
                 </li>

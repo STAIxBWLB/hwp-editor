@@ -11,6 +11,25 @@ afterEach(cleanup);
 const file: DocumentHandle = { name: "range.hwpx", data: new Uint8Array([1]) };
 const markdown = "**Bold**😀!";
 
+/** The eight bytes every HWP5 file starts with (CFBF/OLE2). */
+function hwp5Bytes(): Uint8Array {
+  return new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0, 0]);
+}
+
+/** An OPC package header: `PK\x03\x04`, a STORED `mimetype` entry, then its value. */
+function hwpxBytes(): Uint8Array {
+  const value = new TextEncoder().encode("application/hwp+zip");
+  const bytes = new Uint8Array(38 + value.length);
+  bytes.set([0x50, 0x4b, 0x03, 0x04], 0);
+  const view = new DataView(bytes.buffer);
+  view.setUint16(8, 0, true);   // compression method: STORED
+  view.setUint16(26, 8, true);  // file name length: "mimetype"
+  view.setUint16(28, 0, true);  // extra field length
+  bytes.set(new TextEncoder().encode("mimetype"), 30);
+  bytes.set(value, 38);
+  return bytes;
+}
+
 /**
  * The direct character properties a run publishes, in the seven Hangul face
  * slots a v2 host reports. A run's `*`/`**` marker is believed only when these
@@ -282,6 +301,12 @@ describe.each([["en", en], ["ko", ko]] as const)("Markdown run range selection (
     // none of a run, so it gets its own sentence.
     expect((await screen.findByRole("alert")).textContent).toContain(messages["segment.rangeSplit"]);
     expect((await screen.findByRole("alert")).textContent).not.toContain(messages["segment.rangeInvalid"]);
+    // The next step moves the edge off the character. Saying "select inside the
+    // character or past it" repeated the cause - there is no inside to select.
+    expect(messages["segment.rangeSplit"]).toContain(
+      locale === "en" ? "Move the start or end to before or after that character" : "시작이나 끝을 그 글자 앞이나 뒤로 옮기세요");
+    expect(messages["segment.rangeSplit"]).not.toContain(
+      locale === "en" ? "Select inside the character" : "그 글자 안쪽이나 지난 위치에서 선택하세요");
     expect((screen.getByRole("button", { name: messages["segment.formatSubmit"] }) as HTMLButtonElement).disabled).toBe(true);
     expect(halfEngine.calls.edit).toHaveLength(0);
   });
@@ -289,8 +314,9 @@ describe.each([["en", en], ["ko", ko]] as const)("Markdown run range selection (
   it("reads the range against the document's own format (t30-c1)", async () => {
     // Measured on ahwp 1.6.1: "동일문 안내" publishes source_chars (0, 7) for
     // six characters as an HWP5 last run (its stored break), and an HWPX run
-    // whose edge space was trimmed publishes the same numbers. Only the file
-    // name tells the two apart, so the name is what the panel reads.
+    // whose edge space was trimmed publishes the same numbers. Only the
+    // document tells the two apart, so the container header is what the panel
+    // reads, and the file name only speaks when the header is unrecognizable.
     const envelope: CatEnvelope = {
       markdown: "동일문 안내\n\n",
       segments: [
@@ -299,7 +325,7 @@ describe.each([["en", en], ["ko", ko]] as const)("Markdown run range selection (
           directChar: runChar(), sourceChars: { start: 0, end: 7 } },
       ],
     };
-    const hwpFile: DocumentHandle = { name: "break.hwp", data: new Uint8Array([1]) };
+    const hwpFile: DocumentHandle = { name: "break.hwp", data: hwp5Bytes() };
     const engine = createMockEngine({ envelope });
     render(<HwpEditor engine={engine} file={hwpFile} locale={locale} />);
     const textarea = await selectFirstParagraph(messages);
@@ -329,6 +355,53 @@ describe.each([["en", en], ["ko", ko]] as const)("Markdown run range selection (
     expect(hwpxEngine.calls.edit[0]?.ops).toEqual([
       { kind: "set-format", address: { id: "run-one" }, props: { bold: "on" } },
     ]);
+
+    cleanup();
+    // The name says HWP5 and the container says HWPX. hwp-cli reads the format
+    // from the content, so this file does open - and the name alone handed it
+    // the HWP5 allowance, shifting its window one character left. The two
+    // disagreeing is no evidence either way, so the piece is named whole.
+    const mislabelled: DocumentHandle = { name: "saved-as.hwp", data: hwpxBytes() };
+    const mislabelledEngine = createMockEngine({ envelope });
+    render(<HwpEditor engine={mislabelledEngine} file={mislabelled} locale={locale} />);
+    const mislabelledTextarea = await selectFirstParagraph(messages);
+    await selectRange(mislabelledTextarea, 0, 3);
+    expect(await screen.findByText(messages["segment.rangeWholeRunTargets"]({ count: 1 }))).toBeTruthy();
+    fireEvent.click(screen.getByLabelText(messages["segment.bold"]));
+    fireEvent.click(screen.getByRole("button", { name: messages["segment.formatSubmit"] }));
+    fireEvent.click(await screen.findByRole("button", { name: messages["toolbar.applyWithCount"]({ count: 1 }) }));
+    await waitFor(() => expect(mislabelledEngine.calls.edit).toHaveLength(1));
+    expect(mislabelledEngine.calls.edit[0]?.ops).toEqual([
+      { kind: "set-format", address: { id: "run-one" }, props: { bold: "on" } },
+    ]);
+  });
+
+  it("does not warn about a whole run the selection already covered", async () => {
+    // The whole-run label is a warning about characters that go with the op
+    // although the selection never reached them. A selection that covers the
+    // run leaves nothing out, so the label must not appear - the coverage
+    // answer is `whole` here too, and only `widened` separates the two.
+    const envelope: CatEnvelope = {
+      markdown: "동일문 안내\n\n",
+      segments: [
+        { id: "para-one", indices: [0], start: 0, end: 6, kind: "para", section: 0, para: 0 },
+        { id: "run-one", indices: [0, 0], start: 0, end: 6, kind: "run", section: 0, para: 0,
+          directChar: runChar(), sourceChars: { start: 0, end: 6 } },
+      ],
+    };
+    const engine = createMockEngine({ envelope });
+    render(<HwpEditor engine={engine} file={file} locale={locale} />);
+    const textarea = await selectFirstParagraph(messages);
+    await selectRange(textarea, 0, 6);
+    expect(await screen.findByText(messages["segment.rangeRunCount"]({ count: 1 }))).toBeTruthy();
+    expect(screen.queryByText(messages["segment.rangeWholeRunTargets"]({ count: 1 }))).toBeNull();
+    fireEvent.click(screen.getByLabelText(messages["segment.bold"]));
+    fireEvent.click(screen.getByRole("button", { name: messages["segment.formatSubmit"] }));
+    fireEvent.click(await screen.findByRole("button", { name: messages["toolbar.applyWithCount"]({ count: 1 }) }));
+    await waitFor(() => expect(engine.calls.edit).toHaveLength(1));
+    expect(engine.calls.edit[0]?.ops).toEqual([
+      { kind: "set-format", address: { id: "run-one" }, props: { bold: "on" } },
+    ]);
   });
 
   it("labels a widened target that still carries a window (t30-c3)", async () => {
@@ -355,10 +428,13 @@ describe.each([["en", en], ["ko", ko]] as const)("Markdown run range selection (
     expect(screen.getByText(messages["segment.rangeWholeRunTargets"]({ count: 1 }))).toBeTruthy();
     fireEvent.click(screen.getByLabelText(messages["segment.bold"]));
     fireEvent.click(screen.getByRole("button", { name: messages["segment.formatSubmit"] }));
-    // The queued row names the window it will edit, so the count and the row
-    // agree about which characters go with the op.
+    // The queued row says the piece goes whole: the op carries a window that is
+    // exactly the piece (an id alone would format the other piece too), so the
+    // window numbers say nothing - the document does, and the row reads the
+    // same warning the panel gave.
     const pending = await screen.findByRole("list", { name: messages["toolbar.pendingList"] });
-    expect(pending.textContent).toContain(messages["pending.target.chars"]({
+    expect(pending.textContent).toContain(messages["pending.target.wholePiece"]({ id: "amp" }));
+    expect(pending.textContent).not.toContain(messages["pending.target.chars"]({
       range: messages["pending.target.id"]({ id: "amp" }), start: 0, end: 3,
     }));
     fireEvent.click(await screen.findByRole("button", { name: messages["toolbar.applyWithCount"]({ count: 1 }) }));
