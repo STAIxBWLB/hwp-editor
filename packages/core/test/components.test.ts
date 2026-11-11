@@ -768,6 +768,278 @@ describe("validateComponent refusals", () => {
   });
 });
 
+/**
+ * What the pinned engine refuses on its own, refused here first so the message
+ * names the component's file and field instead of a document path.
+ *
+ * Every rule was read from hwp-cli v1.4.0 at the cited line; none is a guess
+ * about a limit. Each rule carries one refusal and one acceptance, because a
+ * mirror that also refuses what the engine accepts costs a user a component
+ * that would have composed.
+ */
+describe("engine-refusal mirrors", () => {
+  const refusalFor = (patch: (value: Record<string, unknown>) => void): string => {
+    const value = JSON.parse(JSON.stringify(BASE_COMPONENT)) as Record<string, unknown>;
+    patch(value);
+    try {
+      validateComponent(value, REFUSAL_SOURCE);
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+    throw new Error("expected a refusal");
+  };
+
+  const paragraph = (style?: string): Record<string, unknown> => ({
+    type: "paragraph",
+    ...(style === undefined ? {} : { style }),
+    runs: [{ type: "text", text: "가" }],
+  });
+
+  /** `levels` nested 1x1 tables, each cell holding the next, a paragraph inside. */
+  const nestedTables = (levels: number): Record<string, unknown> => {
+    let inner: Record<string, unknown> = paragraph();
+    for (let level = 0; level < levels; level += 1) {
+      inner = {
+        type: "table",
+        width_mm: 100,
+        columns: [{ width_mm: 100 }],
+        rows: [{ cells: [{ blocks: [inner] }] }],
+      };
+    }
+    return inner;
+  };
+
+  const stylesNamed = (prefix: string, count: number): Record<string, unknown> =>
+    Object.fromEntries(
+      Array.from({ length: count }, (_, index) => [`${prefix}${index}`, { based_on: "바탕글" }]),
+    );
+
+  it("refuses keep_with_next: true on a style and on a paragraph (document_spec.rs:893)", () => {
+    const reason =
+      "keep_with_next is not representable by both native writers in v1 (document_spec.rs:893 " +
+      "and :1080), so hwp compose refuses it; take the key out, then retry";
+    expect(
+      refusalFor((value) => {
+        value["styles"] = { 강조: { based_on: "바탕글", keep_with_next: true } };
+      }),
+    ).toBe(`components: ${REFUSAL_SOURCE}: styles.강조.keep_with_next: ${reason}`);
+    expect(
+      refusalFor((value) => {
+        value["blocks"] = [
+          { type: "paragraph", keep_with_next: true, runs: [{ type: "text", text: "가" }] },
+        ];
+      }),
+    ).toBe(`components: ${REFUSAL_SOURCE}: blocks[0].keep_with_next: ${reason}`);
+    // `false` is a value both writers can say, so it stays accepted.
+    expect(
+      validateComponent(
+        {
+          ...BASE_COMPONENT,
+          styles: { 강조: { based_on: "바탕글", keep_with_next: false } },
+          blocks: [
+            { type: "paragraph", keep_with_next: false, runs: [{ type: "text", text: "가" }] },
+          ],
+        },
+        REFUSAL_SOURCE,
+      ).blocks,
+    ).toHaveLength(1);
+  });
+
+  it("refuses a non-empty image alt at both positions (document_spec.rs:1180)", () => {
+    const reason =
+      "image alt text is not representable by both native writers in v1 (document_spec.rs:1180 " +
+      "and :1394), so hwp compose refuses a non-empty alt; empty it or take the key out, then " +
+      "retry";
+    expect(
+      refusalFor((value) => {
+        value["blocks"] = [{ type: "image", path: "그림.png", width_mm: 10, alt: "도해" }];
+      }),
+    ).toBe(`components: ${REFUSAL_SOURCE}: blocks[0].alt: ${reason}`);
+    expect(
+      refusalFor((value) => {
+        value["blocks"] = [
+          {
+            type: "paragraph",
+            runs: [{ type: "image", path: "그림.png", width_mm: 10, alt: "도해" }],
+          },
+        ];
+      }),
+    ).toBe(`components: ${REFUSAL_SOURCE}: blocks[0].runs[0].alt: ${reason}`);
+    // The empty string is what the engine accepts, so the key stays allowed.
+    expect(
+      validateComponent(
+        {
+          ...BASE_COMPONENT,
+          blocks: [
+            { type: "image", path: "그림.png", width_mm: 10, alt: "" },
+            {
+              type: "paragraph",
+              runs: [{ type: "image", path: "그림.png", width_mm: 10, alt: "" }],
+            },
+          ],
+        },
+        REFUSAL_SOURCE,
+      ).blocks,
+    ).toHaveLength(2);
+  });
+
+  it("refuses a table 17 cells deep and accepts 16 (document_spec.rs:22, MAX_NESTING)", () => {
+    // A section's own blocks are depth 0 and each table cell adds one, so the
+    // seventeenth table's cell blocks are the first list the engine refuses.
+    const path = `blocks${"[0].rows[0].cells[0].blocks".repeat(17)}`;
+    expect(refusalFor((value) => (value["blocks"] = [nestedTables(17)]))).toBe(
+      `components: ${REFUSAL_SOURCE}: ${path}: sits 17 table cells deep; hwp compose allows 16 ` +
+        "levels of block nesting (document_spec.rs:22), so lift the inner table into its own " +
+        "component, or flatten the nesting, then retry",
+    );
+    expect(
+      validateComponent({ ...BASE_COMPONENT, blocks: [nestedTables(16)] }, REFUSAL_SOURCE).blocks,
+    ).toEqual([nestedTables(16)]);
+  });
+
+  it("refuses a based_on cycle between two styles (document_spec.rs:959)", () => {
+    const cycle = validateComponent(
+      {
+        ...BASE_COMPONENT,
+        styles: { 강조: { based_on: "본문" }, 본문: { based_on: "강조" } },
+      },
+      REFUSAL_SOURCE,
+    );
+    expect(() => documentSpecFromComponents([cycle])).toThrow(
+      "components: 시험: styles.강조.based_on: is part of a style inheritance cycle through " +
+        "강조; hwp compose refuses a cycle between styles (document_spec.rs:959), so point one " +
+        "based_on in the cycle at a style that does not lead back to it, then retry",
+    );
+    // One link changed, the same two styles resolve, with the profile row they
+    // now reach.
+    const acyclic = validateComponent(
+      {
+        ...BASE_COMPONENT,
+        styles: { 강조: { based_on: "본문" }, 본문: { based_on: "바탕글" } },
+      },
+      REFUSAL_SOURCE,
+    );
+    expect(Object.keys(documentSpecFromComponents([acyclic]).document.styles ?? {})).toEqual([
+      "바탕글",
+      "강조",
+      "본문",
+    ]);
+  });
+
+  it("refuses a table width that differs from its column sum (document_spec.rs:1503)", () => {
+    const columns = [{ width_mm: 40 }, { width_mm: 50 }];
+    const cells = [{ blocks: [paragraph()] }, { blocks: [paragraph()] }];
+    expect(
+      refusalFor((value) => {
+        value["blocks"] = [{ type: "table", width_mm: 100, columns, rows: [{ cells }] }];
+      }),
+    ).toBe(
+      `components: ${REFUSAL_SOURCE}: blocks[0].width_mm: is 100.00 mm, but the columns total ` +
+        "90.00 mm; hwp compose refuses a table whose width and column sum differ by more than " +
+        "0.01 mm (document_spec.rs:1503), so set width_mm to the column sum, or change a column " +
+        "width, then retry",
+    );
+    // Up to 0.01 mm the engine accepts the difference, so the mirror does too.
+    for (const width of [90, 90.005]) {
+      expect(
+        validateComponent(
+          {
+            ...BASE_COMPONENT,
+            blocks: [{ type: "table", width_mm: width, columns, rows: [{ cells }] }],
+          },
+          REFUSAL_SOURCE,
+        ).blocks,
+      ).toHaveLength(1);
+    }
+  });
+
+  it("refuses a merged style table past 256 styles (document_spec.rs:668)", () => {
+    const pair = [
+      validateComponent({ ...BASE_COMPONENT, name: "가", styles: stylesNamed("가", 129) }, "가"),
+      validateComponent({ ...BASE_COMPONENT, name: "나", styles: stylesNamed("나", 128) }, "나"),
+    ];
+    expect(() => documentSpecFromComponents(pair)).toThrow(
+      "components: 나: styles.나127: takes the merged style table to 257 styles; hwp compose " +
+        "allows 256 styles in one document (document_spec.rs:668), so share a style between the " +
+        "components, or drop one no block references, then retry",
+    );
+    // The profile rows a block names join the same table, so they cross too.
+    const profiled = validateComponent(
+      {
+        ...BASE_COMPONENT,
+        styles: stylesNamed("다", 256),
+        blocks: [paragraph("바탕글")],
+      },
+      REFUSAL_SOURCE,
+    );
+    expect(() => documentSpecFromComponents([profiled])).toThrow(
+      "components: 시험: blocks[0].style: pulls in the profile style 바탕글, taking the merged " +
+        "style table to 257 styles; hwp compose allows 256 styles in one document " +
+        "(document_spec.rs:668), so reference fewer profile styles, or drop a style no block " +
+        "uses, then retry",
+    );
+  });
+
+  it("accepts exactly 256 merged styles, the profile row included", () => {
+    const component = validateComponent(
+      {
+        ...BASE_COMPONENT,
+        styles: stylesNamed("다", 255),
+        blocks: [paragraph("바탕글")],
+      },
+      REFUSAL_SOURCE,
+    );
+    const styles = documentSpecFromComponents([component]).document.styles ?? {};
+    expect(Object.keys(styles)).toHaveLength(256);
+    expect(Object.keys(styles)).toContain("바탕글");
+  });
+
+  it("refuses an image path the engine cannot read from the folder (asset_snapshot.rs:80)", () => {
+    expect(
+      refusalFor((value) => {
+        value["blocks"] = [{ type: "image", path: "/tmp/그림.png", width_mm: 10 }];
+      }),
+    ).toBe(
+      `components: ${REFUSAL_SOURCE}: blocks[0].path: must be a relative path: hwp compose reads ` +
+        "an image only from relative normal components (asset_snapshot.rs:80), so an absolute " +
+        "path is refused; write the path relative to the component's own file, then retry",
+    );
+    expect(
+      refusalFor((value) => {
+        value["blocks"] = [{ type: "image", path: "../그림.png", width_mm: 10 }];
+      }),
+    ).toBe(
+      `components: ${REFUSAL_SOURCE}: blocks[0].path: holds a \`.\` or \`..\` path segment: hwp ` +
+        "compose reads an image only from relative normal components (asset_snapshot.rs:80), so " +
+        "a path that leaves the component's folder is refused; name a file inside that folder, " +
+        "then retry",
+    );
+    // The same rule guards the run position, which has a field path of its own.
+    expect(
+      refusalFor((value) => {
+        value["blocks"] = [
+          { type: "paragraph", runs: [{ type: "image", path: "/tmp/그림.png", width_mm: 10 }] },
+        ];
+      }),
+    ).toContain(
+      `components: ${REFUSAL_SOURCE}: blocks[0].runs[0].path: must be a relative path:`,
+    );
+    // A file inside the folder is what the engine reads, at either position.
+    expect(
+      validateComponent(
+        {
+          ...BASE_COMPONENT,
+          blocks: [
+            { type: "image", path: "img/그림.png", width_mm: 10 },
+            { type: "paragraph", runs: [{ type: "image", path: "그림.png", width_mm: 10 }] },
+          ],
+        },
+        REFUSAL_SOURCE,
+      ).blocks,
+    ).toHaveLength(2);
+  });
+});
+
 describe("documentSpecFromComponents", () => {
   it("wraps the filled blocks in the v2 envelope, in list order", () => {
     const spec = documentSpecFromComponents(STARTER_COMPONENTS, { title: "시험 문서" });

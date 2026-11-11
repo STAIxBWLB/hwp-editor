@@ -174,6 +174,13 @@ const MAX_ITEMS = 65535;
 const MAX_STYLES = 256;
 
 /**
+ * The engine's block-nesting cap (`document_spec.rs`: `MAX_NESTING`). A
+ * section's own blocks are depth 0 and every table cell adds a level, so the
+ * blocks of the seventeenth nested table are the first the engine refuses.
+ */
+const MAX_NESTING = 16;
+
+/**
  * The engine's cap on one table grid (`document_spec.rs` `MAX_TABLE_CELLS`),
  * refused before the occupancy walk allocates a slot per cell.
  */
@@ -342,6 +349,17 @@ const STYLE_FIELDS = [
   "keep_with_next",
 ] as const;
 
+/**
+ * Why a style or a paragraph may not ask to keep the next block beside it.
+ *
+ * Named once because two positions refuse it and they must say the same
+ * thing: a style definition and a paragraph block, which the engine refuses at
+ * the same rule (`document_spec.rs`: `validate_style` and `validate_blocks`).
+ */
+const KEEP_WITH_NEXT_REASON =
+  "keep_with_next is not representable by both native writers in v1 (document_spec.rs:893 and " +
+  ":1080), so hwp compose refuses it; take the key out, then retry";
+
 function validateStyle(raw: unknown, source: string, field: string): Style {
   const style = asObject(raw, source, field);
   onlyKeys(style, STYLE_FIELDS, source, field);
@@ -364,8 +382,11 @@ function validateStyle(raw: unknown, source: string, field: string): Style {
       case "italic":
       case "underline":
       case "strike":
+        flag(value, source, where);
+        break;
       case "keep_with_next":
         flag(value, source, where);
+        if (value === true) refuse(source, where, KEEP_WITH_NEXT_REASON);
         break;
       case "color":
       case "background":
@@ -455,6 +476,50 @@ function sameStyle(left: Style, right: Style): boolean {
   return true;
 }
 
+/**
+ * Why a non-empty image description is refused.
+ *
+ * `hwp compose` refuses alt text at both positions it can appear, a block
+ * image and a run (`document_spec.rs`: `unsupported_native`), and accepts the
+ * empty string. A component that carries `alt: ""` is therefore still valid,
+ * which is why the key itself stays allowed.
+ */
+function refuseAlt(value: unknown, source: string, field: string): void {
+  if (value === "") return;
+  refuse(
+    source,
+    field,
+    "image alt text is not representable by both native writers in v1 (document_spec.rs:1180 and " +
+      ":1394), so hwp compose refuses a non-empty alt; empty it or take the key out, then retry",
+  );
+}
+
+/**
+ * Why an image path has to stay inside the component's own folder.
+ *
+ * The engine snapshots an asset only when the path holds nothing but normal
+ * components relative to the base directory (`asset_snapshot.rs`:
+ * `validate_relative_path`), so it refuses an absolute path and a `.` or `..`
+ * segment. A Windows drive prefix is left to the engine: whether it is a prefix
+ * depends on the host that runs the binary, and this validator has no host.
+ */
+function validateImagePath(value: string, source: string, field: string): void {
+  const absolute = value.startsWith("/");
+  const leaves = value.split("/").some((segment) => segment === "." || segment === "..");
+  if (!absolute && !leaves) return;
+  refuse(
+    source,
+    field,
+    absolute
+      ? "must be a relative path: hwp compose reads an image only from relative normal " +
+          "components (asset_snapshot.rs:80), so an absolute path is refused; write the path " +
+          "relative to the component's own file, then retry"
+      : "holds a `.` or `..` path segment: hwp compose reads an image only from relative normal " +
+          "components (asset_snapshot.rs:80), so a path that leaves the component's folder is " +
+          "refused; name a file inside that folder, then retry",
+  );
+}
+
 function validateRun(raw: unknown, source: string, field: string): void {
   const run = asObject(raw, source, field);
   const type = oneOf(run.type, RUN_TYPES, source, at(field, "type"));
@@ -513,10 +578,17 @@ function validateRun(raw: unknown, source: string, field: string): void {
       break;
     case "image":
       onlyKeys(run, ["type", "path", "width_mm", "height_mm", "alt"], source, field);
-      text(run.path, source, at(field, "path"), false, MAX_LENGTH.path);
+      validateImagePath(
+        text(run.path, source, at(field, "path"), false, MAX_LENGTH.path),
+        source,
+        at(field, "path"),
+      );
       dimension(run.width_mm, source, at(field, "width_mm"));
       if (run.height_mm !== undefined) dimension(run.height_mm, source, at(field, "height_mm"));
-      if (run.alt !== undefined) text(run.alt, source, at(field, "alt"), true, MAX_LENGTH.alt);
+      if (run.alt !== undefined) {
+        text(run.alt, source, at(field, "alt"), true, MAX_LENGTH.alt);
+        refuseAlt(run.alt, source, at(field, "alt"));
+      }
       break;
     case "line_break":
       onlyKeys(run, ["type"], source, field);
@@ -531,6 +603,9 @@ function validateParagraph(block: Record<string, unknown>, source: string, field
   }
   if (block.keep_with_next !== undefined) {
     flag(block.keep_with_next, source, at(field, "keep_with_next"));
+    if (block.keep_with_next === true) {
+      refuse(source, at(field, "keep_with_next"), KEEP_WITH_NEXT_REASON);
+    }
   }
   if (block.list !== undefined) {
     refuse(
@@ -548,7 +623,12 @@ function validateParagraph(block: Record<string, unknown>, source: string, field
   block.runs.forEach((run, index) => validateRun(run, source, at(runsField, index)));
 }
 
-function validateTable(block: Record<string, unknown>, source: string, field: string): void {
+function validateTable(
+  block: Record<string, unknown>,
+  source: string,
+  field: string,
+  depth: number,
+): void {
   onlyKeys(block, ["type", "width_mm", "columns", "rows"], source, field);
   if (block.width_mm !== undefined) dimension(block.width_mm, source, at(field, "width_mm"));
   const columnsField = at(field, "columns");
@@ -558,12 +638,15 @@ function validateTable(block: Record<string, unknown>, source: string, field: st
   if (block.columns.length > MAX_ITEMS) {
     refuse(source, columnsField, `must be at most ${MAX_ITEMS} columns, as document-spec-v1 allows`);
   }
+  let columnSum = 0;
   block.columns.forEach((column, index) => {
     const columnField = at(columnsField, index);
     const value = asObject(column, source, columnField);
     onlyKeys(value, ["width_mm"], source, columnField);
     dimension(value.width_mm, source, at(columnField, "width_mm"));
+    columnSum += value.width_mm as number;
   });
+  validateTableWidth(block.width_mm, columnSum, source, field);
   const rowsField = at(field, "rows");
   if (!Array.isArray(block.rows) || block.rows.length === 0) {
     refuse(source, rowsField, "must be an array of at least 1 row");
@@ -588,11 +671,38 @@ function validateTable(block: Record<string, unknown>, source: string, field: st
         count(cellValue.row_span, source, at(cellField, "row_span"), 1, 65535, true);
       }
       if (cellValue.blocks !== undefined) {
-        validateBlocks(cellValue.blocks, source, at(cellField, "blocks"), 0);
+        validateBlocks(cellValue.blocks, source, at(cellField, "blocks"), 0, depth + 1);
       }
     });
   });
   validateTableGrid(block, source, field);
+}
+
+/**
+ * Why a table's `width_mm` has to equal the sum of its columns.
+ *
+ * `hwp compose` refuses the difference above 0.01 mm (`document_spec.rs`:
+ * `inconsistent_width`). The same rule's other half — the column sum against
+ * the page's body width — needs a page the component cannot know, so it stays
+ * with the engine, and with the insertion preflight that measured it.
+ */
+function validateTableWidth(
+  width: unknown,
+  columnSum: number,
+  source: string,
+  field: string,
+): void {
+  if (width === undefined) return;
+  const value = width as number;
+  if (Math.abs(value - columnSum) <= 0.01) return;
+  refuse(
+    source,
+    at(field, "width_mm"),
+    `is ${value.toFixed(2)} mm, but the columns total ${columnSum.toFixed(2)} mm; hwp compose ` +
+      "refuses a table whose width and column sum differ by more than 0.01 mm " +
+      "(document_spec.rs:1503), so set width_mm to the column sum, or change a column width, " +
+      "then retry",
+  );
 }
 
 /**
@@ -668,7 +778,7 @@ function validateTableGrid(block: Record<string, unknown>, source: string, field
   }
 }
 
-function validateBlock(raw: unknown, source: string, field: string): void {
+function validateBlock(raw: unknown, source: string, field: string, depth: number): void {
   const block = asObject(raw, source, field);
   const type = oneOf(block.type, BLOCK_TYPES, source, at(field, "type"));
   switch (type) {
@@ -676,20 +786,28 @@ function validateBlock(raw: unknown, source: string, field: string): void {
       validateParagraph(block, source, field);
       return;
     case "table":
-      validateTable(block, source, field);
+      validateTable(block, source, field, depth);
       return;
-    case "image":
+    case "image": {
       onlyKeys(block, ["type", "path", "width_mm", "height_mm", "alt", "placement"], source, field);
-      text(block.path, source, at(field, "path"), false, MAX_LENGTH.path);
+      validateImagePath(
+        text(block.path, source, at(field, "path"), false, MAX_LENGTH.path),
+        source,
+        at(field, "path"),
+      );
       dimension(block.width_mm, source, at(field, "width_mm"));
       if (block.height_mm !== undefined) {
         dimension(block.height_mm, source, at(field, "height_mm"));
       }
-      if (block.alt !== undefined) text(block.alt, source, at(field, "alt"), true, MAX_LENGTH.alt);
+      if (block.alt !== undefined) {
+        text(block.alt, source, at(field, "alt"), true, MAX_LENGTH.alt);
+        refuseAlt(block.alt, source, at(field, "alt"));
+      }
       if (block.placement !== undefined) {
         oneOf(block.placement, PLACEMENTS, source, at(field, "placement"));
       }
       return;
+    }
     case "equation":
       onlyKeys(block, ["type", "script", "width_mm", "height_mm"], source, field);
       text(block.script, source, at(field, "script"), false, MAX_LENGTH.script);
@@ -715,7 +833,28 @@ function validateBlock(raw: unknown, source: string, field: string): void {
   }
 }
 
-function validateBlocks(raw: unknown, source: string, field: string, minItems: number): void {
+/**
+ * Validate a block list at the nesting level it sits at: a section's own
+ * blocks are depth 0, and a table hands its cells `depth + 1`, which is how the
+ * engine counts (`document_spec.rs`: `validate_blocks` takes the level and
+ * refuses past `MAX_NESTING` before it walks the list).
+ */
+function validateBlocks(
+  raw: unknown,
+  source: string,
+  field: string,
+  minItems: number,
+  depth: number,
+): void {
+  if (depth > MAX_NESTING) {
+    refuse(
+      source,
+      field,
+      `sits ${depth} table cells deep; hwp compose allows ${MAX_NESTING} levels of block ` +
+        "nesting (document_spec.rs:22), so lift the inner table into its own component, or " +
+        "flatten the nesting, then retry",
+    );
+  }
   if (!Array.isArray(raw) || raw.length < minItems) {
     refuse(
       source,
@@ -723,7 +862,7 @@ function validateBlocks(raw: unknown, source: string, field: string, minItems: n
       minItems === 0 ? "must be an array" : `must be an array of at least ${minItems} block`,
     );
   }
-  raw.forEach((block, index) => validateBlock(block, source, at(field, index)));
+  raw.forEach((block, index) => validateBlock(block, source, at(field, index), depth));
 }
 
 function validateParams(raw: unknown, source: string): Record<string, string> {
@@ -945,7 +1084,7 @@ export function validateComponent(raw: unknown, source: string): Component {
   const description = text(value.description, source, "description");
   const params = validateParams(value.params, source);
   const styles = value.styles === undefined ? undefined : validateStyles(value.styles, source);
-  validateBlocks(value.blocks, source, "blocks", 1);
+  validateBlocks(value.blocks, source, "blocks", 1, 0);
   checkPlaceholders(value.blocks as readonly unknown[], params, source);
   const blocks = structuredClone(value.blocks) as Blocks;
   const component: Component = { name, description, params, blocks };
@@ -1040,7 +1179,7 @@ export function substituteParams(
   }) as Blocks;
   // A value can push a run past a bound the placeholder itself met, so the
   // result is held to the same contract the component was validated against.
-  validateBlocks(blocks, source, "blocks", 1);
+  validateBlocks(blocks, source, "blocks", 1, 0);
   const filled: FilledComponent = {
     ...component,
     params,
@@ -1188,8 +1327,9 @@ export function componentStyleMap(
 
 /**
  * Merge the components' own styles and resolve every reference against the
- * profile table, refusing a reference nothing defines and a name two
- * components define differently.
+ * profile table, refusing a reference nothing defines, a name two components
+ * define differently, a merged table past the engine's cap, and a `based_on`
+ * cycle.
  *
  * The profile rule is applied here again, after validation has already
  * refused a redefinition: a host that assembles a `Component` in memory hands
@@ -1218,6 +1358,19 @@ function resolvedStyles(filled: readonly FilledComponent[]): Map<string, Style> 
       }
       styles.set(name, style);
       definedBy.set(name, component.name);
+      // One document carries one style table, so the cap is on the merge, not
+      // on each component: the engine refuses `spec.styles.len() > 256` before
+      // it writes anything (`document_spec.rs`: `validate`).
+      if (styles.size > MAX_STYLES) {
+        refuse(
+          component.name,
+          at("styles", name),
+          `takes the merged style table to ${styles.size} styles; hwp compose allows ` +
+            `${MAX_STYLES} styles in one document (document_spec.rs:668), so share a style ` +
+            "between the components, or drop one no block references, then retry",
+          "component_style",
+        );
+      }
     }
   }
 
@@ -1254,6 +1407,21 @@ function resolvedStyles(filled: readonly FilledComponent[]): Map<string, Style> 
     }
     if (fromProfile.has(item.name)) continue;
     fromProfile.add(item.name);
+    // A profile row a block references joins the same table, so it counts
+    // against the same cap.
+    const merged = styles.size + fromProfile.size;
+    if (merged > MAX_STYLES) {
+      refuse(
+        item.source,
+        item.field,
+        `pulls in the profile style ${item.name}, taking the merged style table to ${merged} ` +
+          `styles; hwp compose allows ${MAX_STYLES} styles in one document ` +
+          "(document_spec.rs:668), so reference fewer profile styles, or drop a style no block " +
+          "uses, then retry",
+        "component_style",
+        item.name,
+      );
+    }
     if (profile.based_on !== undefined && !styles.has(profile.based_on)) {
       unresolved.push({
         source: item.source,
@@ -1268,7 +1436,42 @@ function resolvedStyles(filled: readonly FilledComponent[]): Map<string, Style> 
     if (fromProfile.has(name)) resolved.set(name, structuredClone(profile));
   }
   for (const [name, style] of styles) resolved.set(name, structuredClone(style));
+  validateStyleCycles(resolved, definedBy);
   return resolved;
+}
+
+/**
+ * Why the merged style table may not hold a `based_on` cycle.
+ *
+ * The engine walks every inheritance chain before it writes anything and
+ * reports `reference_cycle` at `$.styles.<name>.based_on` (`document_spec.rs`:
+ * `validate_style_cycles`). A cycle that spans two components reaches the user
+ * as a document path instead of naming the two files that make it, so the same
+ * walk runs here, over the table both components contribute to.
+ */
+function validateStyleCycles(
+  resolved: Map<string, Style>,
+  definedBy: Map<string, string>,
+): void {
+  for (const name of resolved.keys()) {
+    const seen = new Set<string>();
+    let current: string | undefined = name;
+    while (current !== undefined) {
+      if (seen.has(current)) {
+        refuse(
+          definedBy.get(name) ?? name,
+          `${at("styles", name)}.based_on`,
+          `is part of a style inheritance cycle through ${current}; hwp compose refuses a cycle ` +
+            "between styles (document_spec.rs:959), so point one based_on in the cycle at a " +
+            "style that does not lead back to it, then retry",
+          "component_style",
+          current,
+        );
+      }
+      seen.add(current);
+      current = resolved.get(current)?.based_on;
+    }
+  }
 }
 
 /** Minimal response shape the loader needs; a `fetch` response satisfies it. */
