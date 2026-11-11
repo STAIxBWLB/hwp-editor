@@ -44,8 +44,20 @@ export function toEditorError(e: unknown): EditorError {
  * travels. This module still only classifies; the sentence lives in the table.
  */
 export function isUnmatchedReplaceRefusal(e: unknown): boolean {
+  return engineRefusalKind(e) === "unmatched_replace";
+}
+
+/** The classified edit refusals the server marks with `edit refused: <kind>`. */
+export type EngineRefusalKind = "unmatched_replace" | "run_range_conflict" | "range_tag";
+
+/**
+ * Which classified refusal a failure carries, if any (#76). Matched on the
+ * server's stable marker only; the engine's own prose never reaches here.
+ */
+export function engineRefusalKind(e: unknown): EngineRefusalKind | undefined {
   const message = e instanceof Error ? e.message : String(e);
-  return message.includes("unmatched_replace");
+  const match = /edit refused: (unmatched_replace|run_range_conflict|range_tag)\b/u.exec(message);
+  return match === null ? undefined : match[1] as EngineRefusalKind;
 }
 
 /**

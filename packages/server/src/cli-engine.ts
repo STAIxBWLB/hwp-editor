@@ -860,8 +860,35 @@ function rethrowUnmatchedEditRefusal(error: unknown): never {
       // into the wire code, and this classifier only refines the message.
       throw new HwpCliError(error.reason, `${error.message}: edit refused: unmatched_replace`, error.stderr, error.detail);
     }
+    const cause = engineRefusalCause(error.stderr);
+    if (cause !== undefined) {
+      throw new HwpCliError(error.reason, `${error.message}: edit refused: ${cause}`, error.stderr, error.detail);
+    }
   }
   throw error;
+}
+
+/**
+ * The hwp-cli 1.5-1.6 refusals the editor can reach (#76), as stable markers.
+ *
+ * hwp-cli v1.6.1 publishes no machine code for either, so each is matched on
+ * the most stable token its refusal carries:
+ * - `range_tag`: `RANGE_TAG_SHIFT_REFUSAL` (hwp-convert/src/edit.rs:179,
+ *   hwp-cli#470) names the HWP5 record by its spec identifier `PARA_RANGE_TAG`,
+ *   which is a format name and not prose.
+ * - `run_range_conflict`: the `ConflictKind::LengthChange` line
+ *   (hwp-cli/src/commands/edit.rs:1137, hwp-cli#420) is the only one with the
+ *   fixed phrase `고정된 run 범위가 무효화됩니다`, which its op indices and
+ *   paragraph path surround but never replace.
+ * Neither stderr nor its staged paths cross the boundary: only the marker.
+ */
+const RANGE_TAG_TOKEN = "PARA_RANGE_TAG";
+const RUN_RANGE_CONFLICT_TOKEN = "고정된 run 범위가 무효화됩니다";
+
+function engineRefusalCause(stderr: string): "range_tag" | "run_range_conflict" | undefined {
+  if (stderr.includes(RANGE_TAG_TOKEN)) return "range_tag";
+  if (stderr.includes(RUN_RANGE_CONFLICT_TOKEN)) return "run_range_conflict";
+  return undefined;
 }
 
 /**
