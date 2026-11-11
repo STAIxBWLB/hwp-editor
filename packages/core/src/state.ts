@@ -34,8 +34,8 @@ export interface EditorState {
   /** Additional unique selected segments; selection remains the active primary. */
   selections?: SegmentRef[];
   selectionAnchor?: SegmentRef | null;
-  /** Source paragraph UTF-16 coordinates, independent of emitted Markdown offsets. */
-  range?: SourceRangeSelection | null;
+  /** Absolute Markdown Unicode scalar offsets, not source WCHAR coordinates. */
+  range?: MarkdownRangeSelection | null;
   /** Ops queued for the next engine edit call. */
   pendingOps: EditOp[];
   /**
@@ -51,9 +51,11 @@ export interface EditorState {
   error: EditorError | null;
 }
 
-export interface SourceRangeSelection {
+export interface MarkdownRangeSelection {
   paragraph: SegmentRef;
+  /** Absolute Unicode scalar offset into the emitted Markdown. */
   start: number;
+  /** Exclusive absolute Unicode scalar offset into the emitted Markdown. */
   end: number;
 }
 
@@ -84,7 +86,7 @@ export type EditorAction =
   | { type: "setPages"; pages: PageImage[] }
   | { type: "select"; selection: SegmentRef | null }
   | { type: "selectMany"; selections: SegmentRef[]; primary?: SegmentRef; anchor?: SegmentRef }
-  | { type: "setRange"; range: SourceRangeSelection | null }
+  | { type: "setRange"; range: MarkdownRangeSelection | null }
   | { type: "queueOp"; op: EditOp }
   | { type: "queueOps"; ops: EditOp[] }
   | { type: "dequeueOp"; index: number }

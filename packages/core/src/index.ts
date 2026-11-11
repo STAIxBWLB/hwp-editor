@@ -57,7 +57,7 @@ export {
   validateProjectedMetadata,
 } from "./segments.js";
 export type { CatEnvelope, DirectChar, DirectPara, Segment, SegmentKind, SegmentRef } from "./segments.js";
-export { formatAddresses, paragraphAddress, paragraphForSegment, selectedParagraphs, selectSimilar, selectionAction } from "./selection.js";
+export { formatAddresses, paragraphAddress, paragraphForSegment, paragraphRuns, selectedParagraphs, selectSimilar, selectionAction } from "./selection.js";
 export type {
   DocumentSpecV2,
   TemplateDataV1,
@@ -74,7 +74,7 @@ export type {
   EditorState,
   EditorStatus,
   EditorStore,
-  SourceRangeSelection,
+  MarkdownRangeSelection,
 } from "./state.js";
 export { base64, createHttpEngine } from "./http-engine.js";
 export type { HttpEngineOptions } from "./http-engine.js";

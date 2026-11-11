@@ -72,7 +72,7 @@ export interface DirectChar {
   italic: boolean;
   size_pt: number;
   color: string;
-  faces: string[];
+  faces: (string | null)[];
   face_ids: number[];
 }
 
@@ -125,14 +125,14 @@ function projectSegment(raw: unknown): Segment {
   if (direct !== undefined && (typeof direct !== "object" || direct === null || Array.isArray(direct))) {
     throw new Error("segments envelope: malformed direct properties; upgrade the host adapter to project valid v2 metadata.");
   }
-  const char = d?.char as Record<string, unknown> | undefined;
-  const para = d?.para as Record<string, unknown> | undefined;
-  if ((d?.char !== undefined && (typeof d.char !== "object" || d.char === null || Array.isArray(d.char))) ||
-      (d?.para !== undefined && (typeof d.para !== "object" || d.para === null || Array.isArray(d.para)))) {
+  const char = d?.char as Record<string, unknown> | null | undefined;
+  const para = d?.para as Record<string, unknown> | null | undefined;
+  if ((d?.char !== undefined && d.char !== null && (typeof d.char !== "object" || Array.isArray(d.char))) ||
+      (d?.para !== undefined && d.para !== null && (typeof d.para !== "object" || Array.isArray(d.para)))) {
     throw new Error("segments envelope: malformed direct properties; upgrade the host adapter to project valid v2 metadata.");
   }
-  const directChar = char === undefined ? undefined : projectDirectChar(char);
-  const directPara = para === undefined ? undefined : projectDirectPara(para);
+  const directChar = char == null ? undefined : projectDirectChar(char);
+  const directPara = para == null ? undefined : projectDirectPara(para);
   return {
     id,
     indices: p.indices,
@@ -154,8 +154,9 @@ function projectDirectChar(value: unknown): DirectChar {
   const { bold, italic, size_pt, color, faces, face_ids } = v;
   if (typeof bold !== "boolean" || typeof italic !== "boolean" ||
       typeof size_pt !== "number" || !Number.isFinite(size_pt) ||
-      typeof color !== "string" || !Array.isArray(faces) || !faces.every((x) => typeof x === "string") ||
-      !isNumberArray(face_ids) || face_ids.length !== faces.length || face_ids.some((x) => !Number.isInteger(x))) {
+      typeof color !== "string" || !/^#[0-9a-fA-F]{6}$/.test(color) || !Array.isArray(faces) || faces.length !== 7 ||
+      !faces.every((x) => typeof x === "string" || x === null) || !isNumberArray(face_ids) || face_ids.length !== 7 ||
+      face_ids.some((x) => !Number.isInteger(x) || x < 0)) {
     throw new Error("segments envelope: malformed direct.char properties; upgrade the host adapter to project valid v2 metadata.");
   }
   return { bold, italic, size_pt, color, faces, face_ids };
@@ -167,9 +168,10 @@ function projectDirectPara(value: unknown): DirectPara {
   }
   const v = value as Record<string, unknown>;
   const { alignment, indent, line_spacing, line_spacing_type } = v;
-  if (typeof alignment !== "string" || typeof indent !== "number" || !Number.isFinite(indent) ||
-      typeof line_spacing !== "number" || !Number.isFinite(line_spacing) ||
-      typeof line_spacing_type !== "number" || !Number.isInteger(line_spacing_type)) {
+  if (typeof alignment !== "string" || !["justify", "left", "right", "center", "distribute", "divide", "unknown"].includes(alignment) ||
+      typeof indent !== "number" || !Number.isInteger(indent) ||
+      typeof line_spacing !== "number" || !Number.isInteger(line_spacing) ||
+      typeof line_spacing_type !== "number" || !Number.isInteger(line_spacing_type) || line_spacing_type < 0 || line_spacing_type > 255) {
     throw new Error("segments envelope: malformed direct.para properties; upgrade the host adapter to project valid v2 metadata.");
   }
   return { alignment, indent, line_spacing, line_spacing_type };
@@ -242,11 +244,20 @@ export function markdownLength(envelope: CatEnvelope): number {
 
 /** Revalidate optional metadata from a projected transport envelope before it drives behavior. */
 export function validateProjectedMetadata(envelope: CatEnvelope): CatEnvelope {
-  for (const segment of envelope.segments) {
-    if (segment.directChar !== undefined) projectDirectChar(segment.directChar);
-    if (segment.directPara !== undefined) projectDirectPara(segment.directPara);
-  }
-  return envelope;
+  let changed = false;
+  const segments = envelope.segments.map((segment) => {
+    const nullable = segment as Segment & { directChar?: DirectChar | null; directPara?: DirectPara | null };
+    let normalized = segment;
+    if (nullable.directChar === null || nullable.directPara === null) {
+      normalized = { ...segment };
+      if (nullable.directChar === null) { delete normalized.directChar; changed = true; }
+      if (nullable.directPara === null) { delete normalized.directPara; changed = true; }
+    }
+    if (normalized.directChar !== undefined) projectDirectChar(normalized.directChar);
+    if (normalized.directPara !== undefined) projectDirectPara(normalized.directPara);
+    return normalized;
+  });
+  return changed ? { ...envelope, segments } : envelope;
 }
 
 /** Extract the source coordinate of a segment. */
