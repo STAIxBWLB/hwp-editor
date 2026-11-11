@@ -17,7 +17,6 @@ import { describe, expect, it, afterAll } from "vitest";
 import {
   documentSpecFromComponents,
   loadComponents,
-  OFFICIAL_PROFILE,
   STARTER_COMPONENTS,
   substituteParams,
   validateComponent,
@@ -28,6 +27,12 @@ import type {
   ComponentFetchResponse,
   ComponentIndex,
 } from "../src/components.js";
+import {
+  DOCUMENT_PROFILE_NAMES,
+  DOCUMENT_PROFILES,
+  OFFICIAL_BODY_PROFILE,
+  OFFICIAL_PROFILE,
+} from "../src/profiles.js";
 import type { Blocks } from "../src/generated/document-spec-v2.js";
 
 /** Which binary the real-binary suite runs against (mirrors the server's helper). */
@@ -121,7 +126,7 @@ const BASE_COMPONENT: Record<string, unknown> = {
 const REFUSAL_SOURCE = "src/components/broken.json";
 
 describe("starter components", () => {
-  it("ships the seven starters #54 names, in palette order", () => {
+  it("ships the seven starters #54 names, in one stable order", () => {
     expect(STARTER_COMPONENTS.map((component) => component.name)).toEqual([
       "결재란",
       "붙임",
@@ -173,6 +178,20 @@ describe("starter components", () => {
       expect(JSON.stringify(component.blocks)).not.toContain('"list":');
     }
   });
+
+  it("opens the 결문 with the 발신명의 line, as the engine's own frame does", () => {
+    // hwp-convert `frames.rs` writes 발신명의 first, centred and bold at 22pt,
+    // then the 결재/협조/시행·접수/주소/연락처 rows.
+    const gyeolmun = starter("결문");
+    expect(gyeolmun.blocks[0]).toMatchObject({ type: "paragraph", style: "결문 발신명의" });
+    expect(gyeolmun.blocks[1]).toMatchObject({ type: "table" });
+    expect(gyeolmun.styles?.["결문 발신명의"]).toEqual({
+      based_on: "바탕글",
+      align: "center",
+      bold: true,
+      font_size_pt: 22,
+    });
+  });
 });
 
 describe("substituteParams", () => {
@@ -210,6 +229,57 @@ describe("substituteParams", () => {
   it("inserts a value literally, never re-scanning it", () => {
     const filled = substituteParams(starter("개조식"), { "항목1": "{{항목2}}" });
     expect(textsOf(filled.blocks)[1]).toBe("□ {{항목2}}");
+  });
+
+  it("turns a line break in a value into line_break runs, keeping the run's format", () => {
+    const component = validateComponent(
+      {
+        name: "줄바꿈",
+        description: "줄바꿈 시험",
+        params: { 값: "가" },
+        blocks: [{ type: "paragraph", runs: [{ type: "text", text: "{{값}}", bold: true }] }],
+      },
+      "줄바꿈.json",
+    );
+    // A pasted `\r\n` from a palette textarea is one line break, and the
+    // engine wants the run it asks for (`use line_break runs`), not a
+    // control character inside the text.
+    const filled = substituteParams(component, { "값": "첫 줄\r\n둘째 줄" });
+    expect(filled.blocks[0]).toEqual({
+      type: "paragraph",
+      runs: [
+        { type: "text", text: "첫 줄", bold: true },
+        { type: "line_break" },
+        { type: "text", text: "둘째 줄", bold: true },
+      ],
+    });
+  });
+
+  it("refuses a control character in a value, naming the component and the param", () => {
+    expect(() => substituteParams(starter("결문"), { "주소": "제주시\u0007한라대학로" })).toThrow(
+      "components: 결문: params.주소: holds the control character U+0007; " +
+        "a param may hold a tab or a line break (which becomes a line_break run) and no other " +
+        "control character; remove it, then retry",
+    );
+  });
+
+  it("refuses a line break a field value would have to carry", () => {
+    const component = validateComponent(
+      {
+        name: "필드",
+        description: "필드 시험",
+        params: { "제목": "기본" },
+        blocks: [
+          { type: "paragraph", runs: [{ type: "field", name: "머리말", value: "{{제목}}" }] },
+        ],
+      },
+      "필드.json",
+    );
+    expect(() => substituteParams(component, { "제목": "가\n나" })).toThrow(
+      "components: 필드: blocks[0].runs[0].value: substitutes {{제목}}, whose value holds a " +
+        "line break, and document-spec-v1 allows no control character in a field value; " +
+        "keep that param on one line, then retry",
+    );
   });
 
   it("refuses a value for a param the component does not declare", () => {
@@ -443,6 +513,159 @@ describe("validateComponent refusals", () => {
     );
   });
 
+  it("refuses a paragraph list, which no component can reference", () => {
+    expect(
+      refusalFor((value) => {
+        value["blocks"] = [
+          {
+            type: "paragraph",
+            list: { name: "개요", level: 1 },
+            runs: [{ type: "text", text: "값" }],
+          },
+        ];
+      }),
+    ).toBe(
+      "components: src/components/broken.json: blocks[0].list: is not supported: a component's " +
+        "blocks are inserted into a document whose lists it cannot know, so hwp compose refuses " +
+        "the reference; write the markers into the text runs instead (HWP 5.0 ordered lists " +
+        "also show Hangul numbering, hwp-cli#472)",
+    );
+  });
+
+  it("refuses a control character in a component's own text", () => {
+    expect(
+      refusalFor((value) => {
+        value["blocks"] = [
+          { type: "paragraph", runs: [{ type: "text", text: "가\u0001나" }] },
+        ];
+      }),
+    ).toBe(
+      "components: src/components/broken.json: blocks[0].runs[0].text: holds the control " +
+        "character U+0001; document-spec-v1 allows a tab and no other control character here; " +
+        "split the text into separate runs with a line_break run between them, then retry",
+    );
+    // A newline is the same refusal: text is one line, a break is a run.
+    expect(
+      refusalFor((value) => {
+        value["blocks"] = [
+          { type: "paragraph", runs: [{ type: "text", text: "가\n나" }] },
+        ];
+      }),
+    ).toContain("blocks[0].runs[0].text: holds the control character U+000A");
+  });
+
+  it("refuses a placeholder substitution would not fill", () => {
+    expect(
+      refusalFor((value) => {
+        value["blocks"] = [{ type: "image", path: "사진/{{항목}}.png", width_mm: 10 }];
+      }),
+    ).toBe(
+      "components: src/components/broken.json: blocks[0].path: is not substituted, so " +
+        "{{항목}} would reach the engine as literal braces; move the placeholder into a text " +
+        "run or a field value, then retry",
+    );
+    expect(
+      refusalFor((value) => {
+        value["blocks"] = [
+          { type: "paragraph", runs: [{ type: "field", name: "{{항목}}" }] },
+        ];
+      }),
+    ).toContain("blocks[0].runs[0].name: is not substituted");
+    expect(
+      refusalFor((value) => {
+        value["blocks"] = [{ type: "equation", script: "{{항목}}" }];
+      }),
+    ).toContain("blocks[0].script: is not substituted");
+  });
+
+  it("accepts 256 styles and refuses 257", () => {
+    const styles = (count: number): Record<string, unknown> =>
+      Object.fromEntries(
+        Array.from({ length: count }, (_, index) => [`강조 ${index}`, { based_on: "바탕글" }]),
+      );
+    expect(
+      Object.keys(
+        validateComponent({ ...BASE_COMPONENT, styles: styles(256) }, REFUSAL_SOURCE).styles ?? {},
+      ),
+    ).toHaveLength(256);
+    expect(refusalFor((value) => (value["styles"] = styles(257)))).toBe(
+      "components: src/components/broken.json: styles: must hold at most 256 styles, " +
+        "as document-spec-v1 allows",
+    );
+  });
+
+  const paragraphOf = (text: string): Record<string, unknown> => ({
+    type: "paragraph",
+    runs: [{ type: "text", text }],
+  });
+  const cellOf = (text: string, span: Record<string, number> = {}): Record<string, unknown> => ({
+    ...span,
+    blocks: [paragraphOf(text)],
+  });
+  const gridOf = (rows: Record<string, unknown>[][]): Record<string, unknown> => ({
+    type: "table",
+    width_mm: 90,
+    columns: [{ width_mm: 30 }, { width_mm: 30 }, { width_mm: 30 }],
+    rows: rows.map((cells) => ({ cells })),
+  });
+
+  it("accepts a table whose spans tile the grid", () => {
+    const blocks = [
+      gridOf([
+        [cellOf("가", { col_span: 2 }), cellOf("나")],
+        [cellOf("다"), cellOf("라"), cellOf("마")],
+      ]),
+      gridOf([
+        [cellOf("가", { row_span: 2 }), cellOf("나"), cellOf("다")],
+        [cellOf("라"), cellOf("마")],
+      ]),
+    ];
+    expect(validateComponent({ ...BASE_COMPONENT, blocks }, REFUSAL_SOURCE).blocks).toHaveLength(2);
+  });
+
+  it("refuses a table row that leaves a column empty", () => {
+    expect(
+      refusalFor((value) => {
+        value["blocks"] = [
+          gridOf([[cellOf("가"), cellOf("나"), cellOf("다")], [cellOf("라")]]),
+        ];
+      }),
+    ).toBe(
+      "components: src/components/broken.json: blocks[0].rows[1]: leaves column 2 of the " +
+        "3-column grid empty; every row has to cover every column (a col_span may be wider), " +
+        "then retry",
+    );
+  });
+
+  it("refuses a span that leaves the table grid", () => {
+    expect(
+      refusalFor((value) => {
+        value["blocks"] = [gridOf([[cellOf("가", { col_span: 4 })]])];
+      }),
+    ).toBe(
+      "components: src/components/broken.json: blocks[0].rows[0].cells[0]: spans 4 column(s) " +
+        "from column 1 and 1 row(s) from row 1, past the table's 3 column(s) and 1 row(s); " +
+        "shrink the span so the cells tile the grid, then retry",
+    );
+  });
+
+  it("refuses a cell that overlaps the row span above it", () => {
+    expect(
+      refusalFor((value) => {
+        value["blocks"] = [
+          gridOf([
+            [cellOf("가"), cellOf("나", { row_span: 2 }), cellOf("다")],
+            [cellOf("라", { col_span: 2 }), cellOf("마")],
+          ]),
+        ];
+      }),
+    ).toBe(
+      "components: src/components/broken.json: blocks[0].rows[1].cells[0]: overlaps a cell an " +
+        "earlier row span already covers (row 2, column 2); give the overlapping cell its own " +
+        "slot, then retry",
+    );
+  });
+
   it("keeps a param named like an Object.prototype member", () => {
     const component = validateComponent(
       {
@@ -494,6 +717,36 @@ describe("documentSpecFromComponents", () => {
     );
   });
 
+  it("returns blocks and styles that share no state with the starters or the profile", () => {
+    // A host that edits the spec it gets back must not reach module state (the
+    // profile table, the starter set) or another caller's file.
+    const spec = documentSpecFromComponents([starter("개조식")]);
+    const blocks = spec.document.sections[0]?.blocks as unknown as Record<string, unknown>[];
+    blocks[0]!["style"] = "바뀜";
+    expect((starter("개조식").blocks[0] as { style?: string }).style).toBe("개요 2");
+    const style = spec.document.styles?.["개요 2"];
+    if (style === undefined) throw new Error("개요 2 is missing from the spec");
+    style.font_size_pt = 99;
+    expect(OFFICIAL_PROFILE["개요 2"]?.font_size_pt).toBe(14);
+  });
+
+  it("validates a component into copies, not into the caller's objects", () => {
+    const raw: Record<string, unknown> = {
+      ...BASE_COMPONENT,
+      styles: { 강조: { based_on: "바탕글" } },
+    };
+    const component = validateComponent(raw, "시험");
+    (component.blocks[0] as unknown as Record<string, unknown[]>)["runs"] = [];
+    expect((raw["blocks"] as Record<string, unknown>[])[0]).toEqual({
+      type: "paragraph",
+      runs: [{ type: "text", text: "{{항목}}" }],
+    });
+    const style = component.styles?.["강조"];
+    if (style === undefined) throw new Error("강조 is missing");
+    style.bold = true;
+    expect((raw["styles"] as Record<string, unknown>)["강조"]).toEqual({ based_on: "바탕글" });
+  });
+
   it("refuses one style name defined two different ways", () => {
     const first = validateComponent(
       {
@@ -514,7 +767,8 @@ describe("documentSpecFromComponents", () => {
       "둘째",
     );
     expect(() => documentSpecFromComponents([first, second])).toThrow(
-      /components: 둘째: styles\.같은: is defined differently by 첫째 and this component/,
+      "components: 둘째: styles.같은: is defined differently by 첫째 and this component; " +
+        "make the two definitions agree, or rename one of them, then retry",
     );
   });
 
@@ -642,7 +896,28 @@ describe("loadComponents", () => {
     await expect(
       loadComponents({ version: "1.0", components: [starter("붙임"), starter("붙임")] }),
     ).rejects.toThrow(
-      /components: components\[1\]: loads a second component named 붙임/,
+      "components: component index: components[1]: loads a second component named 붙임, " +
+        "which was already loaded from component index components[0]; " +
+        "rename one of the two, then retry",
+    );
+  });
+
+  it("refuses an inline entry that is not a component, naming the entry and the field", async () => {
+    await expect(
+      loadComponents({ version: "1.0", components: [{} as unknown as Component] }),
+    ).rejects.toThrow(
+      /components: component index components\[0\]: name: must be a non-empty string/,
+    );
+    await expect(
+      loadComponents(
+        {
+          version: "1.0",
+          components: [{ path: "dumo.json", name: "두문" } as unknown as { path: string }],
+        },
+        { baseUrl: "https://example.test/lib/" },
+      ),
+    ).rejects.toThrow(
+      /components: component index: components\[0\]\.name: is not a field of this object/,
     );
   });
 
@@ -790,14 +1065,45 @@ describe("loadComponents", () => {
 });
 
 describe("package surface", () => {
-  it("re-exports the component library from the package index", async () => {
+  it("re-exports the component library and the profile table from the index", async () => {
     const index = await import("../src/index.js");
     expect(index.STARTER_COMPONENTS).toBe(STARTER_COMPONENTS);
     expect(index.OFFICIAL_PROFILE).toBe(OFFICIAL_PROFILE);
+    expect(index.OFFICIAL_BODY_PROFILE).toBe(OFFICIAL_BODY_PROFILE);
+    expect(index.DOCUMENT_PROFILES).toBe(DOCUMENT_PROFILES);
+    expect(index.DOCUMENT_PROFILE_NAMES).toBe(DOCUMENT_PROFILE_NAMES);
     expect(typeof index.validateComponent).toBe("function");
     expect(typeof index.substituteParams).toBe("function");
     expect(typeof index.documentSpecFromComponents).toBe("function");
     expect(typeof index.loadComponents).toBe("function");
+  });
+});
+
+describe("profile table", () => {
+  it("gives 바탕글 no paragraph spacing and the outlines 6pt before and 3pt after", () => {
+    // Compose starts a style from its own default paragraph shape, which
+    // carries 6pt after, so the official values have to be written out.
+    expect(OFFICIAL_PROFILE["바탕글"]).toMatchObject({
+      spacing_before_pt: 0,
+      spacing_after_pt: 0,
+    });
+    for (const name of PROFILE_NAMES.slice(1)) {
+      expect({
+        name,
+        spacing: [OFFICIAL_PROFILE[name]?.spacing_before_pt, OFFICIAL_PROFILE[name]?.spacing_after_pt],
+      }).toEqual({ name, spacing: [6, 3] });
+    }
+  });
+
+  it("offers a row per preset, with the official row derived from one body profile", () => {
+    expect(DOCUMENT_PROFILE_NAMES).toHaveLength(7);
+    expect(Object.keys(DOCUMENT_PROFILES).sort()).toEqual([...DOCUMENT_PROFILE_NAMES].sort());
+    expect(DOCUMENT_PROFILES.official).toEqual({
+      fontFamily: OFFICIAL_BODY_PROFILE.fontFamily,
+      bodySizePt: OFFICIAL_BODY_PROFILE.fontSizePt,
+      lineHeightPercent: OFFICIAL_BODY_PROFILE.lineHeightPercent,
+      pageNumber: false,
+    });
   });
 });
 
@@ -842,7 +1148,7 @@ describeBin("compose with the real hwp", () => {
           name: string;
           attrs: {
             char: { bold: boolean; color: string; faces: string[]; italic: boolean; size_pt: number };
-            para: { alignment: string; line_spacing: number };
+            para: { alignment: string; line_spacing: number; indent: number };
           };
         }[];
       };
@@ -857,9 +1163,40 @@ describeBin("compose with the real hwp", () => {
             color: style.attrs.char.color,
             align: style.attrs.para.alignment,
             line_spacing: style.attrs.para.line_spacing,
+            indent: style.attrs.para.indent,
           },
         ]),
       );
+    };
+    // Paragraph spacing is the one profile attribute `hwp styles` does not
+    // publish, so it is read where both documents keep it: the `paraPr`
+    // margins in the package's own header, reached through `hwp dump`. Both
+    // files go through the same writer, so the units compare directly.
+    const spacingOf = (file: string): Record<string, Record<string, number>> => {
+      const xml = execFileSync(BIN, ["dump", file, "--stream", "Contents/header.xml"], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const shapes = new Map<string, Record<string, number>>();
+      for (const match of xml.matchAll(/<hh:paraPr id="(\d+)"[\s\S]*?<\/hh:paraPr>/g)) {
+        shapes.set(
+          match[1] as string,
+          Object.fromEntries(
+            Array.from(match[0].matchAll(/<hc:(\w+) value="(-?\d+)"/g), (margin) => [
+              margin[1] as string,
+              Number(margin[2]),
+            ]),
+          ),
+        );
+      }
+      const byStyle: Record<string, Record<string, number>> = {};
+      for (const match of xml.matchAll(
+        /<hh:style id="\d+"[^>]*name="([^"]+)"[^>]*paraPrIDRef="(\d+)"/g,
+      )) {
+        const shape = shapes.get(match[2] as string);
+        if (shape !== undefined) byStyle[match[1] as string] = shape;
+      }
+      return byStyle;
     };
     compose(
       documentSpecFromComponents([
@@ -881,6 +1218,47 @@ describeBin("compose with the real hwp", () => {
       "profile",
     );
     expect(profileOf(out("profile.hwpx"))).toEqual(profileOf(preset));
+    expect(spacingOf(out("profile.hwpx"))).toEqual(spacingOf(preset));
+  });
+
+  it("matches the body row of every preset the engine publishes", () => {
+    // `gaejosik` is this repo's own preset: the engine has no such profile, so
+    // there is nothing to compare it with.
+    for (const name of DOCUMENT_PROFILE_NAMES) {
+      if (name === "gaejosik") continue;
+      const row = out(`row-${name}.hwpx`);
+      execFileSync(BIN, ["new", "-o", row, "--preset", name], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const stdout = execFileSync(BIN, ["styles", row, "--format", "json"], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const parsed = JSON.parse(stdout) as {
+        styles: {
+          name: string;
+          attrs: {
+            char: { faces: string[]; size_pt: number };
+            para: { line_spacing: number };
+          };
+        }[];
+      };
+      const body = parsed.styles.find((style) => style.name === "바탕글");
+      if (body === undefined) throw new Error(`${name} has no 바탕글 style`);
+      const section = execFileSync(BIN, ["dump", row, "--stream", "Contents/section0.xml"], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      expect({ name, row: DOCUMENT_PROFILES[name] }).toEqual({
+        name,
+        row: {
+          fontFamily: body.attrs.char.faces[0],
+          bodySizePt: body.attrs.char.size_pt,
+          lineHeightPercent: body.attrs.para.line_spacing,
+          pageNumber: section.includes("<hp:pageNum "),
+        },
+      });
+    }
   });
 
   it("composes each starter on its own, with no warning", () => {
@@ -934,9 +1312,16 @@ describeBin("compose with the real hwp", () => {
           name: component.name,
           face: "맑은 고딕",
         });
-        expect([12, 13, 14, 15]).toContain(run.size);
+        // 22pt is the engine's own 발신명의 size (hwp-convert frames.rs).
+        expect([12, 13, 14, 15, 22]).toContain(run.size);
       }
     });
+  });
+
+  it("composes the 결문's 발신명의 line first, at 22pt", () => {
+    const index = STARTER_COMPONENTS.findIndex((component) => component.name === "결문");
+    compose(documentSpecFromComponents([STARTER_COMPONENTS[index]!]), "font-gyeolmun");
+    expect(runAttrs("font-gyeolmun")[0]).toEqual({ face: "맑은 고딕", size: 22 });
   });
 
   it("gives the 붙임 body the profile's 12pt on all four lines", () => {

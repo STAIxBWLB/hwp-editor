@@ -13,18 +13,26 @@
  * the style of `segments.ts` (no JSON-schema dependency), with every refusal
  * naming the field path and the file or index entry it came from.
  *
- * A component carries no `lists` (the format has no such field), so a starter
- * that needs a bulleted ladder writes the markers into the text. That is also
- * what 개조식 notation does, and it keeps HWP 5.0 ordered-list numbering out
- * of the picture (hwp-cli#472). Style values follow the engine's official
- * profile: starters reference `바탕글` and `개요 1`..`개요 6` by name and
- * define only what the profile does not have (for example a centred 두문
- * line), always `based_on` an official style so no profile value is
- * duplicated here. The profile itself is copied once, in `OFFICIAL_PROFILE`,
- * because a compose spec has to define every style it names.
+ * A paragraph cannot carry a `list` here, so a starter that needs a bulleted
+ * ladder writes the markers into the text. That is also what 개조식 notation
+ * does, and it keeps HWP 5.0 ordered-list numbering out of the picture
+ * (hwp-cli#472); the validator refuses the field rather than letting the
+ * engine refuse the reference it cannot resolve. Style values follow the
+ * engine's official profile: starters reference `바탕글` and `개요 1`..`개요
+ * 6` by name and define only what the profile does not have (for example a
+ * centred 두문 line), always `based_on` an official style, so no starter file
+ * restates a profile constant. The profile itself is copied once, in
+ * `profiles.ts`, because a compose spec has to define every style it names.
+ *
+ * Text is held to the engine's contract as well: `hwp compose` accepts a tab
+ * and no other control character in a text run or a field value, so a param
+ * value's line breaks become `line_break` runs here (the engine's own advice)
+ * and everything else is refused while the field and the component that
+ * produced it are still known.
  */
 import type { Blocks, Style } from "./generated/document-spec-v2.js";
 import type { DocumentSpecV2 } from "./spec.js";
+import { OFFICIAL_PROFILE, OFFICIAL_PROFILE_STYLES } from "./profiles.js";
 
 import approvalBox from "./components/approval-box.json";
 import attachment from "./components/attachment.json";
@@ -103,18 +111,49 @@ const MAX_LENGTH = {
 /** The v1 schema's `maxItems` for a table's columns and rows. */
 const MAX_ITEMS = 65535;
 
+/** The v1 schema's `maxProperties` for the style table. */
+const MAX_STYLES = 256;
+
 /** JSON Schema counts code points, so a surrogate pair is one character there. */
 function exceeds(value: string, maxLength: number): boolean {
   if (value.length <= maxLength) return false;
   return Array.from(value).length > maxLength;
 }
 
-function text(
+/**
+ * Control characters `hwp compose` refuses in a text run or a field value
+ * (`document_spec.rs`: `is_control() && character != '\t'`), which is Unicode
+ * category Cc minus the tab. `\r\n` is not exempt: a line break is a
+ * `line_break` run, never a character in the text.
+ */
+const DISALLOWED_TEXT_CONTROL = /[\u0000-\u0008\u000A-\u001F\u007F-\u009F]/u;
+
+/** The same rule for a param value, which may hold a line break. */
+const DISALLOWED_PARAM_CONTROL = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/u;
+
+function codepoint(character: string): string {
+  return `U+${(character.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0")}`;
+}
+
+function withoutControl(
+  value: string,
+  pattern: RegExp,
+  source: string,
+  field: string,
+  reason: string,
+): string {
+  const found = pattern.exec(value);
+  if (found !== null) refuse(source, field, `holds the control character ${codepoint(found[0])}; ${reason}`);
+  return value;
+}
+
+/** Type, emptiness and length: the part every string field has in common. */
+function stringOf(
   value: unknown,
   source: string,
   field: string,
-  allowEmpty = false,
-  maxLength?: number,
+  allowEmpty: boolean,
+  maxLength: number | undefined,
 ): string {
   if (typeof value !== "string" || (!allowEmpty && value.trim() === "")) {
     refuse(source, field, allowEmpty ? "must be a string" : "must be a non-empty string");
@@ -123,6 +162,47 @@ function text(
     refuse(source, field, `must be at most ${maxLength} characters, as document-spec-v1 allows`);
   }
   return value;
+}
+
+/** A string field that reaches the engine as text: a tab is all it may carry. */
+function text(
+  value: unknown,
+  source: string,
+  field: string,
+  allowEmpty = false,
+  maxLength?: number,
+): string {
+  return withoutControl(
+    stringOf(value, source, field, allowEmpty, maxLength),
+    DISALLOWED_TEXT_CONTROL,
+    source,
+    field,
+    "document-spec-v1 allows a tab and no other control character here; " +
+      "split the text into separate runs with a line_break run between them, then retry",
+  );
+}
+
+/**
+ * A param value. A line break is allowed, because substitution turns it into
+ * a `line_break` run, and `\r\n` is read as one. Every other control
+ * character is refused here, while the component and the param are known,
+ * rather than by the engine at a document path that names neither.
+ */
+function paramValue(
+  value: unknown,
+  source: string,
+  field: string,
+  maxLength?: number,
+): string {
+  const normalized = stringOf(value, source, field, true, maxLength).replace(/\r\n/g, "\n");
+  return withoutControl(
+    normalized,
+    DISALLOWED_PARAM_CONTROL,
+    source,
+    field,
+    "a param may hold a tab or a line break (which becomes a line_break run) and " +
+      "no other control character; remove it, then retry",
+  );
 }
 
 function count(
@@ -234,11 +314,16 @@ function validateStyle(raw: unknown, source: string, field: string): Style {
         count(value, source, where, 0, 1000);
     }
   }
-  return style as unknown as Style;
+  // A copy: a caller that edits the component it gets back would otherwise
+  // edit the file it passed in.
+  return { ...style } as unknown as Style;
 }
 
 function validateStyles(raw: unknown, source: string): Record<string, Style> {
   const value = asObject(raw, source, "styles");
+  if (Object.keys(value).length > MAX_STYLES) {
+    refuse(source, "styles", `must hold at most ${MAX_STYLES} styles, as document-spec-v1 allows`);
+  }
   const validated: [string, Style][] = [];
   for (const [name, style] of Object.entries(value)) {
     if (name.trim() === "" || name.trim() !== name) {
@@ -349,13 +434,13 @@ function validateParagraph(block: Record<string, unknown>, source: string, field
     flag(block.keep_with_next, source, at(field, "keep_with_next"));
   }
   if (block.list !== undefined) {
-    const listField = at(field, "list");
-    const list = asObject(block.list, source, listField);
-    onlyKeys(list, ["name", "level"], source, listField);
-    text(list.name, source, at(listField, "name"), false, MAX_LENGTH.styleName);
-    if (list.level !== undefined) {
-      count(list.level, source, at(listField, "level"), 0, 6, true);
-    }
+    refuse(
+      source,
+      at(field, "list"),
+      "is not supported: a component's blocks are inserted into a document whose lists it " +
+        "cannot know, so hwp compose refuses the reference; write the markers into the text " +
+        "runs instead (HWP 5.0 ordered lists also show Hangul numbering, hwp-cli#472)",
+    );
   }
   const runsField = at(field, "runs");
   if (!Array.isArray(block.runs) || block.runs.length === 0) {
@@ -408,6 +493,66 @@ function validateTable(block: Record<string, unknown>, source: string, field: st
       }
     });
   });
+  validateTableGrid(block, source, field);
+}
+
+/**
+ * The grid the rows have to tile, checked the way `hwp compose` lays a table
+ * out (`document_spec.rs`: cells are placed left to right over the slots not
+ * taken by an earlier `row_span`, a span may not leave the grid, and a row
+ * has to end up covering every column). Without this a short row or an
+ * oversized span reaches the engine, which refuses it at a document path that
+ * names neither the component nor the table.
+ */
+function validateTableGrid(block: Record<string, unknown>, source: string, field: string): void {
+  const width = (block.columns as unknown[]).length;
+  const height = (block.rows as unknown[]).length;
+  const rowsField = at(field, "rows");
+  const covered = Array.from({ length: height }, () => new Array<boolean>(width).fill(false));
+  for (const [rowIndex, row] of (block.rows as Record<string, unknown>[]).entries()) {
+    const cells = row.cells as Record<string, unknown>[];
+    let cursor = 0;
+    for (const [cellIndex, cell] of cells.entries()) {
+      const cellField = at(at(at(rowsField, rowIndex), "cells"), cellIndex);
+      while (cursor < width && covered[rowIndex]?.[cursor] === true) cursor += 1;
+      const colSpan = (cell.col_span as number | undefined) ?? 1;
+      const rowSpan = (cell.row_span as number | undefined) ?? 1;
+      const colEnd = cursor + colSpan;
+      const rowEnd = rowIndex + rowSpan;
+      if (colEnd > width || rowEnd > height) {
+        refuse(
+          source,
+          cellField,
+          `spans ${colSpan} column(s) from column ${cursor + 1} and ${rowSpan} row(s) from ` +
+            `row ${rowIndex + 1}, past the table's ${width} column(s) and ${height} row(s); ` +
+            "shrink the span so the cells tile the grid, then retry",
+        );
+      }
+      for (let r = rowIndex; r < rowEnd; r += 1) {
+        for (let c = cursor; c < colEnd; c += 1) {
+          if (covered[r]?.[c] === true) {
+            refuse(
+              source,
+              cellField,
+              `overlaps a cell an earlier row span already covers (row ${r + 1}, column ${c + 1}); ` +
+                "give the overlapping cell its own slot, then retry",
+            );
+          }
+          (covered[r] as boolean[])[c] = true;
+        }
+      }
+      cursor = colEnd;
+    }
+    const empty = covered[rowIndex]?.indexOf(false) ?? -1;
+    if (empty !== -1) {
+      refuse(
+        source,
+        at(rowsField, rowIndex),
+        `leaves column ${empty + 1} of the ${width}-column grid empty; ` +
+          "every row has to cover every column (a col_span may be wider), then retry",
+      );
+    }
+  }
 }
 
 function validateBlock(raw: unknown, source: string, field: string): void {
@@ -475,13 +620,18 @@ function validateParams(raw: unknown, source: string): Record<string, string> {
     if (name.trim() === "" || name.trim() !== name || name.includes("{") || name.includes("}")) {
       refuse(source, at("params", name), "must be a param name without braces or surrounding spaces");
     }
-    params.push([name, text(item, source, at("params", name), true, MAX_LENGTH.text)]);
+    params.push([name, paramValue(item, source, at("params", name), MAX_LENGTH.text)]);
   }
   // `fromEntries` defines own properties, so a param named `__proto__` survives.
   return Object.fromEntries(params);
 }
 
-type TextMap = (value: string, field: string) => string;
+/**
+ * What the walk does with one field: `text` is a text run's text (a line
+ * break becomes a `line_break` run), `value` a field value (which cannot hold
+ * one, document-spec-v1 allows a tab and nothing else there).
+ */
+type TextMap = (value: string, field: string, kind: "text" | "value") => string;
 
 /**
  * Walk the text a component carries. The callers below only ever run this on
@@ -489,15 +639,26 @@ type TextMap = (value: string, field: string) => string;
  * checked one.
  */
 function mapRuns(runs: readonly unknown[], field: string, map: TextMap): unknown[] {
-  return runs.map((raw, index) => {
+  const mapped: unknown[] = [];
+  for (const [index, raw] of runs.entries()) {
     const where = at(field, index);
     const run = { ...(raw as Record<string, unknown>) };
-    if (run.type === "text") run.text = map(run.text as string, at(where, "text"));
-    if (run.type === "field" && typeof run.value === "string") {
-      run.value = map(run.value, at(where, "value"));
+    if (run.type === "text") {
+      // A line break in the text becomes the run the engine asks for, and the
+      // run keeps its own formatting on both sides of it.
+      const pieces = map(run.text as string, at(where, "text"), "text").split("\n");
+      for (const [piece, text] of pieces.entries()) {
+        if (piece > 0) mapped.push({ type: "line_break" });
+        mapped.push({ ...run, text });
+      }
+      continue;
     }
-    return run;
-  });
+    if (run.type === "field" && typeof run.value === "string") {
+      run.value = map(run.value, at(where, "value"), "value");
+    }
+    mapped.push(run);
+  }
+  return mapped;
 }
 
 function mapBlocks(blocks: readonly unknown[], field: string, map: TextMap): unknown[] {
@@ -526,7 +687,9 @@ function mapBlocks(blocks: readonly unknown[], field: string, map: TextMap): unk
         break;
       }
       case "field":
-        if (typeof block.value === "string") block.value = map(block.value, at(where, "value"));
+        if (typeof block.value === "string") {
+          block.value = map(block.value, at(where, "value"), "value");
+        }
         break;
       default:
         break;
@@ -539,10 +702,117 @@ function placeholderNames(value: string): string[] {
   return Array.from(value.matchAll(PLACEHOLDER), (match) => (match[1] ?? "").trim());
 }
 
+interface TextSite {
+  field: string;
+  text: string;
+  /** Whether substitution fills `{{name}}` here. */
+  substituted: boolean;
+}
+
+/**
+ * Every text field a component carries, and whether substitution reaches it.
+ * A text run's text, a field value and a field block's value are filled; an
+ * image path or alt text, an equation script and a field name are not, so a
+ * placeholder left in one of those would reach the engine as literal braces.
+ */
+function textSites(blocks: readonly unknown[], field: string): TextSite[] {
+  const sites: TextSite[] = [];
+  blocks.forEach((raw, index) => {
+    const where = at(field, index);
+    const block = raw as Record<string, unknown>;
+    switch (block.type) {
+      case "paragraph":
+        (block.runs as Record<string, unknown>[]).forEach((run, runIndex) => {
+          const runField = at(at(where, "runs"), runIndex);
+          switch (run.type) {
+            case "text":
+              sites.push({ field: at(runField, "text"), text: run.text as string, substituted: true });
+              break;
+            case "field":
+              sites.push({ field: at(runField, "name"), text: run.name as string, substituted: false });
+              if (typeof run.value === "string") {
+                sites.push({ field: at(runField, "value"), text: run.value, substituted: true });
+              }
+              break;
+            case "equation":
+              sites.push({
+                field: at(runField, "script"),
+                text: run.script as string,
+                substituted: false,
+              });
+              break;
+            case "image":
+              sites.push({ field: at(runField, "path"), text: run.path as string, substituted: false });
+              if (typeof run.alt === "string") {
+                sites.push({ field: at(runField, "alt"), text: run.alt, substituted: false });
+              }
+              break;
+            default:
+              break;
+          }
+        });
+        break;
+      case "table":
+        (block.rows as Record<string, unknown>[]).forEach((row, rowIndex) => {
+          const cellsField = at(at(at(where, "rows"), rowIndex), "cells");
+          (row.cells as Record<string, unknown>[]).forEach((cell, cellIndex) => {
+            if (Array.isArray(cell.blocks)) {
+              sites.push(...textSites(cell.blocks, at(at(cellsField, cellIndex), "blocks")));
+            }
+          });
+        });
+        break;
+      case "image":
+        sites.push({ field: at(where, "path"), text: block.path as string, substituted: false });
+        if (typeof block.alt === "string") {
+          sites.push({ field: at(where, "alt"), text: block.alt, substituted: false });
+        }
+        break;
+      case "equation":
+        sites.push({ field: at(where, "script"), text: block.script as string, substituted: false });
+        break;
+      case "field":
+        sites.push({ field: at(where, "name"), text: block.name as string, substituted: false });
+        if (typeof block.value === "string") {
+          sites.push({ field: at(where, "value"), text: block.value, substituted: true });
+        }
+        break;
+      default:
+        break;
+    }
+  });
+  return sites;
+}
+
+/** Refuse a placeholder that substitution will not fill, or that no param declares. */
+function checkPlaceholders(
+  blocks: readonly unknown[],
+  params: Record<string, string>,
+  source: string,
+): void {
+  for (const site of textSites(blocks, "blocks")) {
+    for (const placeholder of placeholderNames(site.text)) {
+      if (placeholder === "") refuse(source, site.field, "has an empty {{}} placeholder");
+      if (!site.substituted) {
+        refuse(
+          source,
+          site.field,
+          `is not substituted, so {{${placeholder}}} would reach the engine as literal braces; ` +
+            "move the placeholder into a text run or a field value, then retry",
+        );
+      }
+      if (!Object.hasOwn(params, placeholder)) {
+        refuse(source, site.field, `uses {{${placeholder}}}, which is not a declared param`);
+      }
+    }
+  }
+}
+
 /**
  * Validate one component file and return it in its published shape. `source`
  * is the file path or URL the JSON came from, or the index entry for an
  * inline component; every refusal names it together with the failing field.
+ * The result shares nothing with `raw`: a caller may edit what it gets back.
  */
 export function validateComponent(raw: unknown, source: string): Component {
   const value = asObject(raw, source, "");
@@ -552,16 +822,8 @@ export function validateComponent(raw: unknown, source: string): Component {
   const params = validateParams(value.params, source);
   const styles = value.styles === undefined ? undefined : validateStyles(value.styles, source);
   validateBlocks(value.blocks, source, "blocks", 1);
-  const blocks = value.blocks as Blocks;
-  mapBlocks(blocks, "blocks", (text, field) => {
-    for (const placeholder of placeholderNames(text)) {
-      if (placeholder === "") refuse(source, field, "has an empty {{}} placeholder");
-      if (!Object.hasOwn(params, placeholder)) {
-        refuse(source, field, `uses {{${placeholder}}}, which is not a declared param`);
-      }
-    }
-    return text;
-  });
+  checkPlaceholders(value.blocks as readonly unknown[], params, source);
+  const blocks = structuredClone(value.blocks) as Blocks;
   const component: Component = { name, description, params, blocks };
   if (styles !== undefined) component.styles = styles;
   return component;
@@ -572,77 +834,49 @@ export function validateComponent(raw: unknown, source: string): Component {
  * Values are literal (no recursive substitution), an undeclared value is
  * refused rather than ignored, and the returned component's `params` are the
  * merged values, so a caller can show what the component now holds.
+ *
+ * A line break in a value becomes a `line_break` run, which is what the
+ * engine asks for when a text run has to continue on the next line; a field
+ * value cannot hold one at all, so that is refused with the param named.
  */
 export function substituteParams(
   component: Component,
   values: Record<string, string> = {},
   source = component.name,
 ): Component {
+  const filled: Record<string, string> = {};
   for (const [name, value] of Object.entries(values)) {
     if (!Object.hasOwn(component.params, name)) {
       refuse(source, at("params", name), "is not a param of this component");
     }
     if (typeof value !== "string") refuse(source, at("params", name), "must be a string");
+    // Normalized (`\r\n` becomes `\n`) and checked here, so what is stored is
+    // what is substituted and what the caller reads back.
+    filled[name] = paramValue(value, source, at("params", name), MAX_LENGTH.text);
   }
-  const params = { ...component.params, ...values };
-  const blocks = mapBlocks(component.blocks, "blocks", (text, field) =>
-    text.replace(PLACEHOLDER, (_match, rawName: string) => {
-      const name = rawName.trim();
-      if (!Object.hasOwn(params, name)) {
-        refuse(source, field, `uses {{${name}}}, which is not a declared param`);
-      }
-      return params[name] as string;
-    }),
-  ) as Blocks;
+  const params = { ...component.params, ...filled };
+  checkPlaceholders(component.blocks, params, source);
+  const blocks = mapBlocks(component.blocks, "blocks", (template, field, kind) => {
+    const substituted = template.replace(PLACEHOLDER, (_match, rawName: string) => {
+      return params[rawName.trim()] as string;
+    });
+    if (kind === "value" && substituted.includes("\n")) {
+      const name = placeholderNames(template).find((name) => (params[name] ?? "").includes("\n"));
+      refuse(
+        source,
+        field,
+        `substitutes {{${name ?? "param"}}}, whose value holds a line break, and ` +
+          "document-spec-v1 allows no control character in a field value; " +
+          "keep that param on one line, then retry",
+      );
+    }
+    return substituted;
+  }) as Blocks;
   // A value can push a run past a bound the placeholder itself met, so the
   // result is held to the same contract the component was validated against.
   validateBlocks(blocks, source, "blocks", 1);
-  return { ...component, params, blocks };
+  return { ...component, params, blocks: structuredClone(blocks) };
 }
-
-/**
- * The official profile's body font, size and line spacing as plain data, so a
- * caller that builds its own document (the compose panel's presets) reads the
- * same values instead of restating them. `OFFICIAL_PROFILE` is derived from
- * this, so there is one copy in the repo.
- */
-export const OFFICIAL_BODY_PROFILE = {
-  fontFamily: "맑은 고딕",
-  fontSizePt: 12,
-  lineHeightPercent: 160,
-} as const;
-
-/**
- * The engine's official profile, copied once. `hwp new --preset official`
- * writes these seven named styles, and `hwp styles <file> --format json`
- * reads back exactly these values (맑은 고딕, 12pt, justified, 160% line
- * spacing; the outlines bold at 15/14/13/12/12/12pt, left).
- *
- * A compose spec has no preset switch and refuses a `style` or `based_on`
- * that names a style the spec does not define (`unknown_reference`), so an
- * assembled document has to carry the profile itself. Keeping the values
- * here, rather than in each of the seven starter files, is what lets a
- * starter reference `바탕글` and `개요 2` by name without restating a single
- * profile constant; the starter set only ever adds a style the profile lacks
- * (a centred 두문 line, a bold table header) and names its `based_on`.
- */
-export const OFFICIAL_PROFILE: Readonly<Record<string, Style>> = {
-  "바탕글": {
-    font_family: OFFICIAL_BODY_PROFILE.fontFamily,
-    font_size_pt: OFFICIAL_BODY_PROFILE.fontSizePt,
-    align: "justify",
-    line_height_percent: OFFICIAL_BODY_PROFILE.lineHeightPercent,
-  },
-  "개요 1": { based_on: "바탕글", bold: true, font_size_pt: 15, align: "left" },
-  "개요 2": { based_on: "바탕글", bold: true, font_size_pt: 14, align: "left" },
-  "개요 3": { based_on: "바탕글", bold: true, font_size_pt: 13, align: "left" },
-  "개요 4": { based_on: "바탕글", bold: true, font_size_pt: 12, align: "left" },
-  "개요 5": { based_on: "바탕글", bold: true, font_size_pt: 12, align: "left" },
-  "개요 6": { based_on: "바탕글", bold: true, font_size_pt: 12, align: "left" },
-};
-
-/** The profile as a map, so a style named `constructor` is not mistaken for one. */
-const PROFILE_STYLES = new Map<string, Style>(Object.entries(OFFICIAL_PROFILE));
 
 interface StyleRef {
   field: string;
@@ -707,8 +941,11 @@ export interface ComposeComponentsOptions {
  * Every style the blocks name, and every `based_on` a component defines, is
  * resolved here: one the components define wins, one only the official
  * profile has is added from `OFFICIAL_PROFILE`, and anything else is refused
- * with the field that named it — `hwp compose` would refuse the same
- * reference as `unknown_reference`, later and without the field.
+ * with the field that named it (hwp compose would refuse the same reference
+ * as `unknown_reference`, later and without the field).
+ *
+ * The spec shares no object with the components or with the profile table, so
+ * editing the result cannot reach module state or a caller's file.
  */
 export function documentSpecFromComponents(
   components: readonly Component[],
@@ -727,13 +964,14 @@ export function documentSpecFromComponents(
         refuse(
           component.name,
           at("styles", name),
-          `is defined differently by ${definedBy.get(name) ?? "an earlier component"} and this component`,
+          `is defined differently by ${definedBy.get(name) ?? "an earlier component"} and this ` +
+            "component; make the two definitions agree, or rename one of them, then retry",
         );
       }
       styles.set(name, style);
       definedBy.set(name, component.name);
     }
-    blocks.push(...component.blocks);
+    blocks.push(...(structuredClone(component.blocks) as Block[]));
   }
 
   const unresolved: { source: string; field: string; name: string }[] = [];
@@ -756,7 +994,7 @@ export function documentSpecFromComponents(
   const fromProfile = new Set<string>();
   while (unresolved.length > 0) {
     const item = unresolved.shift() as { source: string; field: string; name: string };
-    const profile = PROFILE_STYLES.get(item.name);
+    const profile = OFFICIAL_PROFILE_STYLES.get(item.name);
     if (profile === undefined) {
       refuse(
         item.source,
@@ -776,10 +1014,10 @@ export function documentSpecFromComponents(
   }
 
   const resolved = new Map<string, Style>();
-  for (const [name, profile] of PROFILE_STYLES) {
-    if (fromProfile.has(name)) resolved.set(name, profile);
+  for (const [name, profile] of OFFICIAL_PROFILE_STYLES) {
+    if (fromProfile.has(name)) resolved.set(name, structuredClone(profile));
   }
-  for (const [name, style] of styles) resolved.set(name, style);
+  for (const [name, style] of styles) resolved.set(name, structuredClone(style));
 
   const document: DocumentSpecV2["document"] = {
     version: "1.0",
@@ -920,7 +1158,7 @@ async function loadIndex(
   label: string,
   base: string | undefined,
   transport: ComponentFetch,
-  add: (component: Component, field: string) => void,
+  add: (component: Component, source: string, field: string) => void,
 ): Promise<void> {
   const index = asObject(raw, label, "");
   onlyKeys(index, ["version", "components"], label, "");
@@ -933,17 +1171,20 @@ async function loadIndex(
     const field = `components[${position}]`;
     if (typeof entry === "string") {
       const url = resolveEntry(field, entry, base);
-      add(validateComponent(await readJson(transport, url), url), field);
+      add(validateComponent(await readJson(transport, url), url), label, field);
       continue;
     }
     const value = asObject(entry, label, field);
-    if (Array.isArray(value.blocks)) {
-      add(validateComponent(value, `${label} ${field}`), field);
+    // An entry either names a file or is the component itself; anything else
+    // is named as such instead of being reported as a missing path.
+    if (value.path === undefined) {
+      add(validateComponent(value, `${label} ${field}`), label, field);
       continue;
     }
+    onlyKeys(value, ["path"], label, field);
     const path = text(value.path, label, at(field, "path"));
     const url = resolveEntry(field, path, base);
-    add(validateComponent(await readJson(transport, url), url), field);
+    add(validateComponent(await readJson(transport, url), url), label, field);
   }
 }
 
@@ -958,10 +1199,19 @@ export async function loadComponents(
 ): Promise<Component[]> {
   const transport: ComponentFetch = options.fetch ?? ((url) => fetch(url));
   const loaded: Component[] = [];
-  const add = (component: Component, field: string): void => {
-    if (loaded.some((other) => other.name === component.name)) {
-      refuse(field, "", `loads a second component named ${component.name}`);
+  const loadedBy = new Map<string, string>();
+  const add = (component: Component, label: string, field: string): void => {
+    const where = field === "" ? label : `${label} ${field}`;
+    const first = loadedBy.get(component.name);
+    if (first !== undefined) {
+      refuse(
+        label,
+        field,
+        `loads a second component named ${component.name}, which was already loaded from ` +
+          `${first}; rename one of the two, then retry`,
+      );
     }
+    loadedBy.set(component.name, where);
     loaded.push(component);
   };
 
@@ -974,11 +1224,13 @@ export async function loadComponents(
   if (Array.isArray(source)) {
     source.forEach((raw, position) => {
       const field = `components[${position}]`;
-      add(validateComponent(raw, field), field);
+      add(validateComponent(raw, field), field, "");
     });
     return loaded;
   }
-  await loadIndex(source, options.baseUrl ?? "component index", options.baseUrl, transport, add);
+  // An in-memory index is named for what it is: `baseUrl` says where its
+  // entries resolve, not where the index itself lives.
+  await loadIndex(source, "component index", options.baseUrl, transport, add);
   return loaded;
 }
 

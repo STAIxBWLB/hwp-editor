@@ -105,8 +105,6 @@ export type { TemplateReport, EmbeddedTemplate, FillReport, FillResult, LintFind
 export {
   documentSpecFromComponents,
   loadComponents,
-  OFFICIAL_BODY_PROFILE,
-  OFFICIAL_PROFILE,
   STARTER_COMPONENTS,
   substituteParams,
   validateComponent,
@@ -120,3 +118,10 @@ export type {
   ComposeComponentsOptions,
   LoadComponentsOptions,
 } from "./components.js";
+export {
+  DOCUMENT_PROFILE_NAMES,
+  DOCUMENT_PROFILES,
+  OFFICIAL_BODY_PROFILE,
+  OFFICIAL_PROFILE,
+} from "./profiles.js";
+export type { DocumentProfile, ProfileName } from "./profiles.js";

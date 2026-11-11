@@ -11,10 +11,15 @@
     "공개구분": "공개"
   },
   "styles": {
-    "결문 발신명의": { "based_on": "바탕글", "align": "right", "bold": true },
+    "결문 발신명의": { "based_on": "바탕글", "align": "center", "bold": true, "font_size_pt": 22 },
     "결문 항목명": { "based_on": "바탕글", "bold": true }
   },
   "blocks": [
+    {
+      "type": "paragraph",
+      "style": "결문 발신명의",
+      "runs": [{ "type": "text", "text": "{{발신명의}}" }]
+    },
     {
       "type": "table",
       "width_mm": 170,
@@ -153,11 +158,6 @@
           ]
         }
       ]
-    },
-    {
-      "type": "paragraph",
-      "style": "결문 발신명의",
-      "runs": [{ "type": "text", "text": "{{발신명의}}" }]
     }
   ]
 }
