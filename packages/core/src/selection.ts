@@ -57,11 +57,12 @@ export function hasOwnRef(segment: Segment): boolean {
  *
  * - para: itself, unless it is nested without an id of its own: its ref then
  *   names the host paragraph, so it is unaddressable rather than the host.
- * - run: the paragraph that directly holds it.
+ * - run: the paragraph that directly holds it, if that paragraph names itself.
  * - cell: every paragraph inside the cell, since align, spacing and character
  *   format apply to all of them, but no single target: replace, insert and
  *   delete address one paragraph, and the engine refuses to delete a cell's
- *   last one. An empty cell has no paragraph at all.
+ *   last one. An empty cell, or one whose paragraphs cannot name themselves,
+ *   has no target at all.
  * - table, image, field, bookmark: no paragraph target. Any text they touch
  *   belongs to the host paragraph they share with the table control.
  * - a segment with no nesting path (an older projection) that is not a cell:
@@ -88,13 +89,21 @@ export function resolveSelection(envelope: CatEnvelope, segment: Segment): Selec
       candidate.section === segment.section && candidate.indices !== undefined &&
       candidate.indices.length === indices.length + 1 &&
       indices.every((index, at) => candidate.indices![at] === index));
-    return paragraphs.length === 0 ? refuse("cell") : { paragraphs, paragraph: undefined, refusal: "cell" };
+    if (paragraphs.length === 0) return refuse("cell");
+    // A paragraph inside a cell can itself be nested and carry no id (a table
+    // in a cell): its ref would name the cell's coordinate, which resolves to
+    // whatever sits there. Refuse the cell rather than address most of it.
+    if (!paragraphs.every(hasOwnRef)) return refuse("unaddressable");
+    return { paragraphs, paragraph: undefined, refusal: "cell" };
   }
-  // Only a run is left: the paragraph one level up holds its text.
-  return only(envelope.segments.find((candidate) => candidate.kind === "para" &&
+  // Only a run is left: the paragraph one level up holds its text. That
+  // paragraph is the target, so it has to name itself - a run with an id under
+  // an id-less nested paragraph would otherwise address the host.
+  const holder = envelope.segments.find((candidate) => candidate.kind === "para" &&
     candidate.section === segment.section && candidate.indices !== undefined &&
     candidate.indices.length === indices.length - 1 &&
-    candidate.indices.every((index, at) => index === indices[at])));
+    candidate.indices.every((index, at) => index === indices[at]));
+  return only(holder !== undefined && hasOwnRef(holder) ? holder : undefined);
 }
 
 /**
@@ -358,14 +367,18 @@ export function selectSimilar(envelope: CatEnvelope, primary: Segment, level: "c
   const props = level === "char" ? primary.directChar : primary.directPara;
   if (props === undefined) return [];
   const key = stableStructure(props);
+  // A unit that cannot name itself is left out: its ref is a bare coordinate,
+  // and the ops this list feeds (set-char, set-para, set-align) turn that into
+  // a host address. The rest of the matches still select.
   if (level === "char") {
     const hasRuns = envelope.segments.some((segment) => segment.kind === "run");
     const candidates = hasRuns
       ? envelope.segments.filter((segment) => segment.kind === "run")
       : envelope.segments.filter((segment) => segment.kind === "para");
-    return uniqueSegments(candidates.filter((segment) => stableStructure(segment.directChar) === key)).sort(compareSegments).map(segmentRef);
+    return uniqueSegments(candidates.filter((segment) => hasOwnRef(segment) &&
+      stableStructure(segment.directChar) === key)).sort(compareSegments).map(segmentRef);
   }
-  return uniqueSegments(envelope.segments.filter((segment) => segment.kind === "para" &&
+  return uniqueSegments(envelope.segments.filter((segment) => segment.kind === "para" && hasOwnRef(segment) &&
     stableStructure(segment.directPara) === key)).sort(compareSegments).map(segmentRef);
 }
 

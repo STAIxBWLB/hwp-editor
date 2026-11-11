@@ -532,7 +532,7 @@ describe.each(LOCALES)("HwpEditor compose flow — locale=%s", (locale) => {
     release();
 
     await vi.waitFor(() => expect(onError).toHaveBeenCalled());
-    expect((onError.mock.calls[0]?.[0] as Error).message).toBe(t["error.staleReplacement"]);
+    expect((onError.mock.calls[0]?.[0] as Error).message).toBe(t["error.staleCompose"]);
     // The host's own load was left to finish, and the composed file was never read.
     releaseReload();
     await vi.waitFor(() => expect(engine.calls.read.at(-1)?.name).toBe(other.name));

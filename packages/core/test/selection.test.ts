@@ -391,6 +391,59 @@ describe("selection helpers", () => {
     });
   });
 
+  it("refuses a cell's or a run's id-less nested holder instead of naming the host (t18-18)", () => {
+    // The same shape arrives by three more routes: a cell whose only paragraph
+    // is a nested table's (no id), a run with an id under that paragraph, and
+    // the similar-format sweep. Each used to hand back a bare coordinate,
+    // which segmentForRef resolves to the host paragraph.
+    const plain = { bold: false, italic: false, size_pt: 10, color: "#000000", faces: Array(7).fill("A"), face_ids: Array(7).fill(0) };
+    const host: Segment = { id: "host", indices: [0], start: 0, end: 6, kind: "para", section: 0, para: 0, directChar: plain };
+    const cell: Segment = { id: "cell", indices: [0, 1], start: 0, end: 6, kind: "cell", section: 0, para: 0 };
+    const nested: Segment = { indices: [0, 1, 0], start: 0, end: 6, kind: "para", section: 0, para: 0, directChar: plain };
+    const run: Segment = { id: "inner-run", indices: [0, 1, 0, 0], start: 0, end: 6, kind: "run", section: 0, para: 0, directChar: plain };
+    const graph: CatEnvelope = { markdown: "abcdef", segments: [host, cell, nested, run] };
+    // The cell's paragraphs exist but none of them can name itself, so the
+    // whole cell is unaddressable rather than most of it being edited.
+    expect(resolveSelection(graph, cell)).toEqual({ paragraphs: [], paragraph: undefined, refusal: "unaddressable" });
+    expect(resolveSelection(graph, nested)).toEqual({ paragraphs: [], paragraph: undefined, refusal: "unaddressable" });
+    // The run's id addresses the run itself, but every paragraph-level op goes
+    // through its holder, and that paragraph's ref is the host's coordinate.
+    expect(resolveSelection(graph, run)).toEqual({ paragraphs: [], paragraph: undefined, refusal: "unaddressable" });
+    const onCell = reducer(initialState, { type: "select", selection: { section: 0, para: 0, id: "cell" } });
+    expect(selectionAction(graph, onCell, cell, "toggle"))
+      .toEqual({ type: "refuseSelection", refusal: "unaddressable" });
+    expect(selectionAction(graph, onCell, run, "toggle"))
+      .toEqual({ type: "refuseSelection", refusal: "unaddressable" });
+    // What the editor counts as selected follows the same rule.
+    expect(selectedParagraphs(graph, onCell)).toEqual([]);
+  });
+
+  it("sweeps similar format past the units that cannot name themselves (t18-18)", () => {
+    // selectSimilar feeds set-char, set-para and set-align through the state,
+    // so a ref it returns has to name the unit itself. The id-less nested
+    // paragraph and run match the shape and are left out; the ones that name
+    // themselves still select.
+    const plain = { bold: false, italic: false, size_pt: 10, color: "#000000", faces: Array(7).fill("A"), face_ids: Array(7).fill(0) };
+    const shape = { alignment: "left" as const, indent: 0, line_spacing: 160, line_spacing_type: 0 };
+    const topPara: Segment = { id: "top-p", indices: [0], start: 0, end: 6, kind: "para", section: 0, para: 0, directPara: shape, directChar: plain };
+    const topRun: Segment = { id: "top-r", indices: [0, 0], start: 0, end: 3, kind: "run", section: 0, para: 0, directChar: plain };
+    const nestedPara: Segment = { indices: [0, 1, 0, 0], start: 0, end: 6, kind: "para", section: 0, para: 0, directPara: shape, directChar: plain };
+    const nestedRun: Segment = { indices: [0, 1, 0, 0, 0], start: 0, end: 3, kind: "run", section: 0, para: 0, directChar: plain };
+    const graph: CatEnvelope = { markdown: "abcdef", segments: [topPara, topRun, nestedPara, nestedRun] };
+    expect(selectSimilar(graph, topRun, "char")).toEqual([{ section: 0, para: 0, id: "top-r" }]);
+    expect(selectSimilar(graph, topPara, "para")).toEqual([{ section: 0, para: 0, id: "top-p" }]);
+    // A legacy projection carries no indices at all, so its paragraphs are
+    // still swept: the filter drops units that have a path but no id, not the
+    // coordinate that is the only identity an older projection has.
+    const legacy: CatEnvelope = { markdown: "abcdef", segments: [
+      { start: 0, end: 6, kind: "para", section: 0, para: 0, directPara: shape },
+      { start: 0, end: 6, kind: "para", section: 0, para: 1, directPara: shape },
+    ] };
+    expect(selectSimilar(legacy, legacy.segments[0]!, "para")).toEqual([
+      { section: 0, para: 0 }, { section: 0, para: 1 },
+    ]);
+  });
+
   it("classifies a section's definition paragraph by position, not by text", () => {
     // Body paragraph 0 of every section carries SectionDef: the engine will not
     // move it and refuses an insertion before it. It reads as an ordinary

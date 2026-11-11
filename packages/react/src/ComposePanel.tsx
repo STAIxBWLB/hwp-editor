@@ -181,7 +181,7 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
       const result = await engine.compose(spec, `${stem}.hwpx`);
       if (!mounted.current) return;
       if (loadEpoch() !== epoch || store.getState().document !== source) {
-        throw new Error(t("error.staleReplacement"));
+        throw new Error(t("error.staleCompose"));
       }
       props.onComposed(result.document);
     } catch (e) {
@@ -211,7 +211,7 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
       if (!mounted.current) return;
       // A load in flight leaves the old document in the store until it
       // resolves, so the document identity alone would still match.
-      if (loadEpoch() !== epoch || store.getState().document !== source) throw new Error(t("error.staleReplacement"));
+      if (loadEpoch() !== epoch || store.getState().document !== source) throw new Error(t("error.staleCompose"));
       props.onComposed(next);
     } catch (e) {
       if (mounted.current) { setError(toEditorError(e)); onError?.(e); }

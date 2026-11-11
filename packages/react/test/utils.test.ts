@@ -100,6 +100,16 @@ describe("fields", () => {
       { name: "x", segment: { section: 0, para: 0, id: "cell-p" } },
     ]);
   });
+
+  it("leaves out a slot whose paragraph names only its host (t18-18)", () => {
+    // A nested paragraph with no id has no ref of its own: its coordinate
+    // resolves to the host, so listing the slot would aim Delete at the host
+    // and everything the projection nested inside it.
+    const markdown = "{{x}}";
+    const host: Segment = { id: "host-p", indices: [0], start: 0, end: 5, kind: "para", section: 0, para: 0 };
+    const nested: Segment = { indices: [0, 1, 0, 0], start: 0, end: 5, kind: "para", section: 0, para: 0 };
+    expect(extractFieldSlots({ markdown, segments: [host, nested] })).toEqual([]);
+  });
 });
 
 describe("presets", () => {

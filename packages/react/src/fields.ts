@@ -25,9 +25,9 @@ const SLOT_PATTERN = /\{\{\s*([^{}]+?)\s*\}\}/g;
  * A v2 projection lists a table's host paragraph before the cell and the
  * cell's own paragraph, and `segmentAtOffset` answers with the first segment
  * whose range holds the offset: for a slot in a cell that is the host. Depth
- * in `indices` is what says which segment sits inside which; on a tie the
- * shorter range is the inner one, and a legacy projection (no indices at all)
- * keeps the first segment it listed.
+ * in `indices` is what says which segment sits inside which. On a tie -
+ * including a legacy projection, where every depth is 0 - the shorter range
+ * is the inner one.
  */
 function innermostAt(envelope: CatEnvelope, offset: number): Segment | undefined {
   let best: Segment | undefined;
@@ -55,6 +55,9 @@ function innermostAt(envelope: CatEnvelope, offset: number): Segment | undefined
  * table, so a slot resolved to the host would make the inspector's Delete
  * remove the table as well. `resolveSelection` is the same mapper every other
  * target goes through, so a slot resolves exactly where a click on it does.
+ * When it refuses - a nested paragraph with no id of its own has no ref that
+ * names it - the slot is left out: `hit` is a segment the resolver rejected,
+ * and shipping its coordinate would resolve to the host it was refused for.
  */
 export function extractFieldSlots(envelope: CatEnvelope): FieldSlot[] {
   const slots: FieldSlot[] = [];
@@ -67,7 +70,8 @@ export function extractFieldSlots(envelope: CatEnvelope): FieldSlot[] {
     const offset = [...envelope.markdown.slice(0, match.index ?? 0)].length;
     const hit = innermostAt(envelope, offset);
     if (hit === undefined || seen.has(name)) continue;
-    const paragraph = resolveSelection(envelope, hit).paragraph ?? hit;
+    const paragraph = resolveSelection(envelope, hit).paragraph;
+    if (paragraph === undefined) continue;
     seen.add(name);
     slots.push({ name, segment: segmentRef(paragraph) });
   }

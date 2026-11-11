@@ -130,10 +130,44 @@ it("refuses an embedded create that resolves after the host switched file (t18-1
   release?.();
 
   await waitFor(() => expect(onError).toHaveBeenCalled());
-  expect((onError.mock.calls[0]?.[0] as Error).message).toBe(en["error.staleReplacement"]);
+  expect((onError.mock.calls[0]?.[0] as Error).message).toBe(en["error.staleCompose"]);
   releaseReload?.();
   await waitFor(() => expect(engine.calls.read.at(-1)?.name).toBe(other.name));
   expect(engine.calls.read.some((document) => document.name === filled.name)).toBe(false);
+});
+
+it("refuses a template apply whose preview predates the host's file switch (t18-1 apply)", async () => {
+  // The preview was produced from the old document, and the host switched
+  // files after asking for it. The reload of the new file is held open, so the
+  // store still holds the old document and identity alone cannot see the
+  // switch: that window is what the generation captured at preview time covers.
+  const other: DocumentHandle = { name: "other.hwpx", data: new TextEncoder().encode("other") };
+  let releaseReload: (() => void) | undefined;
+  const engine = templateEngine();
+  const readDocument = engine.read.bind(engine);
+  engine.read = async (document) => {
+    if (document.name === other.name) {
+      await new Promise<void>((resolve) => { releaseReload = resolve; });
+    }
+    return readDocument(document);
+  };
+  const onChange = vi.fn();
+  const { rerender } = render(<HwpEditor engine={engine} file={original} onChange={onChange} />);
+  fireEvent.click(await screen.findByRole("tab", { name: en["tabs.templates"] }));
+  fireEvent.change(await screen.findByLabelText("문서번호"), { target: { value: "2026-001" } });
+  fireEvent.click(screen.getByRole("button", { name: en["templates.previewFill"] }));
+  const apply = await screen.findByRole("button", { name: en["templates.apply"] }) as HTMLButtonElement;
+
+  rerender(<HwpEditor engine={engine} file={other} onChange={onChange} />);
+  await waitFor(() => expect(releaseReload).toBeDefined());
+  expect(onChange).not.toHaveBeenCalled();
+  fireEvent.click(apply);
+
+  expect((await screen.findByRole("alert")).textContent).toContain(en["error.staleReplacement"]);
+  expect(onChange).not.toHaveBeenCalled();
+  releaseReload?.();
+  await waitFor(() => expect(engine.calls.read.at(-1)?.name).toBe(other.name));
+  expect(onChange).not.toHaveBeenCalled();
 });
 
 it("clears the previous lint error when the profile or document changes", async () => {
