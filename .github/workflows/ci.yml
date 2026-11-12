@@ -68,7 +68,7 @@ jobs:
           }
           total=$(printf '%s\n' "$files" | wc -l | tr -d ' ')
           if [ "$total" -ge "$MAX_FILES" ]; then
-            echo "$total changed files reaches the API's cap; running every gating job"
+            echo "the list reached the API's cap of $MAX_FILES files; running every gating job"
             exit 0
           fi
           outside=$(printf '%s\n' "$files" | grep -Ev '^(docs/|[^/]+\.md$)' || true)
@@ -77,7 +77,7 @@ jobs:
             exit 0
           fi
           echo "docs_only=true" >> "$GITHUB_OUTPUT"
-          echo "$total changed files, all under docs/ or root-level *.md"
+          echo "changed files: $total, all under docs/ or root-level *.md"
 
   build-test:
     needs: changes
