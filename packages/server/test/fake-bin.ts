@@ -84,6 +84,15 @@ export interface FakeBinOptions {
   infoBodyStats?: string;
   /** Make the `--body-stats` form exit non-zero, to drive the plain-info fallback. */
   failBodyStats?: boolean;
+  /**
+   * Make the `--body-stats` form sleep this long before answering, so a test
+   * can drive its timeout and the shared probe deadline (#130).
+   */
+  slowBodyStatsMs?: number;
+  /** Make the plain `info --json` form sleep this long first (#130). */
+  slowPlainInfoMs?: number;
+  /** Append one line per `--body-stats` call to this file, to count probes (#130). */
+  bodyStatsLog?: string;
   /** stderr written by `mode: "fail"`; default `boom`. */
   editStderr?: string;
   /**
@@ -237,13 +246,16 @@ export function createFakeBin(opts: FakeBinOptions = {}): { bin: string; log: ()
       ...(opts.catStdout === undefined
         ? []
         : [`  cat) printf '%s' ${JSON.stringify(opts.catStdout)}; exit 0 ;;`]),
-      ...(opts.info === undefined && opts.infoBodyStats === undefined && opts.failBodyStats !== true
+      ...(opts.info === undefined && opts.infoBodyStats === undefined && opts.failBodyStats !== true && opts.slowBodyStatsMs === undefined
         ? []
         : [`  info) case " $* " in *" --body-stats "*)
+        ${opts.bodyStatsLog === undefined ? "" : `echo x >> ${JSON.stringify(opts.bodyStatsLog)};`}
+        ${opts.slowBodyStatsMs === undefined ? "" : `${sleepSlices(opts.slowBodyStatsMs).join("; ")};`}
         ${opts.failBodyStats === true
           ? "printf '%s' 'body stats failed' >&2; exit 3"
           : `printf '%s' ${JSON.stringify(opts.infoBodyStats ?? opts.info ?? "{}")}; exit 0`} ;;
         *)
+        ${opts.slowPlainInfoMs === undefined ? "" : `${sleepSlices(opts.slowPlainInfoMs).join("; ")};`}
         ${opts.info === undefined ? "exit 0" : `printf '%s' ${JSON.stringify(opts.info)}; exit 0`} ;; esac ;;`]),
       ...(opts.failTemplateCommand === undefined ? [] : [
         `  slots) ${fail("slots").length ? fail("slots").join("; ") : opts.failTemplateCommand === "fill" ? "printf '%s' '{\"placeholders\":[{\"name\":\"title\",\"occurrences\":1}],\"fields\":[]}'; exit 0" : "printf '%s' '{\"placeholders\":[],\"fields\":[]}'; exit 0"} ;;`,

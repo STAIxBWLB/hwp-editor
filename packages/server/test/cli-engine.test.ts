@@ -5,7 +5,7 @@
  * the dev binary moves ahead of the floor as hwp-cli ships.
  */
 
-import { chmodSync, copyFileSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -665,4 +665,86 @@ describe("the engine's own table count (#97)", () => {
     // The plain probe is what answered after the stats probe failed.
     expect(log()).toMatch(/^info (?!--body-stats).*--json$/m);
   });
+});
+
+/**
+ * #130: the two info probes share one deadline, and an inspection whose info
+ * ran out of time is not cached.
+ */
+describe("body-stats probe deadline and cache (#130)", () => {
+  const envelope = JSON.stringify({
+    contract: "hwp-segment-envelope-v2",
+    schema_version: "1.0",
+    markdown: "x",
+    segments: [{ id: "p", kind: "para", path: { section: 0, indices: [0] }, char_range: { start: 0, end: 1 } }],
+  });
+  const info = JSON.stringify({ format: "hwpx" });
+  const stats = JSON.stringify({ format: "hwpx", body: { tables: 0, tables_inline: 0, tables_floating: 0 } });
+  const doc = { name: "doc.hwpx", data: new Uint8Array([1]) };
+  const dirs: string[] = [];
+  const counterFile = (): string => {
+    const dir = mkdtempSync(join(tmpdir(), "hwp-stats-"));
+    dirs.push(dir);
+    return join(dir, "probes");
+  };
+  afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+  const probes = (file: string): number => (existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").length : 0);
+
+  it("gives the plain fallback only the time the stats probe left", async () => {
+    // Stats fails after 1.5s; the plain probe would answer after 3s more. With
+    // a fresh budget per probe the read took 4.5s and more; with one 2s
+    // deadline the fallback is cut off with the budget.
+    const { bin } = createFakeBin({
+      version: "1.4.0", catStdout: envelope, info, failBodyStats: true, slowBodyStatsMs: 1500, slowPlainInfoMs: 3000,
+    });
+    const started = Date.now();
+    const read = await createCliEngine({ bin, timeoutMs: 2000 }).read(doc);
+    expect(read.segments).toHaveLength(1);
+    expect(read).not.toHaveProperty("bodyTables");
+    expect(Date.now() - started).toBeLessThan(4000);
+  }, 20_000);
+
+  it("skips the fallback when the stats probe spent the whole budget, and still reads", async () => {
+    const { bin, log } = createFakeBin({ version: "1.4.0", catStdout: envelope, info, infoBodyStats: stats, slowBodyStatsMs: 5000 });
+    const read = await createCliEngine({ bin, timeoutMs: 1500 }).read(doc);
+    expect(read.segments).toHaveLength(1);
+    expect(log()).toMatch(/^info .*--body-stats$/m);
+    expect(log()).not.toMatch(/^info (?!.*--body-stats).*--json$/m);
+  }, 20_000);
+
+  it("does not cache an inspection whose stats probe timed out", async () => {
+    const counter = counterFile();
+    const { bin } = createFakeBin({
+      version: "1.4.0", catStdout: envelope, info, infoBodyStats: stats, slowBodyStatsMs: 5000, bodyStatsLog: counter,
+    });
+    const engine = createCliEngine({ bin, timeoutMs: 1500 });
+    await engine.read(doc);
+    await engine.read(doc);
+    expect(probes(counter)).toBe(2);
+  }, 20_000);
+
+  it("does not cache an inspection whose fallback timed out after a slow definitive stats failure (t72-1)", async () => {
+    // The info the fallback would have returned marks the document protected;
+    // caching the info-less inspection would read it as editable.
+    const counter = counterFile();
+    const { bin } = createFakeBin({
+      version: "1.4.0", catStdout: envelope, info: JSON.stringify({ format: "hwp", distribution: true }),
+      failBodyStats: true, slowBodyStatsMs: 1500, slowPlainInfoMs: 3000, bodyStatsLog: counter,
+    });
+    const engine = createCliEngine({ bin, timeoutMs: 2000 });
+    await engine.read(doc);
+    await engine.read(doc);
+    expect(probes(counter)).toBe(2);
+  }, 30_000);
+
+  it("caches an inspection whose stats probe failed definitively", async () => {
+    const counter = counterFile();
+    const { bin } = createFakeBin({
+      version: "1.4.0", catStdout: envelope, info, failBodyStats: true, bodyStatsLog: counter,
+    });
+    const engine = createCliEngine({ bin });
+    await engine.read(doc);
+    await engine.read(doc);
+    expect(probes(counter)).toBe(1);
+  }, 20_000);
 });
