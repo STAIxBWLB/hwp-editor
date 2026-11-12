@@ -53,6 +53,15 @@ export interface FakeBinOptions {
    * Korean protected markers through a command other than `edit` (#105 item 2).
    */
   templateStderr?: string;
+  /**
+   * The same stderr as `templateStderr`, one line each. hwp-cli prints a note
+   * before its `Error:` line for a distribution document, and `templateStderr`
+   * is written with `printf '%s'`, which keeps no newline (#112). An element
+   * may itself carry a newline (a fill key that holds one arrives that way),
+   * and that one is written as a single-quoted literal so the newline reaches
+   * stderr instead of a two-character escape.
+   */
+  templateStderrLines?: string[];
   /** `slow` sleep duration in ms; default 5000. */
   delayMs?: number;
   /** JSON printed for `info`, if the test needs the pre-flight to see one. */
@@ -112,6 +121,17 @@ function sleepSlices(ms: number): string[] {
   return ["i=0", `while [ $i -lt ${Math.ceil(ms / 100)} ]; do sleep 0.1; i=$((i+1)); done`];
 }
 
+/**
+ * One fixture string as a shell argument. A line without a newline keeps the
+ * JSON-quoted form this file uses everywhere; a line that carries one is
+ * single-quoted, because `JSON.stringify` would write the two characters
+ * `\n` and `printf '%s'` prints those literally.
+ */
+function shellLiteral(line: string): string {
+  if (!line.includes("\n")) return JSON.stringify(line);
+  return `'${line.replaceAll("'", "'\\''")}'`;
+}
+
 function modeScript(opts: FakeBinOptions): string[] {
   const stdout =
     opts.stdout === undefined ? [] : [`printf '%s' ${JSON.stringify(opts.stdout)}`];
@@ -123,7 +143,7 @@ function modeScript(opts: FakeBinOptions): string[] {
         ...stdout,
         ...(opts.editStderrLines === undefined
           ? [`printf '%s' ${JSON.stringify(opts.editStderr ?? "boom")} >&2`]
-          : opts.editStderrLines.map((line) => `printf '%s\\n' ${JSON.stringify(line)} >&2`)),
+          : opts.editStderrLines.map((line) => `printf '%s\\n' ${shellLiteral(line)} >&2`)),
         "exit 3",
       ];
     case "overflow":
@@ -156,8 +176,18 @@ export function createFakeBin(opts: FakeBinOptions = {}): { bin: string; log: ()
   writeFileSync(logPath, "");
   const bin = path.join(dir, "hwp");
   const help = opts.helpFixture ?? DEFAULT_HELP_FIXTURE;
+  /**
+   * The failing template command's stderr, one `printf` per line when asked.
+   * A line holding a real newline is written as a single-quoted shell literal:
+   * `JSON.stringify` would turn it into the two characters `\n`, and `%s`
+   * prints those literally, so the fixture would arrive as one line (#112).
+   */
+  const templateStderr = (command: string): string =>
+    opts.templateStderrLines === undefined
+      ? `printf '%s' ${JSON.stringify(opts.templateStderr ?? `${command} failed at /private/fake/document.hwpx`)} >&2`
+      : opts.templateStderrLines.map((line) => `printf '%s\\n' ${shellLiteral(line)} >&2`).join("; ");
   const fail = (command: string) => opts.failTemplateCommand === command
-    ? [`printf '%s' ${JSON.stringify(opts.templateStderr ?? `${command} failed at /private/fake/document.hwpx`)} >&2`, `exit ${opts.templateFailureCode ?? 3}`]
+    ? [templateStderr(command), `exit ${opts.templateFailureCode ?? 3}`]
     : [];
   /**
    * A successful `edit` that publishes the staged input and writes the report.

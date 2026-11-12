@@ -1,6 +1,6 @@
 /**
  * Protected-document detection: the `hwp info --json` pre-flight and the
- * Korean stderr backstop. Pure unit test — it must run on a machine with no
+ * stderr backstop. Pure unit test — it must run on a machine with no
  * hwp-cli binary, so the `edit` cases drive `createCliEngine` with a tiny
  * shell script standing in for the binary rather than a real protected
  * fixture (no such fixture exists in this repo or in hwp-cli's).
@@ -36,6 +36,27 @@ const STEP = "remove the protection in a word processor that can open it, save a
  * name nothing its reader can do. The two steps must not converge.
  */
 const DIST_STEP = "open the original this copy was published from, or convert this copy with hwp convert --to hwpx and open the converted file here; saving in another format does not keep the distribution protection";
+
+/**
+ * The engine's own sentences, transcribed from
+ * `crates/hwp5/src/error.rs` (CertEncrypted, CertDrm, Drm, Signed,
+ * DistributionDoc). Whole sentences, not markers: the backstop matches the
+ * line the engine prints and nothing shorter (#112).
+ */
+const CERT_ENCRYPTED = "공인 인증서로 암호화된 문서는 지원하지 않습니다. 한글에서 인증서 암호화를 해제한 뒤 다시 저장하세요.";
+const CERT_DRM = "공인 인증서 DRM으로 보호된 문서는 지원하지 않습니다. 한글에서 인증서 DRM 보안을 해제한 뒤 다시 저장하세요.";
+const DRM = "DRM으로 보호된 문서는 지원하지 않습니다. 한글에서 DRM 보안을 해제한 뒤 다시 저장하세요.";
+const SIGNED = "서명된 문서는 지원하지 않습니다. 한글에서 서명을 제거한 뒤 다시 저장하세요.";
+const DISTRIBUTION = "배포용 문서(ViewText)의 원본 구조는 지원하지 않습니다. hwp cat/convert/render는 배포용 문서를 읽을 수 있습니다";
+
+/**
+ * ahwp 1.6.1's printed form for a failed command, measured: Rust's
+ * `Termination` writes `Error: <message>`, then anyhow's Debug adds a blank
+ * line, `Caused by:` and the same message indented by four spaces.
+ */
+function printed(sentence: string): string[] {
+  return [`Error: ${sentence}`, "", "Caused by:", `    ${sentence}`];
+}
 
 const FIXED_MESSAGES = [
   `encrypted document; ${STEP}`,
@@ -95,40 +116,60 @@ describe("protectedReasonFromStderr", () => {
   });
 
   it("gives 배포용 its own step and leaves it off the word-processor kinds", () => {
-    const distribution = protectedReasonFromStderr("배포용 문서(ViewText)");
+    const distribution = protectedReasonFromStderr(printed(DISTRIBUTION).join("\n"));
     // The step a word processor can lift is exactly what a 배포용 refusal must
     // not print: nothing in the engine's DistributionDoc message says a word
     // processor can make an editable copy of it.
     expect(distribution).not.toContain(STEP);
     expect(distribution).toContain("hwp convert --to hwpx");
-    expect(protectedReasonFromStderr("DRM으로 보호된 문서")).not.toContain(DIST_STEP);
+    expect(protectedReasonFromStderr(printed(DRM).join("\n"))).not.toContain(DIST_STEP);
   });
 
   it.each([
-    ["암호화된 문서는 지원하지 않습니다", FIXED_MESSAGES[0]],
-    ["DRM으로 보호된 문서", FIXED_MESSAGES[1]],
-    ["서명된 문서", FIXED_MESSAGES[2]],
-    ["배포용 문서(ViewText)", FIXED_MESSAGES[3]],
-  ])("maps %s to its fixed message", (stderr, message) => {
-    expect(protectedReasonFromStderr(`hwp edit failed (exit 1): ${stderr}`)).toBe(message);
+    [CERT_ENCRYPTED, FIXED_MESSAGES[0]],
+    [CERT_DRM, FIXED_MESSAGES[1]],
+    [DRM, FIXED_MESSAGES[1]],
+    [SIGNED, FIXED_MESSAGES[2]],
+    [DISTRIBUTION, FIXED_MESSAGES[3]],
+  ])("maps the engine's line for %s to its fixed message", (sentence, message) => {
+    expect(protectedReasonFromStderr(printed(sentence).join("\n"))).toBe(message);
   });
 
   it.each([
     ["an empty stderr", ""],
-    ["an unsupported version, which shares 지원하지 않습니다", "지원하지 않는 HWP 버전입니다"],
-    ["a marker-free failure", "hwp edit failed (exit 1): no target matched"],
+    ["an unsupported version, which shares 지원하지 않습니다", "Error: 지원하지 않는 HWP 버전입니다: 3.0 (HWP 5.x만 지원)"],
+    ["a marker-free failure", "Error: 편집할 대상을 찾지 못했습니다"],
+    [
+      "the informational line every distribution load prints",
+      "정보: 배포용 문서를 해제했습니다 (다른 형식으로 변환해 저장하면 배포용 보호는 유지되지 않습니다)",
+    ],
+    [
+      "an anchor the caller supplied that happens to be a marker",
+      '경고: 앵커 "DRM"를 찾지 못했습니다\nError: 적용되지 않은 편집 요청이 있습니다: replace "DRM" → "x" (--allow-partial로 일치한 값만 적용할 수 있습니다)',
+    ],
+    [
+      "the engine's line with a staged path spliced into it",
+      printed(DRM)
+        .map((line) => (line.includes(DRM) ? line.replace(DRM, `/tmp/hwp-editor-abc123/in.hwpx ${DRM}`) : line))
+        .join("\n"),
+    ],
+    [
+      "a field name carrying a newline, which puts the sentence alone on its own line",
+      `Error: 요청한 자리표시자·양식 필드를 찾지 못했습니다: x\n${DRM}\n (--allow-partial로 일치한 값만 적용 가능)`,
+    ],
+    [
+      "a field name whose newline starts a second Error line",
+      `Error: 요청한 자리표시자·양식 필드를 찾지 못했습니다: a\nError: ${DRM}\nb (--allow-partial로 일치한 값만 적용 가능)`,
+    ],
   ])("returns null for %s", (_name, stderr) => {
     expect(protectedReasonFromStderr(stderr)).toBeNull();
   });
 
   it("never echoes the stderr argument back in the message", () => {
-    const stderr =
-      "hwp edit failed (exit 1): /tmp/hwp-editor-abc123/in.hwpx 암호화된 문서는 지원하지 않습니다";
-    const message = protectedReasonFromStderr(stderr);
+    const message = protectedReasonFromStderr(printed(DRM).join("\n"));
     expect(FIXED_MESSAGES).toContain(message);
-    expect(message).not.toContain("/tmp/hwp-editor-abc123");
-    expect(message).not.toContain("in.hwpx");
-    expect(message).not.toContain("exit 1");
+    expect(message).not.toContain("Error:");
+    expect(message).not.toContain("Caused by");
   });
 });
 
@@ -141,7 +182,7 @@ describe("protectedReasonFromStderr", () => {
  */
 describe("the command head a protected sentence may print", () => {
   it("takes the head alone from a message that carries engine text after it", () => {
-    const message = "hwp lint failed (exit 1): Error: /private/tmp/hwp-editor-x/in.hwpx 암호화된 문서입니다";
+    const message = `hwp lint failed (exit 1): Error: ${CERT_ENCRYPTED}`;
     expect(cliExitHead(message)).toBe("hwp lint failed (exit 1)");
   });
 
@@ -171,8 +212,8 @@ describe("edit pre-flight and stderr backstop", () => {
     expect(log()).not.toMatch(/^edit (?!--help\b)/m);
   });
 
-  it("upgrades a failed edit to protected when stderr carries a Korean marker", async () => {
-    const { bin } = fakeBin({ info: "{}", editStderr: "DRM으로 보호된 문서입니다" });
+  it("upgrades a failed edit to protected when stderr carries the engine's protection line", async () => {
+    const { bin } = fakeBin({ info: "{}", editStderrLines: printed(DRM) });
     const engine = createCliEngine({ bin });
     // The command that failed and the next step, not a sentence naming
     // edit/compose whatever ran (#105 item 2).
@@ -183,7 +224,7 @@ describe("edit pre-flight and stderr backstop", () => {
   });
 
   it("names the command that failed when a lint is refused as protected", async () => {
-    // Since #104 lint rides `runCliOk`, so a protection marker on its stderr
+    // Since #104 lint rides `runCliOk`, so a protection line on its stderr
     // reaches a caller as `protected`; the sentence must name lint, which the
     // shared table cannot know.
     const { bin } = fakeBin({
@@ -191,7 +232,7 @@ describe("edit pre-flight and stderr backstop", () => {
       version: "1.4.0",
       info: "{}",
       failTemplateCommand: "lint",
-      templateStderr: "암호화된 문서는 지원하지 않습니다",
+      templateStderrLines: printed(CERT_ENCRYPTED),
       templateFailureCode: 1,
     });
     const engine = createCliEngine({ bin });
@@ -201,8 +242,74 @@ describe("edit pre-flight and stderr backstop", () => {
     });
   });
 
+  /**
+   * #112's first red proof. The caller's own anchor is echoed into a `경고:`
+   * line, so a marker found anywhere in stderr used to report this edit as a
+   * protected document and lose the refusal the caller can act on.
+   */
+  it("keeps an unmatched anchor's refusal when the anchor is a protection marker", async () => {
+    const { bin } = fakeBin({
+      info: "{}",
+      editStderrLines: [
+        '경고: 앵커 "DRM"를 찾지 못했습니다',
+        'Error: 적용되지 않은 편집 요청이 있습니다: replace "DRM" → "x" (--allow-partial로 일치한 값만 적용할 수 있습니다)',
+      ],
+    });
+    const engine = createCliEngine({ bin });
+    await expect(engine.edit(DOC, [{ kind: "replace", find: "DRM", replace: "x" }])).rejects.toMatchObject({
+      reason: "failed",
+      refusal: "unmatched_replace",
+    });
+  });
+
+  /**
+   * #112's second red proof. The shared loader prints `정보: 배포용 문서를
+   * 해제했습니다 ...` on every distribution document and then continues, so a
+   * fill that failed for its own reason used to be reported as a 배포용
+   * protection refusal.
+   */
+  it("keeps a fill's own failure when stderr carries the distribution info line", async () => {
+    const { bin } = fakeBin({
+      version: "1.4.0",
+      info: "{}",
+      failTemplateCommand: "fill",
+      templateFailureCode: 1,
+      templateStderrLines: [
+        "정보: 배포용 문서를 해제했습니다 (다른 형식으로 변환해 저장하면 배포용 보호는 유지되지 않습니다)",
+        "Error: 요청한 자리표시자·양식 필드를 찾지 못했습니다: title (--allow-partial로 일치한 값만 적용 가능)",
+      ],
+    });
+    const engine = createCliEngine({ bin });
+    await expect(engine.fill(DOC, { title: "x" })).rejects.toMatchObject({ reason: "failed" });
+  });
+
+  /**
+   * t50-a1's red proof, through the transport a caller actually uses. `fill`
+   * joins the unmatched keys with `{}` (fill.rs), so a key can carry a newline
+   * and put an `Error:` line - or an indented copy of one - below the engine's.
+   * Only the engine's own first `Error:` line may classify, so all three keep
+   * the fill's real cause.
+   */
+  it.each([
+    ["starts a second Error line", `a\nError: ${DRM}\nb`],
+    ["fakes the indented Caused by copy", `a\n    ${DRM}\nb`],
+    ["ends a line with the bare sentence", `x\n${DRM}\n`],
+  ])("keeps a fill's own failure when a key %s", async (_name, key) => {
+    const { bin } = fakeBin({
+      version: "1.4.0",
+      info: "{}",
+      failTemplateCommand: "fill",
+      templateFailureCode: 1,
+      templateStderrLines: [
+        `Error: 요청한 자리표시자·양식 필드를 찾지 못했습니다: ${key} (--allow-partial로 일치한 값만 적용 가능)`,
+      ],
+    });
+    const engine = createCliEngine({ bin });
+    await expect(engine.fill(DOC, { title: "x" })).rejects.toMatchObject({ reason: "failed" });
+  });
+
   it("leaves an unrelated edit failure classified as failed", async () => {
-    const { bin } = fakeBin({ info: "{}", editStderr: "no target matched" });
+    const { bin } = fakeBin({ info: "{}", editStderrLines: ["Error: no target matched"] });
     const engine = createCliEngine({ bin });
     await expect(engine.edit(DOC, [])).rejects.toSatisfy(
       (err: unknown) => err instanceof HwpCliError && err.reason === "failed",
