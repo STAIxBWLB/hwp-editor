@@ -160,6 +160,10 @@ function wrapped(error: unknown, text: string, detail: string): Error {
         ...(error.status === undefined ? {} : { status: error.status }),
         cause: error,
         ...(insertion === undefined ? {} : { insertion }),
+        // The marker survives too: a host's `onError` branches on the same
+        // structured fields the transport set, so a wrapper that drops one
+        // hands it a failure it cannot classify (#91).
+        ...(error.stopped === true ? { stopped: true as const } : {}),
       }),
       { detail },
     );

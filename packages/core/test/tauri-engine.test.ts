@@ -352,6 +352,16 @@ describe("createTauriEngine errors", () => {
     expect(bad.insertion).toBeUndefined();
   });
 
+  it("reads the stopped marker from a structured rejection, and only `true` (#91)", async () => {
+    const good = (await rejectionOf({ code: "failed", message: "x", stopped: true })) as HwpEngineError;
+    expect(good.stopped).toBe(true);
+    expect(good.message).toBe("hwped_capabilities failed: x");
+    for (const stopped of [false, "true", 1, null]) {
+      const bad = (await rejectionOf({ code: "failed", message: "x", stopped })) as HwpEngineError;
+      expect(bad.stopped).toBeUndefined();
+    }
+  });
+
   it("narrows an unknown structured code to internal instead of casting it in", async () => {
     const err = (await rejectionOf({ code: "not-a-real-code" })) as HwpEngineError;
     expect(err.code).toBe("internal");

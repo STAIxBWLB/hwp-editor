@@ -115,6 +115,7 @@ describe("insertionFailure", () => {
     expect(shown.message).toContain("Check the component and the insertion point, then retry.");
     expect(shown.detail).toContain("exit 1");
     expect(shown.code).toBe("failed");
+    expect(shown).not.toHaveProperty("stopped");
   });
 
   it("strips the Tauri transport's own prefixes from the cause", () => {
@@ -154,10 +155,14 @@ describe("insertionFailure", () => {
     const error = new HwpEngineError("failed", `hwp edit failed (exit 137): ${STOPPED_WITHOUT_DIAGNOSTIC}`, {
       stopped: true,
     });
-    const shown = insertionFailure(error, WIDE, ko) as Error;
+    const shown = insertionFailure(error, WIDE, ko) as HwpEngineError;
 
     expect(shown.message).toBe(ko("components.insertionRefused", { reason: ko("error.stoppedWithoutDiagnostic") }));
     expect(shown.message).not.toContain("the engine stopped without writing");
+    // The wrapper keeps the marker beside the code, status and insertion it
+    // already copies, so a host reading `onError` can still tell (#91).
+    expect(shown.stopped).toBe(true);
+    expect(shown.code).toBe("failed");
   });
 
   it("leaves a failure that is not a refusal with the handling it has", () => {

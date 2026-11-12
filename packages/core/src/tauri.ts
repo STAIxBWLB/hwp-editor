@@ -152,7 +152,13 @@ function toEngineError(cmd: string, error: unknown, insertion = false): HwpEngin
   // `-> Result<T, String>` today, so this branch is dead now and goes live
   // for free when the Rust side moves to a structured Err.
   if (typeof error === "object" && error !== null && !(error instanceof Error)) {
-    const rec = error as { code?: unknown; message?: unknown; refusal?: unknown; insertion?: unknown };
+    const rec = error as {
+      code?: unknown;
+      message?: unknown;
+      refusal?: unknown;
+      insertion?: unknown;
+      stopped?: unknown;
+    };
     if (typeof rec.code === "string") {
       const detail =
         typeof rec.message === "string" ? rec.message : String(error);
@@ -163,9 +169,12 @@ function toEngineError(cmd: string, error: unknown, insertion = false): HwpEngin
         `${cmd} failed: ${detail}`,
         {
           cause: error,
-          // The same fields the HTTP body carries, narrowed the same way (#88).
+          // The same fields the HTTP body carries, narrowed the same way (#88),
+          // and the marker read the way the HTTP client reads it too: only
+          // `true` counts (#91).
           ...(isEditRefusalKind(rec.refusal) ? { refusal: rec.refusal } : {}),
           ...(isInsertionRefusal(rec.insertion) ? { insertion: rec.insertion } : {}),
+          ...(rec.stopped === true ? { stopped: true as const } : {}),
         },
       );
     }
