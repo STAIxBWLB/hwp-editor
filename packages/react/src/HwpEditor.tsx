@@ -182,6 +182,24 @@ function toError(value: unknown): Error {
   return value instanceof Error ? value : new Error(String(value));
 }
 
+/** How core's `parseCatEnvelope`, `projectSegment` and `validateCatEnvelope` open every message. */
+const ENVELOPE_PREFIX = "segments envelope: ";
+
+/**
+ * The problem half of a core envelope message.
+ *
+ * Core writes each of its envelope refusals as
+ * `segments envelope: <problem>; <next step>.`, and the sentence this editor
+ * paints beside it names the next step in its own vocabulary, so only the
+ * problem travels: otherwise one line carries two instructions and reads
+ * `(... then reload.). Have the host emit ..., then reload.` (t71-1).
+ */
+function envelopeProblem(message: string): string {
+  const body = message.startsWith(ENVELOPE_PREFIX) ? message.slice(ENVELOPE_PREFIX.length) : message;
+  const [problem] = body.split("; ");
+  return (problem ?? body).replace(/\.$/, "");
+}
+
 /**
  * Every render goes straight to the engine. The former client-side
  * SVG-to-PNG catch-all turned a timeout, a missing binary, or a network
@@ -461,8 +479,9 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
      * answers with the same kind vocabulary and the same offset contract the
      * wire projection applies — so a custom engine is held to one answer and
      * the editor adds no notion of its own. The sentence names the cause and
-     * the next step, and the English detail follows it because the reader is
-     * the host wiring that adapter.
+     * the next step, and `envelopeProblem` carries only the cause half of the
+     * core message for it, because core's own text already ends with a next
+     * step of its own (#58 item 19d, t71-1).
      *
      * `latestT`, so the sentence is in the locale on screen without making any
      * effect that reads a document depend on `t` (#58 item 19d).
@@ -474,7 +493,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       } catch (e) {
         throw new HwpEngineError(
           "failed",
-          latestT.current("error.badEnvelope", { detail: e instanceof Error ? e.message : String(e) }),
+          latestT.current("error.badEnvelope", { detail: envelopeProblem(e instanceof Error ? e.message : String(e)) }),
           { cause: e },
         );
       }

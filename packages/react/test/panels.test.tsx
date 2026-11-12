@@ -540,6 +540,29 @@ describe("SegmentInspector op emission (TEST-03)", () => {
     expect(engine.calls.edit).toHaveLength(0);
   });
 
+  it("reports a plain click on a unit whose ref would name its host (t71-3)", async () => {
+    // A nested paragraph with no id of its own is not selectable at all: the
+    // ref would name its host, so `selectionAction` in single mode refuses it
+    // and this is the sentence the panel paints. It answers a plain click as
+    // well as a modifier one, so it may not say the click "added" nothing.
+    //
+    // This case is a control for that path, not a red proof of the rewording:
+    // it reads the sentence from the table, so it passes before and after the
+    // wording change and fails only if a plain click stops reaching it.
+    const nested: Segment = { indices: [0, 0], start: 0, end: 3, kind: "para", section: 0, para: 0 };
+    const envelope: CatEnvelope = { markdown: "가나다", segments: [nested] };
+    const engine = createMockEngine({ envelope });
+    render(<HwpEditor engine={engine} file={file} />);
+    await screen.findByRole("button", { name: en["page.label"]({ page: 1 }) });
+    // No layout row can name an id-less segment, so the click lands through the
+    // paragraph fallback - the path a page without rows takes.
+    clickRow();
+
+    expect(await screen.findByText(en["segment.clickRefusedUnaddressable"])).toBeTruthy();
+    expect(screen.queryByText(en["segment.clickRefusedCell"])).toBeNull();
+    expect(engine.calls.edit).toHaveLength(0);
+  });
+
   it("lists and numbers paragraphs by path, not by the order the envelope emitted", async () => {
     const envelope: CatEnvelope = { markdown: "ab\n\ncd", segments: [
       { id: "P0", indices: [0], start: 0, end: 2, kind: "para", section: 0, para: 0 },
@@ -616,6 +639,22 @@ describe("SegmentInspector op emission (TEST-03)", () => {
     fireEvent.click(submit);
     expect(engine.calls.edit).toHaveLength(0);
     expect(screen.getByLabelText(en["toolbar.pendingEdits"]({ count: 0 }), { exact: true })).toBeTruthy();
+  });
+
+  it("keeps the no-runs sentence off an empty paragraph, which has nothing to format (t71-2)", async () => {
+    // The sentence blames the host for publishing no run, and an empty
+    // paragraph publishes none because it has no text: without the length check
+    // the panel shows that reason for a paragraph with nothing in it, which is
+    // the wrong cause even though nothing can be formatted either way.
+    const envelope = envelopeOf(["가나다", ""]);
+    const engine = createMockEngine({ envelope });
+    render(<HwpEditor engine={engine} file={file} />);
+    const options = await screen.findAllByRole("option");
+    fireEvent.click(options[1]!);
+
+    // The empty paragraph is the selection, and the sentence is not shown.
+    expect(screen.getAllByRole("option")[1]!.getAttribute("aria-selected")).toBe("true");
+    expect(screen.queryByText(en["segment.formatUnavailableNoRuns"])).toBeNull();
   });
 });
 

@@ -260,10 +260,10 @@ export function SegmentInspector(): JSX.Element {
    * is refused the same way, so the reason has to be said rather than left as
    * a dead button (#58 item 19e). An empty paragraph is not this case: it has
    * no runs to publish, and its own sentence already names the whole
-   * paragraph.
+   * paragraph, so the length check keeps it out (t71-2).
    */
   const formatNoRuns = state.range == null && singleParagraph !== undefined &&
-    singleParagraph.indices === undefined && runs.length === 0;
+    singleParagraph.start !== singleParagraph.end && singleParagraph.indices === undefined && runs.length === 0;
   const rangeAvailable = !multiSelection && runs.some(run => run.id !== undefined || (singleParagraph?.indices?.length === 1 && run.indices?.length === 2));
   const charPrimary = segment?.kind === "run" ? segment
     : envelope !== null && state.range != null && formatTargets[0]?.address.id !== undefined

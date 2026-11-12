@@ -1255,12 +1255,12 @@ describe("#58 item 19d: a read result this editor cannot render", () => {
   });
 
   /**
-   * The localized clause of the sentence, without the engine detail inside its
-   * parentheses: the detail is the core message, and pinning it whole here
+   * The localized clause of the sentence, up to the cause core supplies after
+   * its ": ". The cause is core's own problem phrase, and pinning it whole here
    * would make this test a copy of that wording.
    */
   const sentenceLead = (t: MessageTable): string =>
-    t["error.badEnvelope"]({ detail: "" }).split(/\s*\(/)[0] ?? "";
+    t["error.badEnvelope"]({ detail: "" }).split(": ")[0] ?? "";
 
   it("refuses a load whose read result names an offset past its markdown", async () => {
     const engine = createMockEngine({ envelope: makeEnvelope() });
@@ -1273,6 +1273,11 @@ describe("#58 item 19d: a read result this editor cannot render", () => {
     // reader gets both the reason and what to do about it.
     expect(alert.textContent).toContain(sentenceLead(en));
     expect(alert.textContent).toContain("character range exceeds markdown");
+    // Only the cause half of core's message travels: core's own text ends with
+    // a next step of its own, and carrying it here would put two instructions
+    // and a "(... reload.)." sequence in one line (t71-1).
+    expect(alert.textContent).not.toContain("upgrade the host adapter");
+    expect(alert.textContent).not.toContain(".).");
     // Nothing reached render: no page was drawn, and the panel is the empty
     // state rather than a crash over a segment it cannot read.
     expect(screen.queryByRole("button", { name: en["page.label"]({ page: 1 }) })).toBeNull();

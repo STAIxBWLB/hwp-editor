@@ -48,17 +48,22 @@ Run these passes and tag every finding with its pass:
   `:114` exclusive maximum). Wire shapes come from hwp-cli contracts (`segment-envelope-v2`,
   `render-layout-v1`, `edit-ops-v1`, `edit-report-v1`); a field the engine does not publish is a
   finding, not a client-side guess.
-- **Envelope projection is validated.** `packages/core/src/segments.ts:89` refuses unknown segment kinds.
-  New engine artifacts the client relies on are validated the same way before they drive behavior.
+- **Envelope projection is validated.** The kind vocabulary is enforced where a wire envelope is
+  projected (`packages/core/src/segments.ts:175`) and where a decoded one is validated on the way in
+  (`:419`). New engine artifacts the client relies on are validated the same way before they drive
+  behavior.
 - **Check that each selection action maps to exactly the selected content.** A canvas or
   paragraph-list click goes through `selectionAction` and `resolveSelection`
   (`packages/core/src/selection.ts`): a multi-selection holds paragraphs, a cell enters as all of
   its own paragraphs, a run-level selection is formattable but a modifier click there starts a new
   paragraph selection, and a table, image, field or bookmark adds nothing and reports its reason
   instead. A resolver that walks up to the parent paragraph hands the host's text or table to a
-  delete, and a cell narrowed to its first paragraph edits half a cell silently. Select-similar is
-  exempt because it is not a click: `selectSimilar` derives the whole set from the primary's direct
-  format and the panel dispatches it as one `selectMany`, so there is no clicked unit to toggle.
+  delete, and a cell narrowed to its first paragraph edits half a cell silently. The other path is a
+  set the editor derives itself rather than a click on a unit: that one dispatches a single
+  `selectMany` and never goes through `selectionAction`, because there is no clicked unit to toggle
+  — select-similar (`packages/react/src/SegmentInspector.tsx:413`), a style row
+  (`packages/react/src/StylesPanel.tsx:343`) and the paragraphs an insertion adds
+  (`packages/react/src/HwpEditor.tsx:505`) all take it.
   The state stores the primary first and keeps the caller's order for the rest
   (`packages/core/src/state.ts:156`), so a reader that needs document order sorts with
   `compareSegments` instead of trusting the ref list.
