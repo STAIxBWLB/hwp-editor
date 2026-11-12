@@ -15,9 +15,11 @@
  *
  * A paragraph cannot carry a `list` here, so a starter that needs a bulleted
  * ladder writes the markers into the text. That is also what 개조식 notation
- * does, and it keeps HWP 5.0 ordered-list numbering out of the picture
- * (agent-hwp#472); the validator refuses the field rather than letting the
- * engine refuse the reference it cannot resolve. Style values follow the
+ * does. The reason is the target document: a component cannot know its list
+ * definitions, so a list it names may not exist there, and the validator
+ * refuses the field rather than letting the engine refuse the reference. The
+ * engine's HWP 5.0 ordered-list numbering fix (agent-hwp#472, in 1.5.0) has
+ * shipped and does not change that. Style values follow the
  * engine's official profile: starters reference `바탕글` and `개요 1`..`개요
  * 6` by name and define only what the profile does not have (for example a
  * centred 두문 line), always `based_on` an official style, so no starter file
@@ -618,9 +620,10 @@ function validateParagraph(block: Record<string, unknown>, source: string, field
     refuse(
       source,
       at(field, "list"),
-      "is not supported: a component's blocks are inserted into a document whose lists it " +
-        "cannot know, so ahwp compose refuses the reference; write the markers into the text " +
-        "runs instead (HWP 5.0 ordered lists also show Hangul numbering, agent-hwp#472)",
+      "is not supported: a component is inserted into a document whose list definitions it " +
+        "cannot know, so a list it names may not exist there; write the markers into the text " +
+        "runs instead (the engine's HWP 5.0 list numbering fix, agent-hwp#472, shipped and does " +
+        "not change this)",
     );
   }
   const runsField = at(field, "runs");

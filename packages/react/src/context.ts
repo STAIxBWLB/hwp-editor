@@ -12,6 +12,7 @@ import type {
   HwpEngine,
   EditOp,
   ImageAsset,
+  SegmentRef,
   StyleTable,
   ValidationReport,
 } from "@hwp-editor/core";
@@ -24,6 +25,13 @@ import type { TFunction } from "./messages.js";
  * at all are four different next steps.
  */
 export type StylesStatus = "idle" | "loading" | "ready" | "failed" | "unsupported";
+
+/** The unpublished ids of one insertion, tied to the envelope and selection they were read with. */
+export interface InsertedHidden {
+  envelope: CatEnvelope;
+  selections: readonly SegmentRef[] | undefined;
+  ids: readonly string[];
+}
 
 export interface HwpEditorContextValue {
   engine: HwpEngine;
@@ -40,6 +48,14 @@ export interface HwpEditorContextValue {
   queueImage?: (op: Extract<EditOp, { kind: "insert-image" }>, asset: ImageAsset) => void;
   /** Queue of pending ops length convenience. */
   applyPendingOps: () => void;
+  /**
+   * Ids of paragraphs the last insertion created that publish no segment, such
+   * as an empty paragraph agent-hwp 1.6.2 names in its edit report (#521). They
+   * belong to one envelope and the selection made from it; a panel uses them
+   * only while both are still current, so a move or delete of that selection
+   * acts on the whole insertion.
+   */
+  insertedHidden?: InsertedHidden | null;
   /**
    * Replace the current document as one undoable transition. The producer
    * receives the captured current document; results are discarded if it or

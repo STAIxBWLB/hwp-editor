@@ -27,7 +27,7 @@ import type { AddressedEditOp } from "@hwp-editor/core";
 import { compareSegments, componentStyleMap, createStore, insertedParagraphIds, isSectionDefinitionParagraph, resolveSelection, segmentAtRef, segmentRef, substituteParams, validateCatEnvelope, validateImageAssets, HwpEngineError, MAX_IMAGE_ASSETS, MAX_IMAGE_ASSETS_TOTAL_BYTES, STARTER_COMPONENTS } from "@hwp-editor/core";
 import type { EditorError, EditorState, EditorStore } from "@hwp-editor/core";
 import { HwpEditorContext } from "./context.js";
-import type { HwpEditorContextValue, StylesStatus } from "./context.js";
+import type { HwpEditorContextValue, InsertedHidden, StylesStatus } from "./context.js";
 import { PageCanvas } from "./PageCanvas.js";
 import { SegmentInspector } from "./SegmentInspector.js";
 import { PRESET_LABEL, StylesPanel } from "./StylesPanel.js";
@@ -388,6 +388,8 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
      * row list would keep ids that describe the document as it was written.
      */
     const [pendingInserted, setPendingInserted] = useState<string[]>([]);
+    /** Inserted ids with no segment, kept for the selection made from them (#521). */
+    const [insertedHidden, setInsertedHidden] = useState<InsertedHidden | null>(null);
     /**
      * The "still loading" sentence as this render's locale spells it, and the
      * sentences already POSTED in whichever locale was current when they were
@@ -511,12 +513,19 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     // envelope that reads the new document back, whose paths are the engine's.
     // One attempt per envelope: a host whose ids no paragraph carries leaves
     // nothing to select, and the ids are dropped rather than retried forever.
+    // An inserted empty or break-only paragraph is named by agent-hwp 1.6.2
+    // (#521) but publishes no segment, so it cannot be selected. Its id is
+    // kept beside the selection (insertedHidden), tied to this envelope and
+    // the selection made from it, so a move or delete of that selection still
+    // acts on the whole insertion; the next envelope or selection retires it.
     useEffect(() => {
       if (pendingInserted.length === 0 || envelope === null) return;
       if (insertedTriedFor.current === envelope) return;
       insertedTriedFor.current = envelope;
+      const hidden: string[] = [];
       const paragraphs = pendingInserted.flatMap((id) => {
         const segment = segmentAtRef(envelope, { id, section: 0, para: 0 });
+        if (segment === undefined) hidden.push(id);
         return segment === undefined || segment.kind !== "para" ? [] : [segment];
       });
       setPendingInserted([]);
@@ -527,7 +536,40 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         primary: segmentRef(paragraphs[0]!),
         anchor: segmentRef(paragraphs[0]!),
       });
+      setInsertedHidden(hidden.length === 0 ? null : { envelope, selections: store.getState().selections, ids: hidden });
     }, [envelope, pendingInserted, store]);
+    // The kept ids describe one envelope: a panel uses them only while the
+    // selection made from it is also current (it compares both), and the next
+    // envelope retires them, the same one-attempt expiry insertedTriedFor
+    // applies. Retiring them also drops every queued op that addresses one of
+    // them: an empty paragraph's id hashes its shape, style and path and no
+    // text, so after a revert a different blank line at that path can carry the
+    // same id, and the op would land on it with no refusal. A refresh re-reads
+    // the same bytes and cannot collide, and the ops are dropped there too
+    // rather than carving out an exception for it.
+    // A selection-only change keeps the ops: the envelope is the same, so they
+    // still name the paragraph the user meant.
+    useEffect(() => {
+      if (insertedHidden === null || insertedHidden.envelope === envelope) return;
+      const ids = new Set(insertedHidden.ids);
+      // Updater form, because a second insertion sets its own value earlier in
+      // this same render while this effect's closure still holds the retired
+      // one: a plain null would overwrite the live value and lose that
+      // insertion's kept ids, leaving its empty paragraph behind again.
+      setInsertedHidden((current) => (current === insertedHidden ? null : current));
+      const names = (address: unknown): boolean =>
+        typeof address === "object" && address !== null && ids.has((address as { id?: unknown }).id as string);
+      const ops = store.getState().pendingOps;
+      let dropped = 0;
+      for (let index = ops.length - 1; index >= 0; index -= 1) {
+        const op = ops[index] as { address?: unknown; to?: { address?: unknown } };
+        if (names(op.address) || names(op.to?.address)) {
+          store.dispatch({ type: "dequeueOp", index });
+          dropped += 1;
+        }
+      }
+      if (dropped > 0) noteNotice(t("components.insertedOpsDropped", { count: dropped }));
+    }, [envelope, insertedHidden, noteNotice, store, t]);
 
     // Load the document whenever the engine/file pair changes.
     useEffect(() => {
@@ -903,6 +945,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     /** Ids of an insertion belong to one document; a new file retires them. */
     useEffect(() => {
       setPendingInserted([]);
+      setInsertedHidden(null);
       insertedTriedFor.current = null;
     }, [file]);
 
@@ -1326,6 +1369,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         editable,
         validation,
         applyPendingOps,
+        insertedHidden,
         replaceDocument,
         queueImage,
         refresh,
@@ -1360,6 +1404,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         editable,
         validation,
         applyPendingOps,
+        insertedHidden,
         replaceDocument,
         queueImage,
         refresh,

@@ -186,6 +186,8 @@ export const en = {
   "components.noReport":
     "The component is in the document, but this host returned no edit report, so the editor cannot " +
     "select what it created; open the paragraph tab and pick the inserted paragraphs to move or remove them.",
+  "components.insertedOpsDropped": (p: { count: number }): string =>
+    `${p.count === 1 ? "A pending edit that pointed" : `${p.count} pending edits that pointed`} at an empty paragraph the last insertion created ${p.count === 1 ? "was" : "were"} removed, because the document was re-read and that paragraph can no longer be told apart from other blank lines. Select the inserted paragraphs again and redo the edit.`,
   "components.reportTruncated":
     "The edit report capped the ids it lists, so the inserted paragraphs cannot be selected; insert a " +
     "smaller component, or pick the new paragraphs in the paragraph list.",
@@ -767,6 +769,8 @@ export const ko: MessageTable = {
   "components.noReport":
     "구성 요소는 문서에 들어갔지만 이 호스트가 편집 리포트를 주지 않아, 삽입된 문단을 선택할 수 없습니다. " +
     "문단 탭에서 삽입된 문단을 직접 선택해 옮기거나 삭제하세요.",
+  "components.insertedOpsDropped": (p) =>
+    `마지막 삽입으로 생긴 빈 문단을 가리키던 대기 편집 ${p.count}개를 지웠습니다. 문서를 다시 읽어 그 문단을 다른 빈 줄과 구별할 수 없기 때문입니다. 삽입한 문단을 다시 선택한 뒤 편집을 다시 하세요.`,
   "components.reportTruncated":
     "편집 리포트가 나열하는 식별자를 잘라내 삽입된 문단을 선택할 수 없습니다. 더 작은 구성 요소를 넣거나 문단 목록에서 새 문단을 직접 선택하세요.",
   "components.tooWide": (p: { width: string; available: string }): string =>
