@@ -337,8 +337,8 @@ describeBin("cli-engine (real agent-hwp binary)", () => {
       { kind: "set-format", find: "missing-format-target", props: { bold: "on" } },
     ], { assets: [{ name: "figure.png", data: image }] }).catch((error: unknown) => error);
     expect(failure).toBeInstanceOf(HwpCliError);
-    expect(failure).toMatchObject({ reason: "failed", message: expect.stringMatching(/hwp edit failed \(exit [0-9]+\).*operation targets and values/) });
-    expect((failure as HwpCliError).message).not.toMatch(/Image insertion failed|re-export/);
+    expect(failure).toMatchObject({ reason: "failed", message: expect.stringMatching(/hwp edit failed \(exit [0-9]+\): .+\. (Fix or remove the pending edit it names|Check that the document and any uploaded image can be read)/) });
+    expect((failure as HwpCliError).message).not.toMatch(/Image insertion failed|re-export/i);
     expect((failure as HwpCliError).stderr).toBeTruthy();
     expect((failure as HwpCliError).detail).toContain((failure as HwpCliError).stderr!.trim());
   });

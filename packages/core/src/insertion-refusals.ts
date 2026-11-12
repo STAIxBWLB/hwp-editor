@@ -121,14 +121,26 @@ export function isInsertionRefusal(value: unknown): value is InsertionRefusal {
 
 /** Extensions a staged or user path ends with; a path with spaces runs to one. */
 const PATH_END = String.raw`\.(?:hwpx|hwp|json|png|jpe?g|gif|bmp|svg|pdf|md|txt|xml|hwpt)\b`;
-const PATH_ROOT = String.raw`(?:[A-Za-z]:[\\/]|\/)`;
+/**
+ * Where an absolute path can start: a `file://` URL, a UNC root (`//host/`,
+ * `\\host\`), a drive root, a POSIX root whose first segment is followed by
+ * another `/`, or a single-segment POSIX file with a known extension
+ * (`/in.hwpx`). A lone `/` between words (`제목 / 부제`, `수입 / 지출`) or a
+ * bare `/word` is user text, not a path (#93): leaving an ambiguous token in
+ * place beats swallowing an anchor.
+ */
+const PATH_ROOT = String.raw`(?:file:\/\/\/?|(?<![A-Za-z]:)\/\/(?=[^\s/]+\/)|\\\\(?=[^\s\\]+\\)|[A-Za-z]:[\\/]|\/(?=[^\s/"']+\/)|\/(?=[^\s/"']+${PATH_END}))`;
 
 /**
  * Text the engine wrote, with no path in it: the given work dir first, then
- * absolute paths, POSIX or Windows. A path may hold spaces
- * (`/Users/a b/Library/x/in.hwpx`, `C:\Users\a b\x.hwpx`), so a quoted path
- * is redacted through its closing quote, one that reaches a known file
- * extension through its file name, and any other through its first space.
+ * absolute paths, POSIX or Windows. A path may hold spaces (`/Users/홍 길동/x`,
+ * `C:\Program Files (x86)\x`), so, in order:
+ * - a quoted path is redacted through its closing quote;
+ * - a path followed later on its line by `: ` is redacted up to that colon,
+ *   because the engine prints a path as `{path}: {error}` (a drive's `C:\`
+ *   has no space after its colon, so it never ends a path early);
+ * - one that reaches a known file extension, through its file name;
+ * - any other only through its first space, leaving the rest visible.
  * A replacement fires only where a path can start, so a Korean diagnostic's
  * own `블록/스타일/목록` slashes survive.
  */
@@ -136,14 +148,31 @@ export function withoutPaths(text: string, workDir?: string): string {
   const withoutWorkDir = workDir === undefined || workDir === "" ? text : text.split(workDir).join("<work dir>");
   return withoutWorkDir
     .replace(new RegExp(String.raw`(["'])${PATH_ROOT}[^"'\n]*\1`, "gu"), "$1<path>$1")
+    .replace(new RegExp(String.raw`(^|[\s(\[{:])${PATH_ROOT}[^\n"']*?(?=: )`, "gu"), "$1<path>")
     .replace(new RegExp(String.raw`(^|[\s(\[{:])${PATH_ROOT}[^\n"']*?${PATH_END}`, "gu"), "$1<path>")
-    .replace(new RegExp(String.raw`(^|[\s(\[{:])${PATH_ROOT}[^\s"')\]}]*`, "gu"), "$1<path>");
+    .replace(new RegExp(String.raw`(^|[\s(\[{:])${PATH_ROOT}[^\s"')\]}]*`, "gu"), "$1<path>")
+    // With no `: ` after it, a path with spaces stopped at its first space
+    // above; the following words that still hold a separator inside them
+    // (`b/c/data`, `Files\Maru`) are its tail. A lone `/`, a word with no
+    // separator, and any word holding Hangul stay: an ambiguous token is left.
+    .replace(/<path>(?: [^\s"'/\\\p{Script=Hangul}]+[/\\][^\s"'\p{Script=Hangul}]*)+/gu, "<path>");
 }
+
+/**
+ * What a failure whose stderr names no `Error:` line means (a Rust panic, or
+ * output the engine never marked as its error): a cause class and the next
+ * step, never the bare step and never a progress line (#93).
+ */
+export const NO_ENGINE_CAUSE =
+  "the engine failed without naming a cause (most likely it crashed), so nothing was applied. " +
+  "Apply again; if it fails the same way, report it with the host log.";
 
 /**
  * The one-line cause of an `insert_blocks` refusal, for a log or a host that
  * reads text: the class with its measurements, or the engine's own `Error:`
- * line with paths replaced. Every transport writes the same line.
+ * line with paths replaced. Every transport writes the same line. With no
+ * `Error:` line it names no engine text at all: the first other line is
+ * likely progress output, not the cause (#93).
  */
 export function insertionRefusalLine(stderr: string, workDir?: string): string {
   const refusal = classifyInsertionRefusal(stderr);
@@ -160,34 +189,66 @@ export function insertionRefusalLine(stderr: string, workDir?: string): string {
     ];
     return `insert_blocks refused: layout_overflow${widths.length === 0 ? "" : ` (${widths.join(", ")})`}`;
   }
-  const reason = engineLine(stderr, workDir).replace(/^insert_blocks\s+/u, "");
-  return reason === "" ? "insert_blocks refused" : `insert_blocks refused: ${reason}`;
+  const reason = engineErrorReason(stderr, workDir)?.replace(/^insert_blocks\s+/u, "");
+  return reason === undefined || reason === "" ? `insert_blocks refused: ${NO_ENGINE_CAUSE}` : `insert_blocks refused: ${reason}`;
 }
 
-/** The engine's first `Error:` line (or first non-empty line), paths removed. */
-function engineLine(stderr: string, workDir?: string): string {
-  const line = firstErrorLine(stderr) ??
-    stderr.split(/\r?\n/u).map(entry => entry.trim()).find(entry => entry !== "") ?? "";
-  return withoutPaths(line.replace(/^Error:\s*/u, "").trim(), workDir);
+/**
+ * The engine's first `Error:` line without its label, paths removed and the
+ * trailing punctuation trimmed, or undefined when there is none. Only a line
+ * the engine marked as its error: progress and stdout chatter stay off.
+ */
+export function engineErrorReason(stderr: string, workDir?: string): string | undefined {
+  const line = firstErrorLine(stderr);
+  if (line === undefined) return undefined;
+  const reason = withoutPaths(line.replace(/^Error:\s*/u, "").trim(), workDir).replace(/[.:\s]+$/u, "");
+  return reason === "" ? undefined : reason;
 }
 
 /** The step every unclassified edit failure ends with (#88). */
 export const UNCLASSIFIED_EDIT_STEP = "Fix or remove the pending edit it names, then apply again.";
 
 /**
+ * The step for an unclassified line that names a file rather than an edit
+ * target (`failed to read <path> at byte 3`): no pending edit is at fault, so
+ * the step points at the document and its assets (#93).
+ */
+export const UNCLASSIFIED_FILE_STEP =
+  "Check that the document and any uploaded image can be read, reopen the document, then apply again.";
+
+/**
+ * The fixed heads of the engine's document and IO failures on the edit path,
+ * as agent-hwp v1.6.2 writes them (Korean under every locale):
+ * - hwpx/src/error.rs and hwp5/src/error.rs: `입출력 오류:`, `HWPX 파일이
+ *   아닙니다 (`, `XML 파싱 오류 (`, `HWP 5.0 파일이 아닙니다 (`, `압축 해제
+ *   실패 (`, `레코드 구조가 손상되었습니다:`
+ * - hwp-convert/src/image.rs:369: `이미지 읽기 실패 `
+ * - hwp-cli/src/edit_ops.rs:58: `편집 연산 입력을 읽을 수 없습니다:`
+ * - hwp-cli commands/edit/form_bindings.rs:111: `staged_native_readback 실패:`
+ * - hwp-cli commands/edit.rs:5534: `검증 재읽기 실패:`
+ * - hwp-cli commands/cat.rs:193: `JSON IR 파싱 실패 (`
+ */
+export const FILE_LINE_HEAD =
+  /^(?:입출력 오류: |HWPX 파일이 아닙니다 \(|XML 파싱 오류 \(|HWP 5\.0 파일이 아닙니다 \(|압축 해제 실패 \(|레코드 구조가 손상되었습니다: |이미지 읽기 실패 |편집 연산 입력을 읽을 수 없습니다: |staged_native_readback 실패: |검증 재읽기 실패: |JSON IR 파싱 실패 \()/u;
+
+/**
  * An edit failure no classifier recognised, as both transports print it: the
- * engine's own first `Error:` line with paths removed, then the step; the
- * step alone when the engine printed no `Error:` line. Display text only;
- * nothing classifies from it. The full stderr stays on the error for a log.
+ * engine's own first `Error:` line with paths removed, then the step. A line
+ * that opens with one of the engine's fixed IO heads (FILE_LINE_HEAD) names a
+ * file it could not read or write, so it gets the file step; any other names
+ * an edit target. Only the head at the start of the line counts, never a path
+ * inside it, because an anchor the user typed can look like a path. With no
+ * `Error:` line it is NO_ENGINE_CAUSE. Display text only; nothing classifies
+ * from it. The full stderr stays on the error for a log.
+ *
+ * The head list is a display heuristic only; machine-readable refusal codes
+ * (STAIxBWLB/agent-hwp#531) replace it.
  */
 export function unclassifiedEditLine(stderr: string, workDir?: string): string {
-  // Only a line the engine marked as its error: other output (progress,
-  // stdout chatter) stays off the message, as runCliOk always kept it.
-  const line = firstErrorLine(stderr);
-  const reason = line === undefined
-    ? ""
-    : withoutPaths(line.replace(/^Error:\s*/u, "").trim(), workDir).replace(/[.:\s]+$/u, "");
-  return reason === "" ? UNCLASSIFIED_EDIT_STEP : `${reason}. ${UNCLASSIFIED_EDIT_STEP}`;
+  const reason = engineErrorReason(stderr, workDir);
+  if (reason === undefined) return NO_ENGINE_CAUSE;
+  const namesFile = FILE_LINE_HEAD.test(reason);
+  return `${reason}. ${namesFile ? UNCLASSIFIED_FILE_STEP : UNCLASSIFIED_EDIT_STEP}`;
 }
 
 /**

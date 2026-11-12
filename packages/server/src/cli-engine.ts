@@ -1,5 +1,5 @@
 import { createTemplateCommands } from "./template-engine.js";
-import { classifyEditRefusal, classifyInsertionRefusal, editRefusalMarker, insertionRefusalLine, STOPPED_WITHOUT_DIAGNOSTIC, unclassifiedEditLine, type EditRefusalKind, type InsertionRefusal, TEMPLATE_METHODS, templateVersionSupported, parseEditReport, withCallerName, presetBatchOptions, readPresetBatch, type EditReport, type TemplateInputs, type FillResult, type LintReport, type LintProfile, type EmbeddedTemplate, type TemplateSpecV1, type TemplateDataV1 } from "@hwp-editor/core";
+import { classifyEditRefusal, classifyInsertionRefusal, editRefusalMarker, engineErrorReason, FILE_LINE_HEAD, insertionRefusalLine, STOPPED_WITHOUT_DIAGNOSTIC, unclassifiedEditLine, type EditRefusalKind, type InsertionRefusal, TEMPLATE_METHODS, templateVersionSupported, parseEditReport, withCallerName, presetBatchOptions, readPresetBatch, type EditReport, type TemplateInputs, type FillResult, type LintReport, type LintProfile, type EmbeddedTemplate, type TemplateSpecV1, type TemplateDataV1 } from "@hwp-editor/core";
 /**
  * CliEngine — HwpEngine implementation that shells out to the hwp-cli binary.
  *
@@ -813,22 +813,33 @@ function rethrowProtected(error: unknown): never {
   throw error;
 }
 
-function rethrowUploadedImageFailure(error: unknown, imageOnly: boolean): never {
+/**
+ * A failed edit batch that carried uploaded images. The engine's own line
+ * stays (#93), as the Tauri client prints it: an image-only batch whose line
+ * names no file gets the image step instead of the edit step, and any other
+ * batch gets unclassifiedEditLine's step. A batch with an insertion is left to
+ * rethrowInsertBlocksRefusal, which writes the insertion line itself.
+ */
+function rethrowUploadedImageFailure(error: unknown, imageOnly: boolean, insertion: boolean, workDir: string): never {
   try { return rethrowProtected(error); }
   catch (failure) {
-    if (failure instanceof HwpCliError && failure.reason === "failed") {
+    if (failure instanceof HwpCliError && failure.reason === "failed" && !insertion) {
       // A refusal the classifier knows (#76) carries its own next step; an
       // image remedy beside it would be a second, wrong one.
       if (failure.stderr !== undefined && classifyEditRefusal(failure.stderr) !== undefined) throw failure;
-      if (failure.stderr !== undefined && failure.stderr.trim() === "") throw failure;
-      const nextStep = imageOnly
-        ? "Image insertion failed; re-export valid PNG/JPEG image bytes and confirm the anchor text exists, then retry."
-        : "Check the edit batch's operation targets and values, then retry.";
-      throw new HwpCliError("failed", `${failure.message}; ${nextStep}`, failure.stderr, failure.detail);
+      if (failure.stderr === undefined || failure.stderr.trim() === "") throw failure;
+      const reason = engineErrorReason(failure.stderr, workDir);
+      const line = imageOnly && reason !== undefined && !FILE_LINE_HEAD.test(reason)
+        ? `${reason}. ${IMAGE_ONLY_STEP}`
+        : unclassifiedEditLine(failure.stderr, workDir);
+      throw new HwpCliError("failed", `${failure.message}: ${line}`, failure.stderr, failure.detail);
     }
     throw failure;
   }
 }
+
+/** The step for an image-only upload batch whose engine line names no file. */
+const IMAGE_ONLY_STEP = "Re-export valid PNG/JPEG image bytes and confirm the anchor text exists, then apply again.";
 
 /**
  * Report an insertion's refusal as its cause class. A batch without an
@@ -1687,7 +1698,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         const reportPath = path.join(dir, "edit-report.json");
         if (wantsReport) args.push("--report", reportPath);
         await runCliOk(bin, args, timeoutMs, opts.locale, call?.signal).catch(options.assets?.length
-          ? error => rethrowUploadedImageFailure(error, ops.every(op => op.kind === "insert-image"))
+          ? error => rethrowUploadedImageFailure(error, ops.every(op => op.kind === "insert-image"), ops.some(op => op.kind === "insert-blocks"), dir)
           : rethrowProtected).catch(error => rethrowInsertBlocksRefusal(error, ops.some(op => op.kind === "insert-blocks"), dir))
           .catch(error => rethrowUnmatchedEditRefusal(error, dir));
         const data = new Uint8Array(await readFile(output));

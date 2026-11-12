@@ -30,7 +30,7 @@ fs.writeFileSync(args[args.indexOf('-o')+1],Buffer.from([2,3]));
       const call=createCliEngine({bin}).edit({name:"doc.hwpx",data:new Uint8Array([1])},[
         {kind:"insert-image",anchor:"x",path:"client.png"},{kind:"insert-image",anchor:"y",path:"client.png"},
       ],{assets:[{name:"client.png",data:new Uint8Array([137,80,78,71,13,10,26,10])}]});
-      if(failure)await expect(call).rejects.toThrow(/hwp edit failed \(exit 1\).*Image insertion failed.*PNG\/JPEG.*retry/); else await expect(call).resolves.toMatchObject({name:"doc.hwpx"});
+      if(failure)await expect(call).rejects.toThrow("ahwp edit failed (exit 1): 이미지를 삽입할 수 없습니다. Re-export valid PNG/JPEG image bytes and confirm the anchor text exists, then apply again."); else await expect(call).resolves.toMatchObject({name:"doc.hwpx"});
       const record=JSON.parse(readFileSync(witness,"utf8"));
       expect(record.image).toBe(join(record.dir,"asset-0.png"));
       expect(record.mode).toBe(384);
@@ -132,4 +132,64 @@ it("names an upload no op references, and an insert-image path with no upload", 
     .catch((error: unknown) => error);
   expect((missing as Error).message).toContain("insert-image paths must name exactly the uploaded assets");
   expect((missing as Error).message).toContain("attach the PNG/JPEG file for each named path");
+});
+
+/**
+ * Upload batches keep the engine's own line (#93), as the Tauri client does.
+ * The fake engine prints `stderr` (with `{dir}` replaced by its work dir) and
+ * exits 1 on edit.
+ */
+describe("upload batch failures keep the engine line (#93)", () => {
+  const PNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+  async function failWith(stderr: string, ops: Parameters<ReturnType<typeof createCliEngine>["edit"]>[1]): Promise<Error> {
+    const fixture = mkdtempSync(join(tmpdir(), "hwp-upload-fail-"));
+    try {
+      const bin = join(fixture, "hwp");
+      const help = readFileSync(fileURLToPath(new URL("./fixtures/edit-help.txt", import.meta.url)), "utf8");
+      writeFileSync(bin, `#!${process.execPath}
+const path=require('node:path'),args=process.argv.slice(2);
+if(args[0]==='--version'){console.log('hwp 1.4.0');process.exit(0);}
+if(args[0]==='edit'&&args[1]==='--help'){console.log(${JSON.stringify(help)});process.exit(0);}
+if(args[0]==='info'){console.log('{}');process.exit(0);}
+if(args[0]!=='edit')process.exit(2);
+const dir=path.dirname(args[args.indexOf('--ops')+1]);
+process.stderr.write(${JSON.stringify(stderr)}.split('{dir}').join(dir));process.exit(1);
+`);
+      chmodSync(bin, 0o700);
+      return await createCliEngine({ bin }).edit({ name: "doc.hwpx", data: new Uint8Array([1]) }, ops,
+        { assets: [{ name: "client.png", data: PNG }] }).then(() => { throw new Error("edit succeeded"); }, (error: Error) => error);
+    } finally { rmSync(fixture, { recursive: true, force: true }); }
+  }
+  const image = { kind: "insert-image" as const, anchor: "x", path: "client.png" };
+
+  it("leaves an insert-blocks batch with uploads to the insertion line", async () => {
+    const error = await failWith("Error: insert_blocks 구역 정의 문단 앞에는 삽입할 수 없습니다", [
+      image, { kind: "insert-blocks", anchor: "x", blocks: [{ type: "paragraph", runs: [{ text: "a" }] }] } as never,
+    ]);
+    expect(error.message).toBe("ahwp edit failed (exit 1): insert_blocks refused: 구역 정의 문단 앞에는 삽입할 수 없습니다");
+    expect(error.message).not.toMatch(/re-export|pending edit/i);
+  });
+
+  it("scrubs the work dir from the engine line on the upload path", async () => {
+    const error = await failWith("Error: 이미지 읽기 실패 {dir}/asset-0.png: Permission denied (os error 13)", [image]);
+    expect(error.message).toBe(
+      "ahwp edit failed (exit 1): 이미지 읽기 실패 <work dir>/asset-0.png: Permission denied (os error 13). " +
+      "Check that the document and any uploaded image can be read, reopen the document, then apply again.",
+    );
+    expect(error.message).not.toContain(tmpdir());
+  });
+
+  it("gives an image-only batch with a document/IO head the file step, not the image one", async () => {
+    const error = await failWith("Error: 입출력 오류: No such file or directory (os error 2)", [image]);
+    expect(error.message).toBe(
+      "ahwp edit failed (exit 1): 입출력 오류: No such file or directory (os error 2). " +
+      "Check that the document and any uploaded image can be read, reopen the document, then apply again.",
+    );
+  });
+
+  it("names a cause class for an image-only batch that panicked", async () => {
+    const error = await failWith("thread 'main' panicked at src/image.rs:1:1:\nboom\n", [image]);
+    expect(error.message).toMatch(/^ahwp edit failed \(exit 1\): the engine failed without naming a cause .*Apply again/u);
+    expect(error.message).not.toMatch(/panicked|boom|re-export/i);
+  });
 });
