@@ -22,17 +22,21 @@ import { createHwpEditorHandler } from "../src/routes.js";
 import { createFakeBin, disposeFakeBins } from "./fake-bin.js";
 import { hwpxBytes, multipartRequest } from "./helpers.js";
 
-// Cleanup assertions observe only this suite's calls, not another worker's
-// live image upload directory in the shared system temporary directory.
-let lifecycleRoot: string;
-beforeAll(() => {
-  lifecycleRoot = mkdtempSync(path.join(tmpdir(), "hwp-lifecycle-root-"));
-  for (const name of ["TMPDIR", "TMP", "TEMP"]) vi.stubEnv(name, lifecycleRoot);
-});
+// Cleanup assertions observe only the engine under test (#58 item 5): each
+// such engine gets its own `workRoot`, and `workDirs(root)` lists that
+// directory alone, never the shared system temp directory another worker
+// may be writing to at the same moment.
+const roots: string[] = [];
 afterAll(() => {
-  vi.unstubAllEnvs();
-  rmSync(lifecycleRoot, { recursive: true, force: true });
+  for (const root of roots) rmSync(root, { recursive: true, force: true });
 });
+
+/** A private work root for one engine. */
+function ownRoot(): string {
+  const root = mkdtempSync(path.join(tmpdir(), "hwp-lifecycle-root-"));
+  roots.push(root);
+  return root;
+}
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -82,19 +86,12 @@ async function warmBin(bin: string): Promise<void> {
  * session store and `hwp-editor-fake-*` to the fakes themselves, and stale
  * ones from other suites are not this file's business.
  */
-function workDirs(): Set<string> {
-  return new Set(
-    readdirSync(tmpdir()).filter(
-      (name) =>
-        name.startsWith("hwp-editor-") &&
-        !name.startsWith("hwp-editor-sessions-") &&
-        !name.startsWith("hwp-editor-fake-"),
-    ),
-  );
+function workDirs(root: string): Set<string> {
+  return new Set(readdirSync(root).filter((name) => name.startsWith("hwp-editor-")));
 }
 
-function newWorkDirs(before: Set<string>): string[] {
-  return [...workDirs()].filter((name) => !before.has(name));
+function newWorkDirs(root: string, before: Set<string>): string[] {
+  return [...workDirs(root)].filter((name) => !before.has(name));
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -134,7 +131,7 @@ const helpDirs: string[] = [];
  * and refused under the current one. Renaming rather than deleting keeps the
  * rest of the fixture byte-identical.
  *
- * The dir is named `hwp-editor-fake-*` so `workDirs()` keeps ignoring it.
+ * The dir lives in the shared temp dir, never in an engine's own work root.
  */
 function helpWithoutOps(): string {
   const dir = mkdtempSync(path.join(tmpdir(), "hwp-editor-fake-help-"));
@@ -183,28 +180,30 @@ describe("runCli terminal causes", () => {
   it("escalates a SIGTERM-ignoring child to SIGKILL instead of hanging", async () => {
     const { bin } = createFakeBin({ mode: "hang" });
     await warmBin(bin);
-    const engine = createCliEngine({ bin, timeoutMs: TIMEOUT_MS });
+    const root = ownRoot();
+    const engine = createCliEngine({ bin, timeoutMs: TIMEOUT_MS, workRoot: root });
     await engine.capabilities();
-    const before = workDirs();
+    const before = workDirs(root);
     const started = Date.now();
     // The execFile callback fires only after the child exits, so settling
     // inside the budget IS the proof that the SIGKILL landed: a child that
     // ignored SIGTERM and was never escalated would keep the promise open.
     await expect(engine.read(DOC)).rejects.toMatchObject({ reason: "timeout" });
     expect(Date.now() - started).toBeLessThan(TIMEOUT_MS + KILL_GRACE_MS + 2_000);
-    expect(newWorkDirs(before)).toEqual([]);
+    expect(newWorkDirs(root, before)).toEqual([]);
   }, 30_000);
 
   it("reports a caller abort as cancelled, not as a timeout", async () => {
     const { bin, log } = createFakeBin({ mode: "slow" });
-    const engine = createCliEngine({ bin, timeoutMs: 30_000 });
+    const root = ownRoot();
+    const engine = createCliEngine({ bin, timeoutMs: 30_000, workRoot: root });
     const controller = new AbortController();
-    const before = workDirs();
+    const before = workDirs(root);
     const pending = settled(engine.read(DOC, { signal: controller.signal }));
     await waitForSpawn(log, "cat");
     controller.abort();
     expect(await pending).toMatchObject({ reason: "cancelled" });
-    expect(newWorkDirs(before)).toEqual([]);
+    expect(newWorkDirs(root, before)).toEqual([]);
   }, 30_000);
 
   it("refuses to spawn at all for a signal that is already aborted", async () => {
@@ -314,16 +313,17 @@ describe("cancellation survives the optional metadata probes", () => {
 describe("temp directory outlives the child", () => {
   it("keeps the work directory while the child is alive and removes it after", async () => {
     const { bin, log } = createFakeBin({ mode: "hang" });
-    const engine = createCliEngine({ bin, timeoutMs: 30_000 });
+    const root = ownRoot();
+    const engine = createCliEngine({ bin, timeoutMs: 30_000, workRoot: root });
     await engine.capabilities();
-    const before = workDirs();
+    const before = workDirs(root);
     const controller = new AbortController();
     const pending = settled(engine.read(DOC, { signal: controller.signal }));
     await waitForSpawn(log, "cat");
     let live: string[] = [];
     for (let i = 0; i < 100 && live.length === 0; i++) {
       await sleep(50);
-      live = newWorkDirs(before);
+      live = newWorkDirs(root, before);
     }
     expect(live).toHaveLength(1);
     const abortedAt = Date.now();
@@ -334,27 +334,29 @@ describe("temp directory outlives the child", () => {
     // signal rather than on the exit — which is exactly the ordering that
     // lets `withWorkDir` delete a directory the child still holds.
     expect(Date.now() - abortedAt).toBeGreaterThanOrEqual(KILL_GRACE_MS);
-    expect(newWorkDirs(before)).toEqual([]);
+    expect(newWorkDirs(root, before)).toEqual([]);
   }, 30_000);
 });
 
 describe("request cancellation reaches every spawning action", () => {
   it("settles an aborted POST /render as 499 cancelled", async () => {
     const { bin, log } = createFakeBin({ mode: "slow" });
-    const handler = createHwpEditorHandler({ bin, timeoutMs: 30_000, sessions: false });
+    const root = ownRoot();
+    const engine = createCliEngine({ bin, timeoutMs: 30_000, workRoot: root });
+    const handler = createHwpEditorHandler({ engine, sessions: false });
     const controller = new AbortController();
     const req = new Request(
       multipartRequest("http://test/api/hwp-editor/render", { file: DOC }),
       { signal: controller.signal },
     );
-    const before = workDirs();
+    const before = workDirs(root);
     const pending = handler(req);
     await waitForSpawn(log, "render");
     controller.abort();
     const response = await pending;
     expect(response.status).toBe(499);
     expect(await response.json()).toMatchObject({ error: { code: "cancelled" } });
-    expect(newWorkDirs(before)).toEqual([]);
+    expect(newWorkDirs(root, before)).toEqual([]);
   }, 30_000);
 });
 
@@ -462,14 +464,20 @@ describe("capabilities", () => {
   it("reports the resolved binary version with no hwp-cli installed", async () => {
     const { bin } = createFakeBin({ version: "0.20.0" });
     const engine = createCliEngine({ bin });
+    // Below 1.4.0, the version the upload grammar was verified against, no
+    // imageAssets is advertised (#58 item 9), like templateMethods.
     await expect(engine.capabilities()).resolves.toEqual({
       version: "0.20.0",
       editable: true,
       templateMethods: [],
       editOps: "v1",
-      imageAssets: "v1",
       formats: ["hwp", "hwpx"],
     });
+  }, 30_000);
+
+  it("advertises imageAssets v1 from hwp-cli 1.4.0, the verified version (#58 item 9)", async () => {
+    const { bin } = createFakeBin({ version: "1.4.0" });
+    await expect(createCliEngine({ bin }).capabilities()).resolves.toMatchObject({ imageAssets: "v1" });
   }, 30_000);
 });
 

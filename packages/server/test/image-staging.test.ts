@@ -38,6 +38,36 @@ fs.writeFileSync(args[args.indexOf('-o')+1],Buffer.from([2,3]));
   });
 });
 
+/**
+ * Upload mode is entered on `assets?.length`, as the HTTP route and the Tauri
+ * client read it: an empty list carries no upload, so an insert-image op that
+ * names a desktop-local image is not this engine's to refuse (#58 item 6).
+ */
+it("treats an empty asset list as no uploads and keeps a local insert-image path", async () => {
+  const fixture = mkdtempSync(join(tmpdir(), "hwp-staging-empty-"));
+  try {
+    const bin = join(fixture, "hwp"), witness = join(fixture, "ops.json");
+    const help = readFileSync(fileURLToPath(new URL("./fixtures/edit-help.txt", import.meta.url)), "utf8");
+    writeFileSync(bin, `#!${process.execPath}
+const fs=require('node:fs'),args=process.argv.slice(2);
+if(args[0]==='--version'){console.log('hwp 1.4.0');process.exit(0);}
+if(args[0]==='edit'&&args[1]==='--help'){console.log(${JSON.stringify(help)});process.exit(0);}
+if(args[0]==='info'){console.log('{}');process.exit(0);}
+if(args[0]!=='edit')process.exit(2);
+const opsFile=args[args.indexOf('--ops')+1];
+fs.writeFileSync(${JSON.stringify(witness)},fs.readFileSync(opsFile));
+fs.writeFileSync(args[args.indexOf('-o')+1],Buffer.from([2,3]));
+`);
+    chmodSync(bin, 0o700);
+    const local = join(fixture, "local-image.png");
+    const ops = [{ kind: "insert-image" as const, anchor: "x", path: local }];
+    await expect(createCliEngine({ bin }).edit({ name: "doc.hwpx", data: new Uint8Array([1]) }, ops, { assets: [] }))
+      .resolves.toMatchObject({ name: "doc.hwpx" });
+    // The wire op keeps the caller's path: nothing was staged or rewritten.
+    expect(JSON.parse(readFileSync(witness, "utf8"))).toEqual([{ op: "insert_image", anchor: "x", path: local }]);
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
+});
+
 it("names seal's upload restriction before resolving or spawning the binary", async () => {
   const engine = createCliEngine({ bin: "/no/such/hwp-binary" });
   const failure = await engine.edit({ name: "doc.hwpx", data: new Uint8Array([1]) }, [

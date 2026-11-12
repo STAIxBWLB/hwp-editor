@@ -1,0 +1,68 @@
+/**
+ * `scripts/playground.mjs` startup refusal (#58 item 12): the resolved hwp
+ * path and the cause, after resolving a relative `HWP_EDITOR_BIN` against
+ * `INIT_CWD` rather than this repository's root.
+ *
+ * Placement follows `repo-guards.test.ts`: this is a fact about the
+ * repository, not about `@hwp-editor/server`, and `pnpm -r test` (the command
+ * CI runs) only reaches tests inside a workspace package.
+ *
+ * Deliberately not wrapped in `describeBin`: every case fails the binary probe,
+ * so the script exits before it starts anything, and each assertion runs on a
+ * machine with no hwp-cli install.
+ */
+
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { describe, expect, it } from "vitest";
+
+const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
+const SCRIPT = join(REPO_ROOT, "scripts", "playground.mjs");
+
+/** Run the script with only the given hwp-selection variables set. */
+function startup(env: Record<string, string>, cwd = REPO_ROOT) {
+  return spawnSync(process.execPath, [SCRIPT], {
+    encoding: "utf8",
+    cwd,
+    env: { ...process.env, HWP_EDITOR_BIN: "", HWP_CLI: "", INIT_CWD: "", ...env },
+  });
+}
+
+describe("playground startup failure", () => {
+  it("resolves a relative HWP_EDITOR_BIN against INIT_CWD and names the path and the cause", () => {
+    const caller = mkdtempSync(join(tmpdir(), "hwp-playground-cwd-"));
+    try {
+      const { status, stderr } = startup({ HWP_EDITOR_BIN: "./missing-hwp", INIT_CWD: caller });
+      expect(status).toBe(1);
+      // Without the INIT_CWD resolution this reads the repository root, where
+      // the caller never pointed, and the path in the message misleads.
+      expect(stderr).toContain(`The playground cannot run hwp at ${join(caller, "missing-hwp")} (error ENOENT)`);
+      expect(stderr).toMatch(/set HWP_EDITOR_BIN to its executable, then run pnpm playground again/);
+    } finally { rmSync(caller, { recursive: true, force: true }); }
+  });
+
+  it("falls back to the working directory when INIT_CWD is absent", () => {
+    const caller = mkdtempSync(join(tmpdir(), "hwp-playground-noinit-"));
+    try {
+      const { status, stderr } = startup({ HWP_EDITOR_BIN: "./missing-hwp" }, caller);
+      expect(status).toBe(1);
+      expect(stderr).toContain(join(caller, "missing-hwp"));
+    } finally { rmSync(caller, { recursive: true, force: true }); }
+  });
+
+  it("prints the exit status of a binary that runs but fails", () => {
+    const caller = mkdtempSync(join(tmpdir(), "hwp-playground-status-"));
+    try {
+      const bin = join(caller, "failing-hwp");
+      writeFileSync(bin, `#!${process.execPath}\nprocess.exit(3);\n`);
+      chmodSync(bin, 0o700);
+      const { status, stderr } = startup({ HWP_EDITOR_BIN: bin });
+      expect(status).toBe(1);
+      expect(stderr).toContain(`The playground cannot run hwp at ${bin} (exit status 3)`);
+    } finally { rmSync(caller, { recursive: true, force: true }); }
+  });
+});
