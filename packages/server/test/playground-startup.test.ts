@@ -107,8 +107,10 @@ describe("playground startup failure", () => {
       const { status, stderr } = startup({ HWP_EDITOR_BIN: "./missing-hwp", INIT_CWD: caller });
       expect(status).toBe(1);
       // Without the INIT_CWD resolution this reads the repository root, where
-      // the caller never pointed, and the path in the message misleads.
-      expect(stderr).toContain(`The playground cannot run hwp at ${join(caller, "missing-hwp")} (error ENOENT)`);
+      // the caller never pointed, and the path in the message misleads. The
+      // name is the configured value, not the engine's default (#121 review).
+      expect(stderr).toContain(`The playground cannot run ./missing-hwp at ${join(caller, "missing-hwp")} (error ENOENT)`);
+      expect(stderr).not.toContain("cannot run hwp");
       expect(stderr).toMatch(/set HWP_EDITOR_BIN to its executable, then run pnpm playground again/);
     } finally { rmSync(caller, { recursive: true, force: true }); }
   });
@@ -130,24 +132,48 @@ describe("playground startup failure", () => {
       chmodSync(bin, 0o700);
       const { status, stderr } = startup({ HWP_EDITOR_BIN: bin });
       expect(status).toBe(1);
-      expect(stderr).toContain(`The playground cannot run hwp at ${bin} (exit status 3)`);
+      // An absolute configured path names itself, so the refusal does not
+      // repeat it as a second, identical place.
+      expect(stderr).toContain(`The playground cannot run ${bin} (exit status 3)`);
+      expect(stderr).not.toContain("cannot run hwp");
     } finally { rmSync(caller, { recursive: true, force: true }); }
   });
 
   /**
-   * The default is the bare name `hwp`, which `spawn` resolves on PATH, so the
-   * old message repeated the name back: "cannot run hwp at hwp" (#58 item 31).
-   * The refusal names the PATH entry the search would have picked, and says the
-   * lookup was PATH-wide when there is no entry to name.
+   * The default is two names now (#121): `ahwp`, then `hwp` as the 1.x
+   * compatibility name. With neither on PATH the refusal names the pair, so a
+   * reader learns which install is missing rather than which name was probed
+   * last. The PATH-entry detail still applies to the single-name cases below.
    */
-  it("says a bare hwp was looked up on PATH when no entry matches", () => {
+  it("names both default commands when neither is on PATH", () => {
     const empty = mkdtempSync(join(tmpdir(), "hwp-playground-path-"));
     try {
       const { status, stderr } = startup({ HWP_EDITOR_BIN: "", HWP_CLI: "", PATH: empty });
       expect(status).toBe(1);
-      expect(stderr).toContain("The playground cannot run hwp at hwp on PATH (error ENOENT)");
-      expect(stderr).not.toContain("at hwp (");
+      expect(stderr).toContain("The playground cannot run ahwp or hwp: neither is on PATH (error ENOENT)");
+      expect(stderr).toMatch(/install agent-hwp so `ahwp` is on PATH/);
     } finally { rmSync(empty, { recursive: true, force: true }); }
+  });
+
+  /**
+   * `ahwp` is the name this repository runs; `hwp` is only the 1.x fallback.
+   * Both are installed here, so a chain that probed `hwp` first would name it.
+   */
+  it("prefers ahwp over the 1.x name when both are on PATH", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hwp-playground-both-"));
+    try {
+      const legacy = join(dir, "hwp");
+      const primary = join(dir, "ahwp");
+      writeFileSync(legacy, `#!${process.execPath}\nprocess.exit(4);\n`);
+      writeFileSync(primary, `#!${process.execPath}\nprocess.exit(3);\n`);
+      chmodSync(legacy, 0o700);
+      chmodSync(primary, 0o700);
+      const { status, stderr } = startup({ HWP_EDITOR_BIN: "", HWP_CLI: "", PATH: dir });
+      expect(status).toBe(1);
+      // The exit status proves which binary answered: 3 is ahwp alone.
+      expect(stderr).toContain(`The playground cannot run ahwp at ${primary} (exit status 3)`);
+      expect(stderr).not.toContain(`${legacy} (`);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
   it("names the resolved PATH entry for a bare hwp that runs but fails", () => {
@@ -228,7 +254,7 @@ describe("playground startup failure", () => {
       chmodSync(bin, 0o700);
       const { status, stderr } = startup({ HWP_EDITOR_BIN: "", HWP_CLI: "", PATH: "rel" }, caller);
       expect(status).toBe(1);
-      expect(stderr).toContain("The playground cannot run hwp at hwp on PATH (");
+      expect(stderr).toContain("The playground cannot run ahwp or hwp: neither is on PATH (");
       expect(stderr).not.toContain(join("rel", "hwp"));
     } finally { rmSync(caller, { recursive: true, force: true }); }
   });
@@ -266,7 +292,7 @@ describe("playground startup failure", () => {
       writeFileSync(join(dir, "hwp.exe.com"), "not an executable\n");
       const { status, stderr } = startupAs("win32", { HWP_EDITOR_BIN: "hwp.exe", HWP_CLI: "", PATH: dir });
       expect(status).toBe(1);
-      expect(stderr).toContain(`The playground cannot run hwp at ${join(dir, "hwp.exe")} (`);
+      expect(stderr).toContain(`The playground cannot run hwp.exe at ${join(dir, "hwp.exe")} (`);
       expect(stderr).not.toContain(`${join(dir, "hwp.exe.com")} (`);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
@@ -310,7 +336,7 @@ describe("playground startup failure", () => {
     () => {
       const { status, stderr } = startup({ HWP_EDITOR_BIN: "false", HWP_CLI: "", PATH: undefined });
       expect(status).toBe(1);
-      expect(stderr).toContain(`The playground cannot run hwp at ${DEFAULT_FALSE} (exit status 1)`);
+      expect(stderr).toContain(`The playground cannot run false at ${DEFAULT_FALSE} (exit status 1)`);
     },
   );
 
@@ -326,7 +352,7 @@ describe("playground startup failure", () => {
       writeFileSync(join(dir, "hwp.exe.com"), "not an executable\n");
       const { status, stderr } = startupAs("win32", { HWP_EDITOR_BIN: "hwp.exe", HWP_CLI: "", PATH: dir });
       expect(status).toBe(1);
-      expect(stderr).toContain(`The playground cannot run hwp at ${join(dir, "hwp.exe.com")} (`);
+      expect(stderr).toContain(`The playground cannot run hwp.exe at ${join(dir, "hwp.exe.com")} (`);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
@@ -343,7 +369,7 @@ describe("playground startup failure", () => {
       writeFileSync(join(dir, "hwp.com"), "not an executable\n");
       const { status, stderr } = startupAs("win32", { HWP_EDITOR_BIN: "hwp.", HWP_CLI: "", PATH: dir });
       expect(status).toBe(1);
-      expect(stderr).toContain(`The playground cannot run hwp at ${join(dir, "hwp.com")} (`);
+      expect(stderr).toContain(`The playground cannot run hwp. at ${join(dir, "hwp.com")} (`);
       expect(stderr).not.toContain(`${join(dir, "hwp..com")} (`);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
@@ -358,7 +384,7 @@ describe("playground startup failure", () => {
       writeFileSync(join(dir, ".hwp"), "not an executable\n");
       const { status, stderr } = startupAs("win32", { HWP_EDITOR_BIN: ".hwp", HWP_CLI: "", PATH: dir });
       expect(status).toBe(1);
-      expect(stderr).toContain(`The playground cannot run hwp at ${join(dir, ".hwp")} (`);
+      expect(stderr).toContain(`The playground cannot run .hwp at ${join(dir, ".hwp")} (`);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

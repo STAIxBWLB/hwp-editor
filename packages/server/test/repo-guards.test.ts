@@ -1,6 +1,7 @@
 /**
  * Repository-shape guards for PKG-10 (the e2e job cannot gate a publishing job)
- * and PKG-11 (no esbuild below 0.28.1 is resolved).
+ * and PKG-11 (no esbuild below 0.28.1 is resolved), plus the engine asset the
+ * two advisory jobs install (#121).
  *
  * Placement: both assertions are about the repository, not about
  * `@hwp-editor/server`. They live in this package's suite because
@@ -156,6 +157,66 @@ function e2eGatingViolations(dir: string): string[] {
         `a job in the same workflow file can carry a needs: edge to it, so the ` +
         `e2e job would become able to gate a publishing job`,
     );
+  }
+  return violations;
+}
+
+/**
+ * The two workflows that provision the engine binary themselves. They are the
+ * only automated evidence that this repository runs against the renamed `ahwp`
+ * command without the 1.x `hwp` name or the legacy `hwp-` asset (#121).
+ */
+const ENGINE_ASSET_WORKFLOWS = ["e2e.yml", "font-less-render.yml"];
+
+/**
+ * #121: both jobs download the `ahwp-<tag>-<target>` archive, install only its
+ * `ahwp` member and leave HWP_EDITOR_BIN unset, so what they exercise is the
+ * engine's own default resolution. A step that reached for the legacy `hwp-`
+ * asset, pinned HWP_EDITOR_BIN to a `hwp` path, or called `./hwp`, would keep
+ * both jobs green while proving the opposite of what they exist for - and
+ * nothing else in the suite can see it, because the workflows only run on
+ * GitHub.
+ *
+ * Two details that keep the check honest rather than approximate. Comment lines
+ * are skipped, not stripped: both files name the legacy asset in prose on
+ * purpose, so a file's own account of what it avoids must not read as the
+ * avoidance, while the reported line number still has to be the file's own.
+ * And the tag has two spellings, `$HWP_CLI_TAG` and `${HWP_CLI_TAG}`, which YAML
+ * treats alike, so the asset pattern takes both.
+ */
+const LEGACY_ASSET = /(?:^|[^A-Za-z0-9_-])hwp-\$(?:\{HWP_CLI_TAG\}|HWP_CLI_TAG)/;
+const LEGACY_EDITOR_BIN = /\bHWP_EDITOR_BIN=\S*[/\\]hwp(?=[\s"']|$)/;
+/** The compatibility binary called by relative path, e.g. `./hwp render`. */
+const LEGACY_CALL = /(?:^|[\s"';&|])\.\/hwp(?=[\s;&|"']|$)/;
+
+function engineAssetViolations(dir: string): string[] {
+  const violations: string[] = [];
+  for (const name of ENGINE_ASSET_WORKFLOWS) {
+    // readFileSync throws on a missing or renamed workflow, which is the
+    // intended failure: the guard did not run.
+    const text = readFileSync(join(dir, name), "utf8");
+    text.split(/\r?\n/).forEach((line, index) => {
+      if (/^\s*#/.test(line)) return;
+      const at = `${name}:${index + 1}`;
+      if (LEGACY_ASSET.test(line)) {
+        violations.push(
+          `${at}: fetches the legacy \`hwp-\` asset (${line.trim()}); ` +
+            `#121 installs the \`ahwp-\` archive so a call to the 1.x name fails here`,
+        );
+      }
+      if (LEGACY_EDITOR_BIN.test(line)) {
+        violations.push(
+          `${at}: points HWP_EDITOR_BIN at a \`hwp\` binary ` +
+            `(${line.trim()}); the directory on PATH is what exercises the default`,
+        );
+      }
+      if (LEGACY_CALL.test(line)) {
+        violations.push(
+          `${at}: calls the 1.x \`hwp\` binary (${line.trim()}); ` +
+            `install only \`ahwp\` and call that`,
+        );
+      }
+    });
   }
   return violations;
 }
@@ -583,6 +644,22 @@ function fixtureDir(files: Record<string, string>): string {
   return dir;
 }
 
+/**
+ * The two shipped engine-provisioning workflows copied into a temp dir with one
+ * of them edited. Reading the real files rather than a hand-written fixture
+ * keeps each negative control on the shape the repository actually has.
+ */
+function plantedEngineWorkflows(name: string, edit: (text: string) => string): string {
+  const files: Record<string, string> = {};
+  for (const workflow of ENGINE_ASSET_WORKFLOWS) {
+    files[workflow] = readFileSync(join(WORKFLOWS_DIR, workflow), "utf8");
+  }
+  const target = files[name];
+  if (target === undefined) throw new Error(`no workflow named ${name}`);
+  files[name] = edit(target);
+  return fixtureDir(files);
+}
+
 const E2E_ALONE = `name: e2e (non-required)
 on: [pull_request]
 jobs:
@@ -667,6 +744,69 @@ describe("PKG-10: the e2e job never gates a publishing job", () => {
   it("fails rather than passing when no workflow file can be read", () => {
     expect(() => e2eGatingViolations(fixtureDir({ "README.md": "not a workflow" })))
       .toThrow(/the guard did not run/);
+  });
+});
+
+/**
+ * #121's CI half: the only two jobs that provision the engine must prove this
+ * repository needs neither the legacy `hwp-` asset nor the `hwp` command name.
+ * Both claims are invisible to every other test here, because the workflows run
+ * on GitHub and a step that quietly reverted to the legacy pair would stay
+ * green.
+ */
+describe("the advisory jobs install only the ahwp engine asset (#121)", () => {
+  it("fetches the ahwp asset and points no HWP_EDITOR_BIN at a hwp binary", () => {
+    const violations = engineAssetViolations(WORKFLOWS_DIR);
+    expect(
+      violations,
+      `an advisory job still depends on the 1.x name:\n${violations.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  it("reports a job that downloads the legacy hwp- asset", () => {
+    const dir = plantedEngineWorkflows("e2e.yml", (text) =>
+      text.replace('asset="ahwp-$HWP_CLI_TAG', 'asset="hwp-$HWP_CLI_TAG'));
+    expect(engineAssetViolations(dir).join("\n")).toContain("hwp-$HWP_CLI_TAG");
+  });
+
+  it("reports the braced spelling of the legacy asset too", () => {
+    const dir = plantedEngineWorkflows("e2e.yml", (text) =>
+      text.replace('asset="ahwp-$HWP_CLI_TAG', 'asset="hwp-${HWP_CLI_TAG}'));
+    expect(engineAssetViolations(dir).join("\n")).toContain("hwp-${HWP_CLI_TAG}");
+  });
+
+  it("reports a job that points HWP_EDITOR_BIN at a hwp binary", () => {
+    const dir = plantedEngineWorkflows("font-less-render.yml", (text) =>
+      text.replace(
+        'echo "$PWD" >> "$GITHUB_PATH"',
+        'echo "HWP_EDITOR_BIN=$PWD/hwp" >> "$GITHUB_ENV"',
+      ));
+    expect(engineAssetViolations(dir).join("\n")).toContain("points HWP_EDITOR_BIN");
+  });
+
+  it("reports a job that calls the 1.x binary by relative path", () => {
+    const dir = plantedEngineWorkflows("font-less-render.yml", (text) =>
+      text.replace("./ahwp render", "./hwp render"));
+    expect(engineAssetViolations(dir).join("\n")).toContain("calls the 1.x `hwp` binary");
+  });
+
+  it("does not read the files' own account of the legacy names, and reports the file's own line", () => {
+    // The comment inserted at the first `#` pushes every later line down by
+    // one: a number counted after comment lines are removed would point at a
+    // different line than the one the reader opens.
+    const dir = plantedEngineWorkflows("font-less-render.yml", (text) =>
+      text
+        .replace("#", "# the legacy hwp-$HWP_CLI_TAG asset is deliberately not fetched\n#")
+        .replace(
+          'echo "$PWD" >> "$GITHUB_PATH"',
+          'echo "HWP_EDITOR_BIN=$PWD/hwp" >> "$GITHUB_ENV"',
+        ));
+    const lines = readFileSync(join(dir, "font-less-render.yml"), "utf8").split(/\r?\n/);
+    const planted = lines.findIndex((line) => line.includes("HWP_EDITOR_BIN=$PWD/hwp")) + 1;
+    const violations = engineAssetViolations(dir);
+    // Exactly one: the comment naming the legacy asset is not a violation.
+    expect(violations).toHaveLength(1);
+    expect(violations[0]).toContain(`font-less-render.yml:${planted}:`);
   });
 });
 

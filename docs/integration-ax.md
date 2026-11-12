@@ -1,7 +1,7 @@
 # Host integration: ax (Next.js 16, Vercel)
 
 The canonical server-side recipe. ax installs the editor from npm and drives it
-with the HTTP engine against its own API routes; the `hwp` binary is
+with the HTTP engine against its own API routes; the `ahwp` binary is
 provisioned at build time by a pinned fetch script.
 
 ```
@@ -13,7 +13,7 @@ browser                          ax (Next.js)
                       = createHwpEditorRoutes()  (@hwp-editor/server/next)
                                       │ execFile, 60s timeout, scrubbed env
                                       ▼
-                                bin/hwp (hwp-cli, pinned release)
+                                bin/ahwp (agent-hwp, pinned release)
 ```
 
 ## 1. Installing the packages
@@ -71,47 +71,52 @@ discipline as the binary pin below.
 
 Provision the binary with a pinned fetch script that follows this shape:
 
-- The release tag lives in `.hwp-cli-version` (must be `>= v0.20.0` and below `v2.0.0`).
+- The release tag lives in `.hwp-cli-version` (must be `>= v0.20.0` and below `v3.0.0`).
 - Releases are published on
   [`STAIxBWLB/agent-hwp`](https://github.com/STAIxBWLB/agent-hwp/releases). Each tag
-  ships one archive per target plus a sibling `.sha256`:
+  ships one archive per target plus a sibling `.sha256`, under the `ahwp-` name
+  the project was renamed to:
 
   | Target | Asset |
   |---|---|
-  | `aarch64-apple-darwin` | `hwp-<tag>-aarch64-apple-darwin.tar.gz` |
-  | `x86_64-apple-darwin` | `hwp-<tag>-x86_64-apple-darwin.tar.gz` |
-  | `x86_64-unknown-linux-gnu` | `hwp-<tag>-x86_64-unknown-linux-gnu.tar.gz` |
-  | `x86_64-pc-windows-msvc` | `hwp-<tag>-x86_64-pc-windows-msvc.zip` |
+  | `aarch64-apple-darwin` | `ahwp-<tag>-aarch64-apple-darwin.tar.gz` |
+  | `x86_64-apple-darwin` | `ahwp-<tag>-x86_64-apple-darwin.tar.gz` |
+  | `x86_64-unknown-linux-gnu` | `ahwp-<tag>-x86_64-unknown-linux-gnu.tar.gz` |
+  | `x86_64-pc-windows-msvc` | `ahwp-<tag>-x86_64-pc-windows-msvc.zip` |
 
   Every asset has a `<asset>.sha256` next to it, so the download URL is
   `https://github.com/STAIxBWLB/agent-hwp/releases/download/<tag>/<asset>`.
+  A 1.x release also publishes the legacy `hwp-<tag>-<target>` archives and an
+  archive member named `hwp`; both are removed in 2.0.0, so fetch the `ahwp-`
+  asset and install only the `ahwp` member.
 - The script downloads the archive and its `.sha256` and compares them locally;
   it never pipes upstream's installer into a shell (a git tag is mutable).
-- Install goes to `bin/hwp` via a temp file + atomic `mv`; a stamp file
+- Install goes to `bin/ahwp` via a temp file + atomic `mv`; a stamp file
   (`bin/.hwp-cli-version`) skips repeat downloads.
 - On Linux it additionally asserts the glibc floor (Vercel runs on the
-  2.17 baseline) and that `bin/hwp --version` reports the pinned tag.
+  2.17 baseline) and that `bin/ahwp --version` reports the pinned tag.
 
 Wire it into the build: `"vercel-build": "npm run typecheck && sh scripts/fetch-hwp-cli.sh"`.
-At runtime, point the engine at it with `HWP_EDITOR_BIN=<repo>/bin/hwp`
+At runtime, point the engine at it with `HWP_EDITOR_BIN=<repo>/bin/ahwp`
 (the CliEngine resolution order is: `bin` option → `HWP_EDITOR_BIN` →
-`HWP_CLI` → `hwp` on PATH).
+`HWP_CLI` → `ahwp` on PATH, and `hwp` only where `ahwp` is absent and the 1.x
+compatibility name is the install).
 
 ## 2b. Provisioning fonts
 
-`hwp render` draws text with fonts from the host, and a serverless runtime
+`ahwp render` draws text with fonts from the host, and a serverless runtime
 (Vercel included) has **no system fonts**. Without them nothing fails: every
 action answers 200, `read` returns the text, and each rendered page comes back
 with table rules and other strokes but **no text at all**. A developer Mac never
 shows this, because macOS supplies CJK system fonts.
 
-hwp-cli looks for render fonts in `--font-dir`, then `HWP_FONT_DIR`, then
+The engine looks for render fonts in `--font-dir`, then `HWP_FONT_DIR`, then
 `fonts/` relative to its working directory. `@hwp-editor/server` passes no
 `--font-dir`, but `HWP_FONT_DIR` is the one `HWP_*` variable it copies into the
 child's environment. So:
 
 - Ship **both a sans and a serif** CJK face with the deployment, for example in `fonts/`.
-  hwp-cli picks fallbacks by the requested face's class. A serif request such as
+  It picks fallbacks by the requested face's class. A serif request such as
   함초롬바탕 (what `compose` writes by default) only tries serif faces, ending at
   `Noto Serif CJK KR`. So a sans-only directory still renders that text blank. Noto Sans
   CJK KR and Noto Serif CJK KR (SIL Open Font License, about 16 to 25 MB per face) are known
@@ -139,7 +144,7 @@ child's environment. So:
 
   ```ts
   outputFileTracingIncludes: {
-    "/api/hwp-editor/**": ["./bin/hwp", "./fonts/**"],
+    "/api/hwp-editor/**": ["./bin/ahwp", "./fonts/**"],
   },
   ```
 
@@ -157,7 +162,7 @@ export const runtime = "nodejs";        // required: spawns a child process
 export const dynamic = "force-dynamic";
 
 export const { GET, POST } = createHwpEditorRoutes({
-  bin: process.env.HWP_EDITOR_BIN ?? path.join(process.cwd(), "bin", "hwp"),
+  bin: process.env.HWP_EDITOR_BIN ?? path.join(process.cwd(), "bin", "ahwp"),
 });
 ```
 
@@ -224,12 +229,12 @@ Theming: map ax's tokens onto the `--hwped-*` contract — see
 
 ## 5. Operational notes
 
-- **Lambda size**: the hwp binary is ~tens of MB; keep it out of the
+- **Lambda size**: the engine binary is ~tens of MB; keep it out of the
   serverless bundle (`serverExternalPackages` + `outputFileTracing` excludes,
   or a layer) and out of git (stamp file + `.gitignore`).
 - **Fonts**: the four Noto CJK KR faces (Sans/Serif, Regular/Bold) add about
   80 MB to the editor function; section 2b explains why they have to be there.
 - **Timeout**: the engine caps every CLI call at 60s (`HWP_TIMEOUT_MS`);
   the Vercel function limit must exceed that for big renders.
-- **Cold start**: the first call per process verifies `hwp --version`
-  (>= 0.20.0 and < 2.0.0); subsequent calls reuse the memoized result.
+- **Cold start**: the first call per process verifies `ahwp --version`
+  (>= 0.20.0 and < 3.0.0); subsequent calls reuse the memoized result.

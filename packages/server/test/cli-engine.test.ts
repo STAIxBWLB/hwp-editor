@@ -5,6 +5,10 @@
  * the dev binary moves ahead of the floor as hwp-cli ships.
  */
 
+import { chmodSync, copyFileSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+
 import { afterEach, describe, expect, it } from "vitest";
 
 import { HwpEngineError } from "@hwp-editor/core";
@@ -12,7 +16,7 @@ import type { DocumentHandle, DocumentSpecV2, EditOp } from "@hwp-editor/core";
 
 import { createCliEngine, HwpCliError } from "../src/cli-engine.js";
 import { createHwpEditorHandler } from "../src/routes.js";
-import { BIN, describeBin, multipartRequest, sampleSpec } from "./helpers.js";
+import { BIN, describeBin, multipartRequest, resolveTestBin, sampleSpec } from "./helpers.js";
 import { createFakeBin, disposeFakeBins } from "./fake-bin.js";
 
 afterEach(disposeFakeBins);
@@ -38,20 +42,193 @@ describe("CliEngine unit errors", () => {
   });
 });
 
+/**
+ * The default command is `ahwp`; `hwp` is the 1.x compatibility name it falls
+ * back to when that command is absent from PATH (#121). These cases drive the
+ * chain through PATH, because the `bin` option and the two environment
+ * variables are the links the fallback must never touch.
+ */
+describe("default command resolution (#121)", () => {
+  /**
+   * Run `fn` with a controlled binary environment: the selection variables
+   * from `env`, and PATH carrying the fake directory first. `/usr/bin:/bin`
+   * stays behind it because the fake's `edit --help` branch runs `cat`, and a
+   * fixture that cannot reach it would fail the handshake instead of the case
+   * under test. The absent-binary case passes a PATH with no system entries at
+   * all, so an installed engine on the developer's machine cannot answer it.
+   */
+  async function withEnv<T>(env: Record<string, string | undefined>, fn: () => Promise<T>): Promise<T> {
+    const saved: Record<string, string | undefined> = {
+      PATH: process.env.PATH,
+      HWP_EDITOR_BIN: process.env.HWP_EDITOR_BIN,
+      HWP_CLI: process.env.HWP_CLI,
+    };
+    delete process.env.HWP_EDITOR_BIN;
+    delete process.env.HWP_CLI;
+    for (const [key, value] of Object.entries(env)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    try {
+      return await fn();
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  }
+
+  it("falls back to the 1.x name when ahwp is not on PATH", async () => {
+    const legacy = createFakeBin({ name: "hwp" });
+
+    const info = await withEnv({ PATH: `${dirname(legacy.bin)}:/usr/bin:/bin` }, () =>
+      createCliEngine().binaryInfo());
+
+    expect(info.bin).toBe("hwp");
+    expect(info.version).toBe("0.20.0");
+    // The version check and the build report both ran against the fallback,
+    // not against a name that was never there.
+    expect(legacy.log()).toContain("--version");
+  });
+
+  it("prefers ahwp when both names are on PATH", async () => {
+    const primary = createFakeBin({ name: "ahwp" });
+    const legacy = createFakeBin({ name: "hwp" });
+    const dir = dirname(legacy.bin);
+    copyFileSync(primary.bin, join(dir, "ahwp"));
+    chmodSync(join(dir, "ahwp"), 0o700);
+
+    const info = await withEnv({ PATH: `${dir}:/usr/bin:/bin` }, () => createCliEngine().binaryInfo());
+
+    expect(info.bin).toBe("ahwp");
+    // The compatibility name was never spawned: this is a preference, not a
+    // race between two names on one PATH.
+    expect(legacy.log()).toBe("");
+  });
+
+  it("names both commands and the next step when neither is on PATH", async () => {
+    const empty = mkdtempSync(join(tmpdir(), "hwp-editor-no-bin-"));
+    const failure = await withEnv({ PATH: empty }, () => createCliEngine().binaryInfo().catch((e: unknown) => e));
+    rmSync(empty, { recursive: true, force: true });
+
+    expect(failure).toBeInstanceOf(HwpCliError);
+    const cliError = failure as HwpCliError;
+    expect(cliError.reason).toBe("unavailable");
+    // `binary not found` is the phrase packages/react/src/errors.ts matches.
+    expect(cliError.message).toContain("binary not found");
+    expect(cliError.message).toContain("neither `ahwp` nor `hwp` is on PATH");
+    expect(cliError.message).toContain("install agent-hwp so `ahwp` is on PATH");
+    expect(cliError.message).toContain("HWP_EDITOR_BIN");
+    expect(cliError.detail).toBe("ahwp, hwp");
+  });
+
+  it("does not retry a found ahwp whose own check fails", async () => {
+    const primary = createFakeBin({ name: "ahwp", failVersion: 3 });
+    const legacy = createFakeBin({ name: "hwp" });
+    const dir = dirname(legacy.bin);
+    copyFileSync(primary.bin, join(dir, "ahwp"));
+    chmodSync(join(dir, "ahwp"), 0o700);
+
+    const failure = await withEnv({ PATH: `${dir}:/usr/bin:/bin` }, () =>
+      createCliEngine().binaryInfo().catch((e: unknown) => e));
+
+    expect(failure).toBeInstanceOf(HwpCliError);
+    expect((failure as HwpCliError).message).toBe("hwp --version failed (exit 3)");
+    // A binary that was found and failed is a broken install, not an absent
+    // command: the fallback must not paper over it with the other name.
+    expect(legacy.log()).toBe("");
+  });
+
+  /**
+   * The case that proves the fallback is bounded to ENOENT rather than to "the
+   * probe threw". A non-zero `--version` never reaches the catch above (the
+   * spawn resolves with the exit code), so only a probe that throws the other
+   * way - here a timeout - exercises the narrowing.
+   *
+   * The budget is 1.5s rather than 200ms: the first exec of a freshly written
+   * script can take a few hundred milliseconds on macOS while the system scans
+   * it, and a budget that short timed out on the fallback binary as well.
+   */
+  it("does not retry a found ahwp whose probe times out", async () => {
+    const primary = createFakeBin({ name: "ahwp", hangVersion: true });
+    const legacy = createFakeBin({ name: "hwp" });
+    const dir = dirname(legacy.bin);
+    copyFileSync(primary.bin, join(dir, "ahwp"));
+    chmodSync(join(dir, "ahwp"), 0o700);
+
+    const failure = await withEnv({ PATH: `${dir}:/usr/bin:/bin` }, () =>
+      createCliEngine({ timeoutMs: 1_500 }).binaryInfo().catch((e: unknown) => e));
+
+    expect(failure).toBeInstanceOf(HwpCliError);
+    expect((failure as HwpCliError).reason).toBe("timeout");
+    expect(legacy.log()).toBe("");
+  }, 30_000);
+
+  it("uses an explicit HWP_EDITOR_BIN as given, whatever PATH holds", async () => {
+    const legacy = createFakeBin({ name: "hwp" });
+    const empty = mkdtempSync(join(tmpdir(), "hwp-editor-env-bin-"));
+
+    const info = await withEnv({ PATH: `${empty}:/usr/bin:/bin`, HWP_EDITOR_BIN: legacy.bin }, () =>
+      createCliEngine().binaryInfo());
+    rmSync(empty, { recursive: true, force: true });
+
+    expect(info.bin).toBe(legacy.bin);
+  });
+
+  /**
+   * The test helper mirrors this chain but cannot call it (see helpers.ts), so
+   * the two properties that made the mirror wrong are pinned here: `hwp` on
+   * ENOENT only, and an empty selection variable not becoming the binary name.
+   */
+  it("keeps a found-but-broken ahwp as ahwp in the test helper", async () => {
+    const primary = createFakeBin({ name: "ahwp", failVersion: 3 });
+    const legacy = createFakeBin({ name: "hwp" });
+    const dir = dirname(legacy.bin);
+    copyFileSync(primary.bin, join(dir, "ahwp"));
+    chmodSync(join(dir, "ahwp"), 0o700);
+
+    const resolved = await withEnv({ PATH: `${dir}:/usr/bin:/bin` }, async () => resolveTestBin());
+
+    expect(resolved).toBe("ahwp");
+  });
+
+  it("falls back to hwp in the test helper only when ahwp is absent", async () => {
+    const legacy = createFakeBin({ name: "hwp" });
+
+    const resolved = await withEnv({ PATH: `${dirname(legacy.bin)}:/usr/bin:/bin` }, async () =>
+      resolveTestBin());
+
+    expect(resolved).toBe("hwp");
+  });
+
+  it("treats an empty selection variable as unset in the test helper", async () => {
+    const primary = createFakeBin({ name: "ahwp" });
+
+    const resolved = await withEnv(
+      { PATH: `${dirname(primary.bin)}:/usr/bin:/bin`, HWP_EDITOR_BIN: "", HWP_CLI: "" },
+      async () => resolveTestBin(),
+    );
+
+    expect(resolved).toBe("ahwp");
+  });
+});
+
 const engine = () => createCliEngine({ bin: BIN });
 
 /**
  * Mirrors the engine's MIN_VERSION floor ([0, 20, 0] in cli-engine.ts).
  *
  * The accepted range is now bounded at both ends — MAX_VERSION_EXCLUSIVE is
- * [2, 0, 0] — but this still asserts the floor rather than an exact release,
- * for the reason in the file header: the dev binary moves ahead of the floor
- * as hwp-cli ships. Pinning the range here would mean editing this suite on
- * every upstream patch release, and the ceiling itself is proven against a
- * fake binary in `lifecycle.test.ts` rather than against whichever real one
- * happens to be installed. Reaching this assertion at all already proves the
- * ceiling and the flag handshake passed: `ensureVersion` runs both before it
- * resolves a version string.
+ * [3, 0, 0], admitting 2.x on agent-hwp#510's Phase 4 scope (#121) — but this
+ * still asserts the floor rather than an exact release, for the reason in the
+ * file header: the dev binary moves ahead of the floor as hwp-cli ships.
+ * Pinning the range here would mean editing this suite on every upstream patch
+ * release, and the ceiling itself is proven against a fake binary in
+ * `lifecycle.test.ts` rather than against whichever real one happens to be
+ * installed. Reaching this assertion at all already proves the ceiling and the
+ * flag handshake passed: `ensureVersion` runs both before it resolves a
+ * version string.
  */
 function expectVersionAtLeast0200(version: string) {
   const [major = 0, minor = 0, patch = 0] = version.split(".").map(Number);

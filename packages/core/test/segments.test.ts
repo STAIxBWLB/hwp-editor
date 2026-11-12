@@ -13,7 +13,7 @@
  *     (markdown table; table.md is the v1 fixture's own markdown, which
  *     round-trips byte-identically)
  *   cat-segments-runs.json — the schema `1.1` envelope, captured from `ahwp
- *     1.6.1` (the workflow pin) over `hwp compose runs.spec.json -o runs.hwpx &&
+ *     1.6.1` (then the workflow pin) over `hwp compose runs.spec.json -o runs.hwpx &&
  *     hwp cat runs.hwpx --format markdown --with-segments --segments v2`. The
  *     spec is one paragraph of three runs, `{"version":"2.0","document":
  *     {"version":"1.0","sections":[{"blocks":[{"type":"paragraph","runs":
