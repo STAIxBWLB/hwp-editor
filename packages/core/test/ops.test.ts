@@ -125,38 +125,60 @@ describe("opsToArgv", () => {
     ]);
   });
 
-  it("refuses CR and LF in argv values, which the engine would print as its own line", () => {
-    // #115 item 2. Measured on ahwp 1.6.1: `--set-meta "author=a<LF>Error: ..."`
-    // prints the caller's line verbatim, so a value with a line break can put a
-    // line of its own on the engine's stderr. Refused before serialization, and
-    // the value is never echoed into the message.
-    const brokenOps: EditOp[] = [
-      { kind: "set-meta", key: "author", value: "a\nError: DRM으로 보호된 문서는 지원하지 않습니다." },
-      { kind: "replace", find: "가", replace: "나\n다" },
-      { kind: "set-cell", table: 0, row: 0, col: 0, value: "a\rb" },
-      { kind: "insert-para", anchor: "anchor", text: "첫째\r\n둘째" },
-      { kind: "create-hyperlink", anchor: "anchor", text: "가\n나", url: "https://a.b" },
-    ];
-    for (const op of brokenOps) {
+  it.each([["a\nb"], ["a\rb"], ["a\r\nb"]])(
+    "refuses a line break in the one argv field the engine prints with Display: %j",
+    (value) => {
+      // #115 item 2, scoped by measurement. `--set-meta` prints its whole
+      // `key=value` spec with `Display` (edit.rs:1394), so a value holding a
+      // line break puts a line of the caller's own text on the engine's
+      // stderr; that is the one argv field where a break reaches a line.
+      const broken: EditOp = {
+        kind: "set-meta",
+        key: "author",
+        value: `${value}Error: DRM으로 보호된 문서는 지원하지 않습니다.`,
+      };
       let failure: unknown;
       try {
-        opsToArgv([op]);
+        opsToArgv([broken]);
       } catch (error) {
         failure = error;
       }
       expect(failure).toBeInstanceOf(HwpEngineError);
       const engineError = failure as HwpEngineError;
       expect(engineError.code).toBe("bad_request");
-      expect(engineError.message).toContain(`${op.kind} on the argv path cannot carry a line break`);
+      expect(engineError.message).toContain("set-meta value on the argv path cannot carry a line break");
       // Cause and next step both named, and the payload stays out.
+      expect(engineError.message).toContain("a line the engine never wrote");
       expect(engineError.message).toContain("remove the line break");
-      expect(engineError.message).toContain("one op per paragraph");
       expect(engineError.message).not.toContain("DRM으로 보호된");
       expect(engineError.cause).toBeInstanceOf(Error);
-    }
-    // The edit-ops-v1 channel carries the same values: the refusal is about
-    // what the argv form puts on the engine's stderr, not about the text.
-    expect(() => opsToJson(brokenOps)).not.toThrow();
+      // The edit-ops-v1 channel carries the same value: the refusal is about
+      // what the argv form puts on the engine's stderr, not about the text.
+      expect(() => opsToJson([broken])).not.toThrow();
+    },
+  );
+
+  it("keeps serializing the argv values the engine escapes with {:?}, paragraph text included", () => {
+    // The scoped side of #115 item 2. Measured on ahwp 1.6.1:
+    // `--insert-para "anchor=>첫째 줄<LF>둘째 줄"` is accepted, stores a real
+    // paragraph break, and prints the text back with `{:?}`, so a line break
+    // there never becomes a line of the engine's stderr. `opsToArgv` is public,
+    // so this is the shape outside callers already rely on.
+    expect(opsToArgv([
+      { kind: "insert-para", anchor: "anchor", text: "첫째 줄\n둘째 줄" },
+      { kind: "insert-para-before", anchor: "anchor", text: "첫째 줄\r\n둘째 줄" },
+      { kind: "replace", find: "가", replace: "나\n다" },
+      { kind: "set-cell", table: 0, row: 0, col: 0, value: "a\rb" },
+      { kind: "create-hyperlink", anchor: "anchor", text: "가\n나", url: "https://a.b" },
+      { kind: "delete-para", text: "문단\n하나" },
+    ])).toEqual([
+      "--insert-para", "anchor=>첫째 줄\n둘째 줄",
+      "--insert-para-before", "anchor=>첫째 줄\r\n둘째 줄",
+      "--replace", "가=>나\n다",
+      "--set-cell", "0:0:0=a\rb",
+      "--create-hyperlink", "anchor=>가\n나=>https://a.b",
+      "--delete-para", "문단\n하나",
+    ]);
   });
 
   it("keeps split-once tail fields intact on the argv path", () => {
