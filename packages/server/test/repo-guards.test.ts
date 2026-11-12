@@ -28,7 +28,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1129,26 +1129,170 @@ describe("CI-2: bounded workflows and an explicit gating aggregate", () => {
 
   const nodeScript = /node <<'NODE'\n([\s\S]+?)\n {10}NODE/.exec(aggregate)![1]!
     .replace(/^ {10}/gm, "");
+
+  /** The aggregate's verdict for one `needs` map and one docs_only answer. */
+  function aggregateStatus(
+    needs: Record<string, { result?: string }>,
+    docsOnly?: string,
+  ): number | null {
+    return spawnSync(process.execPath, ["-e", nodeScript], {
+      env: { ...process.env, NEEDS_JSON: JSON.stringify(needs), DOCS_ONLY: docsOnly },
+    }).status;
+  }
+
+  /** The shape a pull request touching code produces: every gating job green. */
+  const allGreen = {
+    changes: { result: "success" },
+    "build-test": { result: "success" },
+    package: { result: "success" },
+  };
+  /** The shape a docs-only pull request produces (#126). */
+  const docsOnlySkips = {
+    changes: { result: "success" },
+    "build-test": { result: "skipped" },
+    package: { result: "skipped" },
+  };
+
   it("accepts successful gating jobs", () => {
-    const result = spawnSync(process.execPath, ["-e", nodeScript], {
-      env: { ...process.env, NEEDS_JSON: JSON.stringify({ "build-test": { result: "success" }, package: { result: "success" } }) },
-    });
-    expect(result.status).toBe(0);
+    expect(aggregateStatus(allGreen)).toBe(0);
+  });
+
+  it("accepts the docs-only skip only with the changes job's own answer", () => {
+    expect(aggregateStatus(docsOnlySkips, "true")).toBe(0);
+    // The same skip with no docs_only answer is unexplained, so it fails: the
+    // fast path is a claim the changes job makes, not a shape a skip can take
+    // on its own.
+    expect(aggregateStatus(docsOnlySkips)).toBe(1);
+    // A docs_only answer whose producer did not succeed is not an answer.
+    expect(aggregateStatus({ ...docsOnlySkips, changes: { result: "failure" } }, "true")).toBe(1);
+  });
+
+  it("rejects a third skipped job beside the docs-only pair", () => {
+    // #126 accepts exactly build-test and package. Any job this workflow gains
+    // later has to be named here before it can be skipped on a docs-only PR.
+    expect(aggregateStatus({ ...docsOnlySkips, "lint-docs": { result: "skipped" } }, "true")).toBe(1);
+  });
+
+  it("rejects a docs-only answer that leaves a gating job having run", () => {
+    // One success plus one skip is neither the full matrix nor the fast path;
+    // accepting it would let a docs_only answer excuse a job that never ran.
+    expect(aggregateStatus({ ...docsOnlySkips, "build-test": { result: "success" } }, "true")).toBe(1);
+  });
+
+  it("gates build-test and package on the docs-only answer the changes job publishes", () => {
+    for (const id of ["build-test", "package"]) {
+      const body = ci.jobs.get(id)!.join("\n");
+      expect(body, id).toContain("    needs: changes");
+      expect(body, id).toContain("    if: needs.changes.outputs.docs_only != 'true'");
+    }
+    // One producer, read back by the aggregate through needs.
+    expect(ci.jobs.get("changes")!.join("\n")).toContain(
+      "      docs_only: ${{ steps.classify.outputs.docs_only }}",
+    );
+    expect(aggregate).toContain("DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}");
   });
 
   it.each(["failure", "cancelled", "skipped", undefined])("rejects a %s gating result", (result) => {
-    for (const id of ["build-test", "package"]) {
-      const needs = { "build-test": { result: "success" }, package: { result: "success" }, [id]: { result } };
-      expect(spawnSync(process.execPath, ["-e", nodeScript], {
-        env: { ...process.env, NEEDS_JSON: JSON.stringify(needs) },
-      }).status).toBe(1);
+    for (const id of ["changes", "build-test", "package"]) {
+      expect(aggregateStatus({ ...allGreen, [id]: { result } })).toBe(1);
     }
   });
 
   it("rejects an empty dependency map", () => {
-    expect(spawnSync(process.execPath, ["-e", nodeScript], {
-      env: { ...process.env, NEEDS_JSON: "{}" },
-    }).status).toBe(1);
+    expect(aggregateStatus({})).toBe(1);
+  });
+
+  /**
+   * The classifier's own shell, run against a stub `gh`.
+   *
+   * #126's rule is one path set plus four fail-closed exits, and none of it is
+   * visible from the aggregate: this executes the step's script instead of
+   * trusting it. The stub answers with whatever file list a case names, and
+   * `MAX_FILES` can be lowered so the cap is reachable in three paths rather
+   * than three thousand - the shipped value is asserted on its own below.
+   *
+   * The last `docs_only=` line wins, because the script writes `false` first and
+   * overwrites it only with a list that passes; a case that never overwrote it
+   * is therefore indistinguishable from a real "full run", which is the point.
+   */
+  function classify(
+    paths: string[],
+    options: { stubExit?: number; maxFiles?: string } = {},
+  ): { docsOnly: string; status: number | null } {
+    const body = ci.jobs.get("changes")!.join("\n");
+    const script = body.split("        run: |\n")[1]!.replace(/^ {10}/gm, "");
+    const dir = mkdtempSync(join(tmpdir(), "hwped-classify-"));
+    const gh = join(dir, "gh");
+    writeFileSync(
+      gh,
+      "#!/bin/sh\n" + "printf '%s\\n' \"$STUB_FILES\"\n" + 'exit "${STUB_EXIT:-0}"\n',
+    );
+    chmodSync(gh, 0o700);
+    const output = join(dir, "output.txt");
+    writeFileSync(output, "");
+    const status = spawnSync("bash", ["-e", "-c", script], {
+      env: {
+        ...process.env,
+        PATH: `${dir}:/usr/bin:/bin`,
+        // The step's own env: the script reads these, and `set -u` makes a
+        // missing one a loud failure rather than a silent false.
+        GH_TOKEN: "stub-token",
+        REPO: "STAIxBWLB/hwp-editor",
+        NUMBER: "126",
+        STUB_FILES: paths.join("\n"),
+        STUB_EXIT: String(options.stubExit ?? 0),
+        MAX_FILES: options.maxFiles ?? "3000",
+        GITHUB_OUTPUT: output,
+      },
+      encoding: "utf8",
+    }).status;
+    const written = readFileSync(output, "utf8");
+    const docsOnly = [...written.matchAll(/^docs_only=(true|false)$/gm)].at(-1)?.[1] ?? "absent";
+    return { docsOnly, status };
+  }
+
+  it("calls a pull request that changes only docs and root Markdown docs-only", () => {
+    expect(classify(["docs/integration-ax.md", "docs/img/diagram.png", "README.md"])).toEqual({
+      docsOnly: "true",
+      status: 0,
+    });
+  });
+
+  it("runs every gating job when one changed path is outside that set", () => {
+    for (const path of [
+      "packages/core/src/segments.ts",
+      // The trap #126 names: it ships inside the tarballs `package` checks.
+      "packages/core/README.md",
+      "apps/playground/README.md",
+      ".github/workflows/ci.yml",
+      "scripts/playground.mjs",
+      "pnpm-lock.yaml",
+    ]) {
+      expect(classify(["docs/a.md", path]), path).toEqual({ docsOnly: "false", status: 0 });
+    }
+  });
+
+  it("runs every gating job when the list cannot be read, is empty, or may be truncated", () => {
+    expect(classify(["docs/a.md"], { stubExit: 1 })).toEqual({ docsOnly: "false", status: 0 });
+    expect(classify([])).toEqual({ docsOnly: "false", status: 0 });
+    // At the cap the list may be cut short, so the answer is not provable.
+    expect(classify(["docs/a.md", "docs/b.md", "docs/c.md"], { maxFiles: "3" })).toEqual({
+      docsOnly: "false",
+      status: 0,
+    });
+  });
+
+  it("ships the 3000-file cap, the step env it reads, and a classifier that never fails the job", () => {
+    // Every case above exits 0: an uncomputable answer costs runner-minutes,
+    // never a red required check. This is the shipped cap the runtime cases
+    // lower on purpose, and the four variables the script reads - `set -u`
+    // turns a deleted one into a loud step failure, which is worse than a
+    // full run and is why they are pinned here.
+    const body = ci.jobs.get("changes")!.join("\n");
+    expect(body).toContain('          MAX_FILES: "3000"');
+    for (const name of ["GH_TOKEN", "REPO", "NUMBER"]) {
+      expect(body, name).toContain("          " + name + ": ${{");
+    }
   });
 
   it("never hides job failures behind job-level continue-on-error", () => {
@@ -1244,19 +1388,23 @@ type UnparsedUse =
   | { where: string; form: "line"; line: string };
 
 interface UseScan {
-  thirdParty: ActionUse[];
+  /** Every reference that has to be pinned: first-party and third-party alike. */
+  remote: ActionUse[];
   unparsed: UnparsedUse[];
 }
 
 /**
- * Every `uses:` line in the workflows, split into the third-party references
- * and the lines this scanner could not read.
+ * Every `uses:` line in the workflows, split into the remote references and the
+ * lines this scanner could not read.
  *
- * `actions/*` is GitHub's own and stays on its major tag by the owner's decision
- * (#45 item 6 scopes the pinning to third-party actions); a local `./path`
- * action is this repository's own code and has no ref at all. `docker://` is
- * third-party by definition, so it is scanned as an image pin - excluding it
- * would be one more class of reference that vanishes instead of failing.
+ * Every remote action is scanned, first-party included: #45 item 6 pinned the
+ * third-party ones, and #126 extended the same rule to `actions/*`, which run
+ * with the job's permissions exactly as a third-party action does - the publish
+ * job's `id-token: write` is the reason that matters. A local `./path` action is
+ * this repository's own code, held at the commit that contains it, so it has no
+ * ref to pin. `docker://` is an image, which pins by digest rather than by
+ * commit, so it is scanned as an image pin - excluding it would be one more
+ * class of reference that vanishes instead of failing.
  *
  * Two readings decide each line. `USES_LINE` reads the shape this repository
  * writes; a line that names the key in any other shape is captured by
@@ -1265,7 +1413,7 @@ interface UseScan {
  * key is discussed rather than used, so it is the one line skipped.
  */
 function scanUses(dir: string): UseScan {
-  const thirdParty: ActionUse[] = [];
+  const remote: ActionUse[] = [];
   const unparsed: UnparsedUse[] = [];
   for (const workflow of readWorkflows(dir)) {
     for (const [index, line] of workflow.lines.entries()) {
@@ -1289,8 +1437,7 @@ function scanUses(dir: string): UseScan {
       const bare = image ? text.slice("docker://".length) : text;
       const at = bare.lastIndexOf("@");
       const action = at === -1 ? bare : bare.slice(0, at);
-      if (!image && action.split("/")[0] === "actions") continue;
-      thirdParty.push({
+      remote.push({
         text,
         action,
         ref: at === -1 ? "" : bare.slice(at + 1),
@@ -1300,11 +1447,12 @@ function scanUses(dir: string): UseScan {
       });
     }
   }
-  return { thirdParty, unparsed };
+  return { remote, unparsed };
 }
 
 /**
- * #45 item 6: a third-party action may only run at a full commit SHA.
+ * #45 item 6, extended by #126: every remote action may only run at a full
+ * commit SHA.
  *
  * Why this is a guard and not a style rule: `uses: pnpm/action-setup@v6` names a
  * tag, and a tag is a pointer the action's owner can move. A workflow run then
@@ -1312,7 +1460,9 @@ function scanUses(dir: string): UseScan {
  * review, and the permission it runs with is the one the job was given - the
  * publish job's OIDC identity included. The SHA is the reviewed commit; the
  * trailing comment is the version, because a 40-character hash names nothing a
- * reader can check.
+ * reader can check. `actions/*` is held to the same rule by #126: it is
+ * GitHub's own, but a major tag there is still a pointer, and `release.yml`'s
+ * publish job gives what it runs `id-token: write`.
  *
  * Fail-closed in three ways. A `uses:` line whose shape this scanner does not
  * read is a violation rather than a line to skip, so a hand-edited pin cannot
@@ -1326,7 +1476,7 @@ function scanUses(dir: string): UseScan {
  */
 function unpinnedActionViolations(dir: string): string[] {
   const scan = scanUses(dir);
-  if (scan.thirdParty.length === 0 && scan.unparsed.length === 0) {
+  if (scan.remote.length === 0 && scan.unparsed.length === 0) {
     throw new Error(
       `CI-3 guard found no uses: line in ${dir}; the guard did not run.`,
     );
@@ -1336,7 +1486,7 @@ function unpinnedActionViolations(dir: string): string[] {
       ? `${unread.where}: uses: ${unread.rest === "" ? "(nothing)" : unread.rest} does not parse as <action>@<ref> # <version>`
       : `${unread.where}: ${unread.line} names uses: in a form this guard does not read; write "- uses: <action>@<ref> # <version>"`,
   );
-  for (const use of scan.thirdParty) {
+  for (const use of scan.remote) {
     if (use.image) {
       if (!IMAGE_DIGEST.test(use.text)) {
         violations.push(`${use.where}: ${use.text} is not pinned to an @sha256: digest`);
@@ -1354,13 +1504,32 @@ function unpinnedActionViolations(dir: string): string[] {
   return violations;
 }
 
-describe("CI-3: a third-party action runs only at a pinned commit (#45 item 6)", () => {
-  it("pins every third-party action in the workflows to a SHA with its version", () => {
+describe("CI-3: every remote action runs only at a pinned commit (#45 item 6, #126)", () => {
+  it("pins every remote action in the workflows to a SHA with its version", () => {
     expect(unpinnedActionViolations(WORKFLOWS_DIR)).toEqual([]);
-    // Non-vacuous on this tree: the pin above is one of these.
-    expect(scanUses(WORKFLOWS_DIR).thirdParty.map((use) => use.action)).toContain(
-      "pnpm/action-setup",
-    );
+    // Non-vacuous on this tree: the pins above are these.
+    const actions = scanUses(WORKFLOWS_DIR).remote.map((use) => use.action);
+    expect(actions).toContain("pnpm/action-setup");
+    expect(actions).toContain("actions/checkout");
+    expect(actions).toContain("actions/setup-node");
+    expect(actions).toContain("actions/cache");
+  });
+
+  it("reports a first-party action left on its major tag", () => {
+    // The shape #126 closed: this line read as compliant until the `actions/*`
+    // exclusion was removed.
+    const dir = fixtureDir({
+      "ci.yml": [
+        "jobs:",
+        "  build:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - uses: actions/checkout@v5",
+      ].join("\n"),
+    });
+    expect(unpinnedActionViolations(dir)).toEqual([
+      "ci.yml:5: actions/checkout@v5 is not a full commit SHA",
+    ]);
   });
 
   it("reports a tag reference, which its owner can repoint", () => {
@@ -1484,7 +1653,7 @@ describe("CI-3: a third-party action runs only at a pinned commit (#45 item 6)",
     expect(unpinnedActionViolations(dir)).toEqual([]);
   });
 
-  it("allows a pinned action, an actions/* tag, a local action and a pinned image", () => {
+  it("allows a pinned action, a local action and a pinned image", () => {
     const dir = fixtureDir({
       "ci.yml": [
         "jobs:",
@@ -1492,7 +1661,9 @@ describe("CI-3: a third-party action runs only at a pinned commit (#45 item 6)",
         "    runs-on: ubuntu-latest",
         "    steps:",
         `      - uses: pnpm/action-setup@${"b".repeat(40)} # v6.1.1`,
-        "      - uses: actions/checkout@v5",
+        // A pinned first-party action, which #126 requires and the case above
+        // this one proves is not free: the same line at a major tag is reported.
+        `      - uses: actions/checkout@${"c".repeat(40)} # v5.1.0`,
         "      - uses: ./scripts/local-action",
         `      - uses: docker://alpine:3.20@sha256:${"d".repeat(64)}`,
       ].join("\n"),
