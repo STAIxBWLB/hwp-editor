@@ -297,14 +297,24 @@ describe.each(locales)("table rows and legacy field creation (%s)", (locale, mes
       expect((button as HTMLButtonElement).disabled).toBe(!addressed);
       fireEvent.click(button);
     }
-    for (const example of [{anchor:"A=>B",name:"Mark"},{anchor:"Safe",name:"A=>B"}]) {
+    for (const example of [{anchor:"A=>B",name:"Mark"}]) {
       fireEvent.change(screen.getByLabelText(plain(messages,"fields.bookmarkAnchorAria")),{target:{value:example.anchor}});
       fireEvent.change(screen.getByLabelText(plain(messages,"fields.bookmarkNameAria")),{target:{value:example.name}});
       const button=screen.getByRole("button",{name:plain(messages,"fields.createBookmark")});
       expect((button as HTMLButtonElement).disabled).toBe(!addressed);
       fireEvent.click(button);
     }
-    expect(queued(store)).toHaveLength(addressed ? 4 : 0);
+    // The name is the tail of the one split, so a `=>` inside it is carried
+    // whole: the button stays live on a legacy host too (#58 item 10).
+    fireEvent.change(screen.getByLabelText(plain(messages,"fields.bookmarkAnchorAria")),{target:{value:"Safe"}});
+    fireEvent.change(screen.getByLabelText(plain(messages,"fields.bookmarkNameAria")),{target:{value:"A=>B"}});
+    const bookmarkTail=screen.getByRole("button",{name:plain(messages,"fields.createBookmark")});
+    expect((bookmarkTail as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(bookmarkTail);
+    expect(queued(store)).toHaveLength(addressed ? 4 : 1);
+    if (!addressed) {
+      expect(queued(store)).toEqual([{kind:"create-bookmark",anchor:"Safe",name:"A=>B"}]);
+    }
   });
   it("refuses separator-bearing table anchors on legacy hosts with a localized hint", () => {
     const store = renderPanel(locale,"table",false,false);

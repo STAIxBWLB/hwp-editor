@@ -289,10 +289,10 @@ function argvSeparatorFields(op: LegacyEditOp): ArgvSeparatorField[] {
         { field: "name", value: op.name, separator: "=" },
       ];
     case "create-bookmark":
-      return [
-        { field: "anchor", value: op.anchor, separator: "=>" },
-        { field: "name", value: op.name, separator: "=>" },
-      ];
+      // `--create-bookmark` is split once, into anchor and name, so the name is
+      // the tail and may hold the separator itself (edit.rs
+      // `EditOperation::CreateBookmark`: `split_once("=>")`).
+      return [{ field: "anchor", value: op.anchor, separator: "=>" }];
     case "create-hyperlink":
       return [
         { field: "anchor", value: op.anchor, separator: "=>" },
@@ -342,8 +342,32 @@ function argvSeparatorFields(op: LegacyEditOp): ArgvSeparatorField[] {
         { field: "find", value: op.find, separator: "=>" },
         { field: "value", value: op.value, separator: "," },
       ];
-    default:
+    // Kinds whose value joins nothing: every field they carry is positional
+    // (set-cell, merge-cells, add-row, set-page) or a single value the engine
+    // reads whole (delete-image, delete-field, delete-bookmark). `delete-table`
+    // takes one value too, and the index/anchor ambiguity that value has is
+    // refused in `argvDeleteTableTarget`.
+    case "set-cell":
+    case "delete-para":
+    case "add-row":
+    case "add-col":
+    case "delete-row":
+    case "delete-col":
+    case "merge-cells":
+    case "split-cell":
+    case "set-page":
+    case "delete-image":
+    case "delete-table":
+    case "delete-field":
+    case "delete-bookmark":
       return [];
+    default: {
+      // Exhaustive on purpose: a new op kind has to say what its value joins
+      // on, and the `default: return []` this replaces let one join on a
+      // structural separator without this guard ever seeing it.
+      const unhandled: never = op;
+      throw new Error(`argvSeparatorFields: unhandled op kind ${JSON.stringify(unhandled)}`);
+    }
   }
 }
 
@@ -354,12 +378,65 @@ function imagePathHasDimensionSuffix(path: string): boolean {
 }
 
 function sealPathHasSizeSuffix(path: string): boolean {
-  const suffix = path.slice(path.lastIndexOf("@") + 1).trim().replace(/mm$/, "");
+  // hwp-cli's `parse_seal_size` trims before stripping the unit and trims the
+  // rest again before parsing (`edit.rs`: `raw.trim().strip_suffix("mm")` then
+  // `num.trim().parse::<f32>()`), so `stamp@5 mm` is a size suffix too.
+  const suffix = path.slice(path.lastIndexOf("@") + 1).trim().replace(/mm$/, "").trim();
   return isRustFloat(suffix);
 }
 
 function isRustFloat(value: string): boolean {
   return /^[+-]?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|inf(?:inity)?|nan)$/i.test(value);
+}
+
+/** `usize::MAX`: every platform hwp-cli ships a binary for is 64-bit. */
+const USIZE_MAX = 18_446_744_073_709_551_615n;
+
+/**
+ * Whether hwp-cli would read this `--delete-table` value as a table index.
+ *
+ * The flag carries one value and the engine decides what it means by whether
+ * it parses as a `usize` (`edit.rs` `EditOperation::DeleteTable`:
+ * `spec.trim().parse::<usize>()` selects `ObjectKind::TableNth(n)`, anything
+ * else is an anchor), which `cli.rs` documents as `"n" (0-based index) or
+ * "anchor"`. Rust's `usize` grammar is an optional `+` and then decimal
+ * digits, so `3`, `+3` and `007` are indices while `3.5`, `-1` and the empty
+ * string are anchors.
+ */
+function parsesAsUsize(value: string): boolean {
+  if (!/^\+?[0-9]+$/.test(value)) return false;
+  return BigInt(value.replace(/^\+/, "")) <= USIZE_MAX;
+}
+
+/**
+ * The one value `--delete-table` can carry for this target.
+ *
+ * The argv form has no way to say "this anchor is the text 3": the engine reads
+ * a value that parses as a `usize` as a 0-based index, so such an anchor would
+ * silently delete another table. A number that is not a `usize` is the same
+ * problem from the other side, because the engine would read it as an anchor
+ * name and match no paragraph. Both are refused before serialization, and the
+ * edit-ops-v1 JSON transport carries either form without the ambiguity.
+ */
+function argvDeleteTableTarget(target: number | string): string {
+  const value = String(target);
+  if (typeof target === "string" && parsesAsUsize(value.trim())) {
+    const cause = new Error(`delete-table anchor ${JSON.stringify(target)} is read as table index ${value.trim()}`);
+    throw new HwpEngineError(
+      "bad_request",
+      `${cause.message}, so the anchor cannot be addressed in the argv form; pick an anchor that is not a number or upgrade the host to the edit-ops-v1 JSON transport.`,
+      { cause },
+    );
+  }
+  if (typeof target === "number" && !parsesAsUsize(value)) {
+    const cause = new Error(`delete-table target ${value} is not a 0-based table index`);
+    throw new HwpEngineError(
+      "bad_request",
+      `${cause.message}, so the argv form would read it as an anchor paragraph name; use a non-negative integer index or upgrade the host to the edit-ops-v1 JSON transport.`,
+      { cause },
+    );
+  }
+  return value;
 }
 
 function validateArgvSeparators(op: LegacyEditOp): void {
@@ -461,7 +538,7 @@ function opValue(op: LegacyEditOp): string {
     case "delete-image":
       return op.anchor;
     case "delete-table":
-      return String(op.target);
+      return argvDeleteTableTarget(op.target);
     case "delete-field":
     case "delete-bookmark":
       return op.name;
@@ -986,8 +1063,12 @@ function parseOp(flag: string | undefined, value: string): LegacyEditOp {
     case "--delete-image":
       return { kind: "delete-image", anchor: value };
     case "--delete-table": {
-      const n = Number(value);
-      return { kind: "delete-table", target: Number.isNaN(n) ? value : n };
+      // The engine trims and then parses a `usize` to decide index or anchor,
+      // so the same predicate decides what this side hands back: `Number("")`
+      // would have made the empty string index 0 and `Number("3.5")` a
+      // fractional index, and both are anchors to the engine.
+      const trimmed = value.trim();
+      return { kind: "delete-table", target: parsesAsUsize(trimmed) ? Number(trimmed) : value };
     }
     case "--delete-field":
       return { kind: "delete-field", name: value };

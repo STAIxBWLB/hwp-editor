@@ -27,7 +27,9 @@ export function FieldsPanel(): JSX.Element {
 
   const legacy = capabilities?.editOps !== "v1";
   const badFieldSeparator = legacy && (anchor.includes("=>") || name.includes("=>") || name.includes("="));
-  const badBookmarkSeparator = legacy && (bookmarkAnchor.includes("=>") || bookmarkName.includes("=>"));
+  // The bookmark name is the tail of a single split, so only the anchor can
+  // carry the separator into the wrong field (#58 item 10).
+  const badBookmarkAnchor = legacy && bookmarkAnchor.includes("=>");
   const disabled = !editable || state.document === null || envelope === null || state.status === "applying";
 
   return (
@@ -104,7 +106,7 @@ export function FieldsPanel(): JSX.Element {
       <div className="hwped-field">
         <input className="hwped-input" value={bookmarkAnchor} disabled={disabled} placeholder={t("fields.anchorPlaceholder")} aria-label={t("fields.bookmarkAnchorAria")} onChange={(e) => setBookmarkAnchor(e.target.value)} />
         <input className="hwped-input" value={bookmarkName} disabled={disabled} placeholder={t("fields.bookmarkNamePlaceholder")} aria-label={t("fields.bookmarkNameAria")} onChange={(e) => setBookmarkName(e.target.value)} />
-        <button type="button" className="hwped-btn" disabled={disabled || badBookmarkSeparator || bookmarkAnchor.trim() === "" || bookmarkName.trim() === ""} onClick={() => store.dispatch({ type: "queueOp", op: { kind: "create-bookmark", anchor: bookmarkAnchor.trim(), name: bookmarkName.trim() } })}>{t("fields.createBookmark")}</button>
+        <button type="button" className="hwped-btn" disabled={disabled || badBookmarkAnchor || bookmarkAnchor.trim() === "" || bookmarkName.trim() === ""} onClick={() => store.dispatch({ type: "queueOp", op: { kind: "create-bookmark", anchor: bookmarkAnchor.trim(), name: bookmarkName.trim() } })}>{t("fields.createBookmark")}</button>
         <p id="hwped-delete-bookmark-hint" className="hwped-hint">{t("fields.deleteAllBookmarksHint")}</p>
         <input aria-describedby="hwped-delete-bookmark-hint" className="hwped-input" value={deleteBookmarkName} disabled={disabled} placeholder={t("fields.bookmarkNamePlaceholder")} aria-label={t("fields.deleteBookmarkNameAria")} onChange={(e) => setDeleteBookmarkName(e.target.value)} />
         <button type="button" className="hwped-btn hwped-btn-danger" disabled={disabled || deleteBookmarkName.trim() === ""} onClick={() => store.dispatch({ type: "queueOp", op: { kind: "delete-bookmark", name: deleteBookmarkName.trim() } })}>{t("fields.deleteBookmark")}</button>
