@@ -16,7 +16,7 @@
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { STOPPED_WITHOUT_DIAGNOSTIC } from "@hwp-editor/core";
+import { NO_ENGINE_CAUSE, STOPPED_WITHOUT_DIAGNOSTIC } from "@hwp-editor/core";
 import type { Blocks, EditOp } from "@hwp-editor/core";
 
 import { createCliEngine, HwpCliError } from "../src/cli-engine.js";
@@ -246,5 +246,26 @@ describe("an edit failure that wrote no stderr (#88, #91)", () => {
     const error = await failure("Error: no target matched", DELETE);
     expect(error.stopped).toBeUndefined();
     expect(error.message).not.toContain(STOPPED_WITHOUT_DIAGNOSTIC);
+  });
+});
+
+describe("an edit failure whose stderr has no Error: line (#140)", () => {
+  const PANIC = ["thread 'main' panicked at src/edit.rs:12:5:", "index out of bounds"];
+
+  it("marks a panic in a plain batch with noCause and writes NO_ENGINE_CAUSE", async () => {
+    const error = await failure(PANIC, DELETE);
+    expect(error.message).toBe(`ahwp edit failed (exit 3): ${NO_ENGINE_CAUSE}`);
+    expect(error.noCause).toBe(true);
+    expect(error.stopped).toBeUndefined();
+  });
+
+  it("marks a panic in an insertion batch the same way", async () => {
+    const error = await failure(PANIC, INSERT);
+    expect(error.message).toBe(`ahwp edit failed (exit 3): insert_blocks refused: ${NO_ENGINE_CAUSE}`);
+    expect(error.noCause).toBe(true);
+  });
+
+  it("sets no noCause when the engine wrote an Error: line", async () => {
+    expect((await failure("Error: no target matched", DELETE)).noCause).toBeUndefined();
   });
 });

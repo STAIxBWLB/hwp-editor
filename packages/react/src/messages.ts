@@ -30,7 +30,7 @@
 // stopped sentence is the same rule: the English one is the sentence the core
 // message already carries, so a host that reads text and the editor that reads
 // the marker cannot print two different accounts of one failure (#91).
-import { MAX_IMAGE_ASSET_MIB, STOPPED_WITHOUT_DIAGNOSTIC } from "@hwp-editor/core";
+import { MAX_IMAGE_ASSET_MIB, NO_ENGINE_CAUSE, STOPPED_WITHOUT_DIAGNOSTIC } from "@hwp-editor/core";
 
 export const en = {
   // Toolbar
@@ -480,6 +480,8 @@ export const en = {
   "error.runRangeConflict": "A run format change was refused because an earlier pending change in that paragraph (text, a link, a field, a bookmark, an image or a cell) may change its text, so the run might no longer name the same characters. Nothing was applied. Remove the format change from the pending list, apply the rest, then format the run again; or queue the format change before the others.",
   "error.rangeTagRefused": "This HWP document holds a range mark the engine cannot move, so a pending edit was refused and nothing was applied. Edits that move text around the mark are refused: changing a paragraph's text length, changing a field's value to one of a different length, inserting or deleting a link, field, bookmark or image, or deleting a table. A table cell that holds a mark refuses any change to its content. The engine does not say which edit. Remove those pending edits from the pending list (a same-length text replacement in a paragraph, or a same-length field value, is accepted) and apply the rest. To make those edits, convert the document to HWPX, which drops the range marks, or remove the mark in Hangul, then reopen it; reopening drops the pending list.",
   "error.stoppedWithoutDiagnostic": STOPPED_WITHOUT_DIAGNOSTIC,
+  // The same rule for a failure with stderr but no Error: line (#140).
+  "error.noEngineCause": NO_ENGINE_CAUSE,
   "error.readOnlyReplacement": "The editor became read-only before the template could be applied; switch to an editable document and retry.",
   "error.pendingReplacement": "Pending edits would be lost; apply or clear them before replacing this document.",
   "error.loadingReplacement": "A new document is still loading; wait for it to finish, then retry.",
@@ -1002,6 +1004,7 @@ export const ko: MessageTable = {
   "error.unmatchedReplace": "해당 문단에서 바꿀 텍스트를 엔진이 찾지 못해 아무것도 적용되지 않았습니다. 텍스트를 다시 선택한 뒤 재시도하세요.",
   "error.runRangeConflict": "같은 문단에 대기 중인 앞선 변경(텍스트, 링크, 필드, 책갈피, 이미지, 셀)이 문단 텍스트를 바꿀 수 있어 run이 더 이상 같은 글자를 가리키지 않을 수 있으므로 run 서식 변경이 거부되었습니다. 아무것도 적용되지 않았습니다. 대기 목록에서 서식 변경을 제거하고 나머지를 적용한 뒤 run 서식을 다시 지정하거나, 서식 변경을 다른 변경보다 먼저 대기열에 넣으세요.",
   "error.rangeTagRefused": "이 HWP 문서에는 엔진이 옮길 수 없는 구간 표시가 있어 대기 중인 편집이 거부되었고, 아무것도 적용되지 않았습니다. 구간 표시 주변의 글자를 움직이는 편집은 거부됩니다: 문단 텍스트 길이 변경, 길이가 다른 필드 값으로의 변경, 링크·필드·책갈피·이미지의 삽입이나 삭제, 표 삭제. 구간 표시가 있는 표 셀은 내용을 어떻게 바꾸든 거부합니다. 엔진은 어느 편집인지 알려 주지 않습니다. 대기 목록에서 해당 편집을 제거하고(문단 안의 같은 길이 텍스트 치환과 같은 길이의 필드 값은 허용됩니다) 나머지를 적용하세요. 그런 편집이 필요하면 문서를 HWPX로 변환하거나(변환하면 구간 표시가 사라집니다) 한글에서 구간 표시를 제거한 뒤 다시 여세요. 다시 열면 대기 목록은 사라집니다.",
+  "error.noEngineCause": "엔진이 원인을 밝히지 않고 실패했으므로(대개 비정상 종료된 경우입니다) 아무것도 적용되지 않았습니다. 다시 적용하고, 같은 방식으로 실패하면 호스트 로그와 함께 알려 주세요.",
   "error.stoppedWithoutDiagnostic": "엔진이 진단 메시지를 남기지 않고 멈췄으므로(대개 강제 종료되었거나 메모리가 부족한 경우입니다) 아무것도 적용되지 않았습니다. 다시 적용하고, 같은 방식으로 실패하면 호스트 로그와 함께 알려 주세요.",
   "error.readOnlyReplacement": "템플릿을 적용하기 전에 편집기가 읽기 전용으로 바뀌었습니다. 편집 가능한 문서에서 다시 시도하세요.",
   "error.pendingReplacement": "대기 중인 편집이 사라질 수 있습니다. 문서를 바꾸기 전에 편집을 적용하거나 지우세요.",

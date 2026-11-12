@@ -68,6 +68,14 @@ export function engineStoppedWithoutDiagnostic(e: unknown): boolean {
 }
 
 /**
+ * Whether a failure is one whose stderr held no `Error:` line, such as a panic
+ * (#140), read from the structured `noCause` field the same way `stopped` is.
+ */
+export function engineFailedWithoutCause(e: unknown): boolean {
+  return typeof e === "object" && e !== null && (e as { noCause?: unknown }).noCause === true;
+}
+
+/**
  * Badge per code. A total Record on purpose, not a switch with a default:
  * adding a sixteenth HwpErrorCode must fail `tsc --noEmit` here and force
  * an explicit badge decision rather than silently rendering "generic".

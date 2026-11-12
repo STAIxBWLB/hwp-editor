@@ -141,6 +141,8 @@ async function parseError(res: Response): Promise<HwpEngineError> {
         // counts, so a server that sends `false` or a string sends nothing
         // (#91). The sentence in the message stays as the fallback.
         ...(body.error.stopped === true ? { stopped: true as const } : {}),
+        // The no-Error-line marker (#140), read the same way.
+        ...(body.error.noCause === true ? { noCause: true as const } : {}),
       },
     );
   } catch {

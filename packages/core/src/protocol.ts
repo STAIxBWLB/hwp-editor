@@ -138,5 +138,10 @@ export interface ErrorResponse {
      * client that reads text only.
      */
     stopped?: true;
+    /**
+     * The engine failed with stderr but no `Error:` line, e.g. a panic (#140).
+     * Presence is the signal; the message keeps NO_ENGINE_CAUSE in English.
+     */
+    noCause?: true;
   };
 }

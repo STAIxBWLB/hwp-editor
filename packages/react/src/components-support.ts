@@ -37,7 +37,7 @@
  * structured `stopped` marker takes the slot (#91).
  */
 import type { MessageKey, TFunction } from "./messages.js";
-import { engineStoppedWithoutDiagnostic } from "./errors.js";
+import { engineFailedWithoutCause, engineStoppedWithoutDiagnostic } from "./errors.js";
 import { isComponentError, isHwpEngineError, isInsertionRefusal, HwpEngineError } from "@hwp-editor/core";
 import type { Blocks, ComponentErrorCode, InsertionRefusal } from "@hwp-editor/core";
 
@@ -164,6 +164,7 @@ function wrapped(error: unknown, text: string, detail: string): Error {
         // structured fields the transport set, so a wrapper that drops one
         // hands it a failure it cannot classify (#91).
         ...(error.stopped === true ? { stopped: true as const } : {}),
+        ...(error.noCause === true ? { noCause: true as const } : {}),
       }),
       { detail },
     );
@@ -256,7 +257,9 @@ export function insertionFailure(
   // would otherwise sit inside this frame in English.
   const reason = engineStoppedWithoutDiagnostic(error)
     ? t("error.stoppedWithoutDiagnostic")
-    : refusalReason(message);
+    : engineFailedWithoutCause(error)
+      ? t("error.noEngineCause")
+      : refusalReason(message);
   // The frame is the whole point: a refusal with no readable cause still names
   // both things the caller can vary, rather than an empty slot after a colon.
   return wrapped(error, t("components.insertionRefused", { reason }), message);

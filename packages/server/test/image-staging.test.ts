@@ -191,5 +191,6 @@ process.stderr.write(${JSON.stringify(stderr)}.split('{dir}').join(dir));process
     const error = await failWith("thread 'main' panicked at src/image.rs:1:1:\nboom\n", [image]);
     expect(error.message).toMatch(/^ahwp edit failed \(exit 1\): the engine failed without naming a cause .*Apply again/u);
     expect(error.message).not.toMatch(/panicked|boom|re-export/i);
+    expect((error as { noCause?: true }).noCause).toBe(true);
   });
 });

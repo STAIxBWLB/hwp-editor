@@ -21,6 +21,7 @@ import {
   ComponentError,
   createHttpEngine,
   HwpEngineError,
+  NO_ENGINE_CAUSE,
   STOPPED_WITHOUT_DIAGNOSTIC,
 } from "@hwp-editor/core";
 import type { Blocks, ComponentErrorCode, InsertionRefusal } from "@hwp-editor/core";
@@ -172,6 +173,19 @@ describe("insertionFailure", () => {
     // already copies, so a host reading `onError` can still tell (#91).
     expect(shown.stopped).toBe(true);
     expect(shown.code).toBe("failed");
+  });
+
+  it("puts the locale's own cause in the frame for a failure with no Error: line (#140)", () => {
+    const error = new HwpEngineError("failed", `ahwp edit failed (exit 101): insert_blocks refused: ${NO_ENGINE_CAUSE}`, {
+      noCause: true,
+    });
+    const shown = insertionFailure(error, WIDE, ko) as HwpEngineError;
+    expect(shown.message).toBe(ko("components.insertionRefused", { reason: ko("error.noEngineCause") }));
+    expect(ko("error.noEngineCause")).toBe(
+      "엔진이 원인을 밝히지 않고 실패했으므로(대개 비정상 종료된 경우입니다) 아무것도 적용되지 않았습니다. 다시 적용하고, 같은 방식으로 실패하면 호스트 로그와 함께 알려 주세요.",
+    );
+    expect(shown.message).not.toContain("the engine failed without naming a cause");
+    expect(shown.noCause).toBe(true);
   });
 
   it("leaves a failure that is not a refusal with the handling it has", () => {

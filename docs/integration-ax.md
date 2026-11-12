@@ -193,7 +193,9 @@ carries `error.insertion` (`HwpEngineError.insertion`) the same way. An edit
 that failed without writing a diagnostic carries `error.stopped: true`
 (`HwpEngineError.stopped`), the marker a client uses to show that sentence in
 the user's own language; the message keeps an English one for a host that reads
-text only. Branch on those fields, never on the message text, which can contain
+text only. An edit whose stderr held no `Error:` line (a crash such as a Rust
+panic) carries `error.noCause: true` (`HwpEngineError.noCause`) the same way.
+Branch on those fields, never on the message text, which can contain
 values the user typed.
 
 ## 4. Client

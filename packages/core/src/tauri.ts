@@ -1,6 +1,6 @@
 import { parsePageLayout } from "./layout.js";
 import { classifyEditRefusal, editRefusalMarker, isEditRefusalKind } from "./refusals.js";
-import { classifyInsertionRefusal, insertionRefusalLine, isInsertionRefusal, STOPPED_WITHOUT_DIAGNOSTIC, unclassifiedEditLine } from "./insertion-refusals.js";
+import { classifyInsertionRefusal, engineErrorReason, insertionRefusalLine, isInsertionRefusal, STOPPED_WITHOUT_DIAGNOSTIC, unclassifiedEditLine } from "./insertion-refusals.js";
 import type { InsertionRefusal } from "./insertion-refusals.js";
 import type { EditRefusalKind } from "./refusals.js";
 /**
@@ -158,6 +158,7 @@ function toEngineError(cmd: string, error: unknown, insertion = false): HwpEngin
       refusal?: unknown;
       insertion?: unknown;
       stopped?: unknown;
+      noCause?: unknown;
     };
     if (typeof rec.code === "string") {
       const detail =
@@ -175,6 +176,7 @@ function toEngineError(cmd: string, error: unknown, insertion = false): HwpEngin
           ...(isEditRefusalKind(rec.refusal) ? { refusal: rec.refusal } : {}),
           ...(isInsertionRefusal(rec.insertion) ? { insertion: rec.insertion } : {}),
           ...(rec.stopped === true ? { stopped: true as const } : {}),
+          ...(rec.noCause === true ? { noCause: true as const } : {}),
         },
       );
     }
@@ -212,7 +214,9 @@ const MARU_EDIT_FAILURE = /^hwp_failed: (hwp edit failed \(exit -?\d+\)): ([\s\S
  * - a batch carrying an insertion: the exit line plus the insert_blocks
  *   cause line, and `insertion` when the class is known;
  * - anything else: the engine's first Error: line with paths removed, then
- *   the step (`unclassifiedEditLine`).
+ *   the step (`unclassifiedEditLine`);
+ * - with no Error: line at all (a panic), the cause line is NO_ENGINE_CAUSE,
+ *   and `noCause` lets a client show it in its own locale (#140).
  * The raw rejection stays on the error's `cause` for a log.
  */
 function editFailure(
@@ -220,7 +224,7 @@ function editFailure(
   code: HwpErrorCode,
   detail: string,
   insertion: boolean,
-): { message: string; fields: { refusal?: EditRefusalKind; insertion?: InsertionRefusal; stopped?: true } } | null {
+): { message: string; fields: { refusal?: EditRefusalKind; insertion?: InsertionRefusal; stopped?: true; noCause?: true } } | null {
   if (code !== "failed" || cmd !== "hwped_edit") return null;
   const failure = MARU_EDIT_FAILURE.exec(detail);
   if (failure === null) return null;
@@ -229,16 +233,17 @@ function editFailure(
   const kind = classifyEditRefusal(stderr);
   if (kind !== undefined) return { message: `${head}: ${editRefusalMarker(kind)}`, fields: { refusal: kind } };
   if (stderr.trim() === "") return { message: `${head}: ${STOPPED_WITHOUT_DIAGNOSTIC}`, fields: { stopped: true } };
+  const noCause = engineErrorReason(stderr) === undefined ? { noCause: true as const } : {};
   if (insertion) {
     const cls = classifyInsertionRefusal(stderr);
     return {
       message: `${head}: ${insertionRefusalLine(stderr)}`,
-      fields: cls === undefined ? {} : { insertion: cls },
+      fields: cls === undefined ? noCause : { insertion: cls },
     };
   }
   // The engine's own first Error: line, paths removed, then the step: the
   // same display line HTTP prints. Nothing classifies from it.
-  return { message: `${head}: ${unclassifiedEditLine(stderr)}`, fields: {} };
+  return { message: `${head}: ${unclassifiedEditLine(stderr)}`, fields: noCause };
 }
 
 /**

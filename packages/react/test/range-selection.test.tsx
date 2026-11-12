@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { CatEnvelope, DirectChar, DocumentHandle } from "@hwp-editor/core";
-import { createHttpEngine, createTauriEngine, HwpEngineError, STOPPED_WITHOUT_DIAGNOSTIC } from "@hwp-editor/core";
+import { createHttpEngine, createTauriEngine, HwpEngineError, NO_ENGINE_CAUSE, STOPPED_WITHOUT_DIAGNOSTIC } from "@hwp-editor/core";
 import { HwpEditor } from "../src/HwpEditor.js";
 import { en, ko } from "../src/messages.js";
 import type { MessageTable } from "../src/messages.js";
@@ -1059,5 +1059,27 @@ describe.each([["en", en], ["ko", ko]] as const)("Transport failures end to end 
     const text = await shown(failure);
     expect(text).toContain(messages["error.stoppedWithoutDiagnostic"]);
     if (locale === "ko") expect(text).not.toContain("the engine stopped without writing");
+  });
+
+  // #140: a stderr with no Error: line (a panic) is the same class: the
+  // transports append NO_ENGINE_CAUSE in English, and the marker selects the
+  // locale's sentence.
+  it("HTTP: a failure with no Error: line shows the locale's cause", async () => {
+    const failure = await failureOf(http({
+      code: "failed",
+      message: `ahwp edit failed (exit 101): ${NO_ENGINE_CAUSE}`,
+      noCause: true,
+    }));
+    const text = await shown(failure);
+    expect(text).toContain(messages["error.noEngineCause"]);
+    if (locale === "ko") expect(text).not.toContain("the engine failed without naming a cause");
+  });
+
+  it("Tauri: a panic with no Error: line shows the locale's cause", async () => {
+    const failure = await failureOf(tauri("hwp_failed: hwp edit failed (exit 101): thread 'main' panicked at src/edit.rs:1:1:\nboom"));
+    const text = await shown(failure);
+    expect(text).toContain(messages["error.noEngineCause"]);
+    expect(text).not.toMatch(/panicked|boom/u);
+    if (locale === "ko") expect(text).not.toContain("the engine failed without naming a cause");
   });
 });
