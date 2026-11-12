@@ -221,7 +221,6 @@ describe("engine-line display after #90 (#93)", () => {
     ["Error: 레코드 구조가 손상되었습니다: tag 66 length", "레코드 구조가 손상되었습니다: tag 66 length"],
     ["Error: 이미지 읽기 실패 /tmp/w/asset-0.png: Permission denied (os error 13)", "이미지 읽기 실패 <path>: Permission denied (os error 13)"],
     ["Error: 편집 연산 입력을 읽을 수 없습니다: expected value at line 1 column 1", "편집 연산 입력을 읽을 수 없습니다: expected value at line 1 column 1"],
-    ["Error: staged_native_readback 실패: 게시 전 native 후보를 읽지 못했습니다", "staged_native_readback 실패: 게시 전 native 후보를 읽지 못했습니다"],
     ["Error: 검증 재읽기 실패: /tmp/w/out.hwpx", "검증 재읽기 실패: <path>"],
   ])("gives a real document/IO line the file step: %s", (stderr, reason) => {
     expect(unclassifiedEditLine(stderr)).toBe(`${reason}. ${UNCLASSIFIED_FILE_STEP}`);
@@ -235,5 +234,65 @@ describe("engine-line display after #90 (#93)", () => {
     const line = insertionRefusalLine("progress /tmp/a b/in.hwpx 50%\nthread 'main' panicked at x");
     expect(line).toBe(`insert_blocks refused: ${NO_ENGINE_CAUSE}`);
     expect(line).not.toMatch(/progress|50%/u);
+  });
+});
+
+describe("redaction and file-head follow-ups (#142)", () => {
+  it("runs the colon rule only on a file-head line, so later user text survives", () => {
+    expect(withoutPaths("앵커를 찾을 수 없습니다: /tmp/w/x 다음 문장: 사용자 텍스트"))
+      .toBe("앵커를 찾을 수 없습니다: <path> 다음 문장: 사용자 텍스트");
+  });
+
+  it("never treats a Hangul first segment as a path root", () => {
+    expect(withoutPaths("예산 /항목/세부 비고: 확인")).toBe("예산 /항목/세부 비고: 확인");
+  });
+
+  it("does not merge two paths into one on a non-file line", () => {
+    expect(withoutPaths("copy /tmp/a b/x to /tmp/c d/y: denied")).toBe("copy <path> to <path>: denied");
+  });
+
+  it("still redacts a file-head path with spaces up to the engine's `: `", () => {
+    expect(withoutPaths("이미지 읽기 실패 /Users/홍 길동/Library/stage: Permission denied (os error 13)"))
+      .toBe("이미지 읽기 실패 <path>: Permission denied (os error 13)");
+  });
+
+  // Documents the open limit (#142 item 2): with no `: ` after a path and no
+  // known extension, a space-split tail stays until the Tauri host passes its
+  // stage dir as workDir. Passing the work dir closes it.
+  it("leaves the tail of a colon-less, extension-less path with spaces until the host passes workDir", () => {
+    const line = "검증 재읽기 실패: C:\\Program Files (x86)\\Maru\\out";
+    expect(withoutPaths(line)).toBe("검증 재읽기 실패: <path> Files (x86)\\Maru\\out");
+    expect(withoutPaths(line, "C:\\Program Files (x86)\\Maru")).toBe("검증 재읽기 실패: <work dir>\\out");
+  });
+
+  // Exact Display text from agent-hwp v1.6.2 hwpx/src/error.rs and hwp5/src/error.rs.
+  it.each([
+    "엔트리가 없습니다: Contents/section0.xml",
+    "HWPX 패키지 무결성 오류: manifest digest mismatch",
+    "FileHeader 시그니처가 올바르지 않습니다",
+    "FileHeader 크기가 올바르지 않습니다 (기대 256바이트, 실제 12바이트)",
+    "스트림이 없습니다: BodyText/Section0",
+  ])("gives a document-corruption head the file step: %s", (reason) => {
+    expect(unclassifiedEditLine(`Error: ${reason}`)).toBe(`${reason}. ${UNCLASSIFIED_FILE_STEP}`);
+  });
+
+  it("adds no English step to staged_native_readback, which carries its own", () => {
+    const reason = "staged_native_readback 실패: 게시 전 native 후보를 읽지 못했습니다. 출력을 게시하지 않았습니다. 출력 디렉터리의 읽기·쓰기 권한과 디스크 여유 공간을 확인한 뒤 다시 실행하세요";
+    expect(unclassifiedEditLine(`Error: ${reason}`)).toBe(`${reason}.`);
+  });
+
+  it("keeps the colon after a redacted path (t67-1)", () => {
+    expect(withoutPaths("failed to open /tmp/w/stage: Permission denied")).toBe("failed to open <path>: Permission denied");
+    expect(withoutPaths("입출력 오류: /tmp/x: /tmp/y: z")).toBe("입출력 오류: <path>: <path>: z");
+  });
+
+  // Documents the open non-head limit (#142 item 2): with no file head the
+  // colon rule does not run, so a path with a space and no extension keeps its
+  // tail even before `: ` (the engine's `새 미디어 제거 실패 {dir}: {err}`).
+  // Passing the work dir closes it.
+  it("leaves a spaced, extension-less path's tail on a non-head line until the host passes workDir", () => {
+    const line = "failed to read C:\\Program Files (x86)\\Maru\\stage: Access is denied.";
+    expect(withoutPaths(line)).toBe("failed to read <path> Files (x86)\\Maru\\stage: Access is denied.");
+    expect(withoutPaths(line, "C:\\Program Files (x86)\\Maru")).toBe("failed to read <work dir>\\stage: Access is denied.");
   });
 });
