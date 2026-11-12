@@ -122,19 +122,25 @@ export function isInsertionRefusal(value: unknown): value is InsertionRefusal {
 /** Extensions a staged or user path ends with; a path with spaces runs to one. */
 const PATH_END = String.raw`\.(?:hwpx|hwp|json|png|jpe?g|gif|bmp|svg|pdf|md|txt|xml|hwpt)\b`;
 /**
- * Where an absolute path can start: a drive root, or a POSIX root whose first
- * segment is followed by another `/`. A lone `/` between words (`제목 / 부제`,
- * `수입 / 지출`) or a single `/word` is user text, not a path (#93): leaving an
- * ambiguous token in place beats swallowing an anchor.
+ * Where an absolute path can start: a `file://` URL, a UNC root (`//host/`,
+ * `\\host\`), a drive root, a POSIX root whose first segment is followed by
+ * another `/`, or a single-segment POSIX file with a known extension
+ * (`/in.hwpx`). A lone `/` between words (`제목 / 부제`, `수입 / 지출`) or a
+ * bare `/word` is user text, not a path (#93): leaving an ambiguous token in
+ * place beats swallowing an anchor.
  */
-const PATH_ROOT = String.raw`(?:[A-Za-z]:[\\/]|\/(?=[^\s/"']+\/))`;
+const PATH_ROOT = String.raw`(?:file:\/\/\/?|(?<![A-Za-z]:)\/\/(?=[^\s/]+\/)|\\\\(?=[^\s\\]+\\)|[A-Za-z]:[\\/]|\/(?=[^\s/"']+\/)|\/(?=[^\s/"']+${PATH_END}))`;
 
 /**
  * Text the engine wrote, with no path in it: the given work dir first, then
- * absolute paths, POSIX or Windows. A path may hold spaces
- * (`/Users/a b/Library/x/in.hwpx`, `C:\Users\a b\x.hwpx`), so a quoted path
- * is redacted through its closing quote, one that reaches a known file
- * extension through its file name, and any other through its first space.
+ * absolute paths, POSIX or Windows. A path may hold spaces (`/Users/홍 길동/x`,
+ * `C:\Program Files (x86)\x`), so, in order:
+ * - a quoted path is redacted through its closing quote;
+ * - a path followed later on its line by `: ` is redacted up to that colon,
+ *   because the engine prints a path as `{path}: {error}` (a drive's `C:\`
+ *   has no space after its colon, so it never ends a path early);
+ * - one that reaches a known file extension, through its file name;
+ * - any other only through its first space, leaving the rest visible.
  * A replacement fires only where a path can start, so a Korean diagnostic's
  * own `블록/스타일/목록` slashes survive.
  */
@@ -142,13 +148,13 @@ export function withoutPaths(text: string, workDir?: string): string {
   const withoutWorkDir = workDir === undefined || workDir === "" ? text : text.split(workDir).join("<work dir>");
   return withoutWorkDir
     .replace(new RegExp(String.raw`(["'])${PATH_ROOT}[^"'\n]*\1`, "gu"), "$1<path>$1")
+    .replace(new RegExp(String.raw`(^|[\s(\[{:])${PATH_ROOT}[^\n"']*?(?=: )`, "gu"), "$1<path>")
     .replace(new RegExp(String.raw`(^|[\s(\[{:])${PATH_ROOT}[^\n"']*?${PATH_END}`, "gu"), "$1<path>")
     .replace(new RegExp(String.raw`(^|[\s(\[{:])${PATH_ROOT}[^\s"')\]}]*`, "gu"), "$1<path>")
-    // A path with spaces and no known extension stops at its first space
-    // above; the words after it that still hold a separator inside them
-    // (`b/c/data`, `Files\Maru`) are its tail, not prose (#93). A lone `/`,
-    // a word with no separator, and any word holding Hangul (an anchor such
-    // as `제목/부제` is user text) stay: an ambiguous token is left in place.
+    // With no `: ` after it, a path with spaces stopped at its first space
+    // above; the following words that still hold a separator inside them
+    // (`b/c/data`, `Files\Maru`) are its tail. A lone `/`, a word with no
+    // separator, and any word holding Hangul stay: an ambiguous token is left.
     .replace(/<path>(?: [^\s"'/\\\p{Script=Hangul}]+[/\\][^\s"'\p{Script=Hangul}]*)+/gu, "<path>");
 }
 
@@ -211,10 +217,19 @@ export const UNCLASSIFIED_FILE_STEP =
   "Check that the document and any uploaded image can be read, reopen the document, then apply again.";
 
 /**
- * The fixed heads of the engine's file and IO failures (anyhow context the
- * engine writes before a path): reading, parsing, opening or writing a file.
+ * The fixed heads of the engine's document and IO failures on the edit path,
+ * as agent-hwp v1.6.2 writes them (Korean under every locale):
+ * - hwpx/src/error.rs and hwp5/src/error.rs: `입출력 오류:`, `HWPX 파일이
+ *   아닙니다 (`, `XML 파싱 오류 (`, `HWP 5.0 파일이 아닙니다 (`, `압축 해제
+ *   실패 (`, `레코드 구조가 손상되었습니다:`
+ * - hwp-convert/src/image.rs:369: `이미지 읽기 실패 `
+ * - hwp-cli/src/edit_ops.rs:58: `편집 연산 입력을 읽을 수 없습니다:`
+ * - hwp-cli commands/edit/form_bindings.rs:111: `staged_native_readback 실패:`
+ * - hwp-cli commands/edit.rs:5534: `검증 재읽기 실패:`
+ * - hwp-cli commands/cat.rs:193: `JSON IR 파싱 실패 (`
  */
-export const FILE_LINE_HEAD = /^(?:failed to (?:read|parse|open|write|create|decode|load)|cannot (?:open|read|write|create)|could not (?:open|read|write)|no such (?:file|dir))\b/iu;
+export const FILE_LINE_HEAD =
+  /^(?:입출력 오류: |HWPX 파일이 아닙니다 \(|XML 파싱 오류 \(|HWP 5\.0 파일이 아닙니다 \(|압축 해제 실패 \(|레코드 구조가 손상되었습니다: |이미지 읽기 실패 |편집 연산 입력을 읽을 수 없습니다: |staged_native_readback 실패: |검증 재읽기 실패: |JSON IR 파싱 실패 \()/u;
 
 /**
  * An edit failure no classifier recognised, as both transports print it: the

@@ -151,8 +151,8 @@ describe("unclassifiedEditLine and path scrubbing (t37-a2)", () => {
     ["no extension", "Error: no such dir /var/folders/ab/T/stage", "no such dir <path>"],
   ])("redacts an absolute path: %s", (_label, stderr, reason) => {
     const line = unclassifiedEditLine(stderr);
-    // A line that held a path names a file, not a pending edit (#93).
-    expect(line).toBe(`${reason}. ${UNCLASSIFIED_FILE_STEP}`);
+    // English heads are not the engine's IO heads, so these keep the edit step.
+    expect(line).toBe(`${reason}. ${UNCLASSIFIED_EDIT_STEP}`);
     expect(line).not.toMatch(/Users|Library|AppData|folders/u);
   });
 
@@ -162,10 +162,27 @@ describe("unclassifiedEditLine and path scrubbing (t37-a2)", () => {
 });
 
 describe("engine-line display after #90 (#93)", () => {
+  const OS = ": No such file or directory (os error 2)";
   it.each([
-    ["POSIX, spaces, no extension", "failed to read /var/tmp/a b/c/data at byte 3", "failed to read <path> at byte 3"],
-    ["Windows, spaces, no extension", "cannot open C:\\Program Files\\Maru Data\\stage now", "cannot open <path> now"],
-  ])("redacts the whole path, tail included: %s", (_label, text, shown) => {
+    ["POSIX, Korean folder with a space", "/Users/홍 길동/Library/stage"],
+    ["Windows, Korean folder with a space", "C:\\Users\\홍 길동\\AppData\\Local\\stage"],
+    ["nested Korean folders with spaces", "/srv/data/결산 자료/2026 상반기/stage"],
+    ["Program Files (x86)", "C:\\Program Files (x86)\\Maru\\stage"],
+    ["OneDrive - Contoso", "C:\\Users\\a\\OneDrive - Contoso\\Documents\\stage"],
+    ["several spaces", "/var/tmp/a b c/d/data"],
+    ["Korean tail glued on", "/var/tmp/a b/결산/data"],
+  ])("redacts a path up to the engine's `: ` separator: %s", (_label, path) => {
+    expect(withoutPaths(`이미지 읽기 실패 ${path}${OS}`)).toBe(`이미지 읽기 실패 <path>${OS}`);
+  });
+
+  it.each([
+    ["POSIX, spaces, no extension, no separator", "failed to read /var/tmp/a b/c/data at byte 3", "failed to read <path> at byte 3"],
+    ["Windows, spaces, no separator", "cannot open C:\\Program Files\\Maru Data\\stage now", "cannot open <path> now"],
+    ["UNC with slashes", "cannot open //server/share/a/in.hwpx now", "cannot open <path> now"],
+    ["UNC with backslashes", "cannot open \\\\server\\share\\a\\stage now", "cannot open <path> now"],
+    ["file URL", "cannot open file:///tmp/a/b.hwpx now", "cannot open <path> now"],
+    ["single-segment file", "cannot open /in.hwpx now", "cannot open <path> now"],
+  ])("redacts a path with no `: ` after it: %s", (_label, text, shown) => {
     expect(withoutPaths(text)).toBe(shown);
   });
 
@@ -174,11 +191,13 @@ describe("engine-line display after #90 (#93)", () => {
     "제목 / 부제",
     "앵커를 찾을 수 없습니다: 제목 / 부제",
     "앵커를 찾을 수 없습니다: a /b c",
-  ])("leaves user text with a lone slash alone: %s", (text) => {
+    "앵커를 찾을 수 없습니다: a/b",
+    "앵커를 찾을 수 없습니다: https://example.com/a/b",
+  ])("leaves user text alone: %s", (text) => {
     expect(withoutPaths(text)).toBe(text);
   });
 
-  it("keeps a Hangul word after a path rather than guessing it is the path's tail", () => {
+  it("keeps a Hangul word after a path with no `: ` rather than guessing it is the tail", () => {
     expect(withoutPaths("no such dir /var/x/stage 제목/부제")).toBe("no such dir <path> 제목/부제");
   });
 
@@ -192,8 +211,20 @@ describe("engine-line display after #90 (#93)", () => {
     expect(unclassifiedEditLine("Error: 앵커를 찾을 수 없습니다: 회의록")).toBe(`앵커를 찾을 수 없습니다: 회의록. ${UNCLASSIFIED_EDIT_STEP}`);
   });
 
-  it("gives a document/IO line the file step, not the pending-edit one", () => {
-    expect(unclassifiedEditLine("Error: failed to read /tmp/w/in.hwpx at byte 3")).toBe(`failed to read <path> at byte 3. ${UNCLASSIFIED_FILE_STEP}`);
+  // Lines agent-hwp v1.6.2 writes, each from its source (see FILE_LINE_HEAD).
+  it.each([
+    ["Error: 입출력 오류: No such file or directory (os error 2)", "입출력 오류: No such file or directory (os error 2)"],
+    ["Error: HWPX 파일이 아닙니다 (ZIP 열기 실패): invalid Zip archive: Could not find EOCD", "HWPX 파일이 아닙니다 (ZIP 열기 실패): invalid Zip archive: Could not find EOCD"],
+    ["Error: XML 파싱 오류 (Contents/section0.xml): unexpected end", "XML 파싱 오류 (Contents/section0.xml): unexpected end"],
+    ["Error: HWP 5.0 파일이 아닙니다 (CFB 컨테이너 열기 실패 또는 FileHeader 없음)", "HWP 5.0 파일이 아닙니다 (CFB 컨테이너 열기 실패 또는 FileHeader 없음)"],
+    ["Error: 압축 해제 실패 (BodyText/Section0): corrupt deflate stream", "압축 해제 실패 (BodyText/Section0): corrupt deflate stream"],
+    ["Error: 레코드 구조가 손상되었습니다: tag 66 length", "레코드 구조가 손상되었습니다: tag 66 length"],
+    ["Error: 이미지 읽기 실패 /tmp/w/asset-0.png: Permission denied (os error 13)", "이미지 읽기 실패 <path>: Permission denied (os error 13)"],
+    ["Error: 편집 연산 입력을 읽을 수 없습니다: expected value at line 1 column 1", "편집 연산 입력을 읽을 수 없습니다: expected value at line 1 column 1"],
+    ["Error: staged_native_readback 실패: 게시 전 native 후보를 읽지 못했습니다", "staged_native_readback 실패: 게시 전 native 후보를 읽지 못했습니다"],
+    ["Error: 검증 재읽기 실패: /tmp/w/out.hwpx", "검증 재읽기 실패: <path>"],
+  ])("gives a real document/IO line the file step: %s", (stderr, reason) => {
+    expect(unclassifiedEditLine(stderr)).toBe(`${reason}. ${UNCLASSIFIED_FILE_STEP}`);
   });
 
   it("keys the file step on the engine's fixed head, not on a path-like anchor", () => {

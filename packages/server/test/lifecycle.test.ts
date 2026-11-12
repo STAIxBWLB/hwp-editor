@@ -518,16 +518,16 @@ describe("no leak: engine messages carry no path and no CLI output", () => {
     const { bin } = createFakeBin({
       mode: "fail",
       info: "{}",
-      editStderrLines: ["progress: /tmp/stage x/in.hwpx", "Error: failed to read /Users/a b/Library/in.hwpx at byte 3"],
+      editStderrLines: ["progress: /tmp/stage x/in.hwpx", "Error: 이미지 읽기 실패 /Users/a b/Library/in.png: Permission denied (os error 13)"],
       stdout: "chatter on stdout",
     });
     const error = await thrown(createCliEngine({ bin }).edit(DOC, []));
     expect(error.message).toBe(
-      "ahwp edit failed (exit 3): failed to read <path> at byte 3. Check that the document and any uploaded image can be read, reopen the document, then apply again.",
+      "ahwp edit failed (exit 3): 이미지 읽기 실패 <path>: Permission denied (os error 13). Check that the document and any uploaded image can be read, reopen the document, then apply again.",
     );
     expect(error.message).not.toContain("progress");
     expect(error.message).not.toContain("chatter");
-    expect(error.stderr).toContain("/Users/a b/Library/in.hwpx");
+    expect(error.stderr).toContain("/Users/a b/Library/in.png");
   }, 30_000);
 
   it("reports a missing binary without naming the path it tried", async () => {
