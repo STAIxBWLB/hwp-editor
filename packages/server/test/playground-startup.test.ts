@@ -13,9 +13,9 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
@@ -24,12 +24,31 @@ const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const SCRIPT = join(REPO_ROOT, "scripts", "playground.mjs");
 const SCRIPT_URL = pathToFileURL(SCRIPT).href;
 
+/** A variable set to undefined is removed from the child's environment. */
+type Env = Record<string, string | undefined>;
+
+/** This process's environment with the hwp-selection variables and `env` applied. */
+function childEnv(env: Env) {
+  const merged: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined) merged[key] = value;
+  }
+  merged.HWP_EDITOR_BIN = "";
+  merged.HWP_CLI = "";
+  merged.INIT_CWD = "";
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) delete merged[key];
+    else merged[key] = value;
+  }
+  return merged;
+}
+
 /** Run the script with only the given hwp-selection variables set. */
-function startup(env: Record<string, string>, cwd = REPO_ROOT) {
+function startup(env: Env, cwd = REPO_ROOT) {
   return spawnSync(process.execPath, [SCRIPT], {
     encoding: "utf8",
     cwd,
-    env: { ...process.env, HWP_EDITOR_BIN: "", HWP_CLI: "", INIT_CWD: "", ...env },
+    env: childEnv(env),
   });
 }
 
@@ -39,7 +58,7 @@ function startup(env: Record<string, string>, cwd = REPO_ROOT) {
  * reads the platform when it looks the name up, so a preload that redefines it
  * before the import drives the Windows order.
  */
-function startupAs(platform: string, env: Record<string, string>, cwd = REPO_ROOT) {
+function startupAs(platform: string, env: Env, cwd = REPO_ROOT) {
   return spawnSync(
     process.execPath,
     [
@@ -51,9 +70,26 @@ function startupAs(platform: string, env: Record<string, string>, cwd = REPO_ROO
     {
       encoding: "utf8",
       cwd,
-      env: { ...process.env, HWP_EDITOR_BIN: "", HWP_CLI: "", INIT_CWD: "", ...env },
+      env: childEnv(env),
     },
   );
+}
+
+/**
+ * The same startup with the script copied to `<dir>/scripts/playground.mjs`, so
+ * the copy's own root is `dir`: an empty POSIX PATH entry names that directory
+ * as the spawn's working directory, and a case can then plant the file `spawn`
+ * would run without writing into this repository.
+ */
+function startupIn(dir: string, env: Env) {
+  const script = join(dir, "scripts", "playground.mjs");
+  mkdirSync(dirname(script), { recursive: true });
+  writeFileSync(script, readFileSync(SCRIPT, "utf8"));
+  return spawnSync(process.execPath, [script], {
+    encoding: "utf8",
+    cwd: dir,
+    env: childEnv(env),
+  });
 }
 
 describe("playground startup failure", () => {
@@ -207,12 +243,99 @@ describe("playground startup failure", () => {
       expect(extensionless.stderr).toContain(`The playground cannot run hwp at ${join(dir, "hwp.com")} (`);
       expect(extensionless.stderr).not.toContain(`${join(dir, "hwp")} (`);
 
-      // A name that already carries an extension is tried as written, and only
-      // as written: hwp.exe is found as hwp.exe, never as hwp.exe.com.
+      // A name that already carries an extension is tried as written before
+      // the extensions are appended, so hwp.exe wins over hwp.exe.com; the
+      // append itself is the next case.
       writeFileSync(join(dir, "hwp.exe"), "not an executable\n");
       const named = startupAs("win32", { ...env, HWP_EDITOR_BIN: "hwp.exe" });
       expect(named.status).toBe(1);
       expect(named.stderr).toContain(`The playground cannot run hwp at ${join(dir, "hwp.exe")} (`);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  /**
+   * An empty PATH entry is the spawn's working directory, not an entry to drop
+   * (#113 item 2): libuv composes the bare name from it and the spawn runs with
+   * that directory as its cwd (src/unix/process.c). The script's root is its
+   * own parent directory, so the copy makes the temp directory the place the
+   * entry names without writing a candidate into this repository.
+   */
+  it.runIf(process.platform !== "win32")("treats an empty PATH entry as the spawn's working directory", () => {
+    const repo = mkdtempSync(join(tmpdir(), "hwp-playground-empty-"));
+    try {
+      const bin = join(repo, "hwp");
+      writeFileSync(bin, `#!${process.execPath}\nprocess.exit(3);\n`);
+      chmodSync(bin, 0o700);
+      const { status, stderr } = startupIn(repo, { HWP_EDITOR_BIN: "", HWP_CLI: "", PATH: "" });
+      expect(status).toBe(1);
+      // The copy's root comes from its own module URL, which is the real path:
+      // on macOS the temp directory's /var is a symlink to /private/var.
+      expect(stderr).toContain(`The playground cannot run hwp at ${join(realpathSync(repo), "hwp")} (exit status 3)`);
+      expect(stderr).not.toContain("at hwp on PATH");
+    } finally { rmSync(repo, { recursive: true, force: true }); }
+  });
+
+  /**
+   * An unset PATH is the libc default, which is what libuv searches when the
+   * child environment carries no PATH (src/unix/process.c, _PATH_DEFPATH):
+   * /usr/bin:/bin in both the macOS SDK's paths.h and glibc's. `false` proves
+   * it, because it lives in that default and fails the version probe, so the
+   * reported entry is the file spawn actually ran.
+   */
+  it.runIf(process.platform !== "win32" && existsSync("/usr/bin/false"))(
+    "searches the libc default PATH when PATH is unset",
+    () => {
+      const { status, stderr } = startup({ HWP_EDITOR_BIN: "false", HWP_CLI: "", PATH: undefined });
+      expect(status).toBe(1);
+      expect(stderr).toContain("The playground cannot run hwp at /usr/bin/false (exit status 1)");
+    },
+  );
+
+  /**
+   * The extensions are appended after a name that already carries one, so
+   * hwp.exe is also probed as hwp.exe.com (libuv path_search_walk_ext). The
+   * earlier version of this test asserted the opposite; #111's review corrected
+   * it against the source, and this case keeps the correction from regressing.
+   */
+  it("on the Windows search order, also probes hwp.exe.com for a name that has an extension", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hwp-playground-winext-"));
+    try {
+      writeFileSync(join(dir, "hwp.exe.com"), "not an executable\n");
+      const { status, stderr } = startupAs("win32", { HWP_EDITOR_BIN: "hwp.exe", HWP_CLI: "", PATH: dir });
+      expect(status).toBe(1);
+      expect(stderr).toContain(`The playground cannot run hwp at ${join(dir, "hwp.exe.com")} (`);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  /**
+   * libuv's extension test is the first dot followed by a character, so `hwp.`
+   * is extensionless: no literal try, and the appended extension is joined
+   * without a second dot, which makes it hwp.com and never hwp..com (#113 item
+   * 1).
+   */
+  it("on the Windows search order, treats hwp. as extensionless and does not double the dot", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hwp-playground-windot-"));
+    try {
+      writeFileSync(join(dir, "hwp..com"), "not an executable\n");
+      writeFileSync(join(dir, "hwp.com"), "not an executable\n");
+      const { status, stderr } = startupAs("win32", { HWP_EDITOR_BIN: "hwp.", HWP_CLI: "", PATH: dir });
+      expect(status).toBe(1);
+      expect(stderr).toContain(`The playground cannot run hwp at ${join(dir, "hwp.com")} (`);
+      expect(stderr).not.toContain(`${join(dir, "hwp..com")} (`);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  /**
+   * A leading dot is a nonempty extension by the same test, so `.hwp` is tried
+   * as written before any extension is appended (#113 item 1).
+   */
+  it("on the Windows search order, tries .hwp as written first", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hwp-playground-winlead-"));
+    try {
+      writeFileSync(join(dir, ".hwp"), "not an executable\n");
+      const { status, stderr } = startupAs("win32", { HWP_EDITOR_BIN: ".hwp", HWP_CLI: "", PATH: dir });
+      expect(status).toBe(1);
+      expect(stderr).toContain(`The playground cannot run hwp at ${join(dir, ".hwp")} (`);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

@@ -384,7 +384,11 @@ export function createTauriEngine(
 
     async edit(document, ops: EditOp[], options: EditOptions = {}) {
       if (options.assets !== undefined && options.assets.length > 0) {
-        throw new HwpEngineError("unavailable", "Image-byte uploads are unsupported by this Tauri client; use an HTTP image-upload adapter or a desktop-local image path without uploaded assets.");
+        // Only the bytes are refused: the op channel carries an insert-image
+        // path and the sidecar hands the ops to `hwp edit --ops` unchanged, so
+        // an API caller does have a route (#113 item 4). The app UI does not,
+        // which is why the word-processor step lives in image.unsupported.
+        throw new HwpEngineError("unavailable", "Image-byte uploads are unsupported by this Tauri client; an API caller can send an insert-image op with a local path instead, and a caller holding only bytes needs the HTTP client with an engine that advertises image-asset uploads (hwp-cli 1.4.0 or newer).");
       }
       const caps = await capabilities();
       const channel = caps.editOps === "v1"
