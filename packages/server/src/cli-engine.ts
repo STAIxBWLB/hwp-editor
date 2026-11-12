@@ -1313,7 +1313,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
     const cached = inspections.get(key);
     if (cached !== undefined) return cached;
     const signal = call?.signal;
-    let statsTimedOut = false;
+    let infoTimedOut = false;
     const inspection = await withWorkDir(async (dir) => {
       const file = await stage(dir, document);
       const cat = await runCliOk(bin, ["cat", file, "--format", "markdown", "--with-segments", "--segments", "v2"], timeoutMs, opts.locale, signal);
@@ -1345,26 +1345,34 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         // plain probe: the read keeps every field it had, and only the count is
         // missing.
         //
-        // One deadline covers both probes (#130): the fallback gets only the
-        // time the stats call left, and none at all once it is spent, so a
-        // read never waits two timeouts. A stats call that timed out says
-        // nothing about the document, so its inspection is not cached
-        // (statsTimedOut); a definitive failure (non-zero exit, bad JSON) would
-        // fail the same way next time and is cached as before.
+        // Every read shares one deadline across both probes (#130): the
+        // fallback gets only the time the stats call left, and none at all
+        // once it is spent, so a read never waits two timeouts. An inspection
+        // whose info came back empty for want of time says nothing about the
+        // document, so it is not cached (infoTimedOut): a timed-out stats or
+        // fallback probe, or a fallback skipped for lack of time. A definitive
+        // failure (non-zero exit, bad JSON) would fail the same way next time
+        // and is cached as before.
         (async () => {
-          const deadline = timeoutMs === undefined ? undefined : Date.now() + timeoutMs;
-          let stats: unknown = null;
-          try {
-            const result = await runCliOk(bin, ["info", file, "--json", "--body-stats"], timeoutMs, opts.locale, signal);
-            stats = JSON.parse(result.stdout) as unknown;
-          } catch (error) {
-            if (error instanceof HwpCliError && error.reason === "cancelled") throw error;
-            if (error instanceof HwpCliError && error.reason === "timeout") statsTimedOut = true;
-          }
+          const deadline = Date.now() + timeoutMs;
+          const probe = async (args: string[], budget: number): Promise<unknown> => {
+            try {
+              const result = await runCliOk(bin, args, budget, opts.locale, signal);
+              return JSON.parse(result.stdout) as unknown;
+            } catch (error) {
+              if (error instanceof HwpCliError && error.reason === "cancelled") throw error;
+              if (error instanceof HwpCliError && error.reason === "timeout") infoTimedOut = true;
+              return null;
+            }
+          };
+          const stats = await probe(["info", file, "--json", "--body-stats"], timeoutMs);
           if (stats !== null) return stats;
-          const left = deadline === undefined ? undefined : deadline - Date.now();
-          if (left !== undefined && left <= 0) return null;
-          return tryJson(bin, ["info", file, "--json"], left, opts.locale, signal);
+          // A caller that left while the stats probe was being killed is gone:
+          // answer as cancelled, as the probe itself would have.
+          if (signal?.aborted === true) throw new HwpCliError("cancelled", "ahwp info was cancelled by the caller");
+          const left = deadline - Date.now();
+          if (left <= 0) { infoTimedOut = true; return null; }
+          return probe(["info", file, "--json"], left);
         })(),
       ]);
       const bodyTables = bodyTableCount(info);
@@ -1377,13 +1385,14 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         capabilities: documentEditability(info),
       } satisfies DocumentInspection;
     });
-    if (!statsTimedOut && inspections.size >= 64) {
+    if (!infoTimedOut && inspections.size >= 64) {
       const oldest = inspections.keys().next().value;
       if (oldest !== undefined) inspections.delete(oldest);
     }
-    // A timed-out stats probe leaves the inspection count-less for a reason
-    // the next read may not share, so that read probes again (#130).
-    if (statsTimedOut) return inspection;
+    // An info probe that ran out of time leaves the inspection info-less for
+    // a reason the next read may not share (no count, and an editability read
+    // from nothing), so that read probes again (#130).
+    if (infoTimedOut) return inspection;
     inspections.set(key, inspection);
     return inspection;
   }
