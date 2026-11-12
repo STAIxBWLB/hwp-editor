@@ -34,10 +34,13 @@ function runnable(candidate){
 // not one value across POSIX: the platform picks the spawn path, and the spawn
 // path picks the default. macOS resolves the name itself and falls back to
 // _PATH_DEFPATH, /usr/bin:/bin (src/unix/process.c uv__spawn_resolve_and_spawn,
-// the value the SDK's paths.h:65 defines). Linux never takes that path: it
-// forks and calls glibc execvp (src/unix/process.c:413), whose unset-PATH
-// default is confstr CS_PATH, /bin:/usr/bin (glibc posix/execvpe.c). The order
-// differs, so neither platform's header settles the other's.
+// the value the SDK's paths.h:65 defines). The other entry below is glibc's, not
+// POSIX's: a non-darwin host forks and calls execvp (src/unix/process.c:413),
+// whose unset-PATH default is confstr CS_PATH, /bin:/usr/bin (glibc
+// posix/execvpe.c). musl and the BSDs are not glibc and may resolve an unset
+// PATH their own way, so this branch is darwin versus every other platform
+// rather than darwin versus Linux. The order differs, so neither platform's
+// header settles the other's.
 const DEFAULT_PATH=process.platform==="darwin"?"/usr/bin:/bin":"/bin:/usr/bin";
 // libuv's Windows extension rule (src/win/process.c search_path): the name has
 // an extension when its first dot is followed by a character, so `hwp.` counts

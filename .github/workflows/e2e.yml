@@ -5,13 +5,14 @@ name: e2e (non-required)
 # hold this repository's secrets. It references none.
 #
 # #126: this workflow runs no job for a docs-only pull request. `paths-ignore`
-# skips the run only when EVERY changed path matches; it is available here
-# because this workflow is advisory and nothing depends on its result. `*.md`
-# does not cross a slash, so packages/*/README.md still runs it. This copy is
-# wider than ci.yml's `changes` job by exactly the two cases that job fails
-# closed on - a move into docs/ and a RELEASING.md-only change - and both are
-# safe here because this job reads neither: REL-04, which reads the file, runs
-# in ci.yml's build-test.
+# skips the run only when EVERY changed path matches, and `*.md` does not cross
+# a slash, so packages/*/README.md still runs it. This trigger is not the same
+# computation as ci.yml's `changes` classifier and is not meant to be: GitHub
+# applies its own filter, with its own diff-size limit and whatever head it reads
+# at that moment, so a pull request this workflow skips can be one ci.yml runs in
+# full. Nothing is lost by that, because this workflow is advisory - the only
+# required check is `ci-ok` - and ci.yml answers for itself, running every gating
+# job whenever it cannot prove the change is docs-only.
 on:
   pull_request:
     paths-ignore:
@@ -48,10 +49,11 @@ jobs:
   # this one. It is also excluded from ci-ok, the required-check aggregate.
   # Keep this job in its separate advisory workflow, outside ci-ok needs.
   #
-  # Settings half: `main` carries no branch protection and no rulesets today.
-  # When a release workflow adds one, the check name produced by this workflow
-  # must stay out of it - a required e2e would put fork-supplied code and a
-  # network-downloaded binary on the release path.
+  # Settings half: the `main: require ci-ok` ruleset is what gates a merge, and
+  # its only required check is `ci-ok` (one required_status_checks context). The
+  # check name produced by this workflow must stay out of that list - a required
+  # e2e would put fork-supplied code and a network-downloaded binary on the
+  # release path.
   #
   # A red run here is to be TRIAGED, NOT TOLERATED. Failures stay red and emit
   # an advisory warning and step summary. This is where hwp-cli contract drift
