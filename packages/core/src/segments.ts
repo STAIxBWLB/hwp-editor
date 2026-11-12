@@ -172,15 +172,18 @@ function isNumberArray(v: unknown): v is number[] {
 }
 
 /**
- * A v2 nesting path: an array of non-negative integers.
+ * A v2 nesting path: a non-empty array of non-negative integers.
  *
- * Stricter than {@link isNumberArray}, which accepts `2.5` and `-1`. The
- * projection already holds the wire's `path.indices` to this rule; a decoded
- * envelope is held to it here, because `segmentPath` and the run addressing
- * that read these indices cannot do anything else with them (#147).
+ * Stricter than {@link isNumberArray}, which accepts `2.5`, `-1` and `[]`. The
+ * projection already holds the wire's `path.indices` to this rule, emptiness
+ * included (`p.indices.length === 0` is refused with the rest of the path); a
+ * decoded envelope is held to it here, because `segmentPath` and the run
+ * addressing that read these indices cannot do anything else with them (#147,
+ * #150).
  */
 function isIndexPath(v: unknown): v is number[] {
-  return Array.isArray(v) && v.every((index) => typeof index === "number" && Number.isInteger(index) && index >= 0);
+  return Array.isArray(v) && v.length > 0 &&
+    v.every((index) => typeof index === "number" && Number.isInteger(index) && index >= 0);
 }
 
 /** Validate one wire segment and project it to the published shape. */
@@ -448,7 +451,7 @@ export function validateCatEnvelope(raw: unknown): CatEnvelope {
     const indices = (segment as { indices?: unknown }).indices;
     return indices === undefined || isIndexPath(indices);
   })) {
-    throw new Error("segments envelope: segment indices is not an array of non-negative integers; upgrade the host adapter to project valid segment-envelope-v2 nesting paths, then reload.");
+    throw new Error("segments envelope: segment indices is not a non-empty array of non-negative integers; upgrade the host adapter to project valid segment-envelope-v2 nesting paths, then reload.");
   }
   if (!segments.every((segment) => {
     const { section, para } = segment as { section?: unknown; para?: unknown };
@@ -456,6 +459,18 @@ export function validateCatEnvelope(raw: unknown): CatEnvelope {
       (section as number) >= 0 && (para as number) >= 0;
   })) {
     throw new Error("segments envelope: segment section or para is not a non-negative integer; upgrade the host adapter to project valid segment-envelope-v2 locations, then reload.");
+  }
+  // `para` is the segment's top-level paragraph, which is the first index of a
+  // v2 path and nothing else: the projection derives it that way (`para:
+  // p.indices[0]`), so a decoded envelope where the two disagree names a
+  // location two readers would resolve differently. Checked after the two
+  // refusals above, because it reads both. Skipped where `indices` is absent,
+  // since an older host-projected envelope publishes `para` alone (#150).
+  if (!segments.every((segment) => {
+    const { indices, para } = segment as { indices?: number[]; para?: number };
+    return indices === undefined || para === indices[0];
+  })) {
+    throw new Error("segments envelope: segment para disagrees with its nesting path; upgrade the host adapter to project valid segment-envelope-v2 locations, then reload.");
   }
   if (!segments.every((segment) => {
     const { id } = segment as { id?: unknown };

@@ -1309,7 +1309,7 @@ describe("#58 item 19d: a read result this editor cannot render", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain(en["error.prefix.load"]);
     expect(alert.textContent).toContain(sentenceLead(en));
-    expect(alert.textContent).toContain("segment indices is not an array of non-negative integers");
+    expect(alert.textContent).toContain("segment indices is not a non-empty array of non-negative integers");
     expect(alert.textContent).not.toContain("upgrade the host adapter");
     // Nothing reached render: no page was drawn over a segment whose nesting
     // path cannot be walked.

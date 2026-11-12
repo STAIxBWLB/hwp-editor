@@ -132,13 +132,16 @@ function cellEnvelope(): CatEnvelope {
   return {
     markdown: `body\n\n${table}\n\n`,
     segments: [
-      { id: "para-body", indices: [1], start: 0, end: 4, kind: "para", section: 0, para: 0 },
-      { id: "run-body", indices: [1, 0], start: 0, end: 4, kind: "run", section: 0, para: 0, directChar: runChar() },
-      { id: "para-table", indices: [2], start: tableStart, end: tableStart + table.length, kind: "para", section: 0, para: 1 },
-      { id: "table", indices: [2, 0], start: tableStart, end: tableStart + table.length, kind: "table", section: 0, para: 1 },
-      { id: "cell", indices: [2, 0, 0], start: cellStart, end: cellStart + 2, kind: "cell", section: 0, para: 1 },
-      { id: "para-cell", indices: [2, 0, 0, 0], start: cellStart, end: cellStart + 2, kind: "para", section: 0, para: 1 },
-      { id: "run-cell", indices: [2, 0, 0, 0, 0], start: cellStart, end: cellStart + 2, kind: "run", section: 0, para: 1, directChar: runChar() },
+      // `para` is the segment's top-level paragraph, which is the first index of
+      // its path; the projection derives it that way and `validateCatEnvelope`
+      // refuses a published pair that disagrees (#150).
+      { id: "para-body", indices: [1], start: 0, end: 4, kind: "para", section: 0, para: 1 },
+      { id: "run-body", indices: [1, 0], start: 0, end: 4, kind: "run", section: 0, para: 1, directChar: runChar() },
+      { id: "para-table", indices: [2], start: tableStart, end: tableStart + table.length, kind: "para", section: 0, para: 2 },
+      { id: "table", indices: [2, 0], start: tableStart, end: tableStart + table.length, kind: "table", section: 0, para: 2 },
+      { id: "cell", indices: [2, 0, 0], start: cellStart, end: cellStart + 2, kind: "cell", section: 0, para: 2 },
+      { id: "para-cell", indices: [2, 0, 0, 0], start: cellStart, end: cellStart + 2, kind: "para", section: 0, para: 2 },
+      { id: "run-cell", indices: [2, 0, 0, 0, 0], start: cellStart, end: cellStart + 2, kind: "run", section: 0, para: 2, directChar: runChar() },
     ],
   };
 }
