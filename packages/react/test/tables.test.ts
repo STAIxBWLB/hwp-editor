@@ -10,7 +10,7 @@
  */
 import { describe, expect, it } from "vitest";
 import type { CatEnvelope, Segment } from "@hwp-editor/core";
-import { findTables, parseMarkdownTable, tableAtRef, tableRows } from "../src/tables.js";
+import { findTables, hostsTable, parseMarkdownTable, tableAtRef, tableRows } from "../src/tables.js";
 
 /** An envelope holding one table block as its only segment. */
 function envelopeWithTable(block: string): CatEnvelope {
@@ -141,5 +141,66 @@ describe("table index matches the engine's count (#95)", () => {
       { kind: "table", text: "| a |\n| --- |\n| 1 |" },
     ]);
     expect(findTables(envelope).map((table) => table.tableIndex)).toEqual([0, 1]);
+  });
+});
+
+describe("two tables under one top-level paragraph (#97 item 2d)", () => {
+  // The engine numbers a table's host paragraph by `path.indices[0]`, so a table
+  // nested in a cell answers the same {section, para} as the table that holds it.
+  // The published segment ids are what tells them apart.
+  const markdown = "AAAABBBBCCCC";
+  const host: Segment = { id: "host", start: 0, end: 12, kind: "table", section: 0, para: 3 };
+  const nested: Segment = { id: "nested", start: 4, end: 8, kind: "table", section: 0, para: 3 };
+  const cellPara: Segment = { id: "cell-para", start: 4, end: 8, kind: "para", section: 0, para: 3, indices: [3, 0, 0, 0] };
+  const envelope: CatEnvelope = { markdown, segments: [host, nested, cellPara] };
+
+  it("resolves the table a selection names by its segment id", () => {
+    expect(tableAtRef(envelope, { section: 0, para: 3, id: "nested" })?.tableIndex).toBe(1);
+    expect(tableAtRef(envelope, { section: 0, para: 3, id: "host" })?.tableIndex).toBe(0);
+  });
+
+  it("trusts the id over a coordinate that names no table", () => {
+    // The isolating case for the id lookup: a selection kept across a re-read
+    // can carry a paragraph number the new envelope no longer numbers at all,
+    // and the coordinate alone finds nothing. Without the id first, this ref
+    // would fall back to the paragraph's first table.
+    expect(tableAtRef(envelope, { section: 0, para: 9, id: "nested" })?.tableIndex).toBe(1);
+  });
+
+  it("resolves a ref inside a table to the innermost table holding it", () => {
+    // The cell's own paragraph sits inside both spans, and the greater start is
+    // the closer one, so the grid is the table the reader clicked into.
+    expect(tableAtRef(envelope, { section: 0, para: 3, id: "cell-para" })?.tableIndex).toBe(1);
+  });
+
+  it("keeps the paragraph's first table for a ref that identifies neither", () => {
+    // Nothing tells the two apart, and the grid the panel draws is the table the
+    // op addresses, so a hand-built ref without an id gets the first one.
+    expect(tableAtRef(envelope, { section: 0, para: 3 })?.tableIndex).toBe(0);
+  });
+});
+
+describe("the table tab follows the published segment (#97 item 2c)", () => {
+  const table: Segment = { id: "t", start: 0, end: 8, kind: "table", section: 0, para: 1 };
+  const host: Segment = { id: "h", start: 0, end: 8, kind: "para", section: 0, para: 1, indices: [1] };
+  const mention: Segment = { id: "m", start: 9, end: 22, kind: "para", section: 0, para: 2, indices: [2] };
+  const envelope: CatEnvelope = { markdown: "| a |\n| ---------- |\n표\n", segments: [host, table, mention] };
+
+  it("counts the paragraph a table occupies", () => {
+    expect(hostsTable(envelope, host)).toBe(true);
+    expect(hostsTable(envelope, table)).toBe(true);
+  });
+
+  it("leaves a paragraph that only mentions <table> in the paragraph tab", () => {
+    expect(hostsTable(envelope, mention)).toBe(false);
+  });
+
+  it("leaves a paragraph inside a cell in the paragraph tab", () => {
+    expect(hostsTable(envelope, { ...host, id: "c", start: 2, indices: [1, 0, 0, 0] })).toBe(false);
+    // A cell's first paragraph can start where the table does, so the offset
+    // alone puts it in the table tab; the nesting path is what rules it out.
+    expect(hostsTable(envelope, { ...host, id: "c0", start: 0, indices: [1, 0, 0, 0] })).toBe(false);
+    // A cell shares the coordinate too, and it is not the table's paragraph.
+    expect(hostsTable(envelope, { ...host, id: "cell", kind: "cell", indices: [1, 0, 0] })).toBe(false);
   });
 });

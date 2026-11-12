@@ -58,6 +58,7 @@ export {
   parseCatEnvelope,
   hasDirectFormatting,
   projectShapeAttrs,
+  publishedTableCount,
   runCoverage,
   segmentAtOffset,
   segmentAtRef,
@@ -65,6 +66,7 @@ export {
   segmentText,
   shownSpan,
   sniffDocumentFormat,
+  tableCountMismatch,
   validateProjectedMetadata,
 } from "./segments.js";
 export type {

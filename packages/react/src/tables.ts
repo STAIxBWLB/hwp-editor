@@ -3,13 +3,17 @@
  *
  * The CLI emits one `table` segment per table control, covering the whole
  * markdown that table projects to: a GFM pipe table, or the HTML `<table>` a
- * merged cell or a block-content cell forces. Both are published, so a table's
- * index is its position among the `table` segments, which is the order
- * hwp-cli's own nth-table walk counts (`walk_nth_table_root` visits every
- * table control in document order). Table indices are 0-based in document
- * order, matching the `hwp edit --set-cell "table:row:col=value"` coordinate
- * grammar; within a table, row 0 is the header row and the `---` separator row
- * is skipped.
+ * merged cell or a block-content cell forces. A table's index is its position
+ * among the `table` segments, which is the order hwp-cli's own nth-table walk
+ * (`walk_nth_table_root`) assigns - with one gap: that walk also counts a table
+ * inside a footnote, a header, a footer or a hidden comment, and the envelope
+ * publishes no segment for any of those. One such table shifts every later
+ * published index onto another table, so the panel must not trust the count on
+ * its own. The engine's own count arrives as `bodyTables`, and the table panel
+ * refuses index-addressed ops when the two disagree (#97 item 1). Table indices
+ * are 0-based in document order, matching the `hwp edit --set-cell
+ * "table:row:col=value"` coordinate grammar; within a table, row 0 is the
+ * header row and the `---` separator row is skipped.
  *
  * The row and column numbers this module produces are the ones every table op
  * addresses, so the grid the panel shows and the coordinate it queues come
@@ -26,8 +30,7 @@ export interface TableModel {
   segment: Segment;
   /**
    * Cell grid. Row 0 is the header row; the markdown separator row is not
-   * included. Merged cells cannot be represented in a pipe table, so spans are
-   * flattened to their anchor cell text.
+   * included.
    *
    * `null` when the engine projected this table as HTML instead (a merged cell,
    * or a cell holding block content). Such a table has no grid to draw here but
@@ -125,17 +128,6 @@ export function isTableSlice(slice: string): boolean {
   return parseMarkdownTable(slice) !== null;
 }
 
-/**
- * True when a segment's slice carries the engine's HTML projection of a table.
- *
- * `hwp cat` writes `<table>` in place of a pipe table as soon as one cell is
- * merged or holds block content, so this is the projection a table the panel
- * cannot draw arrives in. It is still a table the engine counts (#95).
- */
-export function isHtmlTableSlice(slice: string): boolean {
-  return /<table[\s>]/.test(slice);
-}
-
 /** Parse a GFM table slice into a cell grid; null when not a table. */
 export function parseMarkdownTable(slice: string): string[][] | null {
   const lines = slice
@@ -170,13 +162,72 @@ export function findTables(envelope: CatEnvelope): TableModel[] {
   return tables;
 }
 
-/** The table whose segment sits at the given source coordinate, if any. */
+/**
+ * Whether this segment is a table's own paragraph: the paragraph a reader
+ * selects when they click the table itself.
+ *
+ * Such a paragraph and its `table` segment start at the same offset, because
+ * the table is that paragraph's whole content. A paragraph inside a cell (or in
+ * a cell of a nested table) answers the same `{section, para}` yet starts
+ * later, inside the table's span, so selecting text in a cell keeps the
+ * paragraph tab. Deciding by the published segment is what keeps a paragraph
+ * that merely mentions `<table>` out of the table tab (#97 item 2c).
+ */
+export function hostsTable(envelope: CatEnvelope, segment: Segment): boolean {
+  if (segment.kind === "table") return true;
+  // Only a top-level paragraph can be a table's own paragraph. A cell, a
+  // paragraph inside one and a run all answer the same `{section, para}`, and a
+  // cell can even start where the table does, so the nesting path - published
+  // as `indices`, whose length 1 means "top-level paragraph" - is what rules
+  // them out.
+  if (segment.kind !== "para") return false;
+  if (segment.indices !== undefined && segment.indices.length > 1) return false;
+  return envelope.segments.some(
+    (candidate) =>
+      candidate.kind === "table" &&
+      candidate.section === segment.section &&
+      candidate.para === segment.para &&
+      candidate.start === segment.start,
+  );
+}
+
+/**
+ * The table a source coordinate names, if any.
+ *
+ * The segment id is the precise answer, and it is what a selection carries: the
+ * engine numbers a table's host paragraph by the top-level paragraph, so two
+ * tables under one paragraph (a table nested in a cell, a text-box table) answer
+ * the same `{section, para}` (#97 item 2d). The coordinate is the fallback for a
+ * ref without an id, and even then a paragraph holding several tables resolves
+ * to the innermost one whose span encloses the ref's own segment, so the grid
+ * the panel shows and the coordinate it queues still name the same table.
+ */
 export function tableAtRef(
   envelope: CatEnvelope,
   ref: SegmentRef,
 ): TableModel | undefined {
-  return findTables(envelope).find(
+  const tables = findTables(envelope);
+  if (ref.id !== undefined) {
+    const byId = tables.find((table) => table.segment.id === ref.id);
+    if (byId !== undefined) return byId;
+  }
+  const candidates = tables.filter(
     (table) =>
       table.segment.section === ref.section && table.segment.para === ref.para,
   );
+  if (candidates.length <= 1) return candidates[0];
+  const own =
+    ref.id === undefined
+      ? undefined
+      : envelope.segments.find((segment) => segment.id === ref.id);
+  if (own === undefined) return candidates[0];
+  // A table nested in a cell starts after its host's segment, so the greatest
+  // start among the enclosing spans is the closest one.
+  const enclosing = candidates
+    .filter(
+      (table) =>
+        table.segment.start <= own.start && own.end <= table.segment.end,
+    )
+    .sort((a, b) => b.segment.start - a.segment.start);
+  return enclosing[0] ?? candidates[0];
 }

@@ -241,7 +241,7 @@ export interface DocumentInspection {
   bookmarks: unknown;
   /** Raw `hwp slots --json` payload (object), null on failure. */
   slots: unknown;
-  /** Raw `hwp info --json` payload, null on failure. */
+  /** Raw `hwp info --json --body-stats` payload, or the plain `info --json` one when the stats probe failed; null on both failing. */
   info: unknown;
   /** Per-document editability derived from `info` (see below). */
   capabilities: { editable: boolean; reason?: string };
@@ -653,6 +653,24 @@ const PROTECTED_ATTRIBUTES: Readonly<Record<string, string>> = {
  * version on purpose: they reach the host as `capabilities.reason`, where a
  * version number is a maintenance liability with no reader benefit.
  */
+/**
+ * `body.tables` from `hwp info --json --body-stats`, when the engine published a
+ * count this client can read (#97).
+ *
+ * This is the engine's own table count, taken from the walk `hwp edit`
+ * addresses, and never a count of the envelope's `table` segments: the two are
+ * compared precisely because they can differ.
+ */
+export function bodyTableCount(info: unknown): number | undefined {
+  if (typeof info !== "object" || info === null) return undefined;
+  const body = (info as { body?: unknown }).body;
+  if (typeof body !== "object" || body === null) return undefined;
+  const tables = (body as { tables?: unknown }).tables;
+  return typeof tables === "number" && Number.isInteger(tables) && tables >= 0
+    ? tables
+    : undefined;
+}
+
 export function documentEditability(info: unknown): { editable: boolean; reason?: string } {
   if (typeof info !== "object" || info === null) return { editable: true };
   const record = info as Record<string, unknown>;
@@ -1142,10 +1160,21 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         tryJson(bin, ["fields", file, "--json"], timeoutMs, opts.locale, signal),
         tryJson(bin, ["bookmarks", file, "--json"], timeoutMs, opts.locale, signal),
         tryJson(bin, ["slots", file, "--json"], timeoutMs, opts.locale, signal),
-        tryJson(bin, ["info", file, "--json"], timeoutMs, opts.locale, signal),
+        // `--body-stats` is what makes info walk the body and publish
+        // `body.tables`, the count the table-index guard reads (#97). The flag
+        // is opt-in upstream because plain info still answers for a document
+        // whose body does not parse, so a failed stats call falls back to the
+        // plain probe: the read keeps every field it had, and only the count is
+        // missing.
+        (async () => {
+          const stats = await tryJson(bin, ["info", file, "--json", "--body-stats"], timeoutMs, opts.locale, signal);
+          if (stats !== null) return stats;
+          return tryJson(bin, ["info", file, "--json"], timeoutMs, opts.locale, signal);
+        })(),
       ]);
+      const bodyTables = bodyTableCount(info);
       return {
-        envelope,
+        envelope: bodyTables === undefined ? envelope : { ...envelope, bodyTables },
         fields,
         bookmarks,
         slots,
