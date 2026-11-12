@@ -622,7 +622,7 @@ async function tryJson(
  * refusals, states the certificate/DRM/signature branches are unverified
  * against a genuine protected file, and no release through 0.16.1 has since
  * verified them - 0.11.0 added password-protected read and left those three
- * on "their existing typed refusals". So the marker table behind
+ * on "their existing typed refusals". So the refusal table behind
  * `protectedReasonFromStderr` (the stderr backstop, shared from core) is what
  * actually carries the requirement.
  */
@@ -701,7 +701,7 @@ export function documentEditability(info: unknown): { editable: boolean; reason?
 
 /**
  * The stderr backstop for this transport, kept under its stderr-specific
- * name because that is what this transport actually reads. The marker table
+ * name because that is what this transport actually reads. The refusal table
  * itself lives in `@hwp-editor/core`: hwp-cli's Korean diagnostics are its
  * vocabulary, not the CLI server's, and the Tauri bridge needs the same
  * table for the same reason (a second copy would drift the moment hwp-cli
@@ -738,7 +738,7 @@ export function cliExitHead(message: string): string | null {
 
 /**
  * Rethrow a generic CLI failure as `protected` when its stderr carries a
- * protection marker. Applied at every call site that runs a command this
+ * protection refusal. Applied at every call site that runs a command this
  * transport refuses on a protected document, never inside `runCliOk`: that is
  * what keeps `read` and `render` succeeding on protected documents hwp-cli
  * can still read (D-11).

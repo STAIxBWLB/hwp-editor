@@ -257,8 +257,9 @@ const PROTECTABLE_COMMANDS: ReadonlySet<string> = new Set([
  * it, exactly as ERR-03 has the CLI server do in `rethrowProtected`. The
  * Tauri bridge is that boundary on this transport.
  *
- * Only `failed` is upgraded. A `timeout` or `unavailable` that happens to
- * mention a marker is not a protection refusal.
+ * Only `failed` is upgraded. A `timeout` or `unavailable` whose text happens
+ * to carry one of the engine's protection lines is still a timeout or an
+ * unavailable engine.
  */
 function protectedReasonFor(
   cmd: string,

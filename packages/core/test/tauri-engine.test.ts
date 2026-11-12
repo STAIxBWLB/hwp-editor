@@ -364,6 +364,20 @@ describe("createTauriEngine errors", () => {
 });
 
 /**
+ * The engine's protection sentences, transcribed from
+ * `crates/hwp5/src/error.rs`. The backstop matches these whole lines and
+ * nothing shorter (#112), so the fixtures here are the real text.
+ */
+const CERT_ENCRYPTED =
+  "공인 인증서로 암호화된 문서는 지원하지 않습니다. 한글에서 인증서 암호화를 해제한 뒤 다시 저장하세요.";
+const CERT_DRM =
+  "공인 인증서 DRM으로 보호된 문서는 지원하지 않습니다. 한글에서 인증서 DRM 보안을 해제한 뒤 다시 저장하세요.";
+const DRM = "DRM으로 보호된 문서는 지원하지 않습니다. 한글에서 DRM 보안을 해제한 뒤 다시 저장하세요.";
+const SIGNED = "서명된 문서는 지원하지 않습니다. 한글에서 서명을 제거한 뒤 다시 저장하세요.";
+const DISTRIBUTION =
+  "배포용 문서(ViewText)의 원본 구조는 지원하지 않습니다. hwp cat/convert/render는 배포용 문서를 읽을 수 있습니다";
+
+/**
  * Regression: the Tauri transport used to lose `protected` entirely.
  *
  * maru's vocabulary (dev/maru/src-tauri/src/hwped.rs) has no
@@ -381,18 +395,25 @@ describe("createTauriEngine protection backstop", () => {
     : Promise.reject(detail);
 
   const MARKER_CASES: readonly (readonly [string, string, string])[] = [
-    ["암호화된 문서", "encrypted document", PROTECTED_NEXT_STEP],
-    ["DRM", "DRM-protected document", PROTECTED_NEXT_STEP],
-    ["서명된 문서", "signed document", PROTECTED_NEXT_STEP],
-    ["배포용 문서", "distribution (배포용) document", DISTRIBUTION_NEXT_STEP],
+    [CERT_ENCRYPTED, "encrypted document", PROTECTED_NEXT_STEP],
+    [CERT_DRM, "DRM-protected document", PROTECTED_NEXT_STEP],
+    [DRM, "DRM-protected document", PROTECTED_NEXT_STEP],
+    [SIGNED, "signed document", PROTECTED_NEXT_STEP],
+    [DISTRIBUTION, "distribution (배포용) document", DISTRIBUTION_NEXT_STEP],
   ];
+
+  /**
+   * maru's rejection: its own `hwp_failed:` head, then hwp-cli's stderr
+   * verbatim (dev/maru/src-tauri/src/hwped.rs run_hwp_ok), which is the
+   * `Error:` line followed by anyhow's `Caused by:` copy (#112).
+   */
+  const bridgeFailure = (command: string, sentence: string): string =>
+    `hwp_failed: hwp ${command} failed (exit 1): Error: ${sentence}\n\nCaused by:\n    ${sentence}`;
 
   it.each(MARKER_CASES)(
     "upgrades an edit refusal carrying %j to protected",
-    async (marker, kind, step) => {
-      const engine = createTauriEngine(
-        rejectWith(`hwp_failed: hwp exited with status 1: ${marker}는 편집할 수 없습니다`),
-      );
+    async (sentence, kind, step) => {
+      const engine = createTauriEngine(rejectWith(bridgeFailure("edit", sentence)));
       const err = (await engine
         .edit(doc, [{ kind: "replace", find: "가", replace: "나" }])
         .then(() => null, (e: unknown) => e)) as HwpEngineError;
@@ -404,9 +425,7 @@ describe("createTauriEngine protection backstop", () => {
   );
 
   it("upgrades a compose refusal the same way", async () => {
-    const engine = createTauriEngine(
-      rejectWith("hwp_failed: 배포용 문서에는 쓸 수 없습니다"),
-    );
+    const engine = createTauriEngine(rejectWith(bridgeFailure("compose", DISTRIBUTION)));
     const err = (await engine
       .compose({ version: "2.0", document: { sections: [] } } as never, "out.hwpx")
       .then(() => null, (e: unknown) => e)) as HwpEngineError;
@@ -418,22 +437,36 @@ describe("createTauriEngine protection backstop", () => {
     );
   });
 
+  // #112: the caller's anchor is echoed into a warning and into the unapplied
+  // list, so a marker found anywhere in the detail used to report the edit as
+  // a protected document.
+  it("keeps a failed edit's own reading when the detail echoes the caller's anchor", async () => {
+    const engine = createTauriEngine(
+      rejectWith(
+        'hwp_failed: hwp edit failed (exit 3): 경고: 앵커 "DRM"를 찾지 못했습니다\n' +
+          'Error: 적용되지 않은 편집 요청이 있습니다: replace "DRM" → "x" (--allow-partial로 일치한 값만 적용할 수 있습니다)',
+      ),
+    );
+    const err = (await engine
+      .edit(doc, [{ kind: "replace", find: "DRM", replace: "x" }])
+      .then(() => null, (e: unknown) => e)) as HwpEngineError;
+    expect(err.code).toBe("failed");
+  });
+
   // D-11, mirrored from the CLI server: hwp-cli can still READ documents it
   // refuses to edit, so a read/render failure is a real failure. Relabelling
   // it protected would send the user to the wrong remedy.
-  it("leaves a read refusal alone even when it carries a marker", async () => {
-    const engine = createTauriEngine(
-      rejectWith("hwp_failed: 배포용 문서 처리 중 오류"),
-    );
+  it("leaves a read refusal alone even when it carries the engine's protection line", async () => {
+    const engine = createTauriEngine(rejectWith(bridgeFailure("cat", DISTRIBUTION)));
     const err = (await engine.read(doc).then(() => null, (e: unknown) => e)) as HwpEngineError;
     expect(err.code).toBe("failed");
   });
 
-  // Only `failed` is upgraded: a timeout that happens to name a marker is a
-  // timeout, not a protection refusal.
+  // Only `failed` is upgraded: a timeout that happens to name a protection
+  // refusal is a timeout.
   it("does not upgrade a non-failed code that mentions a marker", async () => {
     const engine = createTauriEngine(
-      rejectWith("hwp_timeout: 배포용 문서 편집이 60000ms 후 시간 초과"),
+      rejectWith(`hwp_timeout: hwp edit took 60000ms: Error: ${DISTRIBUTION}`),
     );
     const err = (await engine
       .edit(doc, [{ kind: "replace", find: "가", replace: "나" }])

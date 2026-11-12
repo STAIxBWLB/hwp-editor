@@ -53,6 +53,12 @@ export interface FakeBinOptions {
    * Korean protected markers through a command other than `edit` (#105 item 2).
    */
   templateStderr?: string;
+  /**
+   * The same stderr as `templateStderr`, one line each. hwp-cli prints a note
+   * before its `Error:` line for a distribution document, and `templateStderr`
+   * is written with `printf '%s'`, which keeps no newline (#112).
+   */
+  templateStderrLines?: string[];
   /** `slow` sleep duration in ms; default 5000. */
   delayMs?: number;
   /** JSON printed for `info`, if the test needs the pre-flight to see one. */
@@ -156,8 +162,13 @@ export function createFakeBin(opts: FakeBinOptions = {}): { bin: string; log: ()
   writeFileSync(logPath, "");
   const bin = path.join(dir, "hwp");
   const help = opts.helpFixture ?? DEFAULT_HELP_FIXTURE;
+  /** The failing template command's stderr, one `printf` per line when asked. */
+  const templateStderr = (command: string): string =>
+    opts.templateStderrLines === undefined
+      ? `printf '%s' ${JSON.stringify(opts.templateStderr ?? `${command} failed at /private/fake/document.hwpx`)} >&2`
+      : opts.templateStderrLines.map((line) => `printf '%s\\n' ${JSON.stringify(line)} >&2`).join("; ");
   const fail = (command: string) => opts.failTemplateCommand === command
-    ? [`printf '%s' ${JSON.stringify(opts.templateStderr ?? `${command} failed at /private/fake/document.hwpx`)} >&2`, `exit ${opts.templateFailureCode ?? 3}`]
+    ? [templateStderr(command), `exit ${opts.templateFailureCode ?? 3}`]
     : [];
   /**
    * A successful `edit` that publishes the staged input and writes the report.
