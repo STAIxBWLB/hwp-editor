@@ -16,7 +16,13 @@
  *   step included, while the engine-side English reason survives on `detail`.
  */
 import { describe, expect, it } from "vitest";
-import { classifyInsertionRefusal, ComponentError, createHttpEngine, HwpEngineError } from "@hwp-editor/core";
+import {
+  classifyInsertionRefusal,
+  ComponentError,
+  createHttpEngine,
+  HwpEngineError,
+  STOPPED_WITHOUT_DIAGNOSTIC,
+} from "@hwp-editor/core";
 import type { Blocks, ComponentErrorCode, InsertionRefusal } from "@hwp-editor/core";
 
 import { componentFailure, insertionFailure } from "../src/components-support.js";
@@ -139,6 +145,19 @@ describe("insertionFailure", () => {
       en("components.insertionRefused", { reason: "구역 정의 문단 앞에는 삽입할 수 없습니다" }),
     );
     expect(shown.message).not.toContain("Caused by");
+  });
+
+  it("puts the locale's own sentence in the frame for a stopped edit (#91)", () => {
+    // Both transports append the English sentence to the message for an empty
+    // stderr, so reading it into the {reason} slot would print English inside
+    // the Korean frame. The structured marker selects the locale's sentence.
+    const error = new HwpEngineError("failed", `hwp edit failed (exit 137): ${STOPPED_WITHOUT_DIAGNOSTIC}`, {
+      stopped: true,
+    });
+    const shown = insertionFailure(error, WIDE, ko) as Error;
+
+    expect(shown.message).toBe(ko("components.insertionRefused", { reason: ko("error.stoppedWithoutDiagnostic") }));
+    expect(shown.message).not.toContain("the engine stopped without writing");
   });
 
   it("leaves a failure that is not a refusal with the handling it has", () => {

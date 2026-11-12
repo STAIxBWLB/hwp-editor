@@ -232,10 +232,19 @@ describe("edit report boundary", () => {
   });
 });
 
-describe("an edit failure that wrote no stderr (#88)", () => {
+describe("an edit failure that wrote no stderr (#88, #91)", () => {
   it("names the cause and the next step, the sentence the Tauri client prints", async () => {
     const error = await failure("", INSERT);
     expect(error.message).toBe(`hwp edit failed (exit 3): ${STOPPED_WITHOUT_DIAGNOSTIC}`);
     expect(error.insertion).toBeUndefined();
+    // The marker routes.ts sends as `error.stopped`, so a client shows the
+    // sentence in its own locale (#91).
+    expect(error.stopped).toBe(true);
+  });
+
+  it("sets no marker when the engine did write a diagnostic", async () => {
+    const error = await failure("Error: no target matched", DELETE);
+    expect(error.stopped).toBeUndefined();
+    expect(error.message).not.toContain(STOPPED_WITHOUT_DIAGNOSTIC);
   });
 });

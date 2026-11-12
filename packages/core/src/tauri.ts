@@ -198,7 +198,8 @@ const MARU_EDIT_FAILURE = /^hwp_failed: (hwp edit failed \(exit -?\d+\)): ([\s\S
  * An edit failure as the HTTP transport words the same stderr (#88), so the
  * two transports cannot drift:
  * - a classified refusal: the exit line plus its marker, and `refusal`;
- * - empty stderr: the exit line plus STOPPED_WITHOUT_DIAGNOSTIC;
+ * - empty stderr: the exit line plus STOPPED_WITHOUT_DIAGNOSTIC, and `stopped`
+ *   so a client shows that sentence in its own locale (#91);
  * - a batch carrying an insertion: the exit line plus the insert_blocks
  *   cause line, and `insertion` when the class is known;
  * - anything else: the engine's first Error: line with paths removed, then
@@ -210,7 +211,7 @@ function editFailure(
   code: HwpErrorCode,
   detail: string,
   insertion: boolean,
-): { message: string; fields: { refusal?: EditRefusalKind; insertion?: InsertionRefusal } } | null {
+): { message: string; fields: { refusal?: EditRefusalKind; insertion?: InsertionRefusal; stopped?: true } } | null {
   if (code !== "failed" || cmd !== "hwped_edit") return null;
   const failure = MARU_EDIT_FAILURE.exec(detail);
   if (failure === null) return null;
@@ -218,7 +219,7 @@ function editFailure(
   const stderr = failure[2]!;
   const kind = classifyEditRefusal(stderr);
   if (kind !== undefined) return { message: `${head}: ${editRefusalMarker(kind)}`, fields: { refusal: kind } };
-  if (stderr.trim() === "") return { message: `${head}: ${STOPPED_WITHOUT_DIAGNOSTIC}`, fields: {} };
+  if (stderr.trim() === "") return { message: `${head}: ${STOPPED_WITHOUT_DIAGNOSTIC}`, fields: { stopped: true } };
   if (insertion) {
     const cls = classifyInsertionRefusal(stderr);
     return {

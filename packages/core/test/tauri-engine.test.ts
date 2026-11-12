@@ -680,6 +680,17 @@ describe("Tauri insert_blocks parity with HTTP (#88)", () => {
     const err = (await createTauriEngine(reject("hwp_failed: hwp edit failed (exit 1): ")).edit(doc, INSERT)
       .then(() => null, (e: unknown) => e)) as HwpEngineError;
     expect(err.message).toBe(`hwped_edit failed: hwp edit failed (exit 1): ${STOPPED_WITHOUT_DIAGNOSTIC}`);
+    // The sentence stays for a host that reads text; the marker is what a
+    // client localizes (#91), so both travel on one failure.
+    expect(err.stopped).toBe(true);
+  });
+
+  it("sets no stopped marker on a failure that wrote a diagnostic (#91)", async () => {
+    const err = (await createTauriEngine(reject(
+      "hwp_failed: hwp edit failed (exit 3): Error: insert_blocks 구역 정의 문단 앞에는 삽입할 수 없습니다",
+    )).edit(doc, INSERT).then(() => null, (e: unknown) => e)) as HwpEngineError;
+    expect(err.stopped).toBeUndefined();
+    expect(err.message).not.toContain(STOPPED_WITHOUT_DIAGNOSTIC);
   });
 });
 

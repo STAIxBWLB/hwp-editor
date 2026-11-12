@@ -153,15 +153,19 @@ function error(
   message: string,
   refusal?: EditRefusalKind,
   insertion?: InsertionRefusal,
+  stopped?: true,
 ): Response {
   // The refusal kind is its own field (#82): a client must not select a
-  // sentence from message text, which can carry the user's own values.
+  // sentence from message text, which can carry the user's own values. The
+  // stopped marker (#91) is carried the same way, and the message keeps its
+  // English sentence for a client that reads text only.
   const body: ErrorResponse = {
     error: {
       code,
       message,
       ...(refusal === undefined ? {} : { refusal }),
       ...(insertion === undefined ? {} : { insertion }),
+      ...(stopped === undefined ? {} : { stopped }),
     },
   };
   return json(body, status);
@@ -664,7 +668,7 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
       }
     } catch (err) {
       if (err instanceof HwpCliError) {
-        return error(statusFor(err), err.reason, err.message, err.refusal, err.insertion);
+        return error(statusFor(err), err.reason, err.message, err.refusal, err.insertion, err.stopped);
       }
       if (err instanceof SessionNotFoundError) {
         return error(404, "session_not_found", err.message);

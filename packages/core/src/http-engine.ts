@@ -137,6 +137,10 @@ async function parseError(res: Response): Promise<HwpEngineError> {
         // Narrowed, never cast; an older server sends no field (#82).
         ...(isEditRefusalKind(body.error.refusal) ? { refusal: body.error.refusal } : {}),
         ...(isInsertionRefusal(body.error.insertion) ? { insertion: body.error.insertion } : {}),
+        // A marker read for what it says, not for what it is: only `true`
+        // counts, so a server that sends `false` or a string sends nothing
+        // (#91). The sentence in the message stays as the fallback.
+        ...(body.error.stopped === true ? { stopped: true as const } : {}),
       },
     );
   } catch {

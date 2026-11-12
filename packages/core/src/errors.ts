@@ -95,6 +95,14 @@ export interface HwpEngineErrorOptions {
   refusal?: EditRefusalKind;
   /** The `insert_blocks` refusal class (#88), read the same way as `refusal`. */
   insertion?: InsertionRefusal;
+  /**
+   * The failure is an edit that wrote no diagnostic at all (#91): the engine
+   * was stopped from outside, so nothing was applied. Presence is the whole
+   * signal, hence `true` rather than a boolean. `STOPPED_WITHOUT_DIAGNOSTIC`
+   * stays in the message for hosts that only read text; a client that reads
+   * this field shows its own sentence instead.
+   */
+  stopped?: true;
 }
 
 /** Engine failure carrying a stable `code` alongside its human message. */
@@ -110,6 +118,8 @@ export class HwpEngineError extends Error {
   declare readonly refusal?: EditRefusalKind;
   /** The `insert_blocks` refusal class, when a transport recognised one (#88). */
   declare readonly insertion?: InsertionRefusal;
+  /** The edit wrote no diagnostic, so the engine was stopped (#91). */
+  declare readonly stopped?: true;
 
   constructor(
     public readonly code: HwpErrorCode,
@@ -125,6 +135,7 @@ export class HwpEngineError extends Error {
     if (options.cause !== undefined) this.cause = options.cause;
     if (options.refusal !== undefined) this.refusal = options.refusal;
     if (options.insertion !== undefined) this.insertion = options.insertion;
+    if (options.stopped !== undefined) this.stopped = options.stopped;
   }
 }
 

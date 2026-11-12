@@ -11,6 +11,7 @@ import { base64, createHttpEngine } from "../src/http-engine.js";
 import { isHwpEngineError } from "../src/errors.js";
 import type { HwpEngineError } from "../src/errors.js";
 import type { DocumentHandle } from "../src/engine.js";
+import { STOPPED_WITHOUT_DIAGNOSTIC } from "../src/insertion-refusals.js";
 import type { EditOp } from "../src/ops.js";
 
 const doc: DocumentHandle = {
@@ -442,6 +443,37 @@ describe("structured refusal on the HTTP transport (#82)", () => {
     ]) {
       const err = await failing({ error }).edit(doc, []).catch((e: unknown) => e) as HwpEngineError;
       expect(err.refusal).toBeUndefined();
+    }
+  });
+});
+
+describe("stopped-without-diagnostic marker on the HTTP transport (#91)", () => {
+  // The round trip: routes.ts writes `stopped` beside `code` and `message`,
+  // and this is the client reading it back. The message keeps the English
+  // sentence for a host that reads text, unchanged.
+  function failing(body: unknown): ReturnType<typeof createHttpEngine> {
+    return createHttpEngine("/api", {
+      fetch: (() => Promise.resolve(new Response(JSON.stringify(body), { status: 422 }))) as unknown as typeof fetch,
+    });
+  }
+  const target = { name: "a.hwpx", data: new Uint8Array([1]) };
+  const message = `hwp edit failed (exit 137): ${STOPPED_WITHOUT_DIAGNOSTIC}`;
+
+  it("carries the server's error.stopped onto the error", async () => {
+    const err = await failing({ error: { code: "failed", message, stopped: true } })
+      .edit(target, []).catch((e: unknown) => e) as HwpEngineError;
+    expect(err.stopped).toBe(true);
+    expect(err.message).toBe(`hwp-engine HTTP 422: ${message}`);
+  });
+
+  it("sets no marker from message text, nor from a value that is not true", async () => {
+    for (const error of [
+      { code: "failed", message },
+      { code: "failed", message: "x", stopped: false },
+      { code: "failed", message: "x", stopped: "true" },
+    ]) {
+      const err = await failing({ error }).edit(target, []).catch((e: unknown) => e) as HwpEngineError;
+      expect(err.stopped).toBeUndefined();
     }
   });
 });
