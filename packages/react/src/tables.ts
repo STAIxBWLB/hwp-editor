@@ -198,9 +198,12 @@ export function hostsTable(envelope: CatEnvelope, segment: Segment): boolean {
  * engine numbers a table's host paragraph by the top-level paragraph, so two
  * tables under one paragraph (a table nested in a cell, a text-box table) answer
  * the same `{section, para}` (#97 item 2d). The coordinate is the fallback for a
- * ref without an id, and even then a paragraph holding several tables resolves
- * to the innermost one whose span encloses the ref's own segment, so the grid
- * the panel shows and the coordinate it queues still name the same table.
+ * ref whose id names no table. When the paragraph holds several tables and the
+ * ref's id names a published segment, it resolves to the innermost table whose
+ * span encloses that segment, so the grid the panel shows and the coordinate it
+ * queues still name the same table. A ref without an id, or whose id names no
+ * segment, or whose segment no candidate encloses, gets the first table at that
+ * coordinate.
  */
 export function tableAtRef(
   envelope: CatEnvelope,
