@@ -62,7 +62,6 @@ describe("opsToArgv", () => {
       [{ kind: "create-field", anchor: "anchor", name: "a=>b" }, "create-field name", "=>"],
       [{ kind: "create-field", anchor: "anchor", name: "a=b" }, "create-field name", "="],
       [{ kind: "create-bookmark", anchor: "a=>b", name: "mark" }, "create-bookmark anchor", "=>"],
-      [{ kind: "create-bookmark", anchor: "anchor", name: "a=>b" }, "create-bookmark name", "=>"],
       [{ kind: "create-hyperlink", anchor: "a=>b", text: "label", url: "https://a.b" }, "create-hyperlink anchor", "=>"],
       [{ kind: "create-hyperlink", anchor: "anchor", text: "a=>b", url: "https://a.b" }, "create-hyperlink text", "=>"],
       [{ kind: "create-hyperlink", anchor: "anchor", text: "label", url: "https://a.b/=>c" }, "create-hyperlink url", "=>"],
@@ -70,6 +69,10 @@ describe("opsToArgv", () => {
       [{ kind: "insert-image", anchor: "anchor", path: "image.png@10x20" }, "insert-image path", "@"],
       [{ kind: "seal", anchor: "a=>b", path: "seal.png" }, "seal anchor", "=>"],
       [{ kind: "seal", anchor: "anchor", path: "seal@20" }, "seal path", "@"],
+      // The unit may be spaced from the number: hwp-cli trims before stripping
+      // `mm` and trims the rest again, so "5 mm" is a size and the path is a
+      // path the engine would split (#58 item 11).
+      [{ kind: "seal", anchor: "anchor", path: "stamp@5 mm" }, "seal path", "@"],
       [{ kind: "set-format", find: "a:b", props: {} }, "set-format find", ":"],
       [{ kind: "set-format", find: "x", props: { "bold=on": "yes" } }, "set-format props.bold=on.key", "="],
       [{ kind: "set-format", find: "x", props: { "bold,on": "yes" } }, "set-format props.bold,on.key", ","],
@@ -121,6 +124,9 @@ describe("opsToArgv", () => {
       { kind: "set-field", name: "field", value: "a=b" },
       { kind: "set-meta", key: "title", value: "a=b" },
       { kind: "create-field", anchor: "anchor", name: "field", value: "a=b" },
+      // The bookmark name is the tail of the one split, so a name that holds
+      // the separator reaches the engine whole (#58 item 10).
+      { kind: "create-bookmark", anchor: "anchor", name: "chapter=>1" },
       { kind: "set-cell", table: 0, row: 0, col: 0, value: "a=b" },
       { kind: "insert-para", anchor: "anchor", text: "a=>b" },
       { kind: "insert-image", anchor: "anchor", path: "dir=>image.png" },
@@ -136,6 +142,7 @@ describe("opsToArgv", () => {
       "--set-field", "field=a=b",
       "--set-meta", "title=a=b",
       "--create-field", "anchor=>field=a=b",
+      "--create-bookmark", "anchor=>chapter=>1",
       "--set-cell", "0:0:0=a=b",
       "--insert-para", "anchor=>a=>b",
       "--insert-image", "anchor=>dir=>image.png",
@@ -299,6 +306,83 @@ describe("opsToArgv", () => {
       "--delete-field", "legacy_date",
       "--delete-bookmark", "old_anchor",
     ]);
+  });
+});
+
+/**
+ * `--delete-table` carries one value whose meaning the engine decides by shape
+ * rather than by a separator: `spec.trim().parse::<usize>()` selects the
+ * 0-based index and everything else is an anchor paragraph (edit.rs
+ * `EditOperation::DeleteTable`, documented in `cli.rs`). A target that value
+ * cannot express is refused before serialization rather than reaching another
+ * table (#58 item 13e).
+ */
+describe("the argv delete-table value means what it says (#58 item 13e)", () => {
+  const refusal = (target: number | string): HwpEngineError => {
+    let failure: unknown;
+    try {
+      opsToArgv([{ kind: "delete-table", target }]);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(HwpEngineError);
+    return failure as HwpEngineError;
+  };
+
+  it("refuses an anchor the engine would read as a table index", () => {
+    for (const anchor of ["3", " 3 ", "+3", "007"]) {
+      const failure = refusal(anchor);
+      expect(failure.code).toBe("bad_request");
+      // The refusal prints the anchor it cannot address, so the caller can tell
+      // which op in a batch it came from.
+      expect(failure.message).toContain(JSON.stringify(anchor));
+      expect(failure.message).toContain("is read as table index");
+      expect(failure.message).toContain("upgrade the host");
+      expect(failure.cause).toBeInstanceOf(Error);
+    }
+  });
+
+  it("refuses a number the engine would read as an anchor name", () => {
+    for (const target of [-1, 3.5, Number.NaN]) {
+      const failure = refusal(target);
+      expect(failure.code).toBe("bad_request");
+      expect(failure.message).toContain(`delete-table target ${String(target)}`);
+      expect(failure.message).toContain("anchor paragraph name");
+    }
+  });
+
+  it("serializes an index as an index and a real anchor as an anchor", () => {
+    expect(opsToArgv([
+      { kind: "delete-table", target: 3 },
+      { kind: "delete-table", target: "불필요한 표" },
+      // `usize::from_str` takes no sign but `+`, no decimal point and no radix
+      // prefix, so the engine reads each of these as an anchor name and so may
+      // this side carry it.
+      { kind: "delete-table", target: "-3" },
+      { kind: "delete-table", target: "3.5" },
+      { kind: "delete-table", target: "0x3" },
+      { kind: "delete-table", target: "" },
+    ])).toEqual([
+      "--delete-table", "3",
+      "--delete-table", "불필요한 표",
+      "--delete-table", "-3",
+      "--delete-table", "3.5",
+      "--delete-table", "0x3",
+      "--delete-table", "",
+    ]);
+  });
+
+  it("reads the flag back with the engine's own rule", () => {
+    expect(argvToOps(["--delete-table", "3"])).toEqual([{ kind: "delete-table", target: 3 }]);
+    // The engine trims and then parses, so a padded or plus-signed decimal is
+    // still its index.
+    expect(argvToOps(["--delete-table", " 3 "])).toEqual([{ kind: "delete-table", target: 3 }]);
+    expect(argvToOps(["--delete-table", "+3"])).toEqual([{ kind: "delete-table", target: 3 }]);
+    // `Number("")` is 0 and `Number("3.5")` is a fractional index; the engine
+    // treats both as anchors, and so does the reader now, with "-3" and "0x3".
+    for (const anchor of ["", "3.5", "-3", "0x3"]) {
+      expect(argvToOps(["--delete-table", anchor])).toEqual([{ kind: "delete-table", target: anchor }]);
+    }
   });
 });
 
