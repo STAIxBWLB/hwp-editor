@@ -1355,6 +1355,85 @@ describe("ComponentsPanel (TEST-03)", () => {
     expect(engine.calls.edit[1]!.ops[0]).toMatchObject({ kind: "insert-blocks", address: { id: ids[2] }, position: "after" });
   });
 
+  describe("an insertion whose last paragraph is empty, the 붙임 shape (#521)", () => {
+    // agent-hwp 1.6.2 names the empty paragraph (.0.4) in `changed`, but the
+    // re-read envelope publishes only .0.2 and .0.3. A paragraph after the
+    // insertion (.0.5) is the move-down neighbour.
+    const ids = ["bbbbbbbbbbbbbbbb.0.2", "cccccccccccccccc.0.3", "dddddddddddddddd.0.4"];
+    async function inserted(): Promise<{ engine: ReturnType<typeof composedEngine>; after: CatEnvelope }> {
+      const base = addressableEnvelope();
+      const report: EditReport = {
+        ...insertReport,
+        ops: [{ ...insertReport.ops[0]!, pieces_touched: 3, changed: ids.map((id) => ({ before: null, after: id })) }],
+      };
+      let markdown = base.markdown;
+      const segments = [...base.segments];
+      ([["붙임 제목", ids[0]!, 2], ["붙임 항목", ids[1]!, 3], ["다음 문단", "eeeeeeeeeeeeeeee.0.5", 5]] as const)
+        .forEach(([text, id, para]) => {
+          const start = markdown.length;
+          markdown += `${text}\n\n`;
+          segments.push({ id, indices: [para], start, end: start + text.length, kind: "para", section: 0, para });
+        });
+      const after: CatEnvelope = { markdown, segments };
+      const engine = composedEngine(base);
+      let reads = 0;
+      engine.read = async () => (reads++ === 0 ? base : after);
+      const baseEdit = engine.edit.bind(engine);
+      engine.edit = async (document, ops, options) => ({
+        ...(await baseEdit(document, ops, options)),
+        ...(options?.report === true ? { report } : {}),
+      });
+      await selectPara(engine, 1, base);
+      fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+      fireEvent.click(await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) }));
+      await waitFor(() => expect(engine.calls.edit).toHaveLength(1));
+      const again = await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) });
+      await waitFor(() => expect((again as HTMLButtonElement).disabled).toBe(false));
+      engine.calls.edit.length = 0;
+      fireEvent.click(screen.getByRole("tab", { name: en["tabs.para"] }));
+      return { engine, after };
+    }
+
+    it("deletes the empty paragraph with the run", async () => {
+      const { engine } = await inserted();
+      clickBtn("segment.deletePara");
+      expect(await applyOps(engine, 3)).toEqual([
+        { kind: "delete-para", address: { id: ids[0] } },
+        { kind: "delete-para", address: { id: ids[1] } },
+        { kind: "delete-para", address: { id: ids[2] } },
+      ]);
+    });
+
+    it("moves the neighbour above past the empty paragraph on move up", async () => {
+      const { engine } = await inserted();
+      clickBtn("segment.moveUp");
+      expect(await applyOps(engine, 1)).toEqual([{
+        kind: "move-para",
+        address: { id: "aaaaaaaaaaaaaaaa.0.1" },
+        to: { address: { id: ids[2] }, position: "after" },
+      }]);
+    });
+
+    it("moves the neighbour below before the run's first paragraph on move down", async () => {
+      const { engine } = await inserted();
+      clickBtn("segment.moveDown");
+      expect(await applyOps(engine, 1)).toEqual([{
+        kind: "move-para",
+        address: { id: "eeeeeeeeeeeeeeee.0.5" },
+        to: { address: { id: ids[0] }, position: "before" },
+      }]);
+    });
+
+    it("forgets the empty paragraph once the selection changes", async () => {
+      const { engine, after } = await inserted();
+      // A plain click on the run's second paragraph is a new single selection.
+      const page = screen.getByRole("button", { name: en["page.label"]({ page: 1 }) });
+      fireEvent.click(page, { clientY: clientYForPara(after, 3) });
+      clickBtn("segment.deletePara");
+      expect(await applyOps(engine, 1)).toEqual([{ kind: "delete-para", address: { id: ids[1] } }]);
+    });
+  });
+
   it("refuses to select from a truncated report and says why", async () => {
     // `changed_total` means the engine capped the id list, so the selection
     // would cover only part of what was inserted. The document is published

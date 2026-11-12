@@ -2,7 +2,7 @@ import { isPlainDecimal } from "./unit-input.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import type { JSX } from "react";
-import type { ParagraphAlignment, ParaShapeKey, SelectionRefusal, Segment } from "@hwp-editor/core";
+import type { ParagraphAddress, ParagraphAlignment, ParaShapeKey, SelectionRefusal, Segment } from "@hwp-editor/core";
 import { compareSegments, documentFormat, formatTargets as collectFormatTargets, hasDirectFormatting, hasOwnRef, isSectionDefinitionParagraph, paragraphAddress, paragraphRuns, resolveSelection, segmentAtRef, segmentPath, segmentRef, segmentText, selectSimilar, selectedParagraphs, selectionAction, stylesVersionSupported } from "@hwp-editor/core";
 import { plainSegmentText } from "./text.js";
 import { useHwpEditorContext } from "./context.js";
@@ -34,7 +34,7 @@ const SHAPE_KEYS: { value: ParaShapeKey; key: MessageKey }[] = [
  * All controls queue EditOps; nothing touches the engine until Apply.
  */
 export function SegmentInspector(): JSX.Element {
-  const { state, store, envelope, editable, capabilities, styles, stylesStatus, t } = useHwpEditorContext();
+  const { state, store, envelope, editable, capabilities, styles, stylesStatus, t, insertedHidden } = useHwpEditorContext();
   const { selection } = state;
 
   const paragraphKeys = new Set<string>();
@@ -214,6 +214,36 @@ export function SegmentInspector(): JSX.Element {
   const runContiguous = paragraphRun !== null && runStart >= 0 &&
     paragraphRun.every((item, at) => siblings[runStart + at]?.id === item.id);
   const runEnd = runContiguous ? runStart + paragraphRun!.length - 1 : -1;
+  /**
+   * Paragraphs the insertion behind this run created that publish no segment
+   * (an empty paragraph agent-hwp 1.6.2 names, #521), while the envelope and
+   * selection they were kept with are still current. Only those under the
+   * run's own parent count, ordered by their path among the run, so a move
+   * or a delete of the run acts on the whole insertion.
+   */
+  const runParent = paragraphRun?.[0]?.indices?.slice(0, -1);
+  const hiddenInRun = (() => {
+    if (!runContiguous || insertedHidden == null || runParent === undefined) return [];
+    if (insertedHidden.envelope !== envelope || insertedHidden.selections !== state.selections) return [];
+    const section = paragraphRun![0]!.section;
+    return insertedHidden.ids.flatMap((id) => {
+      const [idSection, ...indices] = id.split(".").slice(1).map(Number);
+      if (idSection !== section || indices.length !== runParent.length + 1) return [];
+      if (!runParent.every((index, at) => indices[at] === index)) return [];
+      return [{ id, index: indices[indices.length - 1]! }];
+    });
+  })();
+  /** The run's own first and last paragraph, an unpublished one included, as an address. */
+  const runEdge = (edge: "first" | "last"): ParagraphAddress | undefined => {
+    const published = edge === "first" ? paragraphRun?.[0] : paragraphRun?.[paragraphRun.length - 1];
+    if (published === undefined) return undefined;
+    const publishedIndex = published.indices?.[published.indices.length - 1];
+    const beyond = hiddenInRun.filter((hidden) => publishedIndex === undefined ||
+      (edge === "first" ? hidden.index < publishedIndex : hidden.index > publishedIndex));
+    if (beyond.length === 0) return paragraphAddress(published);
+    const pick = beyond.reduce((best, hidden) => (edge === "first" ? hidden.index < best.index : hidden.index > best.index) ? hidden : best);
+    return { id: pick.id };
+  };
   const textSelectionRestricted = multiSelection || hasRunSelection || state.range != null;
   const singleTargetDisabled = disabled || textSelectionRestricted || address === undefined;
   // Delete and move serve one paragraph, or a contiguous run of them; every
@@ -441,14 +471,16 @@ export function SegmentInspector(): JSX.Element {
     }
     if (!runContiguous) return;
     const neighbour = siblings[direction === -1 ? runStart - 1 : runEnd + 1];
-    const anchor = direction === -1 ? paragraphRun[paragraphRun.length - 1] : paragraphRun[0];
+    // The run's true edge, an unpublished inserted paragraph included (#521),
+    // so the neighbour passes the whole insertion rather than splitting it.
+    const anchor = runEdge(direction === -1 ? "last" : "first");
     if (neighbour === undefined || anchor === undefined) return;
     store.dispatch({
       type: "queueOp",
       op: {
         kind: "move-para",
         address: paragraphAddress(neighbour),
-        to: { address: paragraphAddress(anchor), position: direction === -1 ? "after" : "before" },
+        to: { address: anchor, position: direction === -1 ? "after" : "before" },
       },
     });
   };
@@ -467,7 +499,11 @@ export function SegmentInspector(): JSX.Element {
     if (!runContiguous) return;
     store.dispatch({
       type: "queueOps",
-      ops: paragraphRun.map(item => ({ kind: "delete-para" as const, address: paragraphAddress(item) })),
+      ops: [
+        ...paragraphRun.map(item => ({ kind: "delete-para" as const, address: paragraphAddress(item) })),
+        // The insertion's unpublished paragraphs go with it (#521).
+        ...hiddenInRun.map(hidden => ({ kind: "delete-para" as const, address: { id: hidden.id } })),
+      ],
     });
   };
 

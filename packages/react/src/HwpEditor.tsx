@@ -27,7 +27,7 @@ import type { AddressedEditOp } from "@hwp-editor/core";
 import { compareSegments, componentStyleMap, createStore, insertedParagraphIds, isSectionDefinitionParagraph, resolveSelection, segmentAtRef, segmentRef, substituteParams, validateCatEnvelope, validateImageAssets, HwpEngineError, MAX_IMAGE_ASSETS, MAX_IMAGE_ASSETS_TOTAL_BYTES, STARTER_COMPONENTS } from "@hwp-editor/core";
 import type { EditorError, EditorState, EditorStore } from "@hwp-editor/core";
 import { HwpEditorContext } from "./context.js";
-import type { HwpEditorContextValue, StylesStatus } from "./context.js";
+import type { HwpEditorContextValue, InsertedHidden, StylesStatus } from "./context.js";
 import { PageCanvas } from "./PageCanvas.js";
 import { SegmentInspector } from "./SegmentInspector.js";
 import { PRESET_LABEL, StylesPanel } from "./StylesPanel.js";
@@ -388,6 +388,8 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
      * row list would keep ids that describe the document as it was written.
      */
     const [pendingInserted, setPendingInserted] = useState<string[]>([]);
+    /** Inserted ids with no segment, kept for the selection made from them (#521). */
+    const [insertedHidden, setInsertedHidden] = useState<InsertedHidden | null>(null);
     /**
      * The "still loading" sentence as this render's locale spells it, and the
      * sentences already POSTED in whichever locale was current when they were
@@ -511,16 +513,19 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     // envelope that reads the new document back, whose paths are the engine's.
     // One attempt per envelope: a host whose ids no paragraph carries leaves
     // nothing to select, and the ids are dropped rather than retried forever.
-    // An inserted empty paragraph is named by agent-hwp 1.6.2 (#521) but
-    // publishes no segment, so it is not selectable here; it sits between the
-    // selected paragraphs, which stay one contiguous run, so moving the run
-    // carries it along; deleting the run leaves it behind (not yet addressed).
+    // An inserted empty or break-only paragraph is named by agent-hwp 1.6.2
+    // (#521) but publishes no segment, so it cannot be selected. Its id is
+    // kept beside the selection (insertedHidden), tied to this envelope and
+    // the selection made from it, so a move or delete of that selection still
+    // acts on the whole insertion; the next envelope or selection retires it.
     useEffect(() => {
       if (pendingInserted.length === 0 || envelope === null) return;
       if (insertedTriedFor.current === envelope) return;
       insertedTriedFor.current = envelope;
+      const hidden: string[] = [];
       const paragraphs = pendingInserted.flatMap((id) => {
         const segment = segmentAtRef(envelope, { id, section: 0, para: 0 });
+        if (segment === undefined) hidden.push(id);
         return segment === undefined || segment.kind !== "para" ? [] : [segment];
       });
       setPendingInserted([]);
@@ -531,7 +536,14 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         primary: segmentRef(paragraphs[0]!),
         anchor: segmentRef(paragraphs[0]!),
       });
+      setInsertedHidden(hidden.length === 0 ? null : { envelope, selections: store.getState().selections, ids: hidden });
     }, [envelope, pendingInserted, store]);
+    // The kept ids describe one envelope and one selection: either moving on
+    // retires them, the same one-attempt expiry insertedTriedFor applies.
+    useEffect(() => {
+      if (insertedHidden === null) return;
+      if (insertedHidden.envelope !== envelope || insertedHidden.selections !== state.selections) setInsertedHidden(null);
+    }, [envelope, insertedHidden, state.selections]);
 
     // Load the document whenever the engine/file pair changes.
     useEffect(() => {
@@ -907,6 +919,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     /** Ids of an insertion belong to one document; a new file retires them. */
     useEffect(() => {
       setPendingInserted([]);
+      setInsertedHidden(null);
       insertedTriedFor.current = null;
     }, [file]);
 
@@ -1330,6 +1343,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         editable,
         validation,
         applyPendingOps,
+        insertedHidden,
         replaceDocument,
         queueImage,
         refresh,
@@ -1364,6 +1378,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         editable,
         validation,
         applyPendingOps,
+        insertedHidden,
         replaceDocument,
         queueImage,
         refresh,

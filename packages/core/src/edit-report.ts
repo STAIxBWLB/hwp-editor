@@ -198,7 +198,7 @@ export function withCallerName(report: EditReport, name: string): EditReport {
  * the middle one empty, give `pieces_touched: 3` and three top-level ids).
  * Engines before 1.6.2 count such a paragraph without naming it (ahwp 1.6.0,
  * the 붙임 starter's empty param: `pieces_touched: 4`, three ids), and
- * MIN_VERSION is below 1.6.2, so a shortfall is still accepted and the named
+ * EDIT_REPORT_MIN_VERSION is below 1.6.2, so a shortfall is still accepted and the named
  * ids returned. A surplus is not — a report listing more paragraphs than it
  * touched is not this contract — and is refused, as is a capped list
  * (`changed_total`), which the caller checks before calling this.
