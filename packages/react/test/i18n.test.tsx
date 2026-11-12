@@ -321,6 +321,21 @@ describe("table parity (I18N-06, I18N-08)", () => {
     expect(ko["image.unsupported"]).toContain("로컬 이미지 경로");
   });
 
+  it("says which names may carry =>, because hwp-cli keeps a bookmark's tail", () => {
+    // Only anchors and field names cannot carry `=>`: hwp-cli splits
+    // `--create-bookmark` once and keeps the rest as the name, so a hint that
+    // said "anchors or names" sent a bookmark author to remove a separator the
+    // engine keeps whole (#103 item 1).
+    expect(en["fields.legacySeparatorHint"]).toContain("anchors or field names");
+    expect(en["fields.legacySeparatorHint"]).toContain("splits --create-bookmark once");
+    expect(en["fields.legacySeparatorHint"]).toContain("a bookmark name may hold it");
+    expect(en["fields.legacySeparatorHint"]).toContain("JSON edit channel");
+    expect(ko["fields.legacySeparatorHint"]).toContain("필드 이름의 =>");
+    expect(ko["fields.legacySeparatorHint"]).toContain("--create-bookmark");
+    expect(ko["fields.legacySeparatorHint"]).toContain("책갈피 이름에는 =>를 쓸 수 있습니다");
+    expect(ko["fields.legacySeparatorHint"]).toContain("JSON 편집 채널");
+  });
+
   it("names which way the table counts disagree, and singularises a count of 1", () => {
     // `tableCountMismatch` reports both directions (#97 item 1), but the cause
     // it gave was only true when the engine counts more, and its "counts 1
