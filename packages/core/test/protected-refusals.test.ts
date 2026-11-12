@@ -1,7 +1,7 @@
 /**
  * The protection backstop after #112: hwp-cli's protected-document refusals
- * are matched as the whole line the engine prints, never as a marker found
- * anywhere in stderr.
+ * are read off the engine's own first `Error:` line, as whole sentences -
+ * never as a marker, a later line, or a value the caller supplied.
  *
  * No binary is needed. The subject here is the text hwp-cli writes, so the
  * fixtures are that text; the sentences were read from
@@ -67,6 +67,21 @@ describe("the protection backstop", () => {
     ).toBe(`DRM-protected document; ${PROTECTED_NEXT_STEP}`);
   });
 
+  /**
+   * The engine's line is the first `Error:` line, not necessarily the first
+   * line: a distribution load prints its notice before the failure, and the
+   * bridge pastes the whole stderr after its own head.
+   */
+  it("finds the engine's line after the notice a distribution load prints first", () => {
+    const notice = "정보: 배포용 문서를 해제했습니다 (다른 형식으로 변환해 저장하면 배포용 보호는 유지되지 않습니다)";
+    expect(protectedReasonFromDiagnostics(`${notice}\nError: ${DISTRIBUTION}\n`)).toBe(
+      `distribution (배포용) document; ${DISTRIBUTION_NEXT_STEP}`,
+    );
+    expect(
+      protectedReasonFromDiagnostics(`hwp_failed: hwp edit failed (exit 1): ${notice}\nError: ${DRM}`),
+    ).toBe(`DRM-protected document; ${PROTECTED_NEXT_STEP}`);
+  });
+
   it("reads CRLF stderr the same as LF", () => {
     expect(protectedReasonFromDiagnostics(printed(DRM).replaceAll("\n", "\r\n"))).toBe(
       `DRM-protected document; ${PROTECTED_NEXT_STEP}`,
@@ -124,6 +139,18 @@ describe("the protection backstop", () => {
     [
       "a field name carrying a newline, which puts the sentence alone on its own line",
       `Error: 요청한 자리표시자·양식 필드를 찾지 못했습니다: x\n${DRM}\n (--allow-partial로 일치한 값만 적용 가능)`,
+    ],
+    [
+      "a field name whose newline starts a second Error line",
+      `Error: 요청한 자리표시자·양식 필드를 찾지 못했습니다: a\nError: ${DRM}\nb (--allow-partial로 일치한 값만 적용 가능)`,
+    ],
+    [
+      "a field name whose newline fakes the indented Caused by copy",
+      `Error: 요청한 자리표시자·양식 필드를 찾지 못했습니다: a\n    ${DRM}\nb (--allow-partial로 일치한 값만 적용 가능)`,
+    ],
+    [
+      "the same forged Error line behind the bridge's head",
+      `hwp_failed: hwp fill failed (exit 1): Error: 요청한 자리표시자·양식 필드를 찾지 못했습니다: a\nError: ${DRM}\nb (--allow-partial로 일치한 값만 적용 가능)`,
     ],
     [
       "a password refusal, which is a credential problem rather than protection",

@@ -272,43 +272,40 @@ const ENGINE_ERROR_LABEL = "Error: ";
 /**
  * The head the desktop bridge puts in front of hwp-cli's stderr
  * (dev/maru/src-tauri/src/hwped.rs run_hwp_ok): `hwp_failed: hwp <cmd> failed
- * (exit N): ` and then that stderr verbatim, so the engine's `Error:` line
- * starts right after it.
+ * (exit N): ` and then that stderr verbatim, on the same line.
  */
-const TRANSPORT_HEAD = /^hwp_failed: hwp \S+ failed \(exit -?\d+\): $/u;
+const TRANSPORT_HEAD = /^hwp_failed: hwp \S+ failed \(exit -?\d+\): /u;
 
 /**
- * Whether some line of `text` is the engine's own `Error:` line for
- * `sentence`, and nothing accumulates around it.
+ * The message of the FIRST line-start `Error:` line in `text`, or null when
+ * there is none. In the bridge's form that line arrives as the tail of its
+ * head line, so the head is stripped first.
  *
- * Two shapes qualify, and nothing else:
- * - `Error: <sentence>`: the line `Termination` writes, at a line start;
- * - `hwp_failed: hwp <cmd> failed (exit N): Error: <sentence>`: the same line
- *   behind the bridge's fixed head, which pastes hwp-cli's stderr on after its
- *   own.
+ * Only the first one can be the engine's. `Termination` writes the failure
+ * line once, before the process exits, and everything hwp-cli prints before it
+ * is fixed text (`cat.rs`'s `정보: 배포용 문서를 해제했습니다 ...`) or a value it
+ * escapes with `{:?}` (`edit.rs`'s anchors and field names). The one raw
+ * interpolation is `fill`'s unmatched key list, and it sits INSIDE the failure
+ * message, after the fixed `... 찾지 못했습니다: ` prefix - so it can only add
+ * lines below the engine's, never replace the first one. A later `Error: `
+ * line is therefore caller text, and a key such as
+ * `a\nError: <sentence>\nb` must not select a protection reading by itself.
  *
- * The `Caused by:` copy is deliberately NOT a second chance, even though the
- * engine prints it. hwp-cli interpolates caller text with `{}` in places
- * (fill.rs's unmatched field names, joined and printed raw), so a value the
- * user typed can hold a newline and put any sentence at the start of a line;
- * accepting an indented line as the engine's would let that value pick a
- * protection reading by itself. The one place the sentence is known to be the
- * engine's is after `Error: `, so that prefix is required.
- *
- * Ending the line is the other half: `edit` writes anchors and field names as
- * `{anchor:?}` and `fill` appends `(--allow-partial로 ...)`, so a value that
- * happens to hold one of these sentences is followed by more text on its line.
+ * The message is compared whole, so nothing may follow the sentence either:
+ * `fill`'s ` (--allow-partial로 ...)` hint and `edit`'s `{anchor:?}` quoting
+ * both leave a value that holds a sentence with text after it on its line, and
+ * the `Caused by:` copy anyhow prints is not read at all.
  */
-function lineCarriesRefusal(text: string, sentence: string): boolean {
-  for (const line of text.split(/\r?\n/u)) {
-    if (!line.endsWith(sentence)) continue;
-    const before = line.slice(0, line.length - sentence.length);
-    if (before === ENGINE_ERROR_LABEL) return true;
-    if (!before.endsWith(ENGINE_ERROR_LABEL)) continue;
-    const outer = before.slice(0, before.length - ENGINE_ERROR_LABEL.length);
-    if (TRANSPORT_HEAD.test(outer)) return true;
+function firstEngineErrorLine(text: string): string | null {
+  const lines = text.split(/\r?\n/u);
+  const head = TRANSPORT_HEAD.exec(lines[0] ?? "");
+  if (head !== null) lines[0] = (lines[0] ?? "").slice(head[0].length);
+  for (const line of lines) {
+    if (line.startsWith(ENGINE_ERROR_LABEL)) {
+      return line.slice(ENGINE_ERROR_LABEL.length);
+    }
   }
-  return false;
+  return null;
 }
 
 /**
@@ -327,14 +324,20 @@ function lineCarriesRefusal(text: string, sentence: string): boolean {
  * puts its own `hwp <command>` line in front rather than this function
  * claiming `edit/compose` every time (#105 item 2).
  *
+ * The line read is the engine's first `Error:` line and the comparison is
+ * exact (see `firstEngineErrorLine`), so no echoed value, warning,
+ * informational line or pattern can select a kind.
+ *
  * The argument is never interpolated into the result: raw CLI output stays on
  * whatever non-serialized field its transport keeps it on, so this path adds
  * no new CLI-output-to-client leak (Phase 4 SEC-06 owns the pre-existing one
  * in the server's `runCliOk`).
  */
 export function protectedReasonFromDiagnostics(text: string): string | null {
+  const message = firstEngineErrorLine(text);
+  if (message === null) return null;
   for (const [sentence, kind, step] of PROTECTED_REFUSALS) {
-    if (lineCarriesRefusal(text, sentence)) return `${kind}; ${step}`;
+    if (message === sentence) return `${kind}; ${step}`;
   }
   return null;
 }

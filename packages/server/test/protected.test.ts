@@ -157,6 +157,10 @@ describe("protectedReasonFromStderr", () => {
       "a field name carrying a newline, which puts the sentence alone on its own line",
       `Error: 요청한 자리표시자·양식 필드를 찾지 못했습니다: x\n${DRM}\n (--allow-partial로 일치한 값만 적용 가능)`,
     ],
+    [
+      "a field name whose newline starts a second Error line",
+      `Error: 요청한 자리표시자·양식 필드를 찾지 못했습니다: a\nError: ${DRM}\nb (--allow-partial로 일치한 값만 적용 가능)`,
+    ],
   ])("returns null for %s", (_name, stderr) => {
     expect(protectedReasonFromStderr(stderr)).toBeNull();
   });
@@ -273,6 +277,31 @@ describe("edit pre-flight and stderr backstop", () => {
       templateStderrLines: [
         "정보: 배포용 문서를 해제했습니다 (다른 형식으로 변환해 저장하면 배포용 보호는 유지되지 않습니다)",
         "Error: 요청한 자리표시자·양식 필드를 찾지 못했습니다: title (--allow-partial로 일치한 값만 적용 가능)",
+      ],
+    });
+    const engine = createCliEngine({ bin });
+    await expect(engine.fill(DOC, { title: "x" })).rejects.toMatchObject({ reason: "failed" });
+  });
+
+  /**
+   * t50-a1's red proof, through the transport a caller actually uses. `fill`
+   * joins the unmatched keys with `{}` (fill.rs), so a key can carry a newline
+   * and put an `Error:` line - or an indented copy of one - below the engine's.
+   * Only the engine's own first `Error:` line may classify, so all three keep
+   * the fill's real cause.
+   */
+  it.each([
+    ["starts a second Error line", `a\nError: ${DRM}\nb`],
+    ["fakes the indented Caused by copy", `a\n    ${DRM}\nb`],
+    ["ends a line with the bare sentence", `x\n${DRM}\n`],
+  ])("keeps a fill's own failure when a key %s", async (_name, key) => {
+    const { bin } = fakeBin({
+      version: "1.4.0",
+      info: "{}",
+      failTemplateCommand: "fill",
+      templateFailureCode: 1,
+      templateStderrLines: [
+        `Error: 요청한 자리표시자·양식 필드를 찾지 못했습니다: ${key} (--allow-partial로 일치한 값만 적용 가능)`,
       ],
     });
     const engine = createCliEngine({ bin });
