@@ -61,9 +61,9 @@ Run these passes and tag every finding with its pass:
   delete, and a cell narrowed to its first paragraph edits half a cell silently. The other path is a
   set the editor derives itself rather than a click on a unit: that one dispatches a single
   `selectMany` and never goes through `selectionAction`, because there is no clicked unit to toggle
-  — select-similar (`packages/react/src/SegmentInspector.tsx:413`), a style row
-  (`packages/react/src/StylesPanel.tsx:343`) and the paragraphs an insertion adds
-  (`packages/react/src/HwpEditor.tsx:505`) all take it.
+  — select-similar (`SegmentInspector.tsx`, `selectSimilar`), a style row (`StylesPanel.tsx:343`)
+  and the paragraphs an insertion adds (the inserted-paragraph effect in `HwpEditor.tsx`) all take
+  it.
   The state stores the primary first and keeps the caller's order for the rest
   (`packages/core/src/state.ts:156`), so a reader that needs document order sorts with
   `compareSegments` instead of trusting the ref list.
