@@ -25,7 +25,7 @@ family-name check).
 
 ## Commands
 
-The Tauri client strips a host's `imageAssets` claim and refuses uploaded image bytes; an API caller can send an `insert-image` op with a local path, while the app inserts a picture in a word processor and reopens the document.
+The Tauri client strips a host's `imageAssets` claim and refuses uploaded image bytes; an API caller can send an `insert-image` op with a local path, while a user working in the app inserts the picture in a word processor and reopens the document.
 
 Payloads mirror `packages/core/src/protocol.ts`, with two Tauri deltas:
 

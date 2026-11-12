@@ -24,6 +24,14 @@ const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const SCRIPT = join(REPO_ROOT, "scripts", "playground.mjs");
 const SCRIPT_URL = pathToFileURL(SCRIPT).href;
 
+/**
+ * The file this platform's unset-PATH default names `false` first. The default
+ * is not one value across POSIX: macOS falls back to libuv's _PATH_DEFPATH,
+ * /usr/bin:/bin, while Linux forks to glibc execvp, whose confstr CS_PATH is
+ * /bin:/usr/bin. Only the first entry tells the two orders apart.
+ */
+const DEFAULT_FALSE = process.platform === "darwin" ? "/usr/bin/false" : "/bin/false";
+
 /** A variable set to undefined is removed from the child's environment. */
 type Env = Record<string, string | undefined>;
 
@@ -237,19 +245,29 @@ describe("playground startup failure", () => {
     try {
       writeFileSync(join(dir, "hwp"), "not an executable\n");
       writeFileSync(join(dir, "hwp.com"), "not an executable\n");
-      const env = { HWP_EDITOR_BIN: "", HWP_CLI: "", PATH: dir };
-      const extensionless = startupAs("win32", env);
-      expect(extensionless.status).toBe(1);
-      expect(extensionless.stderr).toContain(`The playground cannot run hwp at ${join(dir, "hwp.com")} (`);
-      expect(extensionless.stderr).not.toContain(`${join(dir, "hwp")} (`);
+      const { status, stderr } = startupAs("win32", { HWP_EDITOR_BIN: "", HWP_CLI: "", PATH: dir });
+      expect(status).toBe(1);
+      expect(stderr).toContain(`The playground cannot run hwp at ${join(dir, "hwp.com")} (`);
+      expect(stderr).not.toContain(`${join(dir, "hwp")} (`);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
 
-      // A name that already carries an extension is tried as written before
-      // the extensions are appended, so hwp.exe wins over hwp.exe.com; the
-      // append itself is the next case.
+  /**
+   * A name that already carries an extension is tried as written before the
+   * extensions are appended, so hwp.exe wins over hwp.exe.com. Both have to
+   * exist on disk for that to be proved: with hwp.exe.com absent, an order that
+   * appends first still lands on hwp.exe after the appended names miss
+   * (#113 review).
+   */
+  it("on the Windows search order, tries a name that carries an extension as written before hwp.exe.com", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hwp-playground-winlit-"));
+    try {
       writeFileSync(join(dir, "hwp.exe"), "not an executable\n");
-      const named = startupAs("win32", { ...env, HWP_EDITOR_BIN: "hwp.exe" });
-      expect(named.status).toBe(1);
-      expect(named.stderr).toContain(`The playground cannot run hwp at ${join(dir, "hwp.exe")} (`);
+      writeFileSync(join(dir, "hwp.exe.com"), "not an executable\n");
+      const { status, stderr } = startupAs("win32", { HWP_EDITOR_BIN: "hwp.exe", HWP_CLI: "", PATH: dir });
+      expect(status).toBe(1);
+      expect(stderr).toContain(`The playground cannot run hwp at ${join(dir, "hwp.exe")} (`);
+      expect(stderr).not.toContain(`${join(dir, "hwp.exe.com")} (`);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
@@ -277,17 +295,22 @@ describe("playground startup failure", () => {
 
   /**
    * An unset PATH is the libc default, which is what libuv searches when the
-   * child environment carries no PATH (src/unix/process.c, _PATH_DEFPATH):
-   * /usr/bin:/bin in both the macOS SDK's paths.h and glibc's. `false` proves
-   * it, because it lives in that default and fails the version probe, so the
-   * reported entry is the file spawn actually ran.
+   * child environment carries no PATH. That default follows the spawn path and
+   * is therefore per platform (#113 review): macOS resolves the name itself and
+   * falls back to _PATH_DEFPATH, /usr/bin:/bin (src/unix/process.c
+   * uv__spawn_resolve_and_spawn, the value the SDK's paths.h:65 defines), while
+   * Linux forks and calls glibc execvp, whose confstr CS_PATH is /bin:/usr/bin.
+   * `false` proves the order, because it fails the version probe and the
+   * reported entry is the file spawn actually ran: /bin is a symlink to
+   * /usr/bin on the Linux CI image, so "a false resolved" would hold for either
+   * order and only the exact string separates them.
    */
-  it.runIf(process.platform !== "win32" && existsSync("/usr/bin/false"))(
-    "searches the libc default PATH when PATH is unset",
+  it.runIf(process.platform !== "win32" && existsSync(DEFAULT_FALSE))(
+    "searches the libc default PATH when PATH is unset, in its platform's order",
     () => {
       const { status, stderr } = startup({ HWP_EDITOR_BIN: "false", HWP_CLI: "", PATH: undefined });
       expect(status).toBe(1);
-      expect(stderr).toContain("The playground cannot run hwp at /usr/bin/false (exit status 1)");
+      expect(stderr).toContain(`The playground cannot run hwp at ${DEFAULT_FALSE} (exit status 1)`);
     },
   );
 

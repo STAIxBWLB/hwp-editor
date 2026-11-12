@@ -28,11 +28,15 @@ function runnable(candidate){
     return candidate;
   }catch{ return null; }
 }
-// libuv's fallback when the child environment carries no PATH (src/unix/
-// process.c reads the libc's own default, _PATH_DEFPATH). The headers on both
-// platforms this repo runs on define it as the same two entries: the macOS
-// SDK's paths.h:65 and glibc's sysdeps/unix/sysv/linux/paths.h:36.
-const DEFAULT_PATH="/usr/bin:/bin";
+// The entries searched when the child environment carries no PATH, which is
+// not one value across POSIX: the platform picks the spawn path, and the spawn
+// path picks the default. macOS resolves the name itself and falls back to
+// _PATH_DEFPATH, /usr/bin:/bin (src/unix/process.c uv__spawn_resolve_and_spawn,
+// the value the SDK's paths.h:65 defines). Linux never takes that path: it
+// forks and calls glibc execvp (src/unix/process.c:413), whose unset-PATH
+// default is confstr CS_PATH, /bin:/usr/bin (glibc posix/execvpe.c). The order
+// differs, so neither platform's header settles the other's.
+const DEFAULT_PATH=process.platform==="darwin"?"/usr/bin:/bin":"/bin:/usr/bin";
 // libuv's Windows extension rule (src/win/process.c search_path): the name has
 // an extension when its first dot is followed by a character, so `hwp.` counts
 // as extensionless and `.hwp` does not.
@@ -68,7 +72,8 @@ function onPath(name){
   //
   // Approximate on two Windows points that are not mirrored here:
   // NeedCurrentDirectoryForExePathW (whether the working directory is searched
-  // at all) and quote stripping around the configured name.
+  // at all) and the quote stripping libuv applies around each PATH entry before
+  // joining (src/win/process.c:402-430). The configured name is not stripped.
   const win32=process.platform==="win32";
   const exts=win32 ? (winNameHasExtension(name) ? ["","com","exe"] : ["com","exe"]) : [""];
   const dirs=pathEntries();
