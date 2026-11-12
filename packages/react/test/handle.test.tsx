@@ -380,7 +380,7 @@ describe("onError", () => {
     // the one that could reach `onError` stripped of its code, status and
     // cause. The alert shows the table's sentence; the host still gets the
     // error it arrived as, which is what its own doc promises.
-    const cause = new Error("hwp edit failed (exit 3): edit refused: unmatched_replace");
+    const cause = new Error("ahwp edit failed (exit 3): edit refused: unmatched_replace");
     const boom = new HwpEngineError("failed", cause.message, { status: 400, cause, refusal: "unmatched_replace" });
     const engine = createMockEngine();
     engine.edit = async () => {

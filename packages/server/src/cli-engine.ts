@@ -770,14 +770,14 @@ export function protectedReasonFromStderr(stderr: string): string | null {
 }
 
 /**
- * `hwp <subcommand> failed (exit N)`, the whole of it. `runCliOk` writes the
+ * `ahwp <subcommand> failed (exit N)`, the whole of it. `runCliOk` writes the
  * subcommand and the exit code and nothing else, so the match cannot reach
  * past the head into anything a later wrapper appended.
  */
 const CLI_EXIT_HEAD = /^ahwp \S+ failed \(exit -?\d+\)/u;
 
 /**
- * The `hwp <subcommand> failed (exit N)` head of a failure's message, or null.
+ * The `ahwp <subcommand> failed (exit N)` head of a failure's message, or null.
  *
  * The protected sentence prints this head rather than the whole message
  * (#105 item 2): a failure's message can carry a wrapper's added text, and
@@ -1138,7 +1138,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       // and the underlying error text move to `detail`; the phrase stays.
       throw new HwpCliError(
         "unavailable",
-        "hwp binary is not executable (set HWP_EDITOR_BIN or the bin option)",
+        "ahwp binary is not executable (set HWP_EDITOR_BIN or the bin option)",
         undefined,
         detailFor(bin, error instanceof Error ? error.message : String(error)),
       );

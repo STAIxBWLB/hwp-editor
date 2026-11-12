@@ -431,7 +431,7 @@ describe("structured refusal on the HTTP transport (#82)", () => {
   const doc = { name: "a.hwpx", data: new Uint8Array([1]) };
 
   it("carries the server's error.refusal onto the error", async () => {
-    const err = await failing({ error: { code: "failed", message: "hwp edit failed (exit 3): edit refused: range_tag", refusal: "range_tag" } })
+    const err = await failing({ error: { code: "failed", message: "ahwp edit failed (exit 3): edit refused: range_tag", refusal: "range_tag" } })
       .edit(doc, []).catch((e: unknown) => e) as HwpEngineError;
     expect(err.refusal).toBe("range_tag");
   });
@@ -457,7 +457,7 @@ describe("stopped-without-diagnostic marker on the HTTP transport (#91)", () => 
     });
   }
   const target = { name: "a.hwpx", data: new Uint8Array([1]) };
-  const message = `hwp edit failed (exit 137): ${STOPPED_WITHOUT_DIAGNOSTIC}`;
+  const message = `ahwp edit failed (exit 137): ${STOPPED_WITHOUT_DIAGNOSTIC}`;
 
   it("carries the server's error.stopped onto the error", async () => {
     const err = await failing({ error: { code: "failed", message, stopped: true } })

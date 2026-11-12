@@ -190,6 +190,11 @@ describe("template producer refusal", () => {
     await expect(commands.slots({name:"x.hwpx",data:new Uint8Array()})).rejects.toThrow(/1.4.0.*upgrade/i);
     expect(called).toBe(false);
   });
+  it("names agent-hwp when the embedded-template list is malformed (#133)", async () => {
+    const { createTemplateCommands } = await import("../src/template-engine.js");
+    const commands = createTemplateCommands({version:async()=>"1.4.0",work:async fn=>fn("/unused"),stage:async()=>"/unused/input.hwpx",run:async()=>"Bad Id\tlabel\n"});
+    await expect(commands.listTemplates()).rejects.toThrow("Invalid embedded-template list; use agent-hwp 1.4.0 and retry.");
+  });
   it("refuses image paths in rich_blocks defaults before staging or invoking template", async () => {
     const { createTemplateCommands } = await import("../src/template-engine.js");
     let staged = false;

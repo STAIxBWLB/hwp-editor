@@ -945,7 +945,7 @@ describe.each([["en", en], ["ko", ko]] as const)("No or unknown refusal field on
     ["no field", {}],
     ["an unknown kind", { refusal: "bogus" }],
   ] as const)("shows the generic message for %s, even with the marker text", async (_label, extra) => {
-    const message = "hwp-engine HTTP 422: hwp edit failed (exit 3): edit refused: range_tag";
+    const message = "hwp-engine HTTP 422: ahwp edit failed (exit 3): edit refused: range_tag";
     const engine = createMockEngine({ envelope: sentenceEnvelope("hello", [[0, 5]]) });
     engine.edit = async () => {
       throw Object.assign(new HwpEngineError("failed", message, { status: 422 }), extra);
@@ -994,12 +994,12 @@ describe.each([["en", en], ["ko", ko]] as const)("Transport failures end to end 
       : Promise.reject(rejection));
 
   it("HTTP: the server's error.refusal shows the range-tag sentence", async () => {
-    const failure = await failureOf(http({ code: "failed", message: "hwp edit failed (exit 3): edit refused: range_tag", refusal: "range_tag" }));
+    const failure = await failureOf(http({ code: "failed", message: "ahwp edit failed (exit 3): edit refused: range_tag", refusal: "range_tag" }));
     expect(await shown(failure)).toContain(messages["error.rangeTagRefused"]);
   });
 
   it("HTTP: message text alone shows no refusal sentence", async () => {
-    const failure = await failureOf(http({ code: "failed", message: "hwp edit failed (exit 3): edit refused: range_tag" }));
+    const failure = await failureOf(http({ code: "failed", message: "ahwp edit failed (exit 3): edit refused: range_tag" }));
     expect(await shown(failure)).not.toContain(messages["error.rangeTagRefused"]);
   });
 
@@ -1031,7 +1031,7 @@ describe.each([["en", en], ["ko", ko]] as const)("Transport failures end to end 
   it("HTTP: a stopped-without-diagnostic edit shows the locale's sentence", async () => {
     const failure = await failureOf(http({
       code: "failed",
-      message: `hwp edit failed (exit 137): ${STOPPED_WITHOUT_DIAGNOSTIC}`,
+      message: `ahwp edit failed (exit 137): ${STOPPED_WITHOUT_DIAGNOSTIC}`,
       stopped: true,
     }));
     const text = await shown(failure);

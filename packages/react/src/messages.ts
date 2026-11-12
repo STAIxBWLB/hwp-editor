@@ -256,7 +256,7 @@ export const en = {
   "error.prefix.lint": "Lint failed",
   // Badge labels; "generic" renders no chip, hence the empty string.
   "error.kind.timeout": "Engine timed out",
-  "error.kind.unavailable": "hwp binary unavailable",
+  "error.kind.unavailable": "ahwp binary unavailable",
   "error.kind.protected": "Protected document",
   "error.kind.generic": "",
 
@@ -805,7 +805,7 @@ export const ko: MessageTable = {
   "error.prefix.template": "템플릿 작업 실패",
   "error.prefix.lint": "문서 검사 실패",
   "error.kind.timeout": "엔진 시간 초과",
-  "error.kind.unavailable": "hwp 실행 파일 없음",
+  "error.kind.unavailable": "ahwp 실행 파일 없음",
   "error.kind.protected": "보호/배포 문서",
   "error.kind.generic": "",
 

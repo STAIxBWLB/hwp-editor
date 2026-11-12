@@ -45,7 +45,7 @@ const UNMEASURED: Blocks = [{ type: "paragraph", runs: [{ type: "text", text: "�
 
 /** What the CLI server's classification puts in the message (no paths). */
 const serverSummary = (widths: boolean): string =>
-  `hwp edit failed (exit 1): insert_blocks refused: layout_overflow${widths
+  `ahwp edit failed (exit 1): insert_blocks refused: layout_overflow${widths
     ? " (block 120 mm, insertion point 46.4 mm)"
     : ""}`;
 
@@ -107,7 +107,7 @@ describe("insertionFailure", () => {
     // rides inside it rather than replacing it.
     const error = new HwpEngineError(
       "failed",
-      "hwp edit failed (exit 1): 구역 정의 문단 앞에는 삽입할 수 없습니다",
+      "ahwp edit failed (exit 1): 구역 정의 문단 앞에는 삽입할 수 없습니다",
     );
     const shown = insertionFailure(error, WIDE, en) as Error & { detail?: string; code?: string };
 
@@ -152,7 +152,7 @@ describe("insertionFailure", () => {
     // Both transports append the English sentence to the message for an empty
     // stderr, so reading it into the {reason} slot would print English inside
     // the Korean frame. The structured marker selects the locale's sentence.
-    const error = new HwpEngineError("failed", `hwp edit failed (exit 137): ${STOPPED_WITHOUT_DIAGNOSTIC}`, {
+    const error = new HwpEngineError("failed", `ahwp edit failed (exit 137): ${STOPPED_WITHOUT_DIAGNOSTIC}`, {
       stopped: true,
     });
     const shown = insertionFailure(error, WIDE, ko) as HwpEngineError;
@@ -168,7 +168,7 @@ describe("insertionFailure", () => {
   it("leaves a failure that is not a refusal with the handling it has", () => {
     // A timeout is not the engine refusing this component, so it keeps its own
     // badge and message rather than being relabelled.
-    const error = new HwpEngineError("timeout", "hwp edit failed (exit 124)");
+    const error = new HwpEngineError("timeout", "ahwp edit failed (exit 124)");
     expect(insertionFailure(error, WIDE, en)).toBe(error);
   });
 
@@ -179,7 +179,7 @@ describe("insertionFailure", () => {
    */
   it("names the style the target document lacks", () => {
     const error = refused(
-      "hwp edit failed (exit 1): insert_blocks refused: unknown_style; 결재란 셀",
+      "ahwp edit failed (exit 1): insert_blocks refused: unknown_style; 결재란 셀",
       { kind: "unknown_style", style: "결재란 셀" },
     );
     const shown = insertionFailure(error, WIDE, ko) as Error & { detail?: string; code?: string };
@@ -196,7 +196,7 @@ describe("insertionFailure", () => {
     // is user text, and the parenthesised form it used before cut one at its
     // first `)`.
     const style = "결재란 (법인) '대표'";
-    const error = refused(`hwp edit failed (exit 1): insert_blocks refused: unknown_style; ${style}`, { kind: "unknown_style", style });
+    const error = refused(`ahwp edit failed (exit 1): insert_blocks refused: unknown_style; ${style}`, { kind: "unknown_style", style });
     const shown = insertionFailure(error, WIDE, en) as Error;
 
     expect(shown.message).toBe(en("components.unknownStyle", { style }));
@@ -225,7 +225,7 @@ describe("insertionFailure", () => {
 
   it("ignores a malformed insertion field and falls back to the generic frame", () => {
     for (const insertion of [{ kind: "unknown_style", style: "" }, { kind: "layout_overflow", insertionMm: "46" }, { kind: "x" }]) {
-      const error = Object.assign(new HwpEngineError("failed", "hwp edit failed (exit 1)"), { insertion });
+      const error = Object.assign(new HwpEngineError("failed", "ahwp edit failed (exit 1)"), { insertion });
       const shown = insertionFailure(error, WIDE, en) as Error;
       expect(shown.message).not.toContain("no style named");
       expect(shown.message).not.toBe(en("components.invalidDefinition"));
@@ -237,8 +237,8 @@ describe("insertionFailure", () => {
     // falls back to the generic frame, whatever the text says.
     for (const message of [
       "hwped_edit failed: hwp edit failed (exit 1): insert_blocks refused: unknown_style; 결재란 셀",
-      "hwp edit failed (exit 1): insert_blocks refused: layout_overflow (block 120 mm, insertion point 46.4 mm)",
-      "hwp edit failed (exit 1): insert_blocks refused: invalid_definition",
+      "ahwp edit failed (exit 1): insert_blocks refused: layout_overflow (block 120 mm, insertion point 46.4 mm)",
+      "ahwp edit failed (exit 1): insert_blocks refused: invalid_definition",
     ]) {
       const shown = insertionFailure(new HwpEngineError("failed", message), WIDE, en) as Error;
       expect(shown.message).not.toBe(en("components.unknownStyle", { style: "결재란 셀" }));
@@ -251,7 +251,7 @@ describe("insertionFailure", () => {
   });
 
   it("turns an unclassified definition refusal into a sentence with a next step", () => {
-    const error = refused("hwp edit failed (exit 1): insert_blocks refused: invalid_definition", { kind: "invalid_definition" });
+    const error = refused("ahwp edit failed (exit 1): insert_blocks refused: invalid_definition", { kind: "invalid_definition" });
     const shown = insertionFailure(error, WIDE, en) as Error & { detail?: string };
 
     expect(shown.message).toBe(en("components.invalidDefinition"));
@@ -330,7 +330,7 @@ describe("insertion class end to end over HTTP (t37-a4)", () => {
       fetch: (() => Promise.resolve(new Response(JSON.stringify({
         error: {
           code: "failed",
-          message: "hwp edit failed (exit 3): insert_blocks refused: layout_overflow (block 120.00 mm, insertion point 46.40 mm)",
+          message: "ahwp edit failed (exit 3): insert_blocks refused: layout_overflow (block 120.00 mm, insertion point 46.40 mm)",
           insertion: { kind: "layout_overflow", blockMm: 120, insertionMm: 46.4 },
         },
       }), { status: 422 }))) as unknown as typeof fetch,
@@ -344,7 +344,7 @@ describe("insertion class end to end over HTTP (t37-a4)", () => {
   it("shows no class sentence when the body has only the message text", async () => {
     const engine = createHttpEngine("/api", {
       fetch: (() => Promise.resolve(new Response(JSON.stringify({
-        error: { code: "failed", message: "hwp edit failed (exit 3): insert_blocks refused: unknown_style; 결재란 셀" },
+        error: { code: "failed", message: "ahwp edit failed (exit 3): insert_blocks refused: unknown_style; 결재란 셀" },
       }), { status: 422 }))) as unknown as typeof fetch,
     });
     const failure = await engine.edit({ name: "a.hwpx", data: new Uint8Array([1]) }, [])

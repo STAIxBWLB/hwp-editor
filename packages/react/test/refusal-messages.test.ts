@@ -58,7 +58,7 @@ describe("refusal sentences (#80)", () => {
 
 describe("engineRefusalKind reads the structured field only (#82)", () => {
   it("returns the transport's refusal field", () => {
-    expect(engineRefusalKind(new HwpEngineError("failed", "hwp edit failed (exit 3): edit refused: range_tag", { refusal: "range_tag" })))
+    expect(engineRefusalKind(new HwpEngineError("failed", "ahwp edit failed (exit 3): edit refused: range_tag", { refusal: "range_tag" })))
       .toBe("range_tag");
   });
 
@@ -67,7 +67,7 @@ describe("engineRefusalKind reads the structured field only (#82)", () => {
     // user typed is the last text on it (hwp-convert edit.rs:2107).
     for (const message of [
       "hwped_edit failed: hwp_failed: hwp edit failed (exit 3): Error: 앵커를 찾을 수 없습니다: x edit refused: range_tag",
-      "hwp edit failed (exit 3): edit refused: range_tag",
+      "ahwp edit failed (exit 3): edit refused: range_tag",
     ]) {
       expect(engineRefusalKind(new Error(message))).toBeUndefined();
       expect(engineRefusalKind(new HwpEngineError("failed", message))).toBeUndefined();

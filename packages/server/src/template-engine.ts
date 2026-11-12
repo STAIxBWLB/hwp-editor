@@ -179,7 +179,7 @@ export function createTemplateCommands(deps: Dependencies) {
       const stdout = await deps.run(["new", "--list-templates"], call);
       const rows = stdout.trim().split(/\r?\n/).map(line => {
         const [id, label, ...rest] = line.split("\t");
-        if (id === undefined || !/^[a-z][a-z0-9-]*$/.test(id) || !label || rest.length) throw new HwpCliError("failed", "Invalid embedded-template list; use hwp-cli 1.4.0 and retry.");
+        if (id === undefined || !/^[a-z][a-z0-9-]*$/.test(id) || !label || rest.length) throw new HwpCliError("failed", "Invalid embedded-template list; use agent-hwp 1.4.0 and retry.");
         return { id, label };
       });
       return rows;
