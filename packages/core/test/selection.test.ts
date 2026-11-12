@@ -493,6 +493,51 @@ describe("selection helpers", () => {
     expect(at(3, 4)).toEqual([{ address: { id: "bold-split", chars: [0, 2] }, whole: true, widened: true }]);
   });
 
+  it("keeps the edge whitespace when asking what a whole-run op formats (#71)", () => {
+    // The engine wraps a bold run's TRIMMED text and leaves the run's edge
+    // whitespace outside the pair, so ` **a&b** ` is one run whose own text is
+    // " a&b ": a whole-run `{id}` op writes that whitespace too. The ampersand
+    // is what keeps the piece off the window path - `runCoverage` maps no
+    // fragment it rewrites - so the op the hint judges is the whole run.
+    const plain = { bold: false, italic: false, size_pt: 10, color: "#000000", faces: Array(7).fill("A"), face_ids: Array(7).fill(0) };
+    const bold = { ...plain, bold: true };
+    const p: Segment = { id: "p", indices: [0], start: 0, end: 9, kind: "para", section: 0, para: 0 };
+    const run: Segment = { id: "amp", indices: [0, 0], start: 0, end: 9, kind: "run", section: 0, para: 0,
+      directChar: bold, sourceChars: { start: 0, end: 5 } };
+    const envelope: CatEnvelope = { markdown: " **a&b** ", segments: [p, run] };
+    const at = (start: number, end: number) =>
+      formatTargets(envelope, [p], { paragraph: { section: 0, para: 0, id: "p" }, start, end }, "hwpx");
+    // `a&b` alone: the op formats " a&b ".
+    expect(at(3, 6)).toEqual([{ address: { id: "amp" }, whole: true, widened: true }]);
+    // The whole fragment, edge whitespace included: the op adds nothing to it.
+    expect(at(0, 9)).toEqual([{ address: { id: "amp" }, whole: true, widened: false }]);
+  });
+
+  it("counts a split bold piece's literal leading star as text, not as a marker (#71)", () => {
+    // `**` is the pair a bold run is wrapped in, and a piece a block control
+    // split carries one half of it. A run whose own text starts with a literal
+    // `*` therefore projects as `**` plus `*x`: three stars, of which only two
+    // are the pair. The third is a character the piece shows, so a drag that
+    // lands on it does reach the piece, and a drag that skips it has not
+    // covered everything the op formats.
+    const plain = { bold: false, italic: false, size_pt: 10, color: "#000000", faces: Array(7).fill("A"), face_ids: Array(7).fill(0) };
+    const bold = { ...plain, bold: true };
+    const p: Segment = { id: "p", indices: [0], start: 0, end: 8, kind: "para", section: 0, para: 0 };
+    const first: Segment = { id: "star-split", indices: [0, 0], start: 0, end: 4, kind: "run", section: 0, para: 0,
+      directChar: bold, sourceChars: { start: 0, end: 2 } };
+    const second: Segment = { id: "star-split", indices: [0, 0], start: 5, end: 8, kind: "run", section: 0, para: 0,
+      directChar: bold, sourceChars: { start: 9, end: 10 } };
+    const envelope: CatEnvelope = { markdown: "***x|y**", segments: [p, first, second] };
+    const at = (start: number, end: number) =>
+      formatTargets(envelope, [p], { paragraph: { section: 0, para: 0, id: "p" }, start, end }, "hwpx");
+    // What the piece shows is `*x` at 2..4, so covering that adds nothing.
+    expect(at(2, 4)).toEqual([{ address: { id: "star-split", chars: [0, 2] }, whole: true, widened: false }]);
+    // The star alone reaches the piece and is named by it.
+    expect(at(2, 3)).toEqual([{ address: { id: "star-split", chars: [0, 2] }, whole: true, widened: true }]);
+    // `x` alone leaves the star to the op, which formats the piece.
+    expect(at(3, 4)).toEqual([{ address: { id: "star-split", chars: [0, 2] }, whole: true, widened: true }]);
+  });
+
   it("names no target for a piece a drag touches only through its marker", () => {
     // The AC2 fixture, addressed directly: a plain run, a bold " / " and an
     // italic run, with the spans ahwp 1.6.1 publishes for them. A drag that

@@ -475,6 +475,20 @@ describe.each([["en", en], ["ko", ko]] as const)("Markdown run range selection (
     ]);
   });
 
+  it("warns for a whole-run op that formats the edge whitespace the selection left out (#71)", async () => {
+    // The engine leaves a bold run's edge whitespace outside the marker pair,
+    // so ` **a&b** ` is one run whose own text is " a&b ": a whole-run op
+    // writes that whitespace, and the panel has to say so when the selection
+    // covered only the characters between the markers.
+    render(<HwpEditor engine={createMockEngine({ envelope: sentenceEnvelope(" **a&b** ", [[0, 9]], [{ bold: true }]) })} file={file} locale={locale} />);
+    const textarea = await selectFirstParagraph(messages);
+    await selectRange(textarea, 3, 6);
+    expect(await screen.findByText(messages["segment.rangeWholeRunTargets"]({ count: 1 }))).toBeTruthy();
+    // Reaching the whitespace on both sides adds nothing to the op.
+    await selectRange(textarea, 0, 9);
+    expect(screen.queryByText(messages["segment.rangeWholeRunTargets"]({ count: 1 }))).toBeNull();
+  });
+
   it("explains in the active locale why a range is off, without blaming the host for an empty paragraph", async () => {
     render(<HwpEditor engine={createMockEngine({ envelope: noRunEnvelope() })} file={file} locale={locale} />);
     fireEvent.click(await screen.findByRole("option"));

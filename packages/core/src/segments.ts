@@ -833,38 +833,76 @@ function sameParagraph(a: Segment, b: Segment): boolean {
 }
 
 /**
+ * How the engine wrapped a piece's fragment in emphasis markers.
+ *
+ * `undefined` means the fragment is the piece's own text: the run carries no
+ * emphasis property, or it carries one and its fragment shows no marker at all.
+ *
+ * The marker width comes from the run's own character properties, never from
+ * counting stars: a bold run whose text starts with a literal `*` projects as
+ * `***x`, and only two of those three stars are its pair - the third is a
+ * character the piece shows. A piece a block control split can carry one half
+ * of the pair only (`**굵` and `게**` are the two pieces of one bold run), and
+ * that half is `stars` wide for the same reason.
+ *
+ * The edge whitespace is the run's, not the marker's: the engine wraps the
+ * run's trimmed text and leaves the whitespace outside the pair, so `lead` and
+ * `trail` count scalars that the piece shows and a whole-run op formats.
+ */
+type EmphasisWrap =
+  | { kind: "pair"; stars: number; lead: number; trail: number; inner: string }
+  | { kind: "half"; side: "open" | "close"; stars: number; lead: number; trail: number };
+
+function emphasisWrap(run: Segment, fragment: string): EmphasisWrap | undefined {
+  const direct = run.directChar;
+  if (direct === undefined || (!direct.bold && !direct.italic)) return undefined;
+  const stars = direct.bold && direct.italic ? 3 : direct.bold ? 2 : 1;
+  const marker = "\\*".repeat(stars);
+  const wrapped = new RegExp(`^(\\s*)${marker}([\\s\\S]+)${marker}(\\s*)$`, "u").exec(fragment);
+  if (wrapped !== null) {
+    return {
+      kind: "pair",
+      stars,
+      lead: [...wrapped[1]!].length,
+      trail: [...wrapped[3]!].length,
+      inner: wrapped[2]!,
+    };
+  }
+  // One half of a pair, opening or closing, never both.
+  const opening = /^(\s*)\*+/u.exec(fragment);
+  if (opening !== null) {
+    return { kind: "half", side: "open", stars, lead: [...opening[1]!].length, trail: 0 };
+  }
+  const closing = /\*+(\s*)$/u.exec(fragment);
+  if (closing !== null) {
+    return { kind: "half", side: "close", stars, lead: 0, trail: [...closing[1]!].length };
+  }
+  return undefined;
+}
+
+/**
  * The scalars of a piece's fragment that are the text it shows.
  *
  * A piece whose fragment is its own text shows all of it. A piece an emphasis
  * marker pair closes around shows the text between the pair, and the edge
  * whitespace the engine leaves outside the pair is not text. A piece a block
- * control split can carry only one half of the pair - `**굵` and `게**` are the
- * two pieces of one bold run - so the half it does carry is stripped as a
- * marker, with whatever whitespace sits outside it.
+ * control split can carry only one half of the pair, so the half it does carry
+ * is stripped as a marker, with whatever whitespace sits outside it.
  *
  * This answers one question: does a window reach a character this piece shows?
  * It never widens an answer to a window: a piece whose half pair was stripped
  * cannot be read back by `runWindowText`, so it still names the whole run when
- * the window reaches it.
+ * the window reaches it. The edge whitespace is left out here because a window
+ * in it covers nothing the piece shows; a caller deciding what a whole-piece op
+ * FORMATS asks `formattedSpan`, which keeps it.
  */
 function visibleSpan(run: Segment, fragment: string): { start: number; end: number } {
   const chars = [...fragment];
-  const whole = { start: 0, end: chars.length };
-  const direct = run.directChar;
-  if (direct === undefined || (!direct.bold && !direct.italic)) return whole;
-  const stars = direct.bold && direct.italic ? 3 : direct.bold ? 2 : 1;
-  const marker = "\\*".repeat(stars);
-  const wrapped = new RegExp(`^(\\s*)${marker}([\\s\\S]+)${marker}(\\s*)$`, "u").exec(fragment);
-  if (wrapped !== null) {
-    const lead = [...wrapped[1]!].length;
-    return { start: lead + stars, end: lead + stars + [...wrapped[2]!].length };
-  }
-  // One half of a pair, opening or closing, never both.
-  const opening = /^\s*\*+/u.exec(fragment);
-  if (opening !== null) return { start: [...opening[0]].length, end: chars.length };
-  const closing = /\*+\s*$/u.exec(fragment);
-  if (closing !== null) return { start: 0, end: chars.length - [...closing[0]].length };
-  return whole;
+  const wrap = emphasisWrap(run, fragment);
+  if (wrap === undefined) return { start: 0, end: chars.length };
+  if (wrap.kind === "pair") return { start: wrap.lead + wrap.stars, end: wrap.lead + wrap.stars + [...wrap.inner].length };
+  if (wrap.side === "open") return { start: wrap.lead + wrap.stars, end: chars.length };
+  return { start: 0, end: chars.length - wrap.trail - wrap.stars };
 }
 
 /**
@@ -881,6 +919,36 @@ function visibleSpan(run: Segment, fragment: string): { start: number; end: numb
 export function shownSpan(envelope: CatEnvelope, run: Segment): { start: number; end: number } {
   const shown = visibleSpan(run, segmentText(envelope, run));
   return { start: run.start + shown.start, end: run.start + shown.end };
+}
+
+/**
+ * The markdown span a whole-piece op formats, as absolute offsets.
+ *
+ * A `{id}` op with no `chars` writes the piece's source text, which is its
+ * fragment with the marker pair stripped and its edge whitespace kept: the
+ * engine leaves the run's trimmed text inside the pair and its whitespace
+ * outside, so the whitespace is the run's own and an op that formats the piece
+ * writes it. `shownSpan` leaves that whitespace out, because a window landing
+ * in it covers no character the piece shows; the two answers differ exactly
+ * where a whole-piece op formats characters the selection could not have
+ * covered, which is what the range hint warns about.
+ *
+ * Keeping the edge whitespace widens the span over the marker characters that
+ * sit between the whitespace and the text, and that is the honest answer: a
+ * markdown interval cannot skip them, and no selection can reach the whitespace
+ * without crossing the pair. A piece carrying half a pair, or a marker the
+ * fragment does not show at all, keeps whichever edge it has.
+ */
+export function formattedSpan(envelope: CatEnvelope, run: Segment): { start: number; end: number } {
+  const fragment = segmentText(envelope, run);
+  const shown = visibleSpan(run, fragment);
+  const wrap = emphasisWrap(run, fragment);
+  const lead = wrap === undefined ? 0 : wrap.lead;
+  const trail = wrap === undefined ? 0 : wrap.trail;
+  return {
+    start: run.start + (lead > 0 ? 0 : shown.start),
+    end: run.start + (trail > 0 ? [...fragment].length : shown.end),
+  };
 }
 
 /**
