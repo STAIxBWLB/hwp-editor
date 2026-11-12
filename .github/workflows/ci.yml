@@ -257,6 +257,11 @@ jobs:
           const jobs = Object.entries(JSON.parse(process.env.NEEDS_JSON));
           if (jobs.length === 0) {
             console.error("No gating job reported a result");
+            console.error(
+              "Next step: there is no gating job log to read, because none of changes, " +
+                "build-test or package reported at all. Open this run's job graph, re-run " +
+                "the workflow, and if it happens again treat it as a workflow bug in `needs`.",
+            );
             process.exit(1);
           }
           const failed = jobs.filter(([, job]) => job.result !== "success");
@@ -281,9 +286,36 @@ jobs:
             process.exit(0);
           }
           console.error("Gating jobs did not all succeed:", failed);
-          console.error(
-            "Next step: open the log of each job named above in this run, fix what it reports, " +
-              "and push the fix; ci-ok re-runs with the gating jobs.",
-          );
+          // One next step per job, keyed on its own result: "open the log and fix
+          // it" is wrong for a job that has no log to open. A cancelled job is
+          // usually its timeout, and a skipped one was decided upstream.
+          const nextStep = (result) => {
+            switch (result) {
+              case "failure":
+                return (
+                  "open this job's log in this run, fix what it reports, and push; " +
+                  "ci-ok re-runs with the gating jobs"
+                );
+              case "cancelled":
+                return (
+                  "this job was cancelled, typically by its timeout, and produced no " +
+                  "verdict on the change; re-run the job"
+                );
+              case "skipped":
+                return (
+                  "a skipped job has no log. Read the upstream job it depends on " +
+                  "(build-test and package both depend on changes), which is where the " +
+                  "skip was decided"
+                );
+              default:
+                return (
+                  `this job ended ${result}, which this aggregate does not classify; ` +
+                  "open its log and read the step that decided that result"
+                );
+            }
+          };
+          for (const [id, job] of failed) {
+            console.error(`Next step for ${id}: ${nextStep(job.result)}.`);
+          }
           process.exit(1);
           NODE

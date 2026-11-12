@@ -230,6 +230,21 @@ publish_package() {
     --provenance --tag "$(dist_tag_for "$VERSION")"
 }
 
+# mnt_label <pkg> <version> <path> <log>
+# The [ok] line for one successful `npm dist-tag add`, read from npm's output:
+# `+next: @hwp-editor/<pkg>@<version>` is the write, the "is already set" warn
+# is a no-op, and anything else exited 0 without either line, which is
+# reported as unconfirmed rather than credited to a path.
+mnt_label() {
+  if grep -qxF "+next: @hwp-editor/$1@$2" "$4"; then
+    echo "[ok] @hwp-editor/$1 next -> $2 ($3)"
+  elif grep -q "is already set" "$4"; then
+    echo "[ok] @hwp-editor/$1 next already at $2 (no write)"
+  else
+    echo "::warning::npm dist-tag add for @hwp-editor/$1@$2 exited 0 without its +next: line; check next by hand"
+  fi
+}
+
 # move_next_tag <version>
 # RELEASING.md step 7, automated for stable releases (#38): point `next` at the
 # version the publish just put on `latest`, so `@next` never hands out an older
@@ -289,21 +304,6 @@ publish_package() {
 # No token and no OIDC permission is a warning and a skip, not a failure: the
 # packages are already published, and the manual commands in RELEASING.md step 7
 # finish the job.
-# mnt_label <pkg> <version> <path> <log>
-# The [ok] line for one successful `npm dist-tag add`, read from npm's output:
-# `+next: @hwp-editor/<pkg>@<version>` is the write, the "is already set" warn
-# is a no-op, and anything else exited 0 without either line, which is
-# reported as unconfirmed rather than credited to a path.
-mnt_label() {
-  if grep -qxF "+next: @hwp-editor/$1@$2" "$4"; then
-    echo "[ok] @hwp-editor/$1 next -> $2 ($3)"
-  elif grep -q "is already set" "$4"; then
-    echo "[ok] @hwp-editor/$1 next already at $2 (no write)"
-  else
-    echo "::warning::npm dist-tag add for @hwp-editor/$1@$2 exited 0 without its +next: line; check next by hand"
-  fi
-}
-
 move_next_tag() {
   mnt_version="$1"
   if is_prerelease "$mnt_version"; then
@@ -352,13 +352,24 @@ move_next_tag() {
     # Captured like the OIDC attempt, so the label keys on npm's `+next:` line:
     # after a partial OIDC pass the package OIDC already moved is a no-op here,
     # and calling it `(token)` would credit the token with a write it never made.
-    if ! env -u ACTIONS_ID_TOKEN_REQUEST_URL -u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+    #
+    # npm's own status is what leaves this helper, not a fixed 1: E401 and E403
+    # (this token's scope and 2FA bypass) read differently to an operator from
+    # E500 or a registry timeout, and release.yml keeps the step
+    # continue-on-error, so the code in the job log is the only thing that
+    # distinguishes "fix the token" from "retry the job". Reading it from the
+    # else arm is required - inside a `then` arm `$?` is the `!`'s own 0 - and
+    # the call stays in the `if`, so a failure does not abort the shell before
+    # the EXIT trap removes the userconfig that holds the secret.
+    if env -u ACTIONS_ID_TOKEN_REQUEST_URL -u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
       -u NPM_ID_TOKEN -u NPM_DIST_TAG_TOKEN \
       npm --userconfig "$mnt_cfg" dist-tag add "@hwp-editor/$mnt_pkg@$mnt_version" next >"$mnt_log" 2>&1; then
+      mnt_label "$mnt_pkg" "$mnt_version" "token" "$mnt_log"
+    else
+      mnt_st=$?
       cat "$mnt_log"
-      return 1
+      return "$mnt_st"
     fi
-    mnt_label "$mnt_pkg" "$mnt_version" "token" "$mnt_log"
   done
   rm -f "$mnt_cfg"
 }
