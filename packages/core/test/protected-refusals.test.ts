@@ -153,6 +153,72 @@ describe("the protection backstop", () => {
   });
 
   /**
+   * #117: the block is recognised by its lines, not by its head. std writes a
+   * frame as an index right-aligned in four columns, `: ` and the symbol, and
+   * under a frame it can add `at <path>:<line>:<col>`; a short backtrace can
+   * carry std's `note:` elision line, and a disabled one its whole `disabled
+   * backtrace`. Only the first of these is measured here (this Mac's ahwp 1.6.1
+   * prints frames and nothing else), so the other three are fixtures read off
+   * std's `BacktraceFmt` and checked with a throwaway `rustc` program.
+   */
+  it.each([
+    [
+      "frames carrying locations",
+      "\n\nStack backtrace:\n" +
+        "   0: std::backtrace::Backtrace::create\n" +
+        "             at ./src/main.rs:12:5\n" +
+        "   1: ahwp::commands::cat::run\n" +
+        "             at ./src/commands/cat.rs:187:9",
+    ],
+    [
+      "frames carrying std's elision note",
+      "\n\nStack backtrace:\n" +
+        "   0: std::backtrace::Backtrace::create\n" +
+        "note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.",
+    ],
+    ["the disabled line", "\n\nStack backtrace:\ndisabled backtrace"],
+  ])("classifies when the captured block is %s", (_name, block) => {
+    expect(protectedReasonFromDiagnostics(`${printed(DRM).trimEnd()}${block}\n`)).toBe(
+      `DRM-protected document; ${PROTECTED_NEXT_STEP}`,
+    );
+  });
+
+  /**
+   * #117's red proof. hwp-cli prints a document warning with the warning as
+   * written (`경고: {w}`, cat.rs:212/:230), so a warning can carry an `Error:`
+   * line, the chain and then a `Stack backtrace:` head of its own; the engine's
+   * real failure follows it. No backtrace was captured - the server never sets
+   * one - so the text below that head is not a block, and cutting at the head
+   * would drop the real failure and leave the planted chain ending the report.
+   */
+  it("does not classify when a warning planted a chain and a head above the real failure", () => {
+    const planted = `경고: 머리말 idRef=1\n${printed(DRM).trimEnd()}\n\nStack backtrace:`;
+    const failure =
+      "Error: 요청한 자리표시자·양식 필드를 찾지 못했습니다: title (--allow-partial로 일치한 값만 적용 가능)";
+    expect(protectedReasonFromDiagnostics(`${planted}\n${failure}\n`)).toBeNull();
+    expect(
+      protectedReasonFromDiagnostics(
+        `hwp_failed: hwp fill failed (exit 1): ${planted}\n${failure}`,
+      ),
+    ).toBeNull();
+  });
+
+  /**
+   * The same head at the end of an unmatched key: `fill` joins the key list
+   * with `{}` and appends its ` (--allow-partial로 ...)` hint to that line, so
+   * the hint is the only text below the head. It is not a frame, so nothing is
+   * cut and the engine's own suffix stays where it wrote it.
+   */
+  it("does not cut at a head an unmatched fill key ended on", () => {
+    const key = "title\n\nStack backtrace:";
+    expect(
+      protectedReasonFromDiagnostics(
+        `Error: 요청한 자리표시자·양식 필드를 찾지 못했습니다: ${key} (--allow-partial로 일치한 값만 적용 가능)\n`,
+      ),
+    ).toBeNull();
+  });
+
+  /**
    * The cut is at the LAST `Stack backtrace:` head. A `set-meta` value is
    * printed raw, so a caller can plant a head of its own before the engine's
    * chain; cutting at the first one would drop the chain that follows it.

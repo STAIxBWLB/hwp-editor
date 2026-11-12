@@ -343,7 +343,7 @@ function terminationChain(message: string): string {
 
 /**
  * The head anyhow's Debug appends when a backtrace is captured: a blank line
- * and `Stack backtrace:`, then one frame per line. Read from anyhow 1.0.104
+ * and `Stack backtrace:`, then the frames. Read from anyhow 1.0.104
  * (`fmt.rs:46-61`, the version in hwp-cli v1.6.1's Cargo.lock) and measured on
  * ahwp 1.6.1 with `RUST_BACKTRACE=1 hwp cat` on a file that is not a document:
  * the block follows the `Caused by:` copy, so the diagnostics no longer END
@@ -357,16 +357,63 @@ function terminationChain(message: string): string {
 const BACKTRACE_HEAD = "\n\nStack backtrace:";
 
 /**
+ * One line of the block std's `Backtrace` Display writes, or false. The four
+ * shapes were measured and read, because the block is recognised by its lines
+ * and not by its head alone:
+ *
+ * - `   0: anyhow::error::<impl anyhow::Error>::new` - a frame. The index is
+ *   right-aligned in four columns, then `: ` and the symbol (the `backtrace`
+ *   output of ahwp 1.6.1 on macOS, identical under `RUST_BACKTRACE=1` and
+ *   `=full`).
+ * - `             at ./src/main.rs:12:5` - the location std prints under a
+ *   frame on a build that carries debug info. This Mac's ahwp binary has none,
+ *   so it is read off std's `BacktraceFmt` rather than seen here, and it is
+ *   accepted for the Linux builds that do print it.
+ * - `note: Some details are omitted, run with RUST_BACKTRACE=full ...` - std's
+ *   elision note, which replaces or follows frames in a short backtrace.
+ * - `disabled backtrace` - the whole Display of `BacktraceStatus::Disabled`,
+ *   measured with a throwaway `rustc` program under `RUST_BACKTRACE=0`. anyhow
+ *   prints no block at all in that state (measured on ahwp 1.6.1), so nothing
+ *   real reaches it; accepting it keeps the reader from misreading a block a
+ *   future anyhow version decides to print.
+ */
+function isBacktraceLine(line: string): boolean {
+  return /^ +\d+: \S/u.test(line) ||
+    /^ +at \S/u.test(line) ||
+    /^note: \S/u.test(line) ||
+    /^disabled backtrace$/u.test(line);
+}
+
+/**
+ * Whether everything after a `Stack backtrace:` head is that block: at least
+ * one non-blank line, and every non-blank one a frame, a location, a note or
+ * the disabled line.
+ */
+function backtraceTailIsFrames(tail: string): boolean {
+  const lines = tail.split(/\r?\n/u).filter(line => line.trim() !== "");
+  return lines.length > 0 && lines.every(isBacktraceLine);
+}
+
+/**
  * The engine's report with any backtrace block cut off, so the chain check
  * reads the same with and without `RUST_BACKTRACE`.
  *
- * Cut at the LAST occurrence: the engine appends its block once, after
- * Termination's, so anything earlier is caller text an op value planted, and
- * dropping the tail there only ever rejects a reading.
+ * Cut at the LAST head, and only when the block after it really is a backtrace
+ * (`backtraceTailIsFrames`). The head alone is not evidence: a caller's value
+ * can print `\n\nStack backtrace:` - `set-meta`'s spec with `Display`, and
+ * `fill`'s unmatched key list - and when no backtrace was captured, which is
+ * always the case on the server, the text that follows such a planted head is
+ * the engine's own trailing text (`fill`'s ` (--allow-partial로 ...)` suffix).
+ * Cutting there would drop that suffix and leave the chain ending the report,
+ * which is exactly what a protection reading must not happen on. Text that is
+ * not a backtrace is therefore left whole, and the chain check rejects it on
+ * its own terms.
  */
 function withoutBacktrace(diagnostics: string): string {
   const traced = diagnostics.lastIndexOf(BACKTRACE_HEAD);
-  return traced < 0 ? diagnostics : diagnostics.slice(0, traced);
+  if (traced < 0) return diagnostics;
+  const tail = diagnostics.slice(traced + BACKTRACE_HEAD.length);
+  return backtraceTailIsFrames(tail) ? diagnostics.slice(0, traced) : diagnostics;
 }
 
 /**
