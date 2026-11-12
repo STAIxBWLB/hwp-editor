@@ -45,6 +45,14 @@ export interface FakeBinOptions {
   delayMs?: number;
   /** JSON printed for `info`, if the test needs the pre-flight to see one. */
   info?: string;
+  /**
+   * JSON printed for `info ... --body-stats`, the form that carries the body's
+   * table count (#97). Answered from the same `info` case, so a test can give
+   * the two forms different payloads.
+   */
+  infoBodyStats?: string;
+  /** Make the `--body-stats` form exit non-zero, to drive the plain-info fallback. */
+  failBodyStats?: boolean;
   /** stderr written by `mode: "fail"`; default `boom`. */
   editStderr?: string;
   /**
@@ -166,7 +174,14 @@ export function createFakeBin(opts: FakeBinOptions = {}): { bin: string; log: ()
       ...(opts.catStdout === undefined
         ? []
         : [`  cat) printf '%s' ${JSON.stringify(opts.catStdout)}; exit 0 ;;`]),
-      ...(opts.info === undefined ? [] : [`  info) printf '%s' ${JSON.stringify(opts.info)}; exit 0 ;;`]),
+      ...(opts.info === undefined && opts.infoBodyStats === undefined && opts.failBodyStats !== true
+        ? []
+        : [`  info) case " $* " in *" --body-stats "*)
+        ${opts.failBodyStats === true
+          ? "printf '%s' 'body stats failed' >&2; exit 3"
+          : `printf '%s' ${JSON.stringify(opts.infoBodyStats ?? opts.info ?? "{}")}; exit 0`} ;;
+        *)
+        ${opts.info === undefined ? "exit 0" : `printf '%s' ${JSON.stringify(opts.info)}; exit 0`} ;; esac ;;`]),
       ...(opts.failTemplateCommand === undefined ? [] : [
         `  slots) ${fail("slots").length ? fail("slots").join("; ") : opts.failTemplateCommand === "fill" ? "printf '%s' '{\"placeholders\":[{\"name\":\"title\",\"occurrences\":1}],\"fields\":[]}'; exit 0" : "printf '%s' '{\"placeholders\":[],\"fields\":[]}'; exit 0"} ;;`,
         `  fields) ${fail("fields").length ? fail("fields").join("; ") : opts.failTemplateCommand === "edit" ? "printf '%s' '[{\"name\":\"approval\",\"kind\":\"text\",\"ctrl_id\":\"1\",\"value\":\"\"}]'; exit 0" : "printf '%s' '[]'; exit 0"} ;;`,

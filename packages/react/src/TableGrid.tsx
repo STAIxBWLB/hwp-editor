@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { JSX } from "react";
 import type { CloneTableMode } from "@hwp-editor/core";
+import { tableCountMismatch } from "@hwp-editor/core";
 import { tableAtRef, tableRows } from "./tables.js";
 import { plainSegmentText } from "./text.js";
 import { useHwpEditorContext } from "./context.js";
@@ -53,6 +54,24 @@ export function TableGrid(): JSX.Element {
         onClick={() => queue({ type: "queueOp", op: { kind: "add-table", anchor: tableAnchor.trim(), rows } })}>{t("table.addTable")}</button>
     </div>
   );
+
+  // The engine counts every table its own walk reaches, including one inside a
+  // note, a header, a footer or a hidden comment, and the envelope draws none of
+  // those. One of them shifts every published index, so no number this panel
+  // could offer is the reader's table (#97 item 1).
+  const mismatch = envelope === null ? null : tableCountMismatch(envelope);
+
+  if (mismatch !== null) {
+    // The refusal replaces every index-addressed op at once - set-cell, merge,
+    // split, add and delete row and column, delete-table and clone-table - and
+    // keeps the anchor-addressed add-table, which names no index.
+    return (
+      <div className="hwped-panel" role="region" aria-label={t("table.panelAria")}>
+        <p className="hwped-hint">{t("table.indexMismatch", mismatch)}</p>
+        {addTablePanel}
+      </div>
+    );
+  }
 
   if (table === undefined) {
     return (

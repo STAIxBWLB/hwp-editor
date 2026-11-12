@@ -443,3 +443,49 @@ describeBin("routes (real hwp-cli binary)", () => {
     });
   });
 });
+
+/**
+ * #97 item 1: the envelope has to carry the engine's own table count, because
+ * the count the panel numbers by (its `table` segments) leaves out a table
+ * inside a note, a header, a footer or a hidden comment. `info --body-stats` is
+ * the only read that publishes it, and the flag is opt-in upstream, so the
+ * fallback has to leave the read exactly as it was.
+ */
+describe("the engine's own table count (#97)", () => {
+  const envelope = JSON.stringify({
+    contract: "hwp-segment-envelope-v2",
+    schema_version: "1.0",
+    markdown: "x\ny",
+    segments: [
+      { id: "p", kind: "para", path: { section: 0, indices: [0] }, char_range: { start: 0, end: 1 } },
+      { id: "t", kind: "table", path: { section: 0, indices: [1, 0] }, char_range: { start: 2, end: 3 } },
+    ],
+  });
+  const info = JSON.stringify({ format: "hwpx" });
+  // Two tables counted against the one published above: the shape a footnote or
+  // header table makes.
+  const stats = JSON.stringify({ format: "hwpx", body: { tables: 2, tables_inline: 2, tables_floating: 0 } });
+
+  it("publishes the count the body-stats form reports", async () => {
+    const { bin, log } = createFakeBin({ version: "1.4.0", catStdout: envelope, info, infoBodyStats: stats });
+    const read = await createCliEngine({ bin }).read({ name: "doc.hwpx", data: new Uint8Array([1]) });
+    expect(read.bodyTables).toBe(2);
+    // The count is the engine's, taken from the one flag that publishes it.
+    expect(log()).toMatch(/^info .*--body-stats$/m);
+  });
+
+  it("keeps the read and its editability when the body-stats probe fails", async () => {
+    const { bin, log } = createFakeBin({
+      version: "1.4.0", catStdout: envelope, info, infoBodyStats: stats, failBodyStats: true,
+    });
+    const engine = createCliEngine({ bin });
+    const read = await engine.read({ name: "doc.hwpx", data: new Uint8Array([1]) });
+    // No count: the panel allows table editing rather than refusing every op,
+    // and the read itself is untouched.
+    expect(read).not.toHaveProperty("bodyTables");
+    expect(read.segments).toHaveLength(2);
+    await expect(engine.capabilities()).resolves.toMatchObject({ editable: true, version: "1.4.0" });
+    // The plain probe is what answered after the stats probe failed.
+    expect(log()).toMatch(/^info (?!--body-stats).*--json$/m);
+  });
+});

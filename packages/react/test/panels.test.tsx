@@ -443,15 +443,20 @@ describe("SegmentInspector op emission (TEST-03)", () => {
   });
 
   it("keeps a paragraph selection when a modifier click lands on a table", async () => {
-    const markdown = "가나\n";
-    const host: Segment = { id: "t-host", indices: [2], start: 0, end: 2, kind: "para", section: 0, para: 2 };
-    const table: Segment = { id: "t-table", indices: [2, 0], start: 0, end: 2, kind: "table", section: 0, para: 2 };
-    const engine = createMockEngine({ envelope: { markdown, segments: [host, table] } });
+    // The selected paragraph is paragraph 1, which hosts no table (since #97
+    // item 2c a paragraph that DOES host one opens the Table tab) and is not
+    // the section's definition paragraph, so its own ops stay available.
+    const markdown = "가나\n\n다라\n\n마바\n";
+    const definition: Segment = { id: "t-host", indices: [0], start: 0, end: 2, kind: "para", section: 0, para: 0 };
+    const host: Segment = { id: "t-selected", indices: [1], start: 4, end: 6, kind: "para", section: 0, para: 1 };
+    const tableHost: Segment = { id: "t-h2", indices: [2], start: 8, end: 10, kind: "para", section: 0, para: 2 };
+    const table: Segment = { id: "t-table", indices: [2, 0], start: 8, end: 10, kind: "table", section: 0, para: 2 };
+    const engine = createMockEngine({ envelope: { markdown, segments: [definition, host, tableHost, table] } });
     engine.render = async () => [pageWithRow(table, "table")];
     render(<HwpEditor engine={engine} file={file} />);
-    const option = (await screen.findAllByRole("option"))[0]!;
+    const option = (await screen.findAllByRole("option"))[1]!;
     fireEvent.click(option);
-    expect(screen.getByText(en["segment.selectedPara"]({ path: "0/2" }))).toBeTruthy();
+    expect(screen.getByText(en["segment.selectedPara"]({ path: "0/1" }))).toBeTruthy();
 
     // A table carries no paragraph of its own, so a modifier click adds nothing:
     // the paragraph stays selected and the click reports the obstacle instead of
@@ -1559,5 +1564,96 @@ describe("ComponentsPanel (TEST-03)", () => {
     releaseReload?.();
     await waitFor(() => expect(engine.calls.read.at(-1)?.name).toBe(other.name));
     expect(engine.calls.edit).toHaveLength(0);
+  });
+});
+
+describe("the engine's table count against the panel (#97 item 1)", () => {
+  const gfmTable = "| 이름 | 수량 |\n| --- | --- |\n| 연필 | 3 |";
+
+  /**
+   * One published table in paragraph 1, plus the count the engine reports. A
+   * document holding a table in a footnote or a header publishes one `table`
+   * segment and counts two.
+   */
+  function oneTable(bodyTables: number): CatEnvelope {
+    let markdown = "";
+    const segments: CatEnvelope["segments"] = [];
+    ["머리말 문단", gfmTable].forEach((text, para) => {
+      const start = markdown.length;
+      markdown += `${text}\n\n`;
+      segments.push({ id: `p${para}`, start, end: start + text.length, kind: "para", section: 0, para });
+      if (para === 1) {
+        segments.push({ id: "t1", start, end: start + text.length, kind: "table", section: 0, para, indices: [para, 0] });
+      }
+    });
+    return { markdown, segments, bodyTables };
+  }
+
+  /** Click the table's paragraph on the page, the way a reader lands on a table. */
+  function clickTablePara(envelope: CatEnvelope, messages: typeof en): void {
+    const segment = envelope.segments.find((s) => s.kind === "para" && s.para === 1);
+    if (segment === undefined) throw new Error("no table paragraph");
+    fireEvent.click(screen.getByRole("button", { name: messages["page.label"]({ page: 1 }) }), {
+      clientY: (((segment.start + segment.end) / 2) / envelope.markdown.length) * 842,
+    });
+  }
+
+  it.each([["en", en], ["ko", ko]] as const)(
+    "refuses every index-addressed table op when the engine counts more tables (%s)",
+    async (locale, messages) => {
+      const envelope = oneTable(2);
+      const engine = createMockEngine({ envelope });
+      render(<HwpEditor locale={locale} engine={engine} file={file} />);
+      await screen.findByRole("button", { name: messages["page.label"]({ page: 1 }) });
+      clickTablePara(envelope, messages);
+
+      // The line names both counts, so the reader can see the table is counted
+      // and not drawn.
+      expect(await screen.findByText(messages["table.indexMismatch"]({ engine: 2, published: 1 }))).toBeTruthy();
+      // Every index-addressed control is gone: set-cell, merge, split, the row
+      // and column ops, delete-table and clone-table all name a table index.
+      expect(screen.queryByRole("button", { name: messages["table.setCell"] })).toBeNull();
+      expect(screen.queryByRole("button", { name: messages["table.deleteTable"] })).toBeNull();
+      expect(screen.queryByRole("button", { name: messages["table.cloneTable"] })).toBeNull();
+      expect(screen.queryByRole("button", { name: messages["table.addRow"] })).toBeNull();
+      // The anchor-addressed add-table names no index, so it stays available.
+      expect(screen.getByRole("button", { name: messages["table.addTable"] })).toBeTruthy();
+    },
+  );
+
+  it("allows the same op when the counts agree", async () => {
+    const envelope = oneTable(1);
+    const engine = createMockEngine({ envelope });
+    render(<HwpEditor engine={engine} file={file} />);
+    await screen.findByRole("button", { name: en["page.label"]({ page: 1 }) });
+    clickTablePara(envelope, en);
+
+    expect(await screen.findByText(en["table.tableLabel"]({ index: 1 }))).toBeTruthy();
+    expect(screen.queryByText(en["table.indexMismatch"]({ engine: 1, published: 1 }))).toBeNull();
+    clickCell("연필");
+    fireEvent.change(screen.getByLabelText(en["table.cellLabel"]({ row: 1, col: 0 })), {
+      target: { value: "볼펜" },
+    });
+    clickBtn("table.setCell");
+    expect(await applyOps(engine, 1)).toEqual([
+      { kind: "set-cell", table: 0, row: 1, col: 0, value: "볼펜" },
+    ]);
+  });
+
+  it("keeps the paragraph tab for a paragraph that only mentions <table>", async () => {
+    // #97 item 2c: the tab follows the published `table` segment, so prose about
+    // the tag no longer opens the table editor.
+    const text = "Use <table> for rows";
+    const envelope: CatEnvelope = {
+      markdown: `${text}\n\n`,
+      segments: [{ id: "p0", start: 0, end: text.length, kind: "para", section: 0, para: 0, indices: [0] }],
+    };
+    const engine = createMockEngine({ envelope });
+    render(<HwpEditor engine={engine} file={file} />);
+    const page = await screen.findByRole("button", { name: en["page.label"]({ page: 1 }) });
+    fireEvent.click(page, { clientY: 100 });
+
+    expect(await screen.findByRole("region", { name: en["segment.panelAria"] })).toBeTruthy();
+    expect(screen.queryByRole("region", { name: en["table.panelAria"] })).toBeNull();
   });
 });

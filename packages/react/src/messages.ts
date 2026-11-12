@@ -379,8 +379,14 @@ export const en = {
   "table.hint":
     "Select a region containing a table on the page. The current selection is not a table paragraph.",
   "table.tableLabel": (p: { index: number }): string => `Table #${p.index}`,
+  // #97 item 1: the engine counts a table the envelope never draws (a note,
+  // header, footer or hidden-comment table), so every number here would name
+  // another table. The next step is the only honest one: take that table out of
+  // the note and reload, or edit the document where it can be reached.
+  "table.indexMismatch": (p: { engine: number; published: number }): string =>
+    `The engine counts ${p.engine} tables in this document but this editor shows ${p.published}, because a table inside a note, a header, a footer or a hidden comment is counted there and not shown here. A table number would point at a different table than the one you picked, so table edits are off: move that table into the body and reload, or edit the document in a word processor.`,
   "table.htmlTable": (p: { index: number }): string =>
-    `Table #${p.index} holds a merged cell or a cell with block content, so the engine writes it as HTML and there is no cell grid to show here. Its number still counts every table the engine counts, so the other tables' cells keep addressing the right table; unmerge a cell in a word processor and reopen the document to edit this table here.`,
+    `Table #${p.index} holds a merged cell, or a cell with block content such as a nested table, a list or a paragraph of its own, so the engine writes it as HTML and there is no cell grid to show here. Its number still holds this table's slot in the numbering. To edit it here, unmerge the cell, or move the nested block out of the cell, in a word processor, then reopen the document.`,
   "table.cellLabel": (p: { row: number; col: number }): string =>
     `Cell (${p.row}, ${p.col})`,
   "table.setCell": "Set cell",
@@ -900,8 +906,10 @@ export const ko: MessageTable = {
   "table.hint":
     "표가 포함된 영역을 페이지에서 선택하세요. 표가 아닌 문단이 선택되어 있습니다.",
   "table.tableLabel": (p) => `표 #${p.index}`,
+  "table.indexMismatch": (p) =>
+    `엔진은 이 문서에서 표 ${p.engine}개를 세지만 이 편집기는 ${p.published}개를 보여 줍니다. 각주·미주, 머리말·꼬리말, 숨은 설명 안의 표는 엔진이 세지만 여기에는 표시되지 않습니다. 표 번호가 고른 표가 아닌 다른 표를 가리키게 되므로 표 편집을 꺼 두었습니다. 해당 표를 본문으로 옮긴 뒤 다시 열거나, 워드프로세서에서 문서를 편집하세요.`,
   "table.htmlTable": (p) =>
-    `표 #${p.index}에 병합된 셀이나 셀 안 블록이 있어 엔진이 HTML로 기록하므로 여기에는 셀 격자를 그릴 수 없습니다. 표 번호는 엔진이 세는 모든 표를 그대로 세므로 다른 표의 셀 주소는 바뀌지 않습니다. 워드프로세서에서 셀 병합을 해제한 뒤 문서를 다시 열면 이 표를 여기서 편집할 수 있습니다.`,
+    `표 #${p.index}에 병합된 셀이 있거나 셀 안에 중첩 표·목록·별도 문단 같은 블록 내용이 있어 엔진이 HTML로 기록하므로 여기에는 셀 격자를 그릴 수 없습니다. 표 번호는 번호 체계에서 이 표의 자리를 그대로 차지합니다. 여기서 편집하려면 워드프로세서에서 셀 병합을 풀거나 셀 안의 블록을 셀 밖으로 옮긴 뒤 문서를 다시 여세요.`,
   "table.cellLabel": (p) => `셀 (${p.row}, ${p.col})`,
   "table.setCell": "셀 설정",
   "table.mergeAnchor": "병합 기준 지정",

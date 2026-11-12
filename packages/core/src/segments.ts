@@ -141,6 +141,20 @@ export interface DirectPara {
 export interface CatEnvelope {
   markdown: string;
   segments: Segment[];
+  /**
+   * How many tables the engine counts in the body: `body.tables` from
+   * `hwp info --json --body-stats`, read beside the envelope by the CLI engine
+   * (#97 item 1). The count comes from the same nth-table walk `hwp edit`
+   * addresses, and that walk also reaches a table inside a footnote, a header,
+   * a footer or a hidden comment, which the envelope publishes no `table`
+   * segment for. It equals the number of `table` segments whenever the document
+   * holds no such table; a difference means every published table index names
+   * another table than the reader picked.
+   *
+   * Optional because the statistic is opt-in: `--body-stats` is off by default,
+   * so a host that does not ask for it publishes no count.
+   */
+  bodyTables?: number;
 }
 
 /** Source coordinate of a segment in the document body. */
@@ -434,13 +448,54 @@ export function markdownLength(envelope: CatEnvelope): number {
   return boundaryInfo(envelope).scalarLength;
 }
 
+/** How many `table` segments the envelope publishes, in document order. */
+export function publishedTableCount(envelope: CatEnvelope): number {
+  return envelope.segments.reduce(
+    (count, segment) => count + (segment.kind === "table" ? 1 : 0),
+    0,
+  );
+}
+
+/**
+ * The two counts that make every table index name another table, or `null` when
+ * they agree or the host published none (#97 item 1).
+ *
+ * `bodyTables` is the engine's own nth-table walk, which also counts a table
+ * inside a footnote, a header, a footer or a hidden comment. The envelope
+ * projects none of that content, so no `table` segment stands for such a table,
+ * and one of them shifts every published index: `hwp edit --set-cell 0:1:0=...`
+ * then writes into the note's table while the panel showed the body's (#97).
+ *
+ * An absent count is not a mismatch. The statistic is opt-in and a host may not
+ * send it, and refusing every table op on such a host would take table editing
+ * away from documents that are perfectly addressable.
+ */
+export function tableCountMismatch(
+  envelope: CatEnvelope,
+): { engine: number; published: number } | null {
+  const engine = envelope.bodyTables;
+  if (engine === undefined) return null;
+  const published = publishedTableCount(envelope);
+  return engine === published ? null : { engine, published };
+}
+
+/** Whether a projected count is the non-negative integer the guard can trust. */
+function isTableCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
 /** Revalidate optional metadata from a projected transport envelope before it drives behavior. */
 export function validateProjectedMetadata(envelope: CatEnvelope): CatEnvelope {
   // A host can project offsets that run past its own Markdown. Fail the read
   // with the boundary message here, rather than crashing render in
   // segmentText, where no error boundary catches it.
   boundaryInfo(envelope);
-  let changed = false;
+  // A count that is not a non-negative integer is dropped instead of failing
+  // the read: it is an optional engine statistic, and dropping it leaves the
+  // same "no count published" answer an older host gives (#97 item 1).
+  const projectedCount = envelope.bodyTables as unknown;
+  const dropCount = projectedCount !== undefined && !isTableCount(projectedCount);
+  let changed = dropCount;
   const segments = envelope.segments.map((segment) => {
     const nullable = segment as Segment & {
       directChar?: DirectChar | null;
@@ -478,7 +533,10 @@ export function validateProjectedMetadata(envelope: CatEnvelope): CatEnvelope {
     }
     return normalized;
   });
-  return changed ? { ...envelope, segments } : envelope;
+  if (!changed) return envelope;
+  const projected: CatEnvelope = { ...envelope, segments };
+  if (dropCount) delete projected.bodyTables;
+  return projected;
 }
 
 /** Extract the source coordinate of a segment. */

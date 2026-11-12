@@ -42,14 +42,13 @@ import { ComponentsPanel } from "./ComponentsPanel.js";
 import { componentsSupportReason } from "./ComponentsPanel.js";
 import type { InsertPosition } from "./ComponentsPanel.js";
 import { componentFailure, insertionFailure, insertionPreflight } from "./components-support.js";
-import { isHtmlTableSlice, isTableSlice } from "./tables.js";
 import { pendingKindKey, pendingTargetLabel } from "./pending-ops.js";
 import { ErrorLine } from "./ErrorLine.js";
 import { engineRefusalKind, toEditorError } from "./errors.js";
 import type { EngineRefusalKind } from "./errors.js";
 import { createT } from "./messages.js";
 import type { HwpEditorMessages, Locale } from "./messages.js";
-import { segmentText } from "@hwp-editor/core";
+import { hostsTable } from "./tables.js";
 
 export interface HwpEditorProps {
   /** Engine implementation (HTTP client, local adapter, mock in tests). */
@@ -604,11 +603,12 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       if (envelope === null || state.selection === null) return;
       const segment = segmentAtRef(envelope, state.selection);
       if (segment === undefined) return;
-      // A table keeps its tab even when the engine wrote it as HTML: a merged
-      // cell takes the grid away, not the table, and its number still counts
-      // (#95).
-      const text = segmentText(envelope, segment);
-      const next: SideTab = isTableSlice(text) || isHtmlTableSlice(text) ? "table" : "para";
+      // The published `table` segment decides the tab, never a sniff of the
+      // text: a paragraph that merely mentions `<table>` is a paragraph, and a
+      // table the engine wrote as HTML is still a table whose number counts
+      // (#95, #97 item 2c). `hostsTable` is what separates the table's own
+      // paragraph from a paragraph inside one of its cells.
+      const next: SideTab = hostsTable(envelope, segment) ? "table" : "para";
       // The palette keeps its tab: the selection an insertion produces is its
       // own result, and leaving its rows behind for the tab it created is not
       // the jump the user asked for. Every other tab still follows.

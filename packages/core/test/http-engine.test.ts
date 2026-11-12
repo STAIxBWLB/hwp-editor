@@ -445,3 +445,26 @@ describe("structured refusal on the HTTP transport (#82)", () => {
     }
   });
 });
+
+/**
+ * #97 item 1: the engine's table count crosses the read wire with the envelope,
+ * and core's projection is what keeps it a non-negative integer or makes it
+ * absent, so one normalization covers both transports.
+ */
+describe("projected read envelope (#97)", () => {
+  const ok = (body: unknown): typeof fetch =>
+    stubFetch(JSON.stringify(body), { status: 200, statusText: "OK" });
+
+  it("carries the engine's table count to the caller", async () => {
+    const envelope = { markdown: "x", segments: [], bodyTables: 3 };
+    const engine = createHttpEngine("/api", { fetch: ok(envelope) });
+    await expect(engine.read(doc)).resolves.toEqual(envelope);
+  });
+
+  it("drops a count that is not a non-negative integer", async () => {
+    const engine = createHttpEngine("/api", {
+      fetch: ok({ markdown: "x", segments: [], bodyTables: "3" }),
+    });
+    expect(await engine.read(doc)).not.toHaveProperty("bodyTables");
+  });
+});

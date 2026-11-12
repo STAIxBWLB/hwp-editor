@@ -30,11 +30,13 @@ import {
   markdownLength,
   offsetToRef,
   parseCatEnvelope,
+  publishedTableCount,
   runCoverage,
   segmentAtOffset,
   segmentAtRef,
   segmentRef,
   segmentText,
+  tableCountMismatch,
   validateProjectedMetadata,
 } from "../src/segments.js";
 import type { CatEnvelope, DirectChar, DocumentFormat, Segment } from "../src/segments.js";
@@ -670,6 +672,54 @@ describe("runCoverage", () => {
     // The same numbers read back as text once nothing covers them, which is
     // what says the nested-segment check - not the length - is what refuses.
     expect(cover({ markdown, segments: [coincidence] }, coincidence, 0, 1)).toEqual(window(0, 1));
+  });
+});
+
+/**
+ * #97 item 1: the engine counts tables the envelope never draws. A table inside
+ * a footnote, a header, a footer or a hidden comment is reached by the walk
+ * `hwp edit` addresses and published as no `table` segment, so the published
+ * index is only trustworthy while the two counts agree. These pin the
+ * comparison, and the normalization of the count a host projects.
+ */
+describe("the engine's table count against the published segments (#97)", () => {
+  const paragraph: Segment = { id: "p", start: 0, end: 1, kind: "para", section: 0, para: 0 };
+  const table = (para: number): Segment => ({
+    id: `t${para}`, start: 0, end: 1, kind: "table", section: 0, para,
+  });
+
+  /** One paragraph and two published tables, with the count a host projected. */
+  const envelope = (bodyTables?: unknown): CatEnvelope => ({
+    markdown: "x",
+    segments: [paragraph, table(1), table(2)],
+    ...(bodyTables === undefined ? {} : { bodyTables: bodyTables as number }),
+  });
+
+  it("counts the table segments and nothing else", () => {
+    expect(publishedTableCount(envelope(2))).toBe(2);
+    expect(publishedTableCount({ markdown: "x", segments: [paragraph] })).toBe(0);
+  });
+
+  it("reports a mismatch only when both counts exist and differ", () => {
+    expect(tableCountMismatch(envelope(2))).toBeNull();
+    // A host that publishes no count keeps table editing: refusing every table
+    // op there would take the feature away from documents that are fine.
+    expect(tableCountMismatch(envelope())).toBeNull();
+    // A note's table is counted and not drawn, so the engine counts more.
+    expect(tableCountMismatch(envelope(3))).toEqual({ engine: 3, published: 2 });
+    // The other direction shifts every index just the same.
+    expect(tableCountMismatch(envelope(1))).toEqual({ engine: 1, published: 2 });
+  });
+
+  it("keeps a non-negative integer count and drops any other projected value", () => {
+    const kept = envelope(2);
+    expect(validateProjectedMetadata(kept)).toBe(kept);
+    for (const malformed of ["2", 2.5, -1, null, Number.NaN]) {
+      const projected = validateProjectedMetadata(envelope(malformed));
+      expect(projected).not.toHaveProperty("bodyTables");
+      // Dropping is the same answer as "the host published none": allowed.
+      expect(tableCountMismatch(projected)).toBeNull();
+    }
   });
 });
 

@@ -628,3 +628,22 @@ describe("Tauri unclassified edit failures keep no path (t37-a2)", () => {
     expect(err.cause).toBe(raw);
   });
 });
+
+/**
+ * #97 item 1: the Tauri bridge publishes no `bodyTables` today, and that is the
+ * fallback the table panel allows table editing under. These pin the two shapes
+ * it can send once the host learns to count: a number survives, anything else
+ * is dropped by the same core projection the HTTP client uses.
+ */
+describe("the read bridge's table count (#97)", () => {
+  it("carries the host's table count to the caller", async () => {
+    const envelope = { markdown: "x", segments: [], bodyTables: 2 };
+    const { invoke } = mockInvoke({ hwped_read: envelope });
+    await expect(createTauriEngine(invoke).read(doc)).resolves.toEqual(envelope);
+  });
+
+  it("drops a count that is not a non-negative integer", async () => {
+    const { invoke } = mockInvoke({ hwped_read: { markdown: "x", segments: [], bodyTables: -1 } });
+    expect(await createTauriEngine(invoke).read(doc)).not.toHaveProperty("bodyTables");
+  });
+});
