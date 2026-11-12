@@ -379,7 +379,11 @@ describe.each(LOCALES)("HwpEditor revert — locale=%s", (locale) => {
     fireEvent.click(screen.getByRole("button", { name: t["toolbar.revert"] }));
 
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain(t["error.prefix.load"]);
+    // #58 item 30: the undo reads the document it would restore, so this is a
+    // re-read failure. The document on screen is open, and the load line would
+    // say it was not.
+    expect(alert.textContent).toContain(t["error.prefix.refresh"]);
+    expect(alert.textContent).not.toContain(t["error.prefix.load"]);
     expect(alert.getAttribute("data-error-kind")).toBe("timeout");
     expect(screen.getByText("edited-1.hwpx")).toBeDefined();
     expect(
