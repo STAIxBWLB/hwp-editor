@@ -296,3 +296,12 @@ describe("redaction and file-head follow-ups (#142)", () => {
     expect(withoutPaths(line, "C:\\Program Files (x86)\\Maru")).toBe("failed to read <work dir>\\stage: Access is denied.");
   });
 });
+
+describe("word-tail colon (#142 t67-4)", () => {
+  it.each([
+    ["no such dir /tmp/a b/c:d", "no such dir <path>"],
+    ["no such dir C:\\Program Files\\x:y z", "no such dir <path> z"],
+  ])("keeps a colon inside a tail word in the redaction: %s", (text, shown) => {
+    expect(withoutPaths(text)).toBe(shown);
+  });
+});

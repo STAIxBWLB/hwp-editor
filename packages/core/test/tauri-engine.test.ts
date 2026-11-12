@@ -11,7 +11,7 @@ import { base64 } from "../src/http-engine.js";
 import type { DocumentHandle, EditOp, HwpErrorCode } from "../src/index.js";
 import { HwpEngineError, isHwpEngineError } from "../src/index.js";
 import { createTauriEngine, type TauriInvoke } from "../src/tauri.js";
-import { DISTRIBUTION_NEXT_STEP, PROTECTED_NEXT_STEP, STOPPED_WITHOUT_DIAGNOSTIC } from "../src/index.js";
+import { DISTRIBUTION_NEXT_STEP, NO_ENGINE_CAUSE, PROTECTED_NEXT_STEP, STOPPED_WITHOUT_DIAGNOSTIC } from "../src/index.js";
 import { DRIFT, MIXED_CONFLICT, RANGE_TAG, RUN_CONFLICT, UNMATCHED } from "./fixtures/refusal-stderr.js";
 
 interface Call {
@@ -738,5 +738,47 @@ describe("the read bridge's table count (#97)", () => {
   it("drops a count that is not a non-negative integer", async () => {
     const { invoke } = mockInvoke({ hwped_read: { markdown: "x", segments: [], bodyTables: -1 } });
     expect(await createTauriEngine(invoke).read(doc)).not.toHaveProperty("bodyTables");
+  });
+});
+
+describe("Tauri no-Error-line marker (#140)", () => {
+  const reject = (detail: unknown): TauriInvoke => <T>(cmd: string): Promise<T> =>
+    cmd === "hwped_capabilities"
+      ? Promise.resolve({ version: "0.20.0", editable: true, formats: ["hwp", "hwpx"], editOps: "v1" } as T)
+      : Promise.reject(detail);
+  const EDIT: EditOp[] = [{ kind: "replace", find: "a", replace: "b" }];
+  const INSERT: EditOp[] = [{
+    kind: "insert-blocks", address: { at: { section: 0, paragraph: 0 } }, position: "after",
+    blocks: [{ type: "paragraph", runs: [{ type: "text", text: "x" }] }],
+  }];
+  const PANIC = "thread 'main' panicked at src/edit.rs:12:5:\nindex out of bounds";
+  const fail = (detail: unknown, ops: EditOp[]): Promise<HwpEngineError> =>
+    createTauriEngine(reject(detail)).edit(doc, ops).then(() => { throw new Error("edit succeeded"); }, (e: HwpEngineError) => e);
+
+  it("sets noCause on maru's edit failure whose stderr has no Error: line", async () => {
+    const err = await fail(`hwp_failed: hwp edit failed (exit 101): ${PANIC}`, EDIT);
+    expect(err.message).toBe(`hwped_edit failed: hwp edit failed (exit 101): ${NO_ENGINE_CAUSE}`);
+    expect(err.noCause).toBe(true);
+    expect(err.stopped).toBeUndefined();
+  });
+
+  it("sets noCause on an insertion batch that panicked", async () => {
+    const err = await fail(`hwp_failed: hwp edit failed (exit 101): ${PANIC}`, INSERT);
+    expect(err.message).toBe(`hwped_edit failed: hwp edit failed (exit 101): insert_blocks refused: ${NO_ENGINE_CAUSE}`);
+    expect(err.noCause).toBe(true);
+  });
+
+  it("sets no noCause when the engine wrote an Error: line, nor for empty stderr", async () => {
+    expect((await fail("hwp_failed: hwp edit failed (exit 3): Error: 앵커를 찾을 수 없습니다: 회의록", EDIT)).noCause).toBeUndefined();
+    const stopped = await fail("hwp_failed: hwp edit failed (exit 1): ", EDIT);
+    expect(stopped.noCause).toBeUndefined();
+    expect(stopped.stopped).toBe(true);
+  });
+
+  it("reads noCause from a structured rejection, and only `true`", async () => {
+    expect((await fail({ code: "failed", message: "x", noCause: true }, EDIT)).noCause).toBe(true);
+    for (const noCause of [false, "true", 1, null]) {
+      expect((await fail({ code: "failed", message: "x", noCause }, EDIT)).noCause).toBeUndefined();
+    }
   });
 });

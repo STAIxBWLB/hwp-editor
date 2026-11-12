@@ -210,6 +210,8 @@ export type HwpCliErrorReason = Extract<
 export class HwpCliError extends Error {
   /** The edit wrote no diagnostic, so the engine was stopped (#91). */
   declare readonly stopped?: true;
+  /** The engine failed without an `Error:` line, e.g. a panic (#140). */
+  declare readonly noCause?: true;
 
   constructor(
     public readonly reason: HwpCliErrorReason,
@@ -224,13 +226,21 @@ export class HwpCliError extends Error {
     public readonly insertion?: InsertionRefusal,
     /** The stopped-without-diagnostic marker (#91), sent the same way. */
     stopped?: true,
+    /** The no-Error-line marker (#140), sent the same way. */
+    noCause?: true,
   ) {
     super(message);
     this.name = "HwpCliError";
     // Conditional like the core error's fields: an error built without the
     // marker has no own `stopped` key, so a wrapper can test for its presence.
     if (stopped !== undefined) this.stopped = stopped;
+    if (noCause !== undefined) this.noCause = noCause;
   }
+}
+
+/** `true` when stderr is non-empty but holds no `Error:` line (#140). */
+function noCauseMarker(stderr: string, workDir?: string): true | undefined {
+  return stderr.trim() !== "" && engineErrorReason(stderr, workDir) === undefined ? true : undefined;
 }
 
 /**
@@ -832,7 +842,8 @@ function rethrowUploadedImageFailure(error: unknown, imageOnly: boolean, inserti
       const line = imageOnly && reason !== undefined && !FILE_LINE_HEAD.test(reason)
         ? `${reason}. ${IMAGE_ONLY_STEP}`
         : unclassifiedEditLine(failure.stderr, workDir);
-      throw new HwpCliError("failed", `${failure.message}: ${line}`, failure.stderr, failure.detail);
+      throw new HwpCliError("failed", `${failure.message}: ${line}`, failure.stderr, failure.detail,
+        undefined, undefined, undefined, noCauseMarker(failure.stderr, workDir));
     }
     throw failure;
   }
@@ -862,6 +873,8 @@ function rethrowInsertBlocksRefusal(error: unknown, insertion: boolean, workDir:
       error.detail,
       error.refusal,
       insertion,
+      undefined,
+      insertion === undefined ? noCauseMarker(error.stderr, workDir) : undefined,
     );
   }
   throw error;
@@ -891,6 +904,8 @@ function rethrowUnmatchedEditRefusal(error: unknown, workDir?: string): never {
         error.detail,
         undefined,
         error.insertion,
+        undefined,
+        noCauseMarker(error.stderr, workDir),
       );
     }
   }

@@ -11,7 +11,7 @@ import { base64, createHttpEngine } from "../src/http-engine.js";
 import { isHwpEngineError } from "../src/errors.js";
 import type { HwpEngineError } from "../src/errors.js";
 import type { DocumentHandle } from "../src/engine.js";
-import { STOPPED_WITHOUT_DIAGNOSTIC } from "../src/insertion-refusals.js";
+import { NO_ENGINE_CAUSE, STOPPED_WITHOUT_DIAGNOSTIC } from "../src/insertion-refusals.js";
 import type { EditOp } from "../src/ops.js";
 
 const doc: DocumentHandle = {
@@ -498,5 +498,33 @@ describe("projected read envelope (#97)", () => {
       fetch: ok({ markdown: "x", segments: [], bodyTables: "3" }),
     });
     expect(await engine.read(doc)).not.toHaveProperty("bodyTables");
+  });
+});
+
+describe("no-Error-line marker on the HTTP transport (#140)", () => {
+  function failing(body: unknown): ReturnType<typeof createHttpEngine> {
+    return createHttpEngine("/api", {
+      fetch: (() => Promise.resolve(new Response(JSON.stringify(body), { status: 422 }))) as unknown as typeof fetch,
+    });
+  }
+  const target = { name: "a.hwpx", data: new Uint8Array([1]) };
+  const message = `ahwp edit failed (exit 101): ${NO_ENGINE_CAUSE}`;
+
+  it("carries the server's error.noCause onto the error", async () => {
+    const err = await failing({ error: { code: "failed", message, noCause: true } })
+      .edit(target, []).catch((e: unknown) => e) as HwpEngineError;
+    expect(err.noCause).toBe(true);
+    expect(err.message).toBe(`hwp-engine HTTP 422: ${message}`);
+  });
+
+  it("sets no marker from message text (an older server), nor from a value that is not true", async () => {
+    for (const error of [
+      { code: "failed", message },
+      { code: "failed", message: "x", noCause: false },
+      { code: "failed", message: "x", noCause: "true" },
+    ]) {
+      const err = await failing({ error }).edit(target, []).catch((e: unknown) => e) as HwpEngineError;
+      expect(err.noCause).toBeUndefined();
+    }
   });
 });

@@ -165,7 +165,7 @@ export function withoutPaths(text: string, workDir?: string): string {
     // above; the following words that still hold a separator inside them
     // (`b/c/data`, `Files\Maru`) are its tail. A lone `/`, a word with no
     // separator, and any word holding Hangul stay: an ambiguous token is left.
-    .replace(/<path>(?: [^\s"'/\\\p{Script=Hangul}]+[/\\][^\s"':\p{Script=Hangul}]*)+/gu, "<path>");
+    .replace(/<path>(?: [^\s"'/\\\p{Script=Hangul}]+[/\\](?:[^\s"'\p{Script=Hangul}:]|:(?!\s|$))*)+/gu, "<path>");
 }
 
 /**

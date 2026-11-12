@@ -44,7 +44,7 @@ import type { InsertPosition } from "./ComponentsPanel.js";
 import { componentFailure, insertionFailure, insertionPreflight } from "./components-support.js";
 import { pendingKindKey, pendingTargetLabel } from "./pending-ops.js";
 import { ErrorLine } from "./ErrorLine.js";
-import { engineRefusalKind, engineStoppedWithoutDiagnostic, toEditorError } from "./errors.js";
+import { engineFailedWithoutCause, engineRefusalKind, engineStoppedWithoutDiagnostic, toEditorError } from "./errors.js";
 import type { EngineRefusalKind } from "./errors.js";
 import { createT } from "./messages.js";
 import type { HwpEditorMessages, Locale } from "./messages.js";
@@ -737,7 +737,9 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
             ? t(REFUSAL_MESSAGE[refusal])
             : engineStoppedWithoutDiagnostic(e)
               ? t("error.stoppedWithoutDiagnostic")
-              : undefined;
+              : engineFailedWithoutCause(e)
+                ? t("error.noEngineCause")
+                : undefined;
           store.dispatch({
             type: "applyFailed",
             error: sentence === undefined ? stored : { ...stored, message: sentence },

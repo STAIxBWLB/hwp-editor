@@ -103,6 +103,12 @@ export interface HwpEngineErrorOptions {
    * this field shows its own sentence instead.
    */
   stopped?: true;
+  /**
+   * The engine failed with stderr but no `Error:` line, such as a Rust panic
+   * (#140). `NO_ENGINE_CAUSE` stays in the message for text-only hosts; a
+   * client that reads this field shows its own sentence instead.
+   */
+  noCause?: true;
 }
 
 /** Engine failure carrying a stable `code` alongside its human message. */
@@ -120,6 +126,8 @@ export class HwpEngineError extends Error {
   declare readonly insertion?: InsertionRefusal;
   /** The edit wrote no diagnostic, so the engine was stopped (#91). */
   declare readonly stopped?: true;
+  /** The engine failed without an `Error:` line, e.g. a panic (#140). */
+  declare readonly noCause?: true;
 
   constructor(
     public readonly code: HwpErrorCode,
@@ -136,6 +144,7 @@ export class HwpEngineError extends Error {
     if (options.refusal !== undefined) this.refusal = options.refusal;
     if (options.insertion !== undefined) this.insertion = options.insertion;
     if (options.stopped !== undefined) this.stopped = options.stopped;
+    if (options.noCause !== undefined) this.noCause = options.noCause;
   }
 }
 
