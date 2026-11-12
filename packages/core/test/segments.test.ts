@@ -707,7 +707,8 @@ describe("the engine's table count against the published segments (#97)", () => 
     expect(tableCountMismatch(envelope())).toBeNull();
     // A note's table is counted and not drawn, so the engine counts more.
     expect(tableCountMismatch(envelope(3))).toEqual({ engine: 3, published: 2 });
-    // The other direction shifts every index just the same.
+    // A count below the published one has no known unpublished table behind
+    // it, so no index is trustworthy and the guard refuses it the same way.
     expect(tableCountMismatch(envelope(1))).toEqual({ engine: 1, published: 2 });
   });
 
