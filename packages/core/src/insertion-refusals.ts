@@ -52,7 +52,7 @@ const INVALID_DEFINITION_LINE =
  * The issue list joins entries with `; ` and paths can carry user style
  * names (document_spec.rs:506-517), so a name holding `; layout_overflow at
  * $.sections[...]` can still forge an entry. Only machine-readable refusal
- * codes from the engine close that; it waits on STAIxBWLB/hwp-cli#531.
+ * codes from the engine close that; it waits on STAIxBWLB/agent-hwp#531.
  */
 const OVERFLOW_ENTRY =
   /(?:^|; )layout_overflow at (\$\.sections\[[^\s:;]*): (?:column widths total (\d+(?:\.\d+)?) mm; body width is (\d+(?:\.\d+)?) mm|[^;]*? exceeds body width (\d+(?:\.\d+)?) mm)(?=; |$)/gu;

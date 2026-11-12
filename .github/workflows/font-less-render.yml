@@ -37,7 +37,7 @@ jobs:
       # back to serif faces, so a sans-only directory still renders blank text.
       - name: Fetch hwp-cli and the pinned Noto Sans and Serif CJK KR faces
         run: |
-          base="https://github.com/STAIxBWLB/hwp-cli/releases/download/$HWP_CLI_TAG"
+          base="https://github.com/STAIxBWLB/agent-hwp/releases/download/$HWP_CLI_TAG"
           asset="hwp-$HWP_CLI_TAG-x86_64-unknown-linux-gnu.tar.gz"
           sums="hwp-$HWP_CLI_TAG-x86_64-unknown-linux-gnu.sha256"
           curl --retry 3 --retry-all-errors -fsSL -O "$base/$asset" -O "$base/$sums"

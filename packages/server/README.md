@@ -1,7 +1,7 @@
 # @hwp-editor/server
 
 Node adapter that serves the `@hwp-editor/core` HTTP contract by spawning the
-external [hwp-cli](https://github.com/STAIxBWLB/hwp-cli) binary. All document
+external [hwp-cli](https://github.com/STAIxBWLB/agent-hwp) binary. All document
 work (read/render/edit/compose/validate) is delegated to that binary; this
 package contains no HWP parsing, only a hardened subprocess wrapper and a
 framework-agnostic `(Request) => Response` handler.
