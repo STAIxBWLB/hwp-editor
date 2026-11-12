@@ -127,18 +127,21 @@ const PATH_END = String.raw`\.(?:hwpx|hwp|json|png|jpe?g|gif|bmp|svg|pdf|md|txt|
  * another `/`, or a single-segment POSIX file with a known extension
  * (`/in.hwpx`). A lone `/` between words (`제목 / 부제`, `수입 / 지출`) or a
  * bare `/word` is user text, not a path (#93): leaving an ambiguous token in
- * place beats swallowing an anchor.
+ * place beats swallowing an anchor. A first segment holding Hangul is never
+ * a root either (`예산 /항목/세부` is prose, #142).
  */
-const PATH_ROOT = String.raw`(?:file:\/\/\/?|(?<![A-Za-z]:)\/\/(?=[^\s/]+\/)|\\\\(?=[^\s\\]+\\)|[A-Za-z]:[\\/]|\/(?=[^\s/"']+\/)|\/(?=[^\s/"']+${PATH_END}))`;
+const PATH_ROOT = String.raw`(?:file:\/\/\/?|(?<![A-Za-z]:)\/\/(?=[^\s/]+\/)|\\\\(?=[^\s\\]+\\)|[A-Za-z]:[\\/]|\/(?=[^\s/"'\p{Script=Hangul}]+\/)|\/(?=[^\s/"'\p{Script=Hangul}]+${PATH_END}))`;
 
 /**
  * Text the engine wrote, with no path in it: the given work dir first, then
  * absolute paths, POSIX or Windows. A path may hold spaces (`/Users/홍 길동/x`,
  * `C:\Program Files (x86)\x`), so, in order:
  * - a quoted path is redacted through its closing quote;
- * - a path followed later on its line by `: ` is redacted up to that colon,
- *   because the engine prints a path as `{path}: {error}` (a drive's `C:\`
- *   has no space after its colon, so it never ends a path early);
+ * - on a line that opens with one of the engine's file heads (FILE_LINE_HEAD),
+ *   where the engine prints `{path}: {error}`, the first path is redacted up
+ *   to the next `: ` (a drive's `C:\` has no space after its colon, so it
+ *   never ends a path early). Any other line may hold user text before a
+ *   later `: `, so the rule does not run there (#142);
  * - one that reaches a known file extension, through its file name;
  * - any other only through its first space, leaving the rest visible.
  * A replacement fires only where a path can start, so a Korean diagnostic's
@@ -146,16 +149,18 @@ const PATH_ROOT = String.raw`(?:file:\/\/\/?|(?<![A-Za-z]:)\/\/(?=[^\s/]+\/)|\\\
  */
 export function withoutPaths(text: string, workDir?: string): string {
   const withoutWorkDir = workDir === undefined || workDir === "" ? text : text.split(workDir).join("<work dir>");
-  return withoutWorkDir
-    .replace(new RegExp(String.raw`(["'])${PATH_ROOT}[^"'\n]*\1`, "gu"), "$1<path>$1")
-    .replace(new RegExp(String.raw`(^|[\s(\[{:])${PATH_ROOT}[^\n"']*?(?=: )`, "gu"), "$1<path>")
+  const quoted = withoutWorkDir.replace(new RegExp(String.raw`(["'])${PATH_ROOT}[^"'\n]*\1`, "gu"), "$1<path>$1");
+  const colon = FILE_LINE_HEAD.test(quoted)
+    ? quoted.replace(new RegExp(String.raw`(^|[\s(\[{:])${PATH_ROOT}[^\n"']*?(?=: )`, "u"), "$1<path>")
+    : quoted;
+  return colon
     .replace(new RegExp(String.raw`(^|[\s(\[{:])${PATH_ROOT}[^\n"']*?${PATH_END}`, "gu"), "$1<path>")
     .replace(new RegExp(String.raw`(^|[\s(\[{:])${PATH_ROOT}[^\s"')\]}]*`, "gu"), "$1<path>")
     // With no `: ` after it, a path with spaces stopped at its first space
     // above; the following words that still hold a separator inside them
     // (`b/c/data`, `Files\Maru`) are its tail. A lone `/`, a word with no
     // separator, and any word holding Hangul stay: an ambiguous token is left.
-    .replace(/<path>(?: [^\s"'/\\\p{Script=Hangul}]+[/\\][^\s"'\p{Script=Hangul}]*)+/gu, "<path>");
+    .replace(/<path>(?: [^\s"'/\\\p{Script=Hangul}]+[/\\][^\s"':\p{Script=Hangul}]*)+/gu, "<path>");
 }
 
 /**
@@ -221,7 +226,9 @@ export const UNCLASSIFIED_FILE_STEP =
  * as agent-hwp v1.6.2 writes them (Korean under every locale):
  * - hwpx/src/error.rs and hwp5/src/error.rs: `입출력 오류:`, `HWPX 파일이
  *   아닙니다 (`, `XML 파싱 오류 (`, `HWP 5.0 파일이 아닙니다 (`, `압축 해제
- *   실패 (`, `레코드 구조가 손상되었습니다:`
+ *   실패 (`, `레코드 구조가 손상되었습니다:`, `엔트리가 없습니다:`, `HWPX 패키지
+ *   무결성 오류:`, `FileHeader 시그니처가 올바르지 않습니다`, `FileHeader 크기가
+ *   올바르지 않습니다 (`, `스트림이 없습니다:` (#142)
  * - hwp-convert/src/image.rs:369: `이미지 읽기 실패 `
  * - hwp-cli/src/edit_ops.rs:58: `편집 연산 입력을 읽을 수 없습니다:`
  * - hwp-cli commands/edit/form_bindings.rs:111: `staged_native_readback 실패:`
@@ -229,7 +236,10 @@ export const UNCLASSIFIED_FILE_STEP =
  * - hwp-cli commands/cat.rs:193: `JSON IR 파싱 실패 (`
  */
 export const FILE_LINE_HEAD =
-  /^(?:입출력 오류: |HWPX 파일이 아닙니다 \(|XML 파싱 오류 \(|HWP 5\.0 파일이 아닙니다 \(|압축 해제 실패 \(|레코드 구조가 손상되었습니다: |이미지 읽기 실패 |편집 연산 입력을 읽을 수 없습니다: |staged_native_readback 실패: |검증 재읽기 실패: |JSON IR 파싱 실패 \()/u;
+  /^(?:입출력 오류: |HWPX 파일이 아닙니다 \(|XML 파싱 오류 \(|HWP 5\.0 파일이 아닙니다 \(|압축 해제 실패 \(|레코드 구조가 손상되었습니다: |엔트리가 없습니다: |HWPX 패키지 무결성 오류: |FileHeader 시그니처가 올바르지 않습니다|FileHeader 크기가 올바르지 않습니다 \(|스트림이 없습니다: |이미지 읽기 실패 |편집 연산 입력을 읽을 수 없습니다: |staged_native_readback 실패: |검증 재읽기 실패: |JSON IR 파싱 실패 \()/u;
+
+/** A file head whose engine line already carries its own next step (#142). */
+const OWN_STEP_HEAD = "staged_native_readback 실패: ";
 
 /**
  * An edit failure no classifier recognised, as both transports print it: the
@@ -247,6 +257,8 @@ export const FILE_LINE_HEAD =
 export function unclassifiedEditLine(stderr: string, workDir?: string): string {
   const reason = engineErrorReason(stderr, workDir);
   if (reason === undefined) return NO_ENGINE_CAUSE;
+  // This head already ends in the engine's own Korean next step (form_bindings.rs:111).
+  if (reason.startsWith(OWN_STEP_HEAD)) return `${reason}.`;
   const namesFile = FILE_LINE_HEAD.test(reason);
   return `${reason}. ${namesFile ? UNCLASSIFIED_FILE_STEP : UNCLASSIFIED_EDIT_STEP}`;
 }
