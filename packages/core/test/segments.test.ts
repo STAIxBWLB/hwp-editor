@@ -734,6 +734,10 @@ describe("the engine's table count against the published segments (#97)", () => 
  * TypeScript type says the fields are there without anything having checked
  * them: a non-array `indices` throws inside `resolveSelection`, one frame above
  * the boundary that could report it.
+ *
+ * #150 closes the two gaps #147 left: an empty path, which names no location,
+ * and a `para` that disagrees with the path's first index, which the projection
+ * derives rather than checks.
  */
 describe("validateCatEnvelope selection fields", () => {
   /** The wire fixture the projection tests use, decoded. */
@@ -741,11 +745,17 @@ describe("validateCatEnvelope selection fields", () => {
   const firstSegment = (envelope: CatEnvelope): Record<string, unknown> =>
     envelope.segments[0] as unknown as Record<string, unknown>;
 
-  it("accepts the envelope the projection just produced, unchanged", () => {
-    const envelope = valid();
-    // The caller's own object comes back, so `bodyTables` and identity survive.
-    expect(validateCatEnvelope(envelope)).toBe(envelope);
-  });
+  // Every fixture the projection tests read, because the two rules added here
+  // are ones a projected envelope can only satisfy by construction: a nested
+  // paragraph inside a cell carries `para` equal to the path's *first* index
+  // (cat-segments-table's cell paragraph is `indices: [2, 0, 0, 0], para: 2`).
+  it.each(["cat-segments-basic.json", "cat-segments-runs.json", "cat-segments-table.json"])(
+    "accepts the envelope %s projects, unchanged",
+    (name) => {
+      const envelope = parseCatEnvelope(fixture(name));
+      // The caller's own object comes back, so `bodyTables` and identity survive.
+      expect(validateCatEnvelope(envelope)).toBe(envelope);
+    });
 
   it("accepts an id-less legacy envelope, whose segments carry no indices either", () => {
     // What an older host projects, and what the playground's own stub carries:
@@ -759,11 +769,17 @@ describe("validateCatEnvelope selection fields", () => {
   });
 
   it.each([
-    ["indices is not an array", { indices: "0.0" }, /segment indices is not an array of non-negative integers/],
-    ["indices holds a non-integer", { indices: [0, 1.5] }, /segment indices is not an array/],
-    ["indices holds a negative index", { indices: [0, -1] }, /segment indices is not an array/],
+    ["indices is not an array", { indices: "0.0" }, /segment indices is not a non-empty array of non-negative integers/],
+    ["indices holds a non-integer", { indices: [0, 1.5] }, /segment indices is not a non-empty array/],
+    ["indices holds a negative index", { indices: [0, -1] }, /segment indices is not a non-empty array/],
+    // The path names no location at all, which the projection refuses
+    // (`p.indices.length === 0`) and the decoded path now refuses too (#150).
+    ["indices is an empty path", { indices: [] }, /segment indices is not a non-empty array/],
     ["section is not a non-negative integer", { section: 0.5 }, /segment section or para is not a non-negative integer/],
     ["para is negative", { para: -1 }, /segment section or para is not a non-negative integer/],
+    // The projection sets `para: p.indices[0]`, so a published pair that
+    // disagrees is a host's own mistake and names one location twice (#150).
+    ["para disagrees with the first index", { para: 1 }, /segment para disagrees with its nesting path/],
     ["id is not a string", { id: 7 }, /segment id is not a string/],
   ])("refuses a segment whose %s", (_label, patch, expected) => {
     const envelope = valid();
