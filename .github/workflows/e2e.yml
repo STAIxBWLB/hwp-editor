@@ -22,8 +22,9 @@ env:
   # `hwp-<tag>-<target>` archive, with a `hwp` compatibility binary beside
   # `ahwp` inside it. This job fetches neither: it downloads the `ahwp-` asset
   # and installs only the `ahwp` member, so a call to the 1.x name fails here
-  # rather than surfacing when 2.0.0 removes it (#121).
-  HWP_CLI_TAG: v1.6.1
+  # rather than surfacing when 2.0.0 removes it (#121). The tag is the newest
+  # 1.x release, which is what #121 asks this job to run against.
+  HWP_CLI_TAG: v1.6.2
 
 jobs:
   # NON-GATING BY CONSTRUCTION.
@@ -46,14 +47,17 @@ jobs:
   # (packages/core/src/segments.ts) and the error markers
   # (packages/react/src/errors.ts) are all pinned to the 0.20.x contract and
   # enforced by cli-engine.ts's flag handshake. The pinned tag tracks the
-  # newest upstream release the contract was verified against (1.6.1 keeps the
-  # v2 segment envelope, render-layout-v1 and edit-ops-v1 contracts; the envelope
-  # it emits is schema 1.1, which only adds an optional `source_chars` per run
-  # that packages/core/src/segments.ts does not project), so what this job
-  # detects from here is drift BETWEEN the floor and the next upstream release,
-  # the next time either the tag or the floor moves. It is the only automated
-  # evidence that the pinned contract holds against a real binary; a red check
-  # nobody reads is the same as no check at all.
+  # newest upstream release the contract was verified against. 1.6.2 keeps the
+  # v2 segment envelope, render-layout-v1 and edit-ops-v1 contracts; its
+  # envelope is schema 1.1, which only adds an optional `source_chars` per run
+  # that packages/core/src/segments.ts does not project; and its edit-ops change
+  # is additive, a `replace` that may carry a run address, with the edit report
+  # naming inserted empty paragraphs by their paragraph id, which
+  # insertedParagraphIds in packages/core/src/edit-report.ts already allows.
+  # What this job detects from here is drift BETWEEN the floor and the next
+  # upstream release, the next time either the tag or the floor moves. It is
+  # the only automated evidence that the pinned contract holds against a real
+  # binary; a red check nobody reads is the same as no check at all.
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 20

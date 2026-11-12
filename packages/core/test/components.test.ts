@@ -3,13 +3,13 @@
  * user, so it is validated here: a typo in one of the seven JSON files has to
  * fail in this package rather than in a host's palette.
  *
- * The compose suite runs the real `hwp` binary and skips when none is
+ * The compose suite runs the real `ahwp` binary and skips when none is
  * runnable, exactly like `packages/server/test/helpers.ts` — hosted CI
- * provisions no hwp (D-04), so a missing binary must read as "skipped", never
+ * provisions no engine (D-04), so a missing binary must read as "skipped", never
  * as a green compose.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { describe, expect, it, afterAll } from "vitest";
@@ -38,31 +38,137 @@ import {
 import type { Blocks } from "../src/generated/document-spec-v2.js";
 
 /** Which binary the real-binary suite runs against (mirrors the server's helper). */
-const BIN =
-  process.env.HWP_EDITOR_BIN?.trim() || process.env.HWP_CLI?.trim() || "hwp";
+const BIN = resolveTestBin();
 
-function runnable(bin: string): boolean {
+/**
+ * The rule `packages/server/test/helpers.ts` uses, restated because a package
+ * cannot import another package's test helpers: `HWP_EDITOR_BIN` then `HWP_CLI`,
+ * each as given when non-empty, otherwise `ahwp` on PATH and `hwp` only when
+ * spawning `ahwp` failed with ENOENT (the 1.x compatibility name, #121). A
+ * found-but-broken `ahwp` stays `ahwp`, so this suite fails against it visibly
+ * instead of quietly running under the name the engine would not have chosen.
+ */
+function resolveTestBin(): string {
+  const configured = process.env.HWP_EDITOR_BIN?.trim() || process.env.HWP_CLI?.trim();
+  // Truthiness, not `!== undefined`: an empty pair yields "", not a binary.
+  if (configured) return configured;
+  const primary = probe("ahwp");
+  if (primary.runs || !primary.absent) return "ahwp";
+  return "hwp";
+}
+
+/**
+ * The probe `HAS_BIN` uses, keeping which way it failed: `absent` is the spawn
+ * itself failing with ENOENT, the only way a name means "not installed" rather
+ * than "installed and broken".
+ */
+function probe(bin: string): { runs: boolean; absent: boolean } {
   try {
     execFileSync(bin, ["--version"], { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
+    return { runs: true, absent: false };
+  } catch (error) {
+    return { runs: false, absent: (error as NodeJS.ErrnoException).code === "ENOENT" };
   }
+}
+
+function runnable(bin: string): boolean {
+  return probe(bin).runs;
 }
 
 const HAS_BIN = BIN.includes(sep) ? existsSync(BIN) : runnable(BIN);
 
 if (!HAS_BIN) {
   console.warn(
-    `[hwp-editor/core tests] no runnable hwp binary at ${BIN} — the compose ` +
-      "suite is skipped. Install hwp-cli, or set HWP_EDITOR_BIN / HWP_CLI.",
+    `[hwp-editor/core tests] no runnable engine binary at ${BIN} — the compose ` +
+      "suite is skipped. Install agent-hwp so `ahwp` is on PATH, or set " +
+      "HWP_EDITOR_BIN / HWP_CLI.",
   );
 }
 
 const describeBin = HAS_BIN
   ? describe
   : (name: string, fn: () => void) =>
-      describe.skip(`${name} [skipped: no runnable hwp binary at ${BIN}]`, fn);
+      describe.skip(`${name} [skipped: no runnable engine binary at ${BIN}]`, fn);
+
+/**
+ * The helper above runs once at import, so these cases call it directly with a
+ * PATH of their own. They pin the three properties #121 fixed here: an empty
+ * selection variable counts as unset, the default is `ahwp`, and the 1.x `hwp`
+ * name is reached only when spawning `ahwp` failed with ENOENT.
+ */
+describe("binary resolution (#121)", () => {
+  const saved = {
+    PATH: process.env.PATH,
+    HWP_EDITOR_BIN: process.env.HWP_EDITOR_BIN,
+    HWP_CLI: process.env.HWP_CLI,
+  };
+
+  function withEnv<T>(env: Record<string, string>, fn: () => T): T {
+    delete process.env.HWP_EDITOR_BIN;
+    delete process.env.HWP_CLI;
+    for (const [key, value] of Object.entries(env)) process.env[key] = value;
+    try {
+      return fn();
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  }
+
+  /** A stand-in binary named `name` that answers `--version` with `exit`. */
+  function fake(dir: string, name: string, exit: number): void {
+    const bin = join(dir, name);
+    writeFileSync(bin, `#!/bin/sh\nexit ${exit}\n`);
+    chmodSync(bin, 0o700);
+  }
+
+  it("resolves ahwp on PATH, the case that used to skip this suite", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hwp-core-bin-"));
+    try {
+      fake(dir, "ahwp", 0);
+      // PATH carries the fixture alone, so an engine installed on the machine
+      // running the suite cannot answer for it.
+      expect(withEnv({ PATH: dir }, resolveTestBin)).toBe("ahwp");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to hwp only when ahwp is absent", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hwp-core-bin-"));
+    try {
+      fake(dir, "hwp", 0);
+      expect(withEnv({ PATH: dir }, resolveTestBin)).toBe("hwp");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a found-but-broken ahwp as ahwp", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hwp-core-bin-"));
+    try {
+      fake(dir, "ahwp", 3);
+      fake(dir, "hwp", 0);
+      // Exit 3 is a broken install, not an absent command: retrying it under
+      // the compatibility name would hide the failure.
+      expect(withEnv({ PATH: dir }, resolveTestBin)).toBe("ahwp");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("treats an empty selection variable as unset", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hwp-core-bin-"));
+    try {
+      fake(dir, "ahwp", 0);
+      expect(withEnv({ PATH: dir, HWP_EDITOR_BIN: "", HWP_CLI: "" }, resolveTestBin)).toBe("ahwp");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 const PROFILE_NAMES = ["바탕글", "개요 1", "개요 2", "개요 3", "개요 4", "개요 5", "개요 6"];
 

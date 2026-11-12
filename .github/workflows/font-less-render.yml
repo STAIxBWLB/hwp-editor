@@ -23,7 +23,7 @@ env:
   # and only its `ahwp` member is installed, so the `./ahwp` calls below
   # exercise the default resolution #121 introduces; the legacy `hwp-` asset
   # and the `hwp` name inside it are neither fetched nor called.
-  HWP_CLI_TAG: v1.6.1
+  HWP_CLI_TAG: v1.6.2
 
 jobs:
   font-less-render:
