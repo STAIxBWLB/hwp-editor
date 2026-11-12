@@ -477,6 +477,75 @@ describe("argvToOps round-trip", () => {
   });
 });
 
+/**
+ * `--seal` and `--insert-image` decide a size suffix the way hwp-cli does
+ * (#108). `parse_seal_size` takes the last `@`, strips one case-sensitive `mm`
+ * from the trimmed suffix and trims again before `parse::<f32>()`;
+ * `parse_image_size` takes the last `@`, splits once on `x`/`X` and trims each
+ * side. Both readers used to match a bare `\d+(\.\d+)?`, so a unit, a space or
+ * a sign left the size in the path: `stamp@5mm` was a file called `stamp@5mm`
+ * here and a 5 mm seal at `stamp` in the engine.
+ */
+describe("the argv size readers mirror hwp-cli (#108)", () => {
+  it("reads a seal size the way parse_seal_size does", () => {
+    const cases: Array<[string, EditOp]> = [
+      ["anchor=>stamp@5mm", { kind: "seal", anchor: "anchor", path: "stamp", size: 5 }],
+      ["anchor=>stamp@5 mm", { kind: "seal", anchor: "anchor", path: "stamp", size: 5 }],
+      ["anchor=>stamp@ 5.5 ", { kind: "seal", anchor: "anchor", path: "stamp", size: 5.5 }],
+      ["anchor=>stamp@+5", { kind: "seal", anchor: "anchor", path: "stamp", size: 5 }],
+      // One `mm` only, so the second one is not a unit and the suffix is path
+      // text to the engine as well.
+      ["anchor=>stamp@5mmmm", { kind: "seal", anchor: "anchor", path: "stamp@5mmmm" }],
+      // The last `@` is the separator, so a directory may carry one.
+      ["anchor=>dir@2x/stamp@5", { kind: "seal", anchor: "anchor", path: "dir@2x/stamp", size: 5 }],
+    ];
+    for (const [value, op] of cases) {
+      expect(argvToOps(["--seal", value])).toEqual([op]);
+      // The writer re-emits the split value, and reading that back is the op.
+      expect(argvToOps(opsToArgv([op]))).toEqual([op]);
+    }
+  });
+
+  it("reads image dimensions the way parse_image_size does", () => {
+    const cases: Array<[string, EditOp]> = [
+      ["anchor=>img@10 x 20", { kind: "insert-image", anchor: "anchor", path: "img", width: 10, height: 20 }],
+      ["anchor=>img@10X20", { kind: "insert-image", anchor: "anchor", path: "img", width: 10, height: 20 }],
+      ["anchor=>img@ 10x20 ", { kind: "insert-image", anchor: "anchor", path: "img", width: 10, height: 20 }],
+      ["anchor=>fig@1/plot@10x20", { kind: "insert-image", anchor: "anchor", path: "fig@1/plot", width: 10, height: 20 }],
+      // `h` is "20x30", which f32 cannot read, so the engine keeps the whole
+      // value as a natural-size path and so does this reader.
+      ["anchor=>img@10x20x30", { kind: "insert-image", anchor: "anchor", path: "img@10x20x30" }],
+    ];
+    for (const [value, op] of cases) {
+      expect(argvToOps(["--insert-image", value])).toEqual([op]);
+      expect(argvToOps(opsToArgv([op]))).toEqual([op]);
+    }
+  });
+
+  it("keeps a path without a size whole, and one whose suffix is not a number", () => {
+    for (const value of ["anchor=>stamp.png", "anchor=>stamp@big"]) {
+      const op: EditOp = { kind: "seal", anchor: "anchor", path: value.slice("anchor=>".length) };
+      expect(argvToOps(["--seal", value])).toEqual([op]);
+      expect(argvToOps(opsToArgv([op]))).toEqual([op]);
+    }
+    for (const value of ["anchor=>img.png", "anchor=>img@10xbig"]) {
+      const op: EditOp = { kind: "insert-image", anchor: "anchor", path: value.slice("anchor=>".length) };
+      expect(argvToOps(["--insert-image", value])).toEqual([op]);
+      expect(argvToOps(opsToArgv([op]))).toEqual([op]);
+    }
+  });
+
+  it("carries a non-finite size the engine parses, since only JSON cannot", () => {
+    // `f32::from_str` reads `inf`, so the engine has a size here and the reader
+    // cannot call the value a path without disagreeing with it; the argv channel
+    // re-emits it and the edit-ops-v1 channel's `withUnit` is what refuses it.
+    expect(argvToOps(["--seal", "anchor=>stamp@inf"]))
+      .toEqual([{ kind: "seal", anchor: "anchor", path: "stamp", size: Infinity }]);
+    expect(argvToOps(["--insert-image", "anchor=>img@infx-inf"]))
+      .toEqual([{ kind: "insert-image", anchor: "anchor", path: "img", width: Infinity, height: -Infinity }]);
+  });
+});
+
 describe("opsToJson", () => {
   const json = (ops: EditOp[]): unknown => JSON.parse(opsToJson(ops));
 
