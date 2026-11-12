@@ -208,7 +208,8 @@ export const DISTRIBUTION_NEXT_STEP =
  * `LoadDocumentError::source` (cat.rs:107-114) returns the root cause, so
  * anyhow's Debug follows it with a blank line, `Caused by:`, and the same
  * sentence indented four spaces. Two copies of the sentence, both authored by
- * the engine, but only the first one counts (see `lineCarriesRefusal`):
+ * the engine, but only the first one is read, and only when the second ends
+ * the report (see `firstEngineErrorLine` and `terminationChain`):
  *
  *     Error: DRM으로 보호된 문서는 지원하지 않습니다. 한글에서 DRM 보안을 ...
  *
@@ -289,8 +290,8 @@ function engineDiagnostics(text: string): string {
 }
 
 /**
- * The message of the FIRST line-start `Error:` line in the engine's
- * diagnostics, or null when there is none.
+ * The message of the FIRST line-start `Error:` line in the engine's report, or
+ * null when there is none.
  *
  * Only the first one can be the engine's. `Termination` writes the failure
  * line once, before the process exits, and everything hwp-cli prints before it
@@ -299,15 +300,16 @@ function engineDiagnostics(text: string): string {
  * interpolations - `fill`'s unmatched key list, and `edit.rs:1394`'s
  * `메타데이터 설정: {spec}` for a `set-meta` key or value - sit INSIDE a message
  * the engine wrote, after a fixed prefix, so they add lines instead of
- * replacing the engine's own; the one that lands before Termination's line is
- * kept out by `terminationChain`.
+ * replacing the engine's own. That line alone is not proof, though: the one
+ * that lands before Termination's is kept out by `terminationChain`, which
+ * every caller must also require.
  *
  * The message is compared whole, so nothing may follow the sentence either:
  * `fill`'s ` (--allow-partial로 ...)` hint and `edit`'s `{anchor:?}` quoting
  * both leave a value that holds a sentence with text after it on its line.
  */
-function firstEngineErrorLine(diagnostics: string): string | null {
-  for (const line of diagnostics.split(/\r?\n/u)) {
+function firstEngineErrorLine(report: string): string | null {
+  for (const line of report.split(/\r?\n/u)) {
     if (line.startsWith(ENGINE_ERROR_LABEL)) {
       return line.slice(ENGINE_ERROR_LABEL.length);
     }
@@ -340,6 +342,34 @@ function terminationChain(message: string): string {
 }
 
 /**
+ * The head anyhow's Debug appends when a backtrace is captured: a blank line
+ * and `Stack backtrace:`, then one frame per line. Read from anyhow 1.0.104
+ * (`fmt.rs:46-61`, the version in hwp-cli v1.6.1's Cargo.lock) and measured on
+ * ahwp 1.6.1 with `RUST_BACKTRACE=1 hwp cat` on a file that is not a document:
+ * the block follows the `Caused by:` copy, so the diagnostics no longer END
+ * with the chain while a protection refusal still printed it.
+ *
+ * `RUST_BACKTRACE` reaches the engine through maru, whose `run_hwp` passes the
+ * environment through unchanged (`dev/maru/src-tauri/src/hwped.rs`, it sets
+ * only `PATH`), so this is a shape the desktop transport really produces and
+ * not a hypothetical.
+ */
+const BACKTRACE_HEAD = "\n\nStack backtrace:";
+
+/**
+ * The engine's report with any backtrace block cut off, so the chain check
+ * reads the same with and without `RUST_BACKTRACE`.
+ *
+ * Cut at the LAST occurrence: the engine appends its block once, after
+ * Termination's, so anything earlier is caller text an op value planted, and
+ * dropping the tail there only ever rejects a reading.
+ */
+function withoutBacktrace(diagnostics: string): string {
+  const traced = diagnostics.lastIndexOf(BACKTRACE_HEAD);
+  return traced < 0 ? diagnostics : diagnostics.slice(0, traced);
+}
+
+/**
  * The protection backstop, shared by every transport that sees raw hwp-cli
  * diagnostics. Returns the kind of protection with the next step that kind
  * carries, or null.
@@ -356,9 +386,12 @@ function terminationChain(message: string): string {
  * claiming `edit/compose` every time (#105 item 2).
  *
  * The line read is the engine's first `Error:` line, the comparison is exact,
- * and the diagnostics must END with Termination's chain for that line (see
+ * and the report must END with Termination's chain for that line (see
  * `firstEngineErrorLine` and `terminationChain`), so no echoed value, warning,
- * informational line or pattern can select a kind.
+ * informational line or pattern can select a kind. A `Stack backtrace:` block
+ * anyhow appends below the chain is cut first (`withoutBacktrace`), because a
+ * host that captures backtraces would otherwise lose a reading this transport
+ * makes today.
  *
  * The argument is never interpolated into the result: raw CLI output stays on
  * whatever non-serialized field its transport keeps it on, so this path adds
@@ -366,13 +399,13 @@ function terminationChain(message: string): string {
  * in the server's `runCliOk`).
  */
 export function protectedReasonFromDiagnostics(text: string): string | null {
-  const diagnostics = engineDiagnostics(text);
-  const message = firstEngineErrorLine(diagnostics);
+  const report = withoutBacktrace(engineDiagnostics(text));
+  const message = firstEngineErrorLine(report);
   if (message === null) return null;
   // The tail is what proves the line above is Termination's and not a line an
   // op value planted: the engine writes the block once, last, and only when
   // the failure carries the root cause a protection refusal has.
-  if (!diagnostics.trimEnd().endsWith(terminationChain(message))) return null;
+  if (!report.trimEnd().endsWith(terminationChain(message))) return null;
   for (const [sentence, kind, step] of PROTECTED_REFUSALS) {
     if (message === sentence) return `${kind}; ${step}`;
   }

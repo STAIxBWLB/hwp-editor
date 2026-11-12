@@ -227,6 +227,30 @@ describe("edit pre-flight and stderr backstop", () => {
     });
   });
 
+  /**
+   * t51-a2: anyhow appends `Stack backtrace:` and frames below the `Caused by:`
+   * copy when a backtrace is captured (`RUST_BACKTRACE`, measured on ahwp 1.6.1),
+   * so the server sees that tail whenever its own environment enables one. The
+   * refusal must still classify.
+   */
+  it("upgrades a failed edit whose stderr carries anyhow's backtrace block", async () => {
+    const { bin } = fakeBin({
+      info: "{}",
+      editStderrLines: [
+        ...printed(SIGNED),
+        "",
+        "Stack backtrace:",
+        "   0: std::backtrace::Backtrace::create",
+        "   1: anyhow::error::<impl anyhow::Error>::new",
+      ],
+    });
+    const engine = createCliEngine({ bin });
+    await expect(engine.edit(DOC, [])).rejects.toMatchObject({
+      reason: "protected",
+      message: `hwp edit failed (exit 3): ${FIXED_MESSAGES[2]}`,
+    });
+  });
+
   it("names the command that failed when a lint is refused as protected", async () => {
     // Since #104 lint rides `runCliOk`, so a protection line on its stderr
     // reaches a caller as `protected`; the sentence must name lint, which the

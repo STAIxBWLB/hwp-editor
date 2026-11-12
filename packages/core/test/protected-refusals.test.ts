@@ -110,6 +110,78 @@ describe("the protection backstop", () => {
   });
 
   /**
+   * anyhow appends one more block when a backtrace is captured, below the
+   * `Caused by:` copy (t51-a2):
+   *
+   *     Stack backtrace:
+   *        0: std::backtrace::Backtrace::create
+   *
+   * Measured on ahwp 1.6.1 with `RUST_BACKTRACE=1 hwp cat` on a file that is
+   * not a document; `RUST_LIB_BACKTRACE` selects the same block. It reaches the
+   * desktop transport because maru's `run_hwp` passes the environment through
+   * and sets only `PATH`, so a refusal that classified before this PR must
+   * still classify with the block present.
+   */
+  const BACKTRACE =
+    "\n\nStack backtrace:\n" +
+    "   0: std::backtrace::Backtrace::create\n" +
+    "   1: anyhow::error::<impl anyhow::Error>::new\n" +
+    "   2: ahwp::commands::cat::run";
+
+  it.each(REFUSALS)("classifies %s with anyhow's backtrace below the chain", (sentence, kind, step) => {
+    expect(protectedReasonFromDiagnostics(`${printed(sentence).trimEnd()}${BACKTRACE}\n`)).toBe(
+      `${kind}; ${step}`,
+    );
+  });
+
+  it("classifies a bridge-shaped refusal whose stderr carries a backtrace", () => {
+    expect(
+      protectedReasonFromDiagnostics(
+        `hwp_failed: hwp edit failed (exit 1): ${printed(DRM).trimEnd()}${BACKTRACE}`,
+      ),
+    ).toBe(`DRM-protected document; ${PROTECTED_NEXT_STEP}`);
+  });
+
+  it("reads a backtrace tail the same over CRLF", () => {
+    expect(
+      protectedReasonFromDiagnostics(`${printed(SIGNED).trimEnd()}${BACKTRACE}\n`.replaceAll("\n", "\r\n")),
+    ).toBe(`signed document; ${PROTECTED_NEXT_STEP}`);
+  });
+
+  it("does not classify an Error line with a backtrace but no chain", () => {
+    expect(protectedReasonFromDiagnostics(`Error: ${DRM}${BACKTRACE}\n`)).toBeNull();
+  });
+
+  /**
+   * The cut is at the LAST `Stack backtrace:` head. A `set-meta` value is
+   * printed raw, so a caller can plant a head of its own before the engine's
+   * chain; cutting at the first one would drop the chain that follows it.
+   */
+  it("classifies when a set-meta value planted a backtrace head above the chain", () => {
+    const planted = `메타데이터 설정: author=a\n\nStack backtrace:\n   0: caller text\n${printed(DRM).trimEnd()}`;
+    expect(protectedReasonFromDiagnostics(`${planted}${BACKTRACE}\n`)).toBe(
+      `DRM-protected document; ${PROTECTED_NEXT_STEP}`,
+    );
+  });
+
+  /**
+   * The document `경고:` line hwp-cli prints for a load warning
+   * (`cat.rs:212/:230`, `eprintln!("경고: {w}")` with the warning as written)
+   * carries document text, so it can plant an `Error:` line above an unrelated
+   * failure. t51-n1 pins that shape at the diagnostics level.
+   */
+  it("does not classify when a document warning line planted the sentence", () => {
+    const warning = `경고: 머리말 idRef=1\nError: ${DRM}`;
+    const failure = "Error: 적용되지 않은 편집 요청이 있습니다: replace \"x\" → \"y\" (--allow-partial로 일치한 값만 적용할 수 있습니다)";
+    expect(protectedReasonFromDiagnostics(`${warning}\n${failure}\n`)).toBeNull();
+    expect(
+      protectedReasonFromDiagnostics(
+        `hwp_failed: hwp edit failed (exit 1): ${warning}\n${failure}`,
+      ),
+    ).toBeNull();
+  });
+
+  /**
    * The `Caused by:` copy is the engine's too, but on its own it is not
    * evidence: `fill` prints unmatched field names with `{}` (fill.rs, joined
    * and not escaped), so a caller's value can put a newline and then a
