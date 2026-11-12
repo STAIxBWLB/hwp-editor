@@ -450,11 +450,11 @@ function splitSealSize(value: string): { path: string; size: number } | null {
  *
  * No f32 overflow is mapped here, because the rounding happens in the engine on
  * both channels: `opsToArgv` re-emits this number as text and hwp-cli's argv
- * parser reads it with its own f32 parse (`parse_seal_size`,
- * `commands/edit.rs:4214-4221`), so `stamp@1e39` is a size of infinity there.
+ * parser reads it with its own f32 parse (`parse_seal_size` in
+ * `commands/edit.rs`), so `stamp@1e39` is a size of infinity there.
  * edit-ops-v1 needs no map either, because its parser refuses a size that is
- * not finite or is above 5000 mm (`parse_mm_f32`, `MM_MAX` at
- * `edit_ops.rs:33`), which already covers what f32 would overflow to. A
+ * not finite or is above 5000 mm (`parse_mm_f32` and `MM_MAX` in
+ * `edit_ops.rs`), which already covers what f32 would overflow to. A
  * non-finite size has no plain-decimal form, so this side's `withUnit` refuses
  * it before the op is sent.
  */
