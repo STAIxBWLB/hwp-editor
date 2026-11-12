@@ -726,7 +726,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           // wrapper that drops them cannot be branched on (`onError`'s contract).
           const stored = toEditorError(e);
           // The classified refusals (#76) each get their own cause and next
-          // step. A run-range conflict (hwp-cli#420) is classified rather than
+          // step. A run-range conflict (agent-hwp#420) is classified rather than
           // blocked at queue time: the queue and the applying lock stay as
           // they are, and the batch fails whole with nothing written.
           const refusal = engineRefusalKind(e);

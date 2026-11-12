@@ -55,7 +55,7 @@ async function failure(stderr: string | string[], ops: EditOp[] = OPS, assets?: 
 }
 
 describe("hwp-cli 1.5-1.6 refusal classification (#76)", () => {
-  it("marks a PARA_RANGE_TAG refusal as range_tag (hwp-cli#470)", async () => {
+  it("marks a PARA_RANGE_TAG refusal as range_tag (agent-hwp#470)", async () => {
     const error = await failure(RANGE_TAG);
     expect(error.reason).toBe("failed");
     expect(error.message).toBe("hwp edit failed (exit 3): edit refused: range_tag");
@@ -64,7 +64,7 @@ describe("hwp-cli 1.5-1.6 refusal classification (#76)", () => {
     expect(error.stderr).toBe(RANGE_TAG);
   });
 
-  it("marks a run-range length conflict as run_range_conflict (hwp-cli#420)", async () => {
+  it("marks a run-range length conflict as run_range_conflict (agent-hwp#420)", async () => {
     const error = await failure(RUN_CONFLICT);
     expect(error.reason).toBe("failed");
     expect(error.message).toBe("hwp edit failed (exit 3): edit refused: run_range_conflict");

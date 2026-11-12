@@ -230,7 +230,7 @@ describe("paragraph run reorder and delete", () => {
     expect(engine.calls.edit).toHaveLength(0);
   });
 
-  it("refuses inserting before the section definition paragraph but not after it (#76, hwp-cli#451)", async () => {
+  it("refuses inserting before the section definition paragraph but not after it (#76, agent-hwp#451)", async () => {
     const engine = createMockEngine({ envelope: addressedFive() });
     render(<HwpEditor engine={engine} file={file} locale="en" />);
     const options = await screen.findAllByRole("option");
