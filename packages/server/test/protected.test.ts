@@ -35,7 +35,7 @@ const STEP = "remove the protection in a word processor that can open it, save a
  * processor opens one without being able to edit it, so the shared step would
  * name nothing its reader can do. The two steps must not converge.
  */
-const DIST_STEP = "open the original this copy was published from, or convert this copy with hwp convert --to hwpx and open the converted file here; saving in another format does not keep the distribution protection";
+const DIST_STEP = "open the original this copy was published from, or convert this copy with ahwp convert --to hwpx and open the converted file here; saving in another format does not keep the distribution protection";
 
 /**
  * The engine's own sentences, transcribed from
@@ -121,7 +121,7 @@ describe("protectedReasonFromStderr", () => {
     // not print: nothing in the engine's DistributionDoc message says a word
     // processor can make an editable copy of it.
     expect(distribution).not.toContain(STEP);
-    expect(distribution).toContain("hwp convert --to hwpx");
+    expect(distribution).toContain("ahwp convert --to hwpx");
     expect(protectedReasonFromStderr(printed(DRM).join("\n"))).not.toContain(DIST_STEP);
   });
 
@@ -186,19 +186,19 @@ describe("protectedReasonFromStderr", () => {
  */
 describe("the command head a protected sentence may print", () => {
   it("takes the head alone from a message that carries engine text after it", () => {
-    const message = `hwp lint failed (exit 1): Error: ${CERT_ENCRYPTED}`;
-    expect(cliExitHead(message)).toBe("hwp lint failed (exit 1)");
+    const message = `ahwp lint failed (exit 1): Error: ${CERT_ENCRYPTED}`;
+    expect(cliExitHead(message)).toBe("ahwp lint failed (exit 1)");
   });
 
   it("keeps the head when runCliOk appended the stopped-without-diagnostic line", () => {
-    const message = `hwp edit failed (exit -1): ${STOPPED_WITHOUT_DIAGNOSTIC}`;
-    expect(cliExitHead(message)).toBe("hwp edit failed (exit -1)");
+    const message = `ahwp edit failed (exit -1): ${STOPPED_WITHOUT_DIAGNOSTIC}`;
+    expect(cliExitHead(message)).toBe("ahwp edit failed (exit -1)");
   });
 
   it.each([
-    ["a family sentence a template command replaced the failure with", "hwp lint could not inspect this document with hwp-cli 1.4.0; check that it opens with hwp info, then retry."],
-    ["a version refusal", "Template commands require hwp-cli 1.4.0 or newer"],
-    ["the head not at the start", "→ hwp edit failed (exit 1)"],
+    ["a family sentence a template command replaced the failure with", "ahwp lint could not inspect this document with agent-hwp 1.4.0; check that it opens with ahwp info, then retry."],
+    ["a version refusal", "Template commands require agent-hwp 1.4.0 or newer"],
+    ["the head not at the start", "→ ahwp edit failed (exit 1)"],
     ["an empty message", ""],
   ])("answers null for %s, so the sentence falls back to the neutral subject", (_name, message) => {
     expect(cliExitHead(message)).toBeNull();
@@ -223,7 +223,7 @@ describe("edit pre-flight and stderr backstop", () => {
     // edit/compose whatever ran (#105 item 2).
     await expect(engine.edit(DOC, [])).rejects.toMatchObject({
       reason: "protected",
-      message: `hwp edit failed (exit 3): ${FIXED_MESSAGES[1]}`,
+      message: `ahwp edit failed (exit 3): ${FIXED_MESSAGES[1]}`,
     });
   });
 
@@ -247,7 +247,7 @@ describe("edit pre-flight and stderr backstop", () => {
     const engine = createCliEngine({ bin });
     await expect(engine.edit(DOC, [])).rejects.toMatchObject({
       reason: "protected",
-      message: `hwp edit failed (exit 3): ${FIXED_MESSAGES[2]}`,
+      message: `ahwp edit failed (exit 3): ${FIXED_MESSAGES[2]}`,
     });
   });
 
@@ -295,7 +295,7 @@ describe("edit pre-flight and stderr backstop", () => {
     const engine = createCliEngine({ bin });
     await expect(engine.lint(DOC)).rejects.toMatchObject({
       reason: "protected",
-      message: `hwp lint failed (exit 1): ${FIXED_MESSAGES[0]}`,
+      message: `ahwp lint failed (exit 1): ${FIXED_MESSAGES[0]}`,
     });
   });
 

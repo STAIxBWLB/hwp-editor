@@ -189,7 +189,7 @@ export const PROTECTED_NEXT_STEP =
  * keeps it.
  */
 export const DISTRIBUTION_NEXT_STEP =
-  "open the original this copy was published from, or convert this copy with hwp convert --to hwpx and open the converted file here; saving in another format does not keep the distribution protection";
+  "open the original this copy was published from, or convert this copy with ahwp convert --to hwpx and open the converted file here; saving in another format does not keep the distribution protection";
 
 /**
  * The five hwp-cli refusals that mean "this document is protected", each with

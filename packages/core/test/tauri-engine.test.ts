@@ -589,7 +589,7 @@ it("does not advertise or silently drop unsupported Tauri image bytes", async ()
   expect(caps).not.toHaveProperty("imageAssets");
   expect(caps).toMatchObject({editOps:"v1",templateMethods:["slots","template"]});
   await expect(engine.edit(doc,[{kind:"insert-image",anchor:"x",path:"x.png"}],{assets:[{name:"x.png",data:new Uint8Array([1])}]})).rejects.toThrow(
-    "Image-byte uploads are unsupported by this Tauri client; an API caller can send an insert-image op with a local path instead, which the JSON op channel passes to `hwp edit --ops` unchanged while the legacy argv channel needs workspaceRoot containing the file, and a caller holding only bytes needs the HTTP client with an engine that advertises image-asset uploads (hwp-cli 1.4.0 or newer).",
+    "Image-byte uploads are unsupported by this Tauri client; an API caller can send an insert-image op with a local path instead, which the JSON op channel passes to `ahwp edit --ops` unchanged while the legacy argv channel needs workspaceRoot containing the file, and a caller holding only bytes needs the HTTP client with an engine that advertises image-asset uploads (agent-hwp 1.4.0 or newer).",
   );
   expect(calls.filter(call=>call.cmd==="hwped_edit")).toEqual([]);
 });

@@ -445,7 +445,7 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
       // binary lacks image insertion, and a supplied engine may advertise no
       // uploads at all. Naming only "configure a host that advertises it" sent
       // the caller hunting for another adapter (#58 item 31).
-      throw new HwpCliError("bad_request", "the configured engine does not support image assets v1; upgrade hwp-cli to 1.4.0 or newer, or configure a host that advertises imageAssets v1, then retry");
+      throw new HwpCliError("bad_request", "the configured engine does not support image assets v1; upgrade agent-hwp to 1.4.0 or newer, or configure a host that advertises imageAssets v1, then retry");
     }
     const options: EditOptions = {};
     const verify = formFlag(form, "verify");
@@ -543,17 +543,17 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
   }
 
   async function requireStyles(): Promise<void> {
-    if (typeof engine.styles !== "function") throw new HwpCliError("unavailable", "styles is unsupported by this host; upgrade the host adapter to the hwp-cli 1.4.0 styles command.");
+    if (typeof engine.styles !== "function") throw new HwpCliError("unavailable", "styles is unsupported by this host; upgrade the host adapter to the agent-hwp 1.4.0 styles command.");
     const caps = await engine.capabilities();
     if (!stylesVersionSupported(caps.version) || caps.styles !== "v1") {
-      throw new HwpCliError("unavailable", "styles requires hwp-cli 1.4.0 and host support; upgrade the binary and host adapter.");
+      throw new HwpCliError("unavailable", "styles requires agent-hwp 1.4.0 and host support; upgrade the binary and host adapter.");
     }
   }
 
   async function requireTemplateMethod(method: TemplateMethod): Promise<void> {
-    if (typeof engine[method] !== "function") throw new HwpCliError("unavailable", `${method} is unsupported by this host; upgrade the host adapter to the hwp-cli 1.4.0 template API.`);
+    if (typeof engine[method] !== "function") throw new HwpCliError("unavailable", `${method} is unsupported by this host; upgrade the host adapter to the agent-hwp 1.4.0 template API.`);
     const caps = await engine.capabilities();
-    if (!templateVersionSupported(caps.version) || (caps.templateMethods !== undefined && !caps.templateMethods.includes(method))) throw new HwpCliError("unavailable", `${method} requires hwp-cli 1.4.0 and host command support; upgrade the binary and host adapter.`);
+    if (!templateVersionSupported(caps.version) || (caps.templateMethods !== undefined && !caps.templateMethods.includes(method))) throw new HwpCliError("unavailable", `${method} requires agent-hwp 1.4.0 and host command support; upgrade the binary and host adapter.`);
   }
   function validated<T>(value: unknown, parser: (raw: unknown) => T): T {
     try { return parser(value); }

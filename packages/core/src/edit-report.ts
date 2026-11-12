@@ -61,7 +61,7 @@ export interface EditReport {
 function invalid(field: string): never {
   throw new Error(
     `Invalid edit report: ${field}; the engine did not answer with edit-report-v1, so the ids ` +
-      "it changed are unknown. Upgrade the host's hwp-cli and retry.",
+      "it changed are unknown. Upgrade the host's agent-hwp and retry.",
   );
 }
 

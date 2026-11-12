@@ -174,8 +174,9 @@ function wrapped(error: unknown, text: string, detail: string): Error {
 /**
  * The engine's own words from a transport's failure message.
  *
- * Each transport prefixes its own sentence — `hwp edit failed (exit 3): ` over
- * HTTP and the CLI engine, `hwped_edit failed: ` through the Tauri bridge, on
+ * Each transport prefixes its own sentence — `ahwp edit failed (exit 3): ` over
+ * HTTP and the CLI engine, `hwped_edit failed: hwp edit failed (exit 3): `
+ * through the Tauri bridge (maru still writes the `hwp` head), on
  * top of the engine's own `Error: insert_blocks ` — and the cause sits after
  * all of them. What the frame prints is the engine's line, so a caller never
  * reads two prefixes stapled together.
@@ -185,6 +186,8 @@ function refusalReason(message: string): string {
   // the first non-empty line is the failure, the rest is its context.
   const firstLine = message.split(/\r?\n/).map((line) => line.trim()).find((line) => line !== "") ?? "";
   return firstLine
+    // The lazy `^.*?` before `hwp` takes this server's `ahwp edit failed` head
+    // and maru's `hwp edit failed` head alike.
     .replace(/^.*?hwp edit failed \(exit \d+\):\s*/, "")
     .replace(/^.*?hwped_edit failed:\s*/, "")
     .replace(/^hwp_failed:\s*/, "")

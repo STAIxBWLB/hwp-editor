@@ -100,9 +100,9 @@ it("refuses uploaded assets on a binary below the 1.4.0 upload floor", async () 
     .catch((error: unknown) => error);
   expect(failure).toMatchObject({ reason: "version" });
   // The cause is this server's own floor, and the found version rides along.
-  expect((failure as Error).message).toContain("this server accepts uploaded images only with hwp-cli 1.4.0 or newer");
-  expect((failure as Error).message).toContain("(hwp 0.20.0 found)");
-  expect((failure as Error).message).toContain("upgrade hwp-cli, then retry the edit");
+  expect((failure as Error).message).toContain("this server accepts uploaded images only with agent-hwp 1.4.0 or newer");
+  expect((failure as Error).message).toContain("(agent-hwp 0.20.0 found)");
+  expect((failure as Error).message).toContain("upgrade agent-hwp, then retry the edit");
   expect((failure as Error).message).not.toContain("has no image asset uploads");
   // The refusal precedes the edit spawn: nothing was staged, nothing ran.
   const edits = log().split("\n").filter((line) => /^edit\b/.test(line) && !/--help/.test(line));

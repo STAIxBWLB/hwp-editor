@@ -25,7 +25,7 @@ try {
   templateBinaryAvailable = templateVersionSupported(version);
 } catch { /* The base integration suite reports a missing binary. */ }
 const describeTemplates = templateBinaryAvailable ? describe : describe.skip;
-describeTemplates("template commands (requires real hwp-cli >= 1.4.0)", () => {
+describeTemplates("template commands (requires real agent-hwp >= 1.4.0)", () => {
   it("lists slots and native fields, fills both, and retains the original bytes", async () => {
     const engine = createCliEngine({bin:BIN});
     const original = (await engine.compose(spec,"inputs.hwpx")).document;
@@ -84,13 +84,13 @@ describeTemplates("template commands (requires real hwp-cli >= 1.4.0)", () => {
 describe("template CLI failure guidance", () => {
   const document = { name: "sample.hwpx", data: new Uint8Array([1]) };
   const cases = [
-    ["slots", (engine: ReturnType<typeof createCliEngine>) => engine.slots(document), "hwp info"],
-    ["fields", (engine: ReturnType<typeof createCliEngine>) => engine.slots(document), "hwp info"],
+    ["slots", (engine: ReturnType<typeof createCliEngine>) => engine.slots(document), "ahwp info"],
+    ["fields", (engine: ReturnType<typeof createCliEngine>) => engine.slots(document), "ahwp info"],
     ["fill", (engine: ReturnType<typeof createCliEngine>) => engine.fill(document, { title: "Hello" }), "form values"],
     ["template", (engine: ReturnType<typeof createCliEngine>) => engine.template(templateSpec, { version: "1.0", values: { title: "Hello" } }, "out.hwpx"), "TemplateSpec"],
-    ["lint", (engine: ReturnType<typeof createCliEngine>) => engine.lint(document), "hwp info"],
-    ["list-templates", (engine: ReturnType<typeof createCliEngine>) => engine.listTemplates(), "hwp new --list-templates"],
-    ["create", (engine: ReturnType<typeof createCliEngine>) => engine.create("gongmun-basic", "out.hwpx"), "hwp new --list-templates"],
+    ["lint", (engine: ReturnType<typeof createCliEngine>) => engine.lint(document), "ahwp info"],
+    ["list-templates", (engine: ReturnType<typeof createCliEngine>) => engine.listTemplates(), "ahwp new --list-templates"],
+    ["create", (engine: ReturnType<typeof createCliEngine>) => engine.create("gongmun-basic", "out.hwpx"), "ahwp new --list-templates"],
     ["edit", (engine: ReturnType<typeof createCliEngine>) => engine.fill(document, { approval: "ok" }), "field names exist"],
   ] as const;
 
@@ -115,8 +115,8 @@ describe("template CLI failure guidance", () => {
     const { bin } = createFakeBin({ version: "1.4.0", failTemplateCommand: "lint", templateFailureCode: 1 });
     const error = await createCliEngine({ bin }).lint(document).then(() => null, (reason: unknown) => reason);
     expect(error).toMatchObject({ reason: "failed" });
-    expect((error as Error).message).toContain("hwp lint could not inspect this document");
-    expect((error as Error).message).toContain("hwp info");
+    expect((error as Error).message).toContain("ahwp lint could not inspect this document");
+    expect((error as Error).message).toContain("ahwp info");
     expect((error as Error).message).not.toContain("invalid JSON");
     expect((error as Error).message).not.toContain("/private/fake/document.hwpx");
     // lint rides runCliOk now, so the family sentence is a rewrite of the
@@ -165,7 +165,7 @@ describe("template CLI invalid JSON names its command", () => {
       const error = await invoke(commands).then(() => null, (reason: unknown) => reason);
       expect(error).toMatchObject({ reason: "failed" });
       expect((error as Error).message).toBe(
-        `hwp ${broken} returned invalid JSON; check hwp --version, use hwp-cli 1.4.0 or newer, and retry.`,
+        `ahwp ${broken} returned invalid JSON; check ahwp --version, use agent-hwp 1.4.0 or newer, and retry.`,
       );
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
@@ -189,6 +189,11 @@ describe("template producer refusal", () => {
     const commands = createTemplateCommands({version:async()=>"1.3.1",work:async fn=>fn("/unused"),stage:async()=>"/unused/input.hwpx",run:async()=>{called=true;return "{}";}});
     await expect(commands.slots({name:"x.hwpx",data:new Uint8Array()})).rejects.toThrow(/1.4.0.*upgrade/i);
     expect(called).toBe(false);
+  });
+  it("names agent-hwp when the embedded-template list is malformed (#133)", async () => {
+    const { createTemplateCommands } = await import("../src/template-engine.js");
+    const commands = createTemplateCommands({version:async()=>"1.4.0",work:async fn=>fn("/unused"),stage:async()=>"/unused/input.hwpx",run:async()=>"Bad Id\tlabel\n"});
+    await expect(commands.listTemplates()).rejects.toThrow("Invalid embedded-template list; use agent-hwp 1.4.0 and retry.");
   });
   it("refuses image paths in rich_blocks defaults before staging or invoking template", async () => {
     const { createTemplateCommands } = await import("../src/template-engine.js");

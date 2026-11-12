@@ -58,7 +58,7 @@ describe("hwp-cli 1.5-1.6 refusal classification (#76)", () => {
   it("marks a PARA_RANGE_TAG refusal as range_tag (agent-hwp#470)", async () => {
     const error = await failure(RANGE_TAG);
     expect(error.reason).toBe("failed");
-    expect(error.message).toBe("hwp edit failed (exit 3): edit refused: range_tag");
+    expect(error.message).toBe("ahwp edit failed (exit 3): edit refused: range_tag");
     expect(error.refusal).toBe("range_tag");
     expect(error.message).not.toContain("구간");
     expect(error.stderr).toBe(RANGE_TAG);
@@ -67,7 +67,7 @@ describe("hwp-cli 1.5-1.6 refusal classification (#76)", () => {
   it("marks a run-range length conflict as run_range_conflict (agent-hwp#420)", async () => {
     const error = await failure(RUN_CONFLICT);
     expect(error.reason).toBe("failed");
-    expect(error.message).toBe("hwp edit failed (exit 3): edit refused: run_range_conflict");
+    expect(error.message).toBe("ahwp edit failed (exit 3): edit refused: run_range_conflict");
     expect(error.message).not.toContain("op[");
   });
 
@@ -82,7 +82,7 @@ describe("hwp-cli 1.5-1.6 refusal classification (#76)", () => {
 
   it("marks the apply-time content-drift form of #420 as run_range_conflict (commands/edit.rs:3553)", async () => {
     const error = await failure(DRIFT);
-    expect(error.message).toBe("hwp edit failed (exit 3): edit refused: run_range_conflict");
+    expect(error.message).toBe("ahwp edit failed (exit 3): edit refused: run_range_conflict");
     expect(error.message).not.toContain("set_format");
   });
 
@@ -101,7 +101,7 @@ describe("hwp-cli 1.5-1.6 refusal classification (#76)", () => {
     // which is its own case (#58 item 31).
     const error = await failure(RANGE_TAG, image, [{ name: "figure.png", data: new Uint8Array(Buffer.from(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==", "base64")) }], "1.4.0");
-    expect(error.message).toBe("hwp edit failed (exit 3): edit refused: range_tag");
+    expect(error.message).toBe("ahwp edit failed (exit 3): edit refused: range_tag");
     expect(error.message).not.toMatch(/Image insertion failed|re-export|operation targets/);
   });
 
@@ -122,7 +122,7 @@ describe("hwp-cli 1.5-1.6 refusal classification (#76)", () => {
       ...OPS,
     ];
     const error = await failure(RANGE_TAG, ops);
-    expect(error.message).toBe("hwp edit failed (exit 3): edit refused: range_tag");
+    expect(error.message).toBe("ahwp edit failed (exit 3): edit refused: range_tag");
     expect(error.message).not.toContain("insert_blocks refused");
   });
 
@@ -131,6 +131,6 @@ describe("hwp-cli 1.5-1.6 refusal classification (#76)", () => {
       '치환: "적용되지 않은 편집 요청이 있습니다: set_field name=x"',
       "Error: 적용되지 않은 편집 요청이 있습니다: replace address=0.1 from=\"a\" to=\"b\" (--allow-partial로 일치한 요청만 적용 가능)",
     ]);
-    expect(error.message).toBe("hwp edit failed (exit 3): edit refused: unmatched_replace");
+    expect(error.message).toBe("ahwp edit failed (exit 3): edit refused: unmatched_replace");
   });
 });

@@ -36,7 +36,7 @@ export function templateVersionSupported(version: string): boolean {
 
 /** Validator errors name only contract fields, never supplied file paths or payloads. */
 function invalid(field: string): never {
-  throw new Error(`Invalid template report: ${field}; upgrade the host/client to the hwp-cli 1.4.0 template contract and retry.`);
+  throw new Error(`Invalid template report: ${field}; upgrade the host/client to the agent-hwp 1.4.0 template contract and retry.`);
 }
 export function reportObject(raw: unknown, field: string): Record<string, unknown> {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) invalid(field);

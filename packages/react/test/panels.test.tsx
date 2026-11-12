@@ -981,7 +981,7 @@ describe("ComponentsPanel (TEST-03)", () => {
     // As a transport delivers it (#88): the class in the `insertion` field.
     engine.edit = () => Promise.reject(new HwpEngineError(
       "failed",
-      "hwp edit failed (exit 3): insert_blocks refused: layout_overflow (insertion point 46.40 mm)",
+      "ahwp edit failed (exit 3): insert_blocks refused: layout_overflow (insertion point 46.40 mm)",
       { status: 422, insertion: { kind: "layout_overflow", insertionMm: 46.4 } },
     ));
     const envelope = await engine.read(file);
@@ -1267,7 +1267,7 @@ describe("ComponentsPanel (TEST-03)", () => {
     const engine = composedEngine();
     engine.edit = () => Promise.reject(new HwpEngineError(
       "failed",
-      "hwp edit failed (exit 3): insert_blocks refused: unknown_style; 결재란 셀",
+      "ahwp edit failed (exit 3): insert_blocks refused: unknown_style; 결재란 셀",
       { status: 422, insertion: { kind: "unknown_style", style: "결재란 셀" } },
     ));
     const envelope = await engine.read(file);

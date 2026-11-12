@@ -66,7 +66,7 @@ export function readPresetBatch(report: EditReport | undefined): PresetBatchRead
     return {
       refusal: {
         code: "unavailable",
-        message: "the engine published this edit without a readable report, so the preset's outcome is unknown; upgrade the host's hwp-cli to a release that writes edit-report-v1 and apply again",
+        message: "the engine published this edit without a readable report, so the preset's outcome is unknown; upgrade the host's agent-hwp to a release that writes edit-report-v1 and apply again",
       },
       unstyledTable: false,
       unchanged: false,

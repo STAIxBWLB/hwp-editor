@@ -241,20 +241,20 @@ describe("routes (stub engine)", () => {
     const { HwpCliError } = await import("../src/cli-engine.js");
     const engine = stubEngine({
       async edit() {
-        throw new HwpCliError("failed", "hwp edit failed (exit 3): edit refused: range_tag", "stderr", undefined, "range_tag");
+        throw new HwpCliError("failed", "ahwp edit failed (exit 3): edit refused: range_tag", "stderr", undefined, "range_tag");
       },
     });
     const handler = createHwpEditorHandler({ engine, sessions: false });
     const res = await handler(multipartRequest(`${BASE}/edit`, { file: DOC, ops: JSON.stringify([]) }));
     const body = await res.json();
-    expect(body.error).toEqual({ code: "failed", message: "hwp edit failed (exit 3): edit refused: range_tag", refusal: "range_tag" });
+    expect(body.error).toEqual({ code: "failed", message: "ahwp edit failed (exit 3): edit refused: range_tag", refusal: "range_tag" });
   });
 
   it("sends the insert_blocks class as error.insertion (#88)", async () => {
     const { HwpCliError } = await import("../src/cli-engine.js");
     const engine = stubEngine({
       async edit() {
-        throw new HwpCliError("failed", "hwp edit failed (exit 3): insert_blocks refused: invalid_definition", "e", undefined, undefined, { kind: "invalid_definition" });
+        throw new HwpCliError("failed", "ahwp edit failed (exit 3): insert_blocks refused: invalid_definition", "e", undefined, undefined, { kind: "invalid_definition" });
       },
     });
     const handler = createHwpEditorHandler({ engine, sessions: false });
@@ -266,7 +266,7 @@ describe("routes (stub engine)", () => {
 
   it("sends the stopped-without-diagnostic marker as error.stopped (#91)", async () => {
     const { HwpCliError } = await import("../src/cli-engine.js");
-    const message = `hwp edit failed (exit 137): ${STOPPED_WITHOUT_DIAGNOSTIC}`;
+    const message = `ahwp edit failed (exit 137): ${STOPPED_WITHOUT_DIAGNOSTIC}`;
     const engine = stubEngine({
       async edit() {
         throw new HwpCliError("failed", message, "", undefined, undefined, undefined, true);
@@ -284,7 +284,7 @@ describe("routes (stub engine)", () => {
     const { HwpCliError } = await import("../src/cli-engine.js");
     const engine = stubEngine({
       async edit() {
-        throw new HwpCliError("failed", "hwp edit failed (exit 3): edit refused: range_tag");
+        throw new HwpCliError("failed", "ahwp edit failed (exit 3): edit refused: range_tag");
       },
     });
     const handler = createHwpEditorHandler({ engine, sessions: false });
@@ -313,7 +313,7 @@ describe("routes (stub engine)", () => {
     const unavailable = async (): Promise<never> => {
       throw new HwpCliError(
         "unavailable",
-        "hwp binary not found: /missing/hwp (install agent-hwp, whose command is `ahwp`, or set HWP_EDITOR_BIN / the bin option)",
+        "ahwp binary not found: /missing/hwp (install agent-hwp, whose command is `ahwp`, or set HWP_EDITOR_BIN / the bin option)",
       );
     };
     const engine = stubEngine({
@@ -326,7 +326,7 @@ describe("routes (stub engine)", () => {
     expect(caps.status).toBe(503);
     const body = await caps.json();
     expect(body.error.code).toBe("unavailable");
-    expect(body.error.message).toContain("hwp binary not found");
+    expect(body.error.message).toContain("ahwp binary not found");
     expect(body.error.message).toContain("HWP_EDITOR_BIN");
 
     const read = await handler(multipartRequest(`${BASE}/read`, { file: DOC }));
@@ -338,7 +338,7 @@ describe("routes (stub engine)", () => {
     const { HwpCliError } = await import("../src/cli-engine.js");
     const engine = stubEngine({
       async render() {
-        throw new HwpCliError("timeout", "hwp render timed out after 60000ms");
+        throw new HwpCliError("timeout", "ahwp render timed out after 60000ms");
       },
     });
     const handler = createHwpEditorHandler({ engine, sessions: false });
@@ -476,7 +476,7 @@ describe("HTTP image asset admission", () => {
     // uploads against (#58 item 9), and "configure a host that advertises it"
     // alone sent the caller hunting for a different adapter (#58 item 31).
     expect(await res.json()).toMatchObject({
-      error: { code: "bad_request", message: expect.stringMatching(/upgrade hwp-cli to 1\.4\.0 or newer/) },
+      error: { code: "bad_request", message: expect.stringMatching(/upgrade agent-hwp to 1\.4\.0 or newer/) },
     });
   });
 

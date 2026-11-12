@@ -28,8 +28,8 @@ function parse<T>(command: string, stdout: string, parser: (raw: unknown) => T):
   try { return parser(JSON.parse(stdout)); }
   catch (error) {
     throw new HwpCliError("failed", error instanceof SyntaxError
-      ? `hwp ${command} returned invalid JSON; check hwp --version, use hwp-cli 1.4.0 or newer, and retry.`
-      : error instanceof Error ? error.message : "Invalid template report; upgrade hwp-cli and retry.");
+      ? `ahwp ${command} returned invalid JSON; check ahwp --version, use agent-hwp 1.4.0 or newer, and retry.`
+      : error instanceof Error ? error.message : "Invalid template report; upgrade agent-hwp and retry.");
   }
 }
 function outputName(name: string): string {
@@ -58,7 +58,7 @@ function rejectAssetPaths(root: unknown): void {
 export function createTemplateCommands(deps: Dependencies) {
   async function requireVersion(): Promise<void> {
     if (!templateVersionSupported(await deps.version())) {
-      throw new HwpCliError("version", `Template commands require hwp-cli >= ${TEMPLATE_MIN_VERSION}; upgrade HWP_EDITOR_BIN and retry.`);
+      throw new HwpCliError("version", `Template commands require agent-hwp >= ${TEMPLATE_MIN_VERSION}; upgrade HWP_EDITOR_BIN and retry.`);
     }
   }
   async function rawInputs(input: string, call?: CliCallOptions): Promise<TemplateInputs & { fieldCounts: Map<string, number> }> {
@@ -76,7 +76,7 @@ export function createTemplateCommands(deps: Dependencies) {
         const label = reportString(row.label, "form.label");
         const source = reportString(row.source, "form.source");
         reportCount(row.occurrences, "form.occurrences");
-        if (typeof row.required !== "boolean" || typeof row.confidence !== "number" || !Number.isFinite(row.confidence)) throw new Error("Invalid template report: form.required/confidence; upgrade hwp-cli to 1.4.0 and retry.");
+        if (typeof row.required !== "boolean" || typeof row.confidence !== "number" || !Number.isFinite(row.confidence)) throw new Error("Invalid template report: form.required/confidence; upgrade agent-hwp to 1.4.0 and retry.");
         return { key, label, kind: source === "placeholder" ? "slot" as const : "form" as const, required: row.required };
       });
       const byKey = new Map<string, TemplateInputs["items"][number]>(placeholders.map(item => [item.key, item]));
@@ -111,7 +111,7 @@ export function createTemplateCommands(deps: Dependencies) {
       valuesObject(values);
       return deps.work(async dir => {
         const input = await deps.stage(dir, document);
-        if (path.extname(input) !== ".hwpx") bad("hwp fill accepts HWPX input only; open an HWPX template before filling slots.");
+        if (path.extname(input) !== ".hwpx") bad("ahwp fill accepts HWPX input only; open an HWPX template before filling slots.");
         const inputs = await rawInputs(input, call);
         const keys = new Set(inputs.items.map(item => item.key));
         if (Object.keys(values).some(key => !keys.has(key))) bad("Fill contains an unknown input key; refresh the template inputs and retry.");
@@ -168,7 +168,7 @@ export function createTemplateCommands(deps: Dependencies) {
         const input = await deps.stage(dir, document);
         return parse("lint", await deps.run(["lint", input, "--json", "--profile", profile], call), raw => {
           const value = reportObject(raw, "lint");
-          if (value.contract !== "hwp-lint-report-v1") throw new Error("Invalid lint contract; use hwp-cli 1.4.0 and retry.");
+          if (value.contract !== "hwp-lint-report-v1") throw new Error("Invalid lint contract; use agent-hwp 1.4.0 and retry.");
           reportSchemaVersion(value.schema_version, "lint.schema_version");
           return parseLintReport(value);
         });
@@ -179,7 +179,7 @@ export function createTemplateCommands(deps: Dependencies) {
       const stdout = await deps.run(["new", "--list-templates"], call);
       const rows = stdout.trim().split(/\r?\n/).map(line => {
         const [id, label, ...rest] = line.split("\t");
-        if (id === undefined || !/^[a-z][a-z0-9-]*$/.test(id) || !label || rest.length) throw new HwpCliError("failed", "Invalid embedded-template list; use hwp-cli 1.4.0 and retry.");
+        if (id === undefined || !/^[a-z][a-z0-9-]*$/.test(id) || !label || rest.length) throw new HwpCliError("failed", "Invalid embedded-template list; use agent-hwp 1.4.0 and retry.");
         return { id, label };
       });
       return rows;

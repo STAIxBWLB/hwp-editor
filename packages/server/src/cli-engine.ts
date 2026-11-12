@@ -451,7 +451,7 @@ function runCli(
     // re-dispatches, so a listener added now would never fire and the child
     // would run to completion for a caller that stopped listening.
     if (requestSignal?.aborted === true) {
-      reject(new HwpCliError("cancelled", `hwp ${args[0] ?? ""} was cancelled by the caller`));
+      reject(new HwpCliError("cancelled", `ahwp ${args[0] ?? ""} was cancelled by the caller`));
       return;
     }
     let cause: "timeout" | "cancelled" | null = null;
@@ -513,11 +513,11 @@ function runCli(
         // `error === null` first reported a blown deadline, or a request the
         // caller had abandoned, as a normal 200 with a complete body.
         if (cause === "timeout") {
-          reject(new HwpCliError("timeout", `hwp ${args[0] ?? ""} timed out after ${timeoutMs}ms`));
+          reject(new HwpCliError("timeout", `ahwp ${args[0] ?? ""} timed out after ${timeoutMs}ms`));
           return;
         }
         if (cause === "cancelled") {
-          reject(new HwpCliError("cancelled", `hwp ${args[0] ?? ""} was cancelled by the caller`));
+          reject(new HwpCliError("cancelled", `ahwp ${args[0] ?? ""} was cancelled by the caller`));
           return;
         }
         if (error === null) {
@@ -528,7 +528,7 @@ function runCli(
         if (raw === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
           reject(new HwpCliError(
             "output_too_large",
-            `hwp ${args[0] ?? ""} produced more than ${HWP_MAX_BUFFER} bytes on stdout`,
+            `ahwp ${args[0] ?? ""} produced more than ${HWP_MAX_BUFFER} bytes on stdout`,
           ));
           return;
         }
@@ -539,7 +539,7 @@ function runCli(
           // The install hint names the package as it is called now (#121).
           reject(new HwpCliNotFound(
             "unavailable",
-            "hwp binary not found (install agent-hwp, whose command is `ahwp`, or set HWP_EDITOR_BIN / the bin option)",
+            "ahwp binary not found (install agent-hwp, whose command is `ahwp`, or set HWP_EDITOR_BIN / the bin option)",
             undefined,
             detailFor(bin),
           ));
@@ -573,7 +573,7 @@ async function runCliOk(
     const silent = stopped ? `: ${STOPPED_WITHOUT_DIAGNOSTIC}` : "";
     throw new HwpCliError(
       "failed",
-      `hwp ${args[0] ?? ""} failed (exit ${result.code})${silent}`,
+      `ahwp ${args[0] ?? ""} failed (exit ${result.code})${silent}`,
       result.stderr,
       detailFor(bin, result.stderr.trim() || result.stdout.trim()),
       undefined,
@@ -770,14 +770,14 @@ export function protectedReasonFromStderr(stderr: string): string | null {
 }
 
 /**
- * `hwp <subcommand> failed (exit N)`, the whole of it. `runCliOk` writes the
+ * `ahwp <subcommand> failed (exit N)`, the whole of it. `runCliOk` writes the
  * subcommand and the exit code and nothing else, so the match cannot reach
  * past the head into anything a later wrapper appended.
  */
-const CLI_EXIT_HEAD = /^hwp \S+ failed \(exit -?\d+\)/u;
+const CLI_EXIT_HEAD = /^ahwp \S+ failed \(exit -?\d+\)/u;
 
 /**
- * The `hwp <subcommand> failed (exit N)` head of a failure's message, or null.
+ * The `ahwp <subcommand> failed (exit N)` head of a failure's message, or null.
  *
  * The protected sentence prints this head rather than the whole message
  * (#105 item 2): a failure's message can carry a wrapper's added text, and
@@ -887,7 +887,7 @@ function rethrowUnmatchedEditRefusal(error: unknown, workDir?: string): never {
 }
 
 /** runCliOk's edit exit line with nothing after it. */
-const BARE_EDIT_EXIT = /^hwp edit failed \(exit -?\d+\)$/u;
+const BARE_EDIT_EXIT = /^ahwp edit failed \(exit -?\d+\)$/u;
 
 /**
  * Refuse a batch a preset dragged through with `--allow-partial` intact.
@@ -1138,7 +1138,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       // and the underlying error text move to `detail`; the phrase stays.
       throw new HwpCliError(
         "unavailable",
-        "hwp binary is not executable (set HWP_EDITOR_BIN or the bin option)",
+        "ahwp binary is not executable (set HWP_EDITOR_BIN or the bin option)",
         undefined,
         detailFor(bin, error instanceof Error ? error.message : String(error)),
       );
@@ -1149,7 +1149,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
   function noCommandError(): HwpCliError {
     return new HwpCliError(
       "unavailable",
-      `hwp binary not found: neither \`${DEFAULT_COMMAND}\` nor \`${LEGACY_COMMAND}\` is on PATH ` +
+      `ahwp binary not found: neither \`${DEFAULT_COMMAND}\` nor \`${LEGACY_COMMAND}\` is on PATH ` +
         `(install agent-hwp so \`${DEFAULT_COMMAND}\` is on PATH, or set HWP_EDITOR_BIN / the bin option)`,
       undefined,
       detailFor(`${DEFAULT_COMMAND}, ${LEGACY_COMMAND}`),
@@ -1189,7 +1189,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       if (result.code !== 0) {
         throw new HwpCliError(
           "unavailable",
-          `hwp --version failed (exit ${result.code})`,
+          `ahwp --version failed (exit ${result.code})`,
           result.stderr,
           detailFor(bin, result.stderr),
         );
@@ -1198,7 +1198,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       if (version === null) {
         throw new HwpCliError(
           "version",
-          "cannot parse a semver from the hwp --version output",
+          "cannot parse a semver from the ahwp --version output",
           undefined,
           detailFor(bin, result.stdout),
         );
@@ -1208,7 +1208,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       if (!versionAtLeast(version, MIN_VERSION)) {
         throw new HwpCliError(
           "version",
-          `hwp ${version.join(".")} is too old; >= ${MIN_VERSION.join(".")} required`,
+          `agent-hwp ${version.join(".")} is too old; >= ${MIN_VERSION.join(".")} required`,
           undefined,
           detailFor(bin),
         );
@@ -1216,7 +1216,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       if (versionAtLeast(version, MAX_VERSION_EXCLUSIVE)) {
         throw new HwpCliError(
           "version",
-          `hwp ${version.join(".")} is newer than this engine supports; ` +
+          `agent-hwp ${version.join(".")} is newer than this engine supports; ` +
             `< ${MAX_VERSION_EXCLUSIVE.join(".")} required`,
           undefined,
           detailFor(bin),
@@ -1230,7 +1230,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       if (help.code !== 0) {
         throw new HwpCliError(
           "version",
-          `hwp edit --help failed (exit ${help.code}); the edit flag surface cannot be verified`,
+          `ahwp edit --help failed (exit ${help.code}); the edit flag surface cannot be verified`,
           help.stderr,
           detailFor(bin, help.stderr),
         );
@@ -1240,7 +1240,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       if (missing.length > 0) {
         throw new HwpCliError(
           "version",
-          `hwp ${version.join(".")} does not accept ${missing.join(", ")} on edit; ` +
+          `agent-hwp ${version.join(".")} does not accept ${missing.join(", ")} on edit; ` +
             "the binary does not match this engine's edit grammar",
           undefined,
           detailFor(bin),
@@ -1300,7 +1300,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         const problem = cause instanceof Error && cause.message.startsWith("segments envelope:")
           ? cause.message.slice("segments envelope: ".length).split("; ")[0]!
           : "invalid segment JSON";
-        const message = `hwp cat returned segment data this client cannot read (${problem}); check hwp --version and use hwp-cli ${MIN_VERSION.join(".")} or newer below ${MAX_VERSION_EXCLUSIVE.join(".")}, then reload.`;
+        const message = `ahwp cat returned segment data this client cannot read (${problem}); check ahwp --version and use agent-hwp ${MIN_VERSION.join(".")} or newer below ${MAX_VERSION_EXCLUSIVE.join(".")}, then reload.`;
         const failure = new HwpCliError("failed", message);
         failure.cause = cause;
         throw failure;
@@ -1347,24 +1347,24 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       const command = args[0] ?? "template";
       const failureMessage = (): string => {
         if (command === "slots" || command === "fields") {
-          return `hwp ${command} could not inspect this document with hwp-cli 1.4.0; check that it opens with hwp info, then retry.`;
+          return `ahwp ${command} could not inspect this document with agent-hwp 1.4.0; check that it opens with ahwp info, then retry.`;
         }
         if (command === "fill") {
-          return "hwp fill could not fill this document; check the form values and open an HWPX template with hwp-cli 1.4.0, then retry.";
+          return "ahwp fill could not fill this document; check the form values and open an HWPX template with agent-hwp 1.4.0, then retry.";
         }
         if (command === "template") {
-          return "hwp template could not create this document; check the self-contained TemplateSpec and its values, then retry with hwp-cli 1.4.0.";
+          return "ahwp template could not create this document; check the self-contained TemplateSpec and its values, then retry with agent-hwp 1.4.0.";
         }
         if (command === "edit") {
-          return "hwp edit could not set the named fields; check that the field names exist and the document is editable, then retry.";
+          return "ahwp edit could not set the named fields; check that the field names exist and the document is editable, then retry.";
         }
         if (command === "new" && args[1] === "--list-templates") {
-          return "hwp new --list-templates could not list embedded templates; check hwp --version and use hwp-cli 1.4.0, then retry.";
+          return "ahwp new --list-templates could not list embedded templates; check ahwp --version and use agent-hwp 1.4.0, then retry.";
         }
         if (command === "new") {
-          return "hwp new could not create the embedded template; choose an id from hwp new --list-templates, then retry.";
+          return "ahwp new could not create the embedded template; choose an id from ahwp new --list-templates, then retry.";
         }
-        return "hwp lint could not inspect this document with hwp-cli 1.4.0; check that it opens with hwp info, then retry.";
+        return "ahwp lint could not inspect this document with agent-hwp 1.4.0; check that it opens with ahwp info, then retry.";
       };
       // An exit 1 from `lint` is NOT a success. `lint::run` returns an anyhow
       // `Result` and exits 1 only on that `Err` (an unreadable document; the
@@ -1409,7 +1409,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         // is a worse answer than naming the version this engine needs.
         throw new HwpCliError(
           "version",
-          `hwp ${version} has no styles command; >= 1.4.0 required for named styles`,
+          `agent-hwp ${version} has no styles command; >= 1.4.0 required for named styles`,
         );
       }
       const bin = resolveBin();
@@ -1427,7 +1427,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
             : "invalid style JSON";
           const failure = new HwpCliError(
             "failed",
-            `hwp styles returned a style table this client cannot read (${problem}); check hwp --version and use hwp-cli 1.4.0 or newer, then retry.`,
+            `ahwp styles returned a style table this client cannot read (${problem}); check ahwp --version and use agent-hwp 1.4.0 or newer, then retry.`,
           );
           failure.cause = cause;
           throw failure;
@@ -1597,7 +1597,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         if (!imageAssetsVersionSupported(hostVersion)) {
           throw new HwpCliError(
             "version",
-            `this server accepts uploaded images only with hwp-cli 1.4.0 or newer (hwp ${hostVersion} found); upgrade hwp-cli, then retry the edit`,
+            `this server accepts uploaded images only with agent-hwp 1.4.0 or newer (agent-hwp ${hostVersion} found); upgrade agent-hwp, then retry the edit`,
           );
         }
       }
@@ -1616,7 +1616,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       // publish while the report says what the preset could not style.
       const presets = ops.filter((op) => op?.kind === "style-tables").length;
       if (presets > 0 && !stylesVersionSupported(hostVersion)) {
-        throw new HwpCliError("version", `hwp ${hostVersion} has no style_tables op; >= 1.4.0 required for preset style tables`);
+        throw new HwpCliError("version", `agent-hwp ${hostVersion} has no style_tables op; >= 1.4.0 required for preset style tables`);
       }
       // The two flags a preset batch owes are decided by the shared rule, not
       // here: core's `presetBatchOptions` is what the HTTP and Tauri clients
@@ -1772,7 +1772,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
           // validate exit, which is a legitimate "invalid document" result.
           throw new HwpCliError(
             "failed",
-            `hwp validate failed (exit ${result.code}): no JSON report`,
+            `ahwp validate failed (exit ${result.code}): no JSON report`,
             result.stderr,
             detailFor(bin, result.stderr.trim() || result.stdout.trim()),
           );

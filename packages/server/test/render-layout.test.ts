@@ -86,7 +86,7 @@ describe("render-layout-v1 retention", () => {
   it("names a rendered page absent from a present artifact and the engine remedy", async () => {
     const layout = { ...artifact, selected_pages: [2], pages: [artifact.pages[0]] };
     await expect(createCliEngine({ bin: renderBin(layout, [3]) }).render(document, { format: "png", pages: "3" }))
-      .rejects.toMatchObject({ reason: "failed", message: expect.stringMatching(/missing rendered page 3; check that the hwp-cli version pinned in cli-engine[.]ts emits render-layout-v1/) });
+      .rejects.toMatchObject({ reason: "failed", message: expect.stringMatching(/missing rendered page 3; check that the agent-hwp version pinned in cli-engine[.]ts emits render-layout-v1/) });
   });
 
   it("keeps geometry absent for older producers that omit the artifact", async () => {
@@ -105,6 +105,6 @@ describe("render-layout-v1 retention", () => {
     { ...artifact, pages: [artifact.pages[0]] },
   ])("rejects malformed present geometry instead of claiming exact selection", async (layout) => {
     await expect(createCliEngine({ bin: renderBin(layout) }).render(document, { format: "png" }))
-      .rejects.toMatchObject({ reason: "failed", message: expect.stringMatching(/invalid render layout geometry: .+; check that the hwp-cli version pinned in cli-engine[.]ts emits render-layout-v1/) });
+      .rejects.toMatchObject({ reason: "failed", message: expect.stringMatching(/invalid render layout geometry: .+; check that the agent-hwp version pinned in cli-engine[.]ts emits render-layout-v1/) });
   });
 });
