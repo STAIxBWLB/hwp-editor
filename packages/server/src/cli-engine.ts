@@ -632,6 +632,24 @@ const PROTECTED_ATTRIBUTES: Readonly<Record<string, string>> = {
 };
 
 /**
+ * `body.tables` from `hwp info --json --body-stats`, when the engine published a
+ * count this client can read (#97).
+ *
+ * This is the engine's own table count, taken from the walk `hwp edit`
+ * addresses, and never a count of the envelope's `table` segments: the two are
+ * compared precisely because they can differ.
+ */
+export function bodyTableCount(info: unknown): number | undefined {
+  if (typeof info !== "object" || info === null) return undefined;
+  const body = (info as { body?: unknown }).body;
+  if (typeof body !== "object" || body === null) return undefined;
+  const tables = (body as { tables?: unknown }).tables;
+  return typeof tables === "number" && Number.isInteger(tables) && tables >= 0
+    ? tables
+    : undefined;
+}
+
+/**
  * Distribution/encrypted documents: hwp-cli reads them but refuses edit/fill.
  *
  * The origin is the 0.8.7 changelog, not a later one. 0.8.7 added reading of
@@ -653,24 +671,6 @@ const PROTECTED_ATTRIBUTES: Readonly<Record<string, string>> = {
  * version on purpose: they reach the host as `capabilities.reason`, where a
  * version number is a maintenance liability with no reader benefit.
  */
-/**
- * `body.tables` from `hwp info --json --body-stats`, when the engine published a
- * count this client can read (#97).
- *
- * This is the engine's own table count, taken from the walk `hwp edit`
- * addresses, and never a count of the envelope's `table` segments: the two are
- * compared precisely because they can differ.
- */
-export function bodyTableCount(info: unknown): number | undefined {
-  if (typeof info !== "object" || info === null) return undefined;
-  const body = (info as { body?: unknown }).body;
-  if (typeof body !== "object" || body === null) return undefined;
-  const tables = (body as { tables?: unknown }).tables;
-  return typeof tables === "number" && Number.isInteger(tables) && tables >= 0
-    ? tables
-    : undefined;
-}
-
 export function documentEditability(info: unknown): { editable: boolean; reason?: string } {
   if (typeof info !== "object" || info === null) return { editable: true };
   const record = info as Record<string, unknown>;

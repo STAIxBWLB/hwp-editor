@@ -148,8 +148,10 @@ export interface CatEnvelope {
    * addresses, and that walk also reaches a table inside a footnote, a header,
    * a footer or a hidden comment, which the envelope publishes no `table`
    * segment for. It equals the number of `table` segments whenever the document
-   * holds no such table; a difference means every published table index names
-   * another table than the reader picked.
+   * holds no such table; a difference means the number of every table published
+   * after such a table names another table than the reader picked, which is why
+   * the guard `tableCountMismatch` refuses all of them rather than sorting that
+   * out (#101 item 3).
    *
    * Optional because the statistic is opt-in: `--body-stats` is off by default,
    * so a host that does not ask for it publishes no count.
@@ -457,14 +459,18 @@ export function publishedTableCount(envelope: CatEnvelope): number {
 }
 
 /**
- * The two counts that make every table index name another table, or `null` when
- * they agree or the host published none (#97 item 1).
+ * The two counts that can disagree, or `null` when they agree or the host
+ * published none (#97 item 1).
  *
  * `bodyTables` is the engine's own nth-table walk, which also counts a table
  * inside a footnote, a header, a footer or a hidden comment. The envelope
  * projects none of that content, so no `table` segment stands for such a table,
- * and one of them shifts every published index: `hwp edit --set-cell 0:1:0=...`
- * then writes into the note's table while the panel showed the body's (#97).
+ * and one of them shifts the number of every table published after it: `hwp
+ * edit --set-cell 0:1:0=...` then writes into a table the panel numbered
+ * differently, or into that unpublished table while the panel showed the body's
+ * (#97). A count below the published number has no such walker behind it, so
+ * the number is not trustworthy in either direction and the guard reads both as
+ * the same refusal (#101 items 2 and 3).
  *
  * An absent count is not a mismatch. The statistic is opt-in and a host may not
  * send it, and refusing every table op on such a host would take table editing
