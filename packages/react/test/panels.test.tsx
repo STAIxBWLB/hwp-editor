@@ -72,6 +72,25 @@ function envelopeOf(blocks: string[]): CatEnvelope {
 /** The heading paragraph's plain text — the `find`/`anchor` every op carries. */
 const HEADING = "1. 회의록";
 
+/**
+ * One paragraph whose own run carries an id.
+ *
+ * `set-format` addresses runs (`edit-ops-v1`), so a whole-paragraph format has
+ * a target only when the envelope publishes one; the shared fixture publishes
+ * none, which is a host shape rather than a format test's subject.
+ */
+function runEnvelope(text = "가나다"): CatEnvelope {
+  const envelope = envelopeOf([text]);
+  const paragraph = envelope.segments[0]!;
+  paragraph.id = "fmt-para";
+  paragraph.indices = [0];
+  envelope.segments.push({
+    id: "fmt-run", indices: [0, 0], start: paragraph.start, end: paragraph.end,
+    kind: "run", section: 0, para: 0,
+  });
+  return envelope;
+}
+
 type Engine = ReturnType<typeof createMockEngine>;
 
 /** Render the editor and click the page so `para` becomes the selection. */
@@ -324,7 +343,9 @@ describe("SegmentInspector op emission (TEST-03)", () => {
   });
 
   it("queues set-format with ONLY the props that were set", async () => {
-    const engine = await openInspector();
+    const envelope = runEnvelope();
+    const engine = createMockEngine({ envelope });
+    await selectPara(engine, 0, envelope);
     fireEvent.change(screen.getByLabelText(en["segment.sizeAria"]), {
       target: { value: "12" },
     });
@@ -333,7 +354,7 @@ describe("SegmentInspector op emission (TEST-03)", () => {
     // bold and color were never touched: their keys must be absent, not
     // present-and-empty — the conditional spread is the contract.
     expect(await applyOps(engine, 1)).toEqual([
-      { kind: "set-format", address: { at: { section: 0, paragraph: 0, run: 0 } }, props: { size: "12" } },
+      { kind: "set-format", address: { id: "fmt-run" }, props: { size: "12" } },
     ]);
   });
 
@@ -460,17 +481,62 @@ describe("SegmentInspector op emission (TEST-03)", () => {
 
     // A table carries no paragraph of its own, so a modifier click adds nothing:
     // the paragraph stays selected and the click reports the obstacle instead of
-    // making the unusable table ref primary.
+    // making the unusable table ref primary. The sentence is the CLICK's, not
+    // the selection's: nothing about the selected paragraph is a table.
     fireEvent.click(screen.getByRole("button", { name: en["page.label"]({ page: 1 }) }), {
       clientX: (200 / 600) * 595,
       clientY: (120 / 800) * 842,
       ctrlKey: true,
     });
-    expect(await screen.findByText(en["segment.tableSelectionRefused"])).toBeTruthy();
+    expect(await screen.findByText(en["segment.clickRefusedTable"])).toBeTruthy();
+    expect(screen.queryByText(en["segment.tableSelectionRefused"])).toBeNull();
     expect(screen.getByText(en["segment.selectedCount"]({ count: 1 }))).toBeTruthy();
     expect(
       (screen.getByRole("button", { name: en["segment.deletePara"] }) as HTMLButtonElement).disabled,
     ).toBe(false);
+    expect(engine.calls.edit).toHaveLength(0);
+  });
+
+  it("reports a refused Ctrl-click on an empty cell while a cell is already selected (#58 item 19b)", async () => {
+    // Both units refuse with the same reason - "cell" - which is the shape the
+    // panel used to suppress: the click left no trace at all, because the
+    // sentence that explains the selection was already on screen. The primary
+    // carries two paragraphs, so it stays a cell; the clicked one carries
+    // none, so it adds nothing.
+    const markdown = "가\n\n나\n\n다\n";
+    const host: Segment = { id: "cell-a-host", indices: [1], start: 0, end: 3, kind: "para", section: 0, para: 1 };
+    const table: Segment = { id: "cell-a-table", indices: [1, 0], start: 0, end: 3, kind: "table", section: 0, para: 1 };
+    const cell: Segment = { id: "cell-a", indices: [1, 0, 0], start: 0, end: 3, kind: "cell", section: 0, para: 1 };
+    const first: Segment = { id: "cell-a-p0", indices: [1, 0, 0, 0], start: 0, end: 1, kind: "para", section: 0, para: 1 };
+    const second: Segment = { id: "cell-a-p1", indices: [1, 0, 0, 1], start: 2, end: 3, kind: "para", section: 0, para: 1 };
+    const emptyHost: Segment = { id: "cell-b-host", indices: [3], start: 6, end: 8, kind: "para", section: 0, para: 3 };
+    const emptyTable: Segment = { id: "cell-b-table", indices: [3, 0], start: 6, end: 8, kind: "table", section: 0, para: 3 };
+    const empty: Segment = { id: "cell-b", indices: [3, 0, 0], start: 6, end: 8, kind: "cell", section: 0, para: 3 };
+    const envelope: CatEnvelope = {
+      markdown,
+      segments: [host, table, cell, first, second, emptyHost, emptyTable, empty],
+    };
+    const engine = createMockEngine({ envelope });
+    // One row per page, because a click resolves through the row it lands in.
+    engine.render = async () => [pageWithRow(cell), { ...pageWithRow(empty), page: 2 }];
+    render(<HwpEditor engine={engine} file={file} />);
+    const coords = { clientX: (200 / 600) * 595, clientY: (120 / 800) * 842 };
+    fireEvent.click(await screen.findByRole("button", { name: en["page.label"]({ page: 1 }) }), coords);
+    expect(await screen.findByText(en["segment.selectedCell"]({ path: "0/1.0.0", count: 2 }))).toBeTruthy();
+    // Nothing has been clicked that failed yet.
+    expect(screen.queryByText(en["segment.clickRefusedCell"])).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: en["page.label"]({ page: 2 }) }), {
+      ...coords,
+      ctrlKey: true,
+    });
+
+    // The click reports itself, and the standing sentence stays because the
+    // cell is still the selection and its paragraph-only ops are still off.
+    expect(await screen.findByText(en["segment.clickRefusedCell"])).toBeTruthy();
+    expect(screen.getByText(en["segment.cellSelectionRefused"])).toBeTruthy();
+    // The selection did not move and nothing was queued.
+    expect(screen.getByText(en["segment.selectedCell"]({ path: "0/1.0.0", count: 2 }))).toBeTruthy();
     expect(engine.calls.edit).toHaveLength(0);
   });
 
@@ -514,7 +580,9 @@ describe("SegmentInspector op emission (TEST-03)", () => {
   });
 
   it("queues set-format with all three props when all three are set", async () => {
-    const engine = await openInspector();
+    const envelope = runEnvelope();
+    const engine = createMockEngine({ envelope });
+    await selectPara(engine, 0, envelope);
     fireEvent.click(screen.getByLabelText(en["segment.bold"]));
     fireEvent.change(screen.getByLabelText(en["segment.sizeAria"]), {
       target: { value: "14" },
@@ -527,10 +595,27 @@ describe("SegmentInspector op emission (TEST-03)", () => {
     expect(await applyOps(engine, 1)).toEqual([
       {
         kind: "set-format",
-        address: { at: { section: 0, paragraph: 0, run: 0 } },
+        address: { id: "fmt-run" },
         props: { bold: "on", size: "14", color: "#FF0000" },
       },
     ]);
+  });
+
+  it("says why a whole-paragraph format has no target when the envelope publishes no run (#58 item 19e)", async () => {
+    // A v1/legacy projection publishes paragraphs and no runs, and
+    // `edit-ops-v1` addresses character format per run, so there is no target
+    // to name: the control stays off and the line says what the host must
+    // publish instead of a `run: 0` guess that formats one run of the
+    // paragraph the panel promised whole.
+    const envelope = envelopeOf(["가나다"]);
+    const engine = createMockEngine({ envelope });
+    await selectPara(engine, 0, envelope);
+    const submit = screen.getByRole("button", { name: en["segment.formatSubmit"] });
+    expect((submit as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(en["segment.formatUnavailableNoRuns"])).toBeTruthy();
+    fireEvent.click(submit);
+    expect(engine.calls.edit).toHaveLength(0);
+    expect(screen.getByLabelText(en["toolbar.pendingEdits"]({ count: 0 }), { exact: true })).toBeTruthy();
   });
 });
 

@@ -313,8 +313,36 @@ describe("selection helpers", () => {
     // A paragraph without nesting indices whose runs carry them is a mixed projection: an ordinal is
     // not a source run index, so refuse the paragraph instead of formatting the wrong run.
     expect(formatAddresses(legacy, [legacy.segments[0]!])).toEqual([]);
+    // A paragraph the envelope publishes no run for names no target at all:
+    // the run-0 fallback is gone (#58 item 19e).
     expect(formatAddresses({ markdown: "x", segments: [{ start: 0, end: 1, kind: "para", section: 0, para: 0 }] },
-      [{ start: 0, end: 1, kind: "para", section: 0, para: 0 }])).toEqual([{ at: { section: 0, paragraph: 0, run: 0 } }]);
+      [{ start: 0, end: 1, kind: "para", section: 0, para: 0 }])).toEqual([]);
+  });
+
+  it("refuses a whole-paragraph format the envelope publishes no run for (#58 item 19e)", () => {
+    // `edit-ops-v1` addresses character format per run, so the only address
+    // this shape admits is a guess: run 0 of a paragraph whose runs the host
+    // never published. Formatting one run of a paragraph the panel promised
+    // whole is a wrong target, so the paragraph names no target instead and
+    // the inspector says why.
+    const legacy: CatEnvelope = { markdown: "가나다", segments: [
+      { start: 0, end: 3, kind: "para", section: 0, para: 0 },
+    ] };
+    expect(formatTargets(legacy, [legacy.segments[0]!])).toEqual([]);
+    // A v2 paragraph without immediate runs is refused the same way, so the
+    // answer follows the paragraph's published runs and not the envelope
+    // version the host happens to emit.
+    const point: CatEnvelope = { markdown: "가나다", segments: [
+      { id: "p0", indices: [0], start: 0, end: 3, kind: "para", section: 0, para: 0 },
+    ] };
+    expect(formatTargets(point, [point.segments[0]!])).toEqual([]);
+    // The same paragraph WITH its run still names it, so the refusal is about
+    // the missing run rather than about the legacy shape.
+    const addressed: CatEnvelope = { markdown: "가나다", segments: [
+      { id: "p1", indices: [0], start: 0, end: 3, kind: "para", section: 0, para: 0 },
+      { id: "r1", indices: [0, 0], start: 0, end: 3, kind: "run", section: 0, para: 0 },
+    ] };
+    expect(formatAddresses(addressed, [addressed.segments[0]!])).toEqual([{ id: "r1" }]);
   });
 
   it("addresses a legacy range run by its position in the paragraph, not in the overlap", () => {

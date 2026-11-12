@@ -387,18 +387,63 @@ function projectDirectPara(value: unknown): DirectPara {
 
 /**
  * Parse the one-line JSON v2 envelope, throwing on anything that is not the
- * v2 shape: a missing or wrong `contract`/`schema_version` pair, a malformed
- * payload, or a segment outside the seven-kind, path-plus-char_range shape.
+ * v2 wire shape: a missing or wrong `contract`/`schema_version` pair, a
+ * malformed payload, or a segment outside the seven-kind, path-plus-char_range
+ * shape.
  */
 export function parseCatEnvelope(json: string): CatEnvelope {
   const raw: unknown = JSON.parse(json);
   if (typeof raw !== "object" || raw === null) {
     throw new Error("segments envelope: not an object; upgrade the host adapter to emit segment-envelope-v2 JSON, then reload.");
   }
-  const { schema_version, contract, markdown, segments } = raw as Record<string, unknown>;
+  const { schema_version, contract } = raw as Record<string, unknown>;
   if (contract !== "hwp-segment-envelope-v2" || typeof schema_version !== "string" || !/^1[.][0-9]+$/.test(schema_version)) {
     throw new Error("segments envelope: not a v2 envelope (contract or schema major); upgrade the host adapter to emit segment-envelope-v2 schema 1.x, then reload.");
   }
+  return projectEnvelope(raw);
+}
+
+/**
+ * Check an envelope a host hands over ALREADY DECODED, which is what an
+ * in-process `HwpEngine`'s `read` returns: the `Segment`s themselves, with no
+ * `path`, `char_range` or wire header to project. So this is not the wire
+ * projection - it is the two contracts render depends on, answered by the same
+ * vocabulary the projection uses: the seven segment kinds, and every offset
+ * being a boundary of this markdown (the check `segmentText` throws from when
+ * it runs inside render).
+ *
+ * Each message names the cause and the next step, because the reader is a host
+ * wiring its own `HwpEngine`: a result this function refuses must be fixed at
+ * the adapter rather than discovered later by a component (`#58` item 19d).
+ */
+export function validateCatEnvelope(raw: unknown): CatEnvelope {
+  if (typeof raw !== "object" || raw === null) {
+    throw new Error("segments envelope: not an object; upgrade the host adapter to emit segment-envelope-v2 JSON, then reload.");
+  }
+  const { markdown, segments } = raw as Record<string, unknown>;
+  if (typeof markdown !== "string" || !Array.isArray(segments)) {
+    throw new Error("segments envelope: missing markdown string or segments array; upgrade the host adapter to emit complete segment-envelope-v2 data, then reload.");
+  }
+  if (!segments.every((segment) => typeof segment === "object" && segment !== null &&
+      SEGMENT_KINDS.includes((segment as { kind: SegmentKind }).kind))) {
+    throw new Error("segments envelope: unknown segment kind; upgrade the host adapter to project the seven segment-envelope-v2 kinds, then reload.");
+  }
+  // The caller's own object, not a rebuilt copy: a published envelope carries
+  // fields beyond markdown and segments (the engine's `bodyTables`, for one),
+  // and dropping them would silently disable what reads them.
+  const envelope = raw as CatEnvelope;
+  boundaryInfo(envelope);
+  return envelope;
+}
+
+/**
+ * Project a wire payload to the published envelope.
+ *
+ * The `path`/`char_range` half is the wire's own; a host that decoded its read
+ * result itself is held to the published shape by {@link validateCatEnvelope}.
+ */
+function projectEnvelope(raw: unknown): CatEnvelope {
+  const { markdown, segments } = raw as Record<string, unknown>;
   if (typeof markdown !== "string" || !Array.isArray(segments)) {
     throw new Error("segments envelope: missing markdown string or segments array; upgrade the host adapter to emit complete segment-envelope-v2 data, then reload.");
   }

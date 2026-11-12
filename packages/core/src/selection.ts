@@ -243,7 +243,7 @@ export function formatTargets(
       ? paragraph.id === range.paragraph.id
       : paragraph.section === range.paragraph.section && paragraph.para === range.paragraph.para;
     if (!matches || range.start < paragraph.start || range.end > paragraph.end) return [];
-    return addressesForRuns(envelope, paragraphRuns(envelope, paragraph, range), paragraph, false, range, format);
+    return addressesForRuns(envelope, paragraphRuns(envelope, paragraph, range), paragraph, range, format);
   }
   const out: FormatTarget[] = [];
   const targets = new Set<string>();
@@ -257,7 +257,7 @@ export function formatTargets(
     }
     if (selected.kind !== "para") continue;
     const paragraph = selected;
-    for (const target of addressesForRuns(envelope, paragraphRuns(envelope, paragraph), paragraph, true)) {
+    for (const target of addressesForRuns(envelope, paragraphRuns(envelope, paragraph), paragraph)) {
       const key = addressKey(target.address);
       if (targets.has(key)) continue;
       targets.add(key);
@@ -288,7 +288,6 @@ function addressesForRuns(
   envelope: CatEnvelope,
   runs: Segment[],
   paragraph: Segment,
-  allowLegacyFallback: boolean,
   range?: MarkdownRangeSelection | null,
   format: DocumentFormat = "unknown",
 ): FormatTarget[] {
@@ -356,9 +355,12 @@ function addressesForRuns(
     targets.add(key);
     out.push({ address, whole, widened });
   }
-  if (allowLegacyFallback && runs.length === 0 && paragraph.indices === undefined) {
-    out.push({ address: { at: { section: paragraph.section, paragraph: paragraph.para, run: 0 } }, whole: true, widened: false });
-  }
+  // A paragraph whose runs the envelope does not publish yields nothing at
+  // all: an engine addresses character format per run (`edit-ops-v1`'s
+  // runAddress has no paragraph spelling), so naming run 0 would format the
+  // paragraph's first run while the panel says the whole paragraph, and the
+  // client cannot even count the runs to warn about the rest. The inspector
+  // reports the cause and keeps the control off (#58 item 19e).
   return out;
 }
 

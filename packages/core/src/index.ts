@@ -71,6 +71,7 @@ export {
   shownSpan,
   sniffDocumentFormat,
   tableCountMismatch,
+  validateCatEnvelope,
   validateProjectedMetadata,
 } from "./segments.js";
 export type {
