@@ -1,6 +1,6 @@
 import type { EditAddress, ParagraphAddress } from "./ops.js";
 import type { CatEnvelope, DocumentFormat, Segment, SegmentRef } from "./segments.js";
-import { markdownLength, runCoverage, segmentRef, shownSpan } from "./segments.js";
+import { formattedSpan, markdownLength, runCoverage, segmentRef } from "./segments.js";
 import type { EditorAction, EditorState, MarkdownRangeSelection } from "./state.js";
 
 function segmentKey(segment: Segment): string {
@@ -324,14 +324,18 @@ function addressesForRuns(
         // whole piece goes with the op although the selection stopped inside
         // it, which is what a reader is warned about.
         //
-        // Partial to what the piece SHOWS, not to its published bounds: an
-        // emphasis run's bounds include the marker pair it is wrapped in, so a
-        // selection of exactly the characters the piece shows starts after
-        // `run.start` and would otherwise be called partial - a warning about
-        // text the selection covered. A piece a block control split carries
-        // only one half of that pair, which is the same question.
-        const shown = shownSpan(envelope, run);
-        widened = range.start > shown.start || range.end < shown.end;
+        // Partial to what the piece FORMATS, not to its published bounds and
+        // not to what it shows: an emphasis run's bounds include the marker
+        // pair it is wrapped in, so a selection of exactly the characters the
+        // piece shows starts after `run.start` - a warning about text the
+        // selection covered. The other direction matters as much: the engine
+        // leaves the run's edge whitespace outside that pair, and a whole-piece
+        // op writes it, so a selection of the text between the markers has not
+        // covered everything the op formats. `formattedSpan` is that question,
+        // and `runCoverage`'s window path answers the same way, counting edge
+        // whitespace only when the selection reaches it.
+        const formatted = formattedSpan(envelope, run);
+        widened = range.start > formatted.start || range.end < formatted.end;
         // A split run publishes one id per piece, and an op that names only the
         // id formats the whole run (edit-ops-v1), so a covered piece names its
         // own span instead. The published span is what the resolver accepts,

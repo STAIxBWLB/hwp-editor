@@ -209,6 +209,9 @@ function sha256Text(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
 
+/** The extension an uploaded document is named with, per format the sniff names. */
+const EXTENSION_OF_SNIFF: Record<"hwp" | "hwpx", ".hwp" | ".hwpx"> = { hwp: ".hwp", hwpx: ".hwpx" };
+
 /**
  * Decide whether these bytes are admissible as an HWP or HWPX document, from
  * the leading bytes alone. `null` means refuse.
@@ -233,7 +236,7 @@ function sha256Text(text: string): string {
  */
 function sniffFormat(d: Uint8Array): ".hwp" | ".hwpx" | null {
   const sniffed = sniffDocumentFormat(d);
-  return sniffed === "hwp" ? ".hwp" : sniffed === "hwpx" ? ".hwpx" : null;
+  return sniffed === null ? null : EXTENSION_OF_SNIFF[sniffed];
 }
 
 /** Extract the uploaded document from a multipart form. */
