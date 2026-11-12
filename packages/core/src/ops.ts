@@ -448,11 +448,15 @@ function splitSealSize(value: string): { path: string; size: number } | null {
  * which is a different value the engine never produces: `inf` and `infinity`,
  * either case and either sign, are sizes there. `nan` needs no mapping.
  *
- * No f32 overflow is mapped here: this value also feeds the edit-ops-v1
- * channel's `numericUnit`, where narrowing `stamp@1e39` to Infinity would turn
- * a size the engine accepts into `withUnit`'s refusal. A non-finite size has no
- * plain-decimal form, so that channel refuses it anyway; the argv channel
- * carries it because the engine does.
+ * No f32 overflow is mapped here, because the rounding happens in the engine on
+ * both channels: `opsToArgv` re-emits this number as text and hwp-cli's argv
+ * parser reads it with its own f32 parse (`parse_seal_size`,
+ * `commands/edit.rs:4214-4221`), so `stamp@1e39` is a size of infinity there.
+ * edit-ops-v1 needs no map either, because its parser refuses a size that is
+ * not finite or is above 5000 mm (`parse_mm_f32`, `MM_MAX` at
+ * `edit_ops.rs:33`), which already covers what f32 would overflow to. A
+ * non-finite size has no plain-decimal form, so this side's `withUnit` refuses
+ * it before the op is sent.
  */
 function rustFloat(text: string): number {
   if (/^[+-]?inf(?:inity)?$/i.test(text)) return text.startsWith("-") ? -Infinity : Infinity;
