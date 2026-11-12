@@ -303,14 +303,14 @@ export function createTauriEngine(
       if (TEMPLATE_COMMANDS.has(cmd) && isUnknownCommand(error)) {
         throw new HwpEngineError(
           "unavailable",
-          `${cmd} is unsupported by this host; upgrade the host to the hwp-cli 1.4.0 template contract and retry.`,
+          `${cmd} is unsupported by this host; upgrade the host to the agent-hwp 1.4.0 template contract and retry.`,
           { cause: error },
         );
       }
       if (STYLE_COMMANDS.has(cmd) && isUnknownCommand(error)) {
         throw new HwpEngineError(
           "unavailable",
-          `${cmd} is unsupported by this host; upgrade the host to the hwp-cli 1.4.0 styles command and retry.`,
+          `${cmd} is unsupported by this host; upgrade the host to the agent-hwp 1.4.0 styles command and retry.`,
           { cause: error },
         );
       }
@@ -399,7 +399,7 @@ export function createTauriEngine(
         // unchanged, so an API caller does have a route (#113 item 4). The app
         // UI does not, which is why the word-processor step lives in
         // image.unsupported.
-        throw new HwpEngineError("unavailable", "Image-byte uploads are unsupported by this Tauri client; an API caller can send an insert-image op with a local path instead, which the JSON op channel passes to `hwp edit --ops` unchanged while the legacy argv channel needs workspaceRoot containing the file, and a caller holding only bytes needs the HTTP client with an engine that advertises image-asset uploads (hwp-cli 1.4.0 or newer).");
+        throw new HwpEngineError("unavailable", "Image-byte uploads are unsupported by this Tauri client; an API caller can send an insert-image op with a local path instead, which the JSON op channel passes to `ahwp edit --ops` unchanged while the legacy argv channel needs workspaceRoot containing the file, and a caller holding only bytes needs the HTTP client with an engine that advertises image-asset uploads (agent-hwp 1.4.0 or newer).");
       }
       const caps = await capabilities();
       const channel = caps.editOps === "v1"

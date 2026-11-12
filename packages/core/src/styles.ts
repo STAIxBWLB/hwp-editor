@@ -59,7 +59,7 @@ export interface StyleTable {
 }
 
 function invalid(field: string): never {
-  throw new Error(`Invalid styles-v1 table: ${field}; upgrade the host adapter to emit the hwp-cli 1.4.0 styles contract, then reload.`);
+  throw new Error(`Invalid styles-v1 table: ${field}; upgrade the host adapter to emit the agent-hwp 1.4.0 styles contract, then reload.`);
 }
 
 function row(raw: unknown, field: string): Record<string, unknown> {

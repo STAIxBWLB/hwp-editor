@@ -1,7 +1,7 @@
 import { HwpEngineError } from "./errors.js";
 import type { LayoutRow, PageLayout } from "./engine.js";
 
-export const RENDER_LAYOUT_NEXT_STEP = "check that the hwp-cli version pinned in cli-engine.ts emits render-layout-v1 (hwp-render-layout-v1, schema 1.x)";
+export const RENDER_LAYOUT_NEXT_STEP = "check that the agent-hwp version pinned in cli-engine.ts emits render-layout-v1 (hwp-render-layout-v1, schema 1.x)";
 
 function invalid(cause: string): never {
   throw new HwpEngineError("failed", `invalid render layout geometry: ${cause}; ${RENDER_LAYOUT_NEXT_STEP}`);

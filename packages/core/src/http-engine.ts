@@ -156,10 +156,10 @@ async function parseError(res: Response): Promise<HwpEngineError> {
 export function decodeTemplateDocument(raw: unknown, field: string): DocumentHandle {
   const value = reportObject(raw, field);
   const name = reportString(value.name, `${field}.name`);
-  if (name === "") throw new Error(`Invalid template report: ${field}.name; upgrade the host/client to the hwp-cli 1.4.0 template contract and retry.`);
+  if (name === "") throw new Error(`Invalid template report: ${field}.name; upgrade the host/client to the agent-hwp 1.4.0 template contract and retry.`);
   const encoded = reportString(value.dataBase64, `${field}.dataBase64`);
   if (encoded === "" || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) {
-    throw new Error(`Invalid template report: ${field}.dataBase64; upgrade the host/client to the hwp-cli 1.4.0 template contract and retry.`);
+    throw new Error(`Invalid template report: ${field}.dataBase64; upgrade the host/client to the agent-hwp 1.4.0 template contract and retry.`);
   }
   return {
     name,
@@ -194,7 +194,7 @@ export function createHttpEngine(
     try { return await request<T>(route, init); }
     catch (error) {
       if (error instanceof HwpEngineError && error.status === 404) throw new HwpEngineError("unavailable", `Template command ${route} is unsupported by this host; upgrade the host adapter to the template API and retry.`, { cause: error });
-      if (error instanceof SyntaxError) throw new HwpEngineError("failed", `Template command ${route} returned invalid JSON; upgrade the host adapter to the hwp-cli 1.4.0 contract and retry.`, { cause: error });
+      if (error instanceof SyntaxError) throw new HwpEngineError("failed", `Template command ${route} returned invalid JSON; upgrade the host adapter to the agent-hwp 1.4.0 contract and retry.`, { cause: error });
       if (error instanceof TypeError) throw new HwpEngineError("unavailable", `Template request ${route} could not reach the host; check the engine base URL and connection, then retry.`, { cause: error });
       throw error;
     }
@@ -266,7 +266,7 @@ export function createHttpEngine(
         // here means an older host answered — the same lesson the template
         // routes teach, in this command family's words.
         if (error instanceof HwpEngineError && error.status === 404) {
-          throw new HwpEngineError("unavailable", "Styles are unsupported by this host; upgrade it to the hwp-cli 1.4.0 styles command and retry.", { cause: error });
+          throw new HwpEngineError("unavailable", "Styles are unsupported by this host; upgrade it to the agent-hwp 1.4.0 styles command and retry.", { cause: error });
         }
         throw error;
       }

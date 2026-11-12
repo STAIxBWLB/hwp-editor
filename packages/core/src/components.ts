@@ -358,7 +358,7 @@ const STYLE_FIELDS = [
  */
 const KEEP_WITH_NEXT_REASON =
   "keep_with_next is not representable by both native writers in v1 (document_spec.rs:893 and " +
-  ":1080), so hwp compose refuses it; take the key out, then retry";
+  ":1080), so ahwp compose refuses it; take the key out, then retry";
 
 function validateStyle(raw: unknown, source: string, field: string): Style {
   const style = asObject(raw, source, field);
@@ -490,7 +490,7 @@ function refuseAlt(value: unknown, source: string, field: string): void {
     source,
     field,
     "image alt text is not representable by both native writers in v1 (document_spec.rs:1180 and " +
-      ":1394), so hwp compose refuses a non-empty alt; empty it or take the key out, then retry",
+      ":1394), so ahwp compose refuses a non-empty alt; empty it or take the key out, then retry",
   );
 }
 
@@ -516,11 +516,11 @@ function validateImagePath(value: string, source: string, field: string): void {
     source,
     field,
     absolute
-      ? "must be a relative path: hwp compose reads an image only from relative normal " +
+      ? "must be a relative path: ahwp compose reads an image only from relative normal " +
           "components (asset_snapshot.rs:80), so an absolute path is refused; write the path " +
           "relative to the base directory the engine is given (the spec's for compose, the ops " +
           "file's for an insert), then retry"
-      : "holds a leading `.` or a `..` segment: hwp compose reads an image only from relative " +
+      : "holds a leading `.` or a `..` segment: ahwp compose reads an image only from relative " +
           "normal components (asset_snapshot.rs:80), so a path that leaves the base directory is " +
           "refused; name a file inside the base directory the engine is given (the spec's or the " +
           "ops file's), then retry",
@@ -619,7 +619,7 @@ function validateParagraph(block: Record<string, unknown>, source: string, field
       source,
       at(field, "list"),
       "is not supported: a component's blocks are inserted into a document whose lists it " +
-        "cannot know, so hwp compose refuses the reference; write the markers into the text " +
+        "cannot know, so ahwp compose refuses the reference; write the markers into the text " +
         "runs instead (HWP 5.0 ordered lists also show Hangul numbering, agent-hwp#472)",
     );
   }
@@ -730,7 +730,7 @@ function validateTableWidth(
   refuse(
     source,
     at(field, "width_mm"),
-    `is ${value.toFixed(2)} mm, but the columns total ${columnSum.toFixed(2)} mm; hwp compose ` +
+    `is ${value.toFixed(2)} mm, but the columns total ${columnSum.toFixed(2)} mm; ahwp compose ` +
       "refuses a table whose width and column sum differ by more than 0.01 mm " +
       "(document_spec.rs:1508), so set width_mm to the column sum, or change a column width, " +
       "then retry",
@@ -757,7 +757,7 @@ function validateTableGrid(block: Record<string, unknown>, source: string, field
     refuse(
       source,
       field,
-      `is a ${height}-row by ${width}-column table, ${slots} cells; hwp compose allows ` +
+      `is a ${height}-row by ${width}-column table, ${slots} cells; ahwp compose allows ` +
         `${MAX_TABLE_CELLS} cells in one table grid; split the table into several, or shrink ` +
         "it, then retry",
     );
@@ -882,7 +882,7 @@ function validateBlocks(
     refuse(
       source,
       field,
-      `sits ${depth} table cells deep; hwp compose allows ${MAX_NESTING} levels of block ` +
+      `sits ${depth} table cells deep; ahwp compose allows ${MAX_NESTING} levels of block ` +
         "nesting (document_spec.rs:22), so lift the inner table into its own component, or " +
         "flatten the nesting, then retry",
     );
@@ -1397,7 +1397,7 @@ function resolvedStyles(filled: readonly FilledComponent[]): Map<string, Style> 
         refuse(
           component.name,
           at("styles", name),
-          `takes the merged style table to ${styles.size} styles; hwp compose allows ` +
+          `takes the merged style table to ${styles.size} styles; ahwp compose allows ` +
             `${MAX_STYLES} styles in one document (document_spec.rs:668), so share a style ` +
             "between the components, or drop one no block references, then retry",
           "component_style",
@@ -1447,7 +1447,7 @@ function resolvedStyles(filled: readonly FilledComponent[]): Map<string, Style> 
         item.source,
         item.field,
         `pulls in the profile style ${item.name}, taking the merged style table to ${merged} ` +
-          `styles; hwp compose allows ${MAX_STYLES} styles in one document ` +
+          `styles; ahwp compose allows ${MAX_STYLES} styles in one document ` +
           "(document_spec.rs:668), so reference fewer profile styles, or drop a style no block " +
           "uses, then retry",
         "component_style",
@@ -1497,7 +1497,7 @@ function validateStyleCycles(
         refuse(
           definedBy.get(current) ?? current,
           `${at("styles", current)}.based_on`,
-          `is part of a style inheritance cycle through ${current}; hwp compose refuses a cycle ` +
+          `is part of a style inheritance cycle through ${current}; ahwp compose refuses a cycle ` +
             "between styles (document_spec.rs:959), so point one based_on in the cycle at a " +
             "style that does not lead back to it, then retry",
           "component_style",

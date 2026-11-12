@@ -134,7 +134,7 @@ describe("default command resolution (#121)", () => {
       createCliEngine().binaryInfo().catch((e: unknown) => e));
 
     expect(failure).toBeInstanceOf(HwpCliError);
-    expect((failure as HwpCliError).message).toBe("hwp --version failed (exit 3)");
+    expect((failure as HwpCliError).message).toBe("ahwp --version failed (exit 3)");
     // A binary that was found and failed is a broken install, not an absent
     // command: the fallback must not paper over it with the other name.
     expect(legacy.log()).toBe("");
@@ -233,7 +233,7 @@ const engine = () => createCliEngine({ bin: BIN });
 function expectVersionAtLeast0200(version: string) {
   const [major = 0, minor = 0, patch = 0] = version.split(".").map(Number);
   const ok = major > 0 || minor > 20 || (minor === 20 && patch >= 0);
-  expect(ok, `expected hwp-cli >= 0.20.0, got ${version}`).toBe(true);
+  expect(ok, `expected agent-hwp >= 0.20.0, got ${version}`).toBe(true);
 }
 
 it("keeps malformed direct-metadata diagnostics actionable at the CLI boundary", async () => {
@@ -247,11 +247,11 @@ it("keeps malformed direct-metadata diagnostics actionable at the CLI boundary",
   expect(failure).toMatchObject({reason:"failed",message:expect.stringContaining("direct.char"),cause:expect.any(Error)});
   // The JSON came from the hwp binary on this path, so the remedy is the
   // hwp-cli version, not an upgrade of some other host adapter.
-  expect((failure as Error).message).toContain("use hwp-cli 0.20.0 or newer");
+  expect((failure as Error).message).toContain("use agent-hwp 0.20.0 or newer");
   expect((failure as Error).message).not.toContain("host adapter");
 });
 
-describeBin("cli-engine (real hwp-cli binary)", () => {
+describeBin("cli-engine (real agent-hwp binary)", () => {
   it("AC3: applies spacing to five addressed paragraphs in one edit and restores all with one undo", async () => {
     const cli = engine();
     const spec = { version: "2.0", document: { version: "1.0", sections: [{ blocks:
@@ -507,7 +507,7 @@ describeBin("cli-engine (real hwp-cli binary)", () => {
   });
 });
 
-describeBin("routes (real hwp-cli binary)", () => {
+describeBin("routes (real agent-hwp binary)", () => {
   it("returns an actionable bad_request for invalid units before invoking edit", async () => {
     const cli = engine();
     const document = (await cli.compose(sampleSpec() as unknown as DocumentSpecV2, "units.hwpx")).document;

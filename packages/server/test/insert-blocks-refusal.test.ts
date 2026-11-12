@@ -74,7 +74,7 @@ describe("insert_blocks refusal classification", () => {
     expect(error.insertion).toEqual({ kind: "layout_overflow", blockMm: 120, insertionMm: 46.4 });
 
     expect(error.message).toBe(
-      "hwp edit failed (exit 3): insert_blocks refused: layout_overflow " +
+      "ahwp edit failed (exit 3): insert_blocks refused: layout_overflow " +
         "(block 120.00 mm, insertion point 46.40 mm)",
     );
     // The one thing the message must never carry is where the input was staged.
@@ -93,7 +93,7 @@ describe("insert_blocks refusal classification", () => {
     // The name is printed last on its own line: a style name is user text and
     // can hold a `)` or a `'`, which any bracketed form would cut in half.
     expect(error.message).toBe(
-      "hwp edit failed (exit 3): insert_blocks refused: unknown_style; 결재란 셀",
+      "ahwp edit failed (exit 3): insert_blocks refused: unknown_style; 결재란 셀",
     );
     expect(error.message).not.toContain(tmpdir());
     expect(error.detail).toContain("결재란 셀");
@@ -107,7 +107,7 @@ describe("insert_blocks refusal classification", () => {
       INSERT,
     );
 
-    expect(error.message).toBe("hwp edit failed (exit 3): insert_blocks refused: layout_overflow (insertion point 46.40 mm)");
+    expect(error.message).toBe("ahwp edit failed (exit 3): insert_blocks refused: layout_overflow (insertion point 46.40 mm)");
     expect(error.message).not.toContain("block ");
   });
 
@@ -132,7 +132,7 @@ describe("insert_blocks refusal classification", () => {
     );
 
     expect(error.message).toBe(
-      "hwp edit failed (exit 3): insert_blocks refused: 구역 정의 문단 앞에는 삽입할 수 없습니다",
+      "ahwp edit failed (exit 3): insert_blocks refused: 구역 정의 문단 앞에는 삽입할 수 없습니다",
     );
     expect(error.stderr).toContain("구역 정의 문단");
   });
@@ -146,7 +146,7 @@ describe("insert_blocks refusal classification", () => {
     );
 
     expect(error.message).toBe(
-      "hwp edit failed (exit 3): insert_blocks refused: failed to parse <path> at byte 42",
+      "ahwp edit failed (exit 3): insert_blocks refused: failed to parse <path> at byte 42",
     );
     expect(error.message).not.toContain("/tmp");
     expect(error.message).not.toContain("input.hwpx");
@@ -166,7 +166,7 @@ describe("insert_blocks refusal classification", () => {
     );
 
     expect(error.message).toBe(
-      "hwp edit failed (exit 3): insert_blocks refused: failed to parse the staged document at byte 42",
+      "ahwp edit failed (exit 3): insert_blocks refused: failed to parse the staged document at byte 42",
     );
     expect(error.message).not.toContain("/tmp");
   });
@@ -175,7 +175,7 @@ describe("insert_blocks refusal classification", () => {
     const error = await failure(WIDTH_REFUSAL, DELETE);
 
     expect(error.insertion).toBeUndefined();
-    expect(error.message).toMatch(/^hwp edit failed \(exit 3\): insert_blocks 블록\/스타일\/목록 정의가 유효하지 않습니다: /u);
+    expect(error.message).toMatch(/^ahwp edit failed \(exit 3\): insert_blocks 블록\/스타일\/목록 정의가 유효하지 않습니다: /u);
     expect(error.message).toMatch(/Fix or remove the pending edit it names, then apply again\.$/u);
     expect(error.stderr).toBe(WIDTH_REFUSAL);
   });
@@ -235,7 +235,7 @@ describe("edit report boundary", () => {
 describe("an edit failure that wrote no stderr (#88, #91)", () => {
   it("names the cause and the next step, the sentence the Tauri client prints", async () => {
     const error = await failure("", INSERT);
-    expect(error.message).toBe(`hwp edit failed (exit 3): ${STOPPED_WITHOUT_DIAGNOSTIC}`);
+    expect(error.message).toBe(`ahwp edit failed (exit 3): ${STOPPED_WITHOUT_DIAGNOSTIC}`);
     expect(error.insertion).toBeUndefined();
     // The marker routes.ts sends as `error.stopped`, so a client shows the
     // sentence in its own locale (#91).

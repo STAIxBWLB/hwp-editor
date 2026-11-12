@@ -693,7 +693,7 @@ describe("validateComponent refusals", () => {
       }),
     ).toBe(
       "components: src/components/broken.json: blocks[0].list: is not supported: a component's " +
-        "blocks are inserted into a document whose lists it cannot know, so hwp compose refuses " +
+        "blocks are inserted into a document whose lists it cannot know, so ahwp compose refuses " +
         "the reference; write the markers into the text runs instead (HWP 5.0 ordered lists " +
         "also show Hangul numbering, agent-hwp#472)",
     );
@@ -846,7 +846,7 @@ describe("validateComponent refusals", () => {
     });
     expect(refusalFor((value) => (value["blocks"] = [grid(1001, 101)]))).toBe(
       "components: src/components/broken.json: blocks[0]: is a 1001-row by 101-column table, " +
-        "101101 cells; hwp compose allows 100000 cells in one table grid; split the table into " +
+        "101101 cells; ahwp compose allows 100000 cells in one table grid; split the table into " +
         "several, or shrink it, then retry",
     );
     // One row under the cap still validates, so the refusal is the product and
@@ -942,7 +942,7 @@ describe("engine-refusal mirrors", () => {
   it("refuses keep_with_next: true on a style and on a paragraph (document_spec.rs:893)", () => {
     const reason =
       "keep_with_next is not representable by both native writers in v1 (document_spec.rs:893 " +
-      "and :1080), so hwp compose refuses it; take the key out, then retry";
+      "and :1080), so ahwp compose refuses it; take the key out, then retry";
     expect(
       refusalFor((value) => {
         value["styles"] = { 강조: { based_on: "바탕글", keep_with_next: true } };
@@ -973,7 +973,7 @@ describe("engine-refusal mirrors", () => {
   it("refuses a non-empty image alt at both positions (document_spec.rs:1180)", () => {
     const reason =
       "image alt text is not representable by both native writers in v1 (document_spec.rs:1180 " +
-      "and :1394), so hwp compose refuses a non-empty alt; empty it or take the key out, then " +
+      "and :1394), so ahwp compose refuses a non-empty alt; empty it or take the key out, then " +
       "retry";
     expect(
       refusalFor((value) => {
@@ -1013,7 +1013,7 @@ describe("engine-refusal mirrors", () => {
     // seventeenth table's cell blocks are the first list the engine refuses.
     const path = `blocks${"[0].rows[0].cells[0].blocks".repeat(17)}`;
     expect(refusalFor((value) => (value["blocks"] = [nestedTables(17)]))).toBe(
-      `components: ${REFUSAL_SOURCE}: ${path}: sits 17 table cells deep; hwp compose allows 16 ` +
+      `components: ${REFUSAL_SOURCE}: ${path}: sits 17 table cells deep; ahwp compose allows 16 ` +
         "levels of block nesting (document_spec.rs:22), so lift the inner table into its own " +
         "component, or flatten the nesting, then retry",
     );
@@ -1062,7 +1062,7 @@ describe("engine-refusal mirrors", () => {
     );
     expect(() => documentSpecFromComponents([cycle])).toThrow(
       "components: 시험: styles.강조.based_on: is part of a style inheritance cycle through " +
-        "강조; hwp compose refuses a cycle between styles (document_spec.rs:959), so point one " +
+        "강조; ahwp compose refuses a cycle between styles (document_spec.rs:959), so point one " +
         "based_on in the cycle at a style that does not lead back to it, then retry",
     );
     // One link changed, the same two styles resolve, with the profile row they
@@ -1106,7 +1106,7 @@ describe("engine-refusal mirrors", () => {
       }),
     ).toBe(
       `components: ${REFUSAL_SOURCE}: blocks[0].width_mm: is 100.00 mm, but the columns total ` +
-        "90.00 mm; hwp compose refuses a table whose width and column sum differ by more than " +
+        "90.00 mm; ahwp compose refuses a table whose width and column sum differ by more than " +
         "0.01 mm (document_spec.rs:1508), so set width_mm to the column sum, or change a column " +
         "width, then retry",
     );
@@ -1142,7 +1142,7 @@ describe("engine-refusal mirrors", () => {
       refusalFor((value) => (value["blocks"] = [oneColumn(10.01, 10)])),
     ).toBe(
       `components: ${REFUSAL_SOURCE}: blocks[0].width_mm: is 10.01 mm, but the columns total ` +
-        "10.00 mm; hwp compose refuses a table whose width and column sum differ by more than " +
+        "10.00 mm; ahwp compose refuses a table whose width and column sum differ by more than " +
         "0.01 mm (document_spec.rs:1508), so set width_mm to the column sum, or change a column " +
         "width, then retry",
     );
@@ -1165,7 +1165,7 @@ describe("engine-refusal mirrors", () => {
     ).toHaveLength(1);
     expect(refusalFor((value) => (value["blocks"] = [sixColumns(6.05)]))).toBe(
       `components: ${REFUSAL_SOURCE}: blocks[0].width_mm: is 6.05 mm, but the columns total ` +
-        "6.06 mm; hwp compose refuses a table whose width and column sum differ by more than " +
+        "6.06 mm; ahwp compose refuses a table whose width and column sum differ by more than " +
         "0.01 mm (document_spec.rs:1508), so set width_mm to the column sum, or change a column " +
         "width, then retry",
     );
@@ -1177,7 +1177,7 @@ describe("engine-refusal mirrors", () => {
       validateComponent({ ...BASE_COMPONENT, name: "나", styles: stylesNamed("나", 128) }, "나"),
     ];
     expect(() => documentSpecFromComponents(pair)).toThrow(
-      "components: 나: styles.나127: takes the merged style table to 257 styles; hwp compose " +
+      "components: 나: styles.나127: takes the merged style table to 257 styles; ahwp compose " +
         "allows 256 styles in one document (document_spec.rs:668), so share a style between the " +
         "components, or drop one no block references, then retry",
     );
@@ -1192,7 +1192,7 @@ describe("engine-refusal mirrors", () => {
     );
     expect(() => documentSpecFromComponents([profiled])).toThrow(
       "components: 시험: blocks[0].style: pulls in the profile style 바탕글, taking the merged " +
-        "style table to 257 styles; hwp compose allows 256 styles in one document " +
+        "style table to 257 styles; ahwp compose allows 256 styles in one document " +
         "(document_spec.rs:668), so reference fewer profile styles, or drop a style no block " +
         "uses, then retry",
     );
@@ -1214,12 +1214,12 @@ describe("engine-refusal mirrors", () => {
 
   it("refuses an image path the engine cannot read (asset_snapshot.rs:80)", () => {
     const absoluteReason =
-      "must be a relative path: hwp compose reads an image only from relative normal components " +
+      "must be a relative path: ahwp compose reads an image only from relative normal components " +
       "(asset_snapshot.rs:80), so an absolute path is refused; write the path relative to the " +
       "base directory the engine is given (the spec's for compose, the ops file's for an " +
       "insert), then retry";
     const leavingReason =
-      "holds a leading `.` or a `..` segment: hwp compose reads an image only from relative " +
+      "holds a leading `.` or a `..` segment: ahwp compose reads an image only from relative " +
       "normal components (asset_snapshot.rs:80), so a path that leaves the base directory is " +
       "refused; name a file inside the base directory the engine is given (the spec's or the ops " +
       "file's), then retry";

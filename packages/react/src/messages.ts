@@ -114,7 +114,7 @@ export const en = {
   "document.invalidDimension": "Page width and height must be greater than zero; enter a positive plain decimal.",
   "unit.positive": "Enter a plain decimal greater than zero.",
   "table.legacySeparatorHint": "Legacy table creation and cloning cannot use => in anchors. Remove it or use the JSON edit channel.",
-  "fields.legacySeparatorHint": "Legacy creation cannot use => in anchors or field names; hwp-cli splits --create-bookmark once and keeps the rest, so a bookmark name may hold it. Field creation and value edits cannot use = in a field name. Remove these separators or use the JSON edit channel.",
+  "fields.legacySeparatorHint": "Legacy creation cannot use => in anchors or field names; agent-hwp splits --create-bookmark once and keeps the rest, so a bookmark name may hold it. Field creation and value edits cannot use = in a field name. Remove these separators or use the JSON edit channel.",
   "image.queueLimit": (p: { count: number; miB: number }): string => `Adding this image would exceed the pending limit (${p.count} images or ${p.miB} MiB). Apply or remove pending images first.`,
   "unit.invalid": "Enter a non-negative plain decimal such as 0.5; signs, leading dots and exponent notation are not supported.",
   "segment.hyperlinkHint": "The link uses the first paragraph containing this text. Use unique paragraph text to avoid linking an earlier match.",
@@ -180,7 +180,7 @@ export const en = {
   "components.noAddress":
     "The selection cannot be addressed: this host's document read reports no segment ids.",
   "components.disabledVersion": (p: { version: string }): string =>
-    `Inserting components requires hwp-cli ${p.version} or newer, because older engines report no inserted ids.`,
+    `Inserting components requires agent-hwp ${p.version} or newer, because older engines report no inserted ids.`,
   "components.disabledChannel":
     "This host cannot send typed edit operations, so a component cannot be inserted.",
   "components.noReport":
@@ -417,8 +417,8 @@ export const en = {
   "fields.setValue": "Set value",
   "templates.panelAria": "Templates and document fields",
   "templates.disabled": (p: { reason: string; remedy: string }): string => `${p.reason} ${p.remedy}`,
-  "templates.remedy": "Upgrade hwp-cli to 1.4.0 or newer, or ask the host to expose this command.",
-  "templates.versionRequired": (p: { version: string }): string => `hwp-cli ${p.version} or newer is required.`,
+  "templates.remedy": "Upgrade agent-hwp to 1.4.0 or newer, or ask the host to expose this command.",
+  "templates.versionRequired": (p: { version: string }): string => `agent-hwp ${p.version} or newer is required.`,
   "templates.methodMissing": (p: { method: string }): string => `The host does not provide ${p.method}.`,
   "templates.methodUnadvertised": (p: { method: string }): string => `The host does not advertise ${p.method}.`,
   "templates.methodSlots": "document field listing",
@@ -556,7 +556,7 @@ export const en = {
   "image.delete": "Delete image",
   "image.file": "PNG/JPEG image file",
   "image.fileHint": `Choose a PNG or JPEG image up to ${MAX_IMAGE_ASSET_MIB} MiB.`,
-  "image.unsupported": "Image upload needs a host with an upload command. With the hwp-cli engine, use 1.4.0 or newer, the version this editor verifies uploads against. A supplied engine has to advertise image-asset uploads. The desktop app has no upload command, and this editor cannot insert a picture from a local file, so insert the picture in a word processor and reopen the document here.",
+  "image.unsupported": "Image upload needs a host with an upload command. With the agent-hwp engine, use 1.4.0 or newer, the version this editor verifies uploads against. A supplied engine has to advertise image-asset uploads. The desktop app has no upload command, and this editor cannot insert a picture from a local file, so insert the picture in a word processor and reopen the document here.",
   "image.anchor": "Insert after paragraph text",
   "image.deleteAnchor": "Image anchor text to delete",
   "image.width": "Width (mm)",
@@ -570,8 +570,8 @@ export const en = {
   "tabs.styles": "Styles",
   "styles.unavailable": (p: { version: string }): string =>
     p.version === ""
-      ? "Named styles need hwp-cli 1.4.0 or newer, and this engine reports no version. Upgrade hwp-cli on the host, then retry."
-      : `Named styles need hwp-cli 1.4.0 or newer; this engine reports ${p.version}. Upgrade hwp-cli on the host, then retry.`,
+      ? "Named styles need agent-hwp 1.4.0 or newer, and this engine reports no version. Upgrade agent-hwp on the host, then retry."
+      : `Named styles need agent-hwp 1.4.0 or newer; this engine reports ${p.version}. Upgrade agent-hwp on the host, then retry.`,
   "styles.unavailableHost": "This host does not serve the styles command; update the engine adapter on the host, then retry.",
   "styles.checkingHost": "Checking whether this host supports named styles...",
   "styles.loading": "Reading styles...",
@@ -609,7 +609,7 @@ export const en = {
   "segment.directStyleUnknown": "The document's style table does not list this paragraph, so its style name is unknown here and the overrides cannot be cleared safely. Reload the document; if it stays unlisted, the host's styles command does not name it.",
   "segment.directStyleLoading": "The style table is still loading, so this paragraph's style name is not known yet.",
   "segment.directStyleFailed": "The style table could not be read, so this paragraph's style name is unknown and the overrides cannot be cleared safely. Read it again in the Styles tab.",
-  "segment.directStyleUnavailable": "This engine does not publish style names: the styles command needs hwp-cli 1.4.0 or newer, so the overrides cannot be cleared safely here.",
+  "segment.directStyleUnavailable": "This engine does not publish style names: the styles command needs agent-hwp 1.4.0 or newer, so the overrides cannot be cleared safely here.",
 
 };
 
@@ -689,7 +689,7 @@ export const ko: MessageTable = {
   "document.invalidDimension": "용지 너비와 높이는 0보다 커야 합니다. 양수인 일반 소수를 입력하세요.",
   "unit.positive": "0보다 큰 일반 소수를 입력하세요.",
   "table.legacySeparatorHint": "레거시 표 생성·복제는 위치 텍스트의 =>를 지원하지 않습니다. 해당 문자를 제거하거나 JSON 편집 채널을 사용하세요.",
-  "fields.legacySeparatorHint": "레거시 생성 기능은 위치나 필드 이름의 =>를 지원하지 않습니다. hwp-cli는 --create-bookmark를 한 번만 나누고 나머지를 이름으로 쓰므로 책갈피 이름에는 =>를 쓸 수 있습니다. 필드 생성·값 수정 시 필드 이름의 =도 지원하지 않습니다. 구분자를 제거하거나 JSON 편집 채널을 사용하세요.",
+  "fields.legacySeparatorHint": "레거시 생성 기능은 위치나 필드 이름의 =>를 지원하지 않습니다. agent-hwp는 --create-bookmark를 한 번만 나누고 나머지를 이름으로 쓰므로 책갈피 이름에는 =>를 쓸 수 있습니다. 필드 생성·값 수정 시 필드 이름의 =도 지원하지 않습니다. 구분자를 제거하거나 JSON 편집 채널을 사용하세요.",
   "image.queueLimit": (p) => `이 이미지를 추가하면 대기 한도(이미지 ${p.count}개 또는 ${p.miB} MiB)를 초과합니다. 먼저 적용하거나 대기 중인 이미지를 제거하세요.`,
   "unit.invalid": "0.5처럼 0 이상의 일반 소수를 입력하세요. 부호, 맨 앞 소수점, 지수 표기는 지원하지 않습니다.",
   "segment.hyperlinkHint": "이 텍스트를 포함하는 첫 문단에 링크를 만듭니다. 앞선 문단에 잘못 연결되지 않도록 고유한 문단 텍스트를 사용하세요.",
@@ -746,7 +746,7 @@ export const ko: MessageTable = {
   "components.noSelection": "먼저 문서에서 문단을 선택하세요.",
   "components.noAddress": "선택 항목의 주소를 알 수 없습니다. 이 호스트의 문서 읽기 결과에 세그먼트 식별자가 없습니다.",
   "components.disabledVersion": (p: { version: string }): string =>
-    `구성 요소 삽입에는 hwp-cli ${p.version} 이상이 필요합니다. 이전 엔진은 삽입한 식별자를 보고하지 않습니다.`,
+    `구성 요소 삽입에는 agent-hwp ${p.version} 이상이 필요합니다. 이전 엔진은 삽입한 식별자를 보고하지 않습니다.`,
   "components.disabledChannel": "이 호스트는 형식이 지정된 편집 연산을 보낼 수 없어 구성 요소를 삽입할 수 없습니다.",
   "components.noReport":
     "구성 요소는 문서에 들어갔지만 이 호스트가 편집 리포트를 주지 않아, 삽입된 문단을 선택할 수 없습니다. " +
@@ -940,8 +940,8 @@ export const ko: MessageTable = {
   "fields.setValue": "설정",
   "templates.panelAria": "템플릿 및 문서 필드",
   "templates.disabled": (p) => `${p.reason} ${p.remedy}`,
-  "templates.remedy": "hwp-cli 1.4.0 이상으로 업그레이드하거나 호스트에서 해당 명령을 지원해야 합니다.",
-  "templates.versionRequired": (p) => `hwp-cli ${p.version} 이상이 필요합니다.`,
+  "templates.remedy": "agent-hwp 1.4.0 이상으로 업그레이드하거나 호스트에서 해당 명령을 지원해야 합니다.",
+  "templates.versionRequired": (p) => `agent-hwp ${p.version} 이상이 필요합니다.`,
   "templates.methodMissing": (p) => `호스트가 ${p.method} 기능을 제공하지 않습니다.`,
   "templates.methodUnadvertised": (p) => `호스트가 ${p.method} 기능을 지원한다고 알리지 않았습니다.`,
   "templates.methodSlots": "문서 필드 목록 조회",
@@ -1079,7 +1079,7 @@ export const ko: MessageTable = {
   "image.delete": "이미지 삭제",
   "image.file": "PNG/JPEG 이미지 파일",
   "image.fileHint": `${MAX_IMAGE_ASSET_MIB} MiB 이하의 PNG 또는 JPEG 이미지를 선택하세요.`,
-  "image.unsupported": "이미지 업로드는 업로드 명령이 있는 호스트가 필요합니다. hwp-cli 엔진이라면 이 편집기가 업로드를 검증한 1.4.0 이상을 사용하세요. 엔진을 직접 공급하는 호스트는 이미지 자산 업로드를 지원한다고 알려야 합니다. 데스크톱 앱에는 업로드 명령이 없고 이 편집기는 로컬 파일에서 그림을 넣을 수 없으므로, 워드프로세서에서 그림을 넣은 뒤 이 편집기에서 문서를 다시 여세요.",
+  "image.unsupported": "이미지 업로드는 업로드 명령이 있는 호스트가 필요합니다. agent-hwp 엔진이라면 이 편집기가 업로드를 검증한 1.4.0 이상을 사용하세요. 엔진을 직접 공급하는 호스트는 이미지 자산 업로드를 지원한다고 알려야 합니다. 데스크톱 앱에는 업로드 명령이 없고 이 편집기는 로컬 파일에서 그림을 넣을 수 없으므로, 워드프로세서에서 그림을 넣은 뒤 이 편집기에서 문서를 다시 여세요.",
   "image.anchor": "이 문단 문자열 뒤에 삽입",
   "image.deleteAnchor": "삭제할 이미지의 위치 문자열",
   "image.width": "너비 (mm)",
@@ -1093,8 +1093,8 @@ export const ko: MessageTable = {
   "tabs.styles": "스타일",
   "styles.unavailable": (p: { version: string }): string =>
     p.version === ""
-      ? "스타일 기능은 hwp-cli 1.4.0 이상이 필요합니다. 이 엔진은 버전을 보고하지 않습니다. 호스트의 hwp-cli를 업그레이드한 뒤 다시 시도하세요."
-      : `스타일 기능은 hwp-cli 1.4.0 이상이 필요합니다. 이 엔진은 ${p.version}입니다. 호스트의 hwp-cli를 업그레이드한 뒤 다시 시도하세요.`,
+      ? "스타일 기능은 agent-hwp 1.4.0 이상이 필요합니다. 이 엔진은 버전을 보고하지 않습니다. 호스트의 agent-hwp를 업그레이드한 뒤 다시 시도하세요."
+      : `스타일 기능은 agent-hwp 1.4.0 이상이 필요합니다. 이 엔진은 ${p.version}입니다. 호스트의 agent-hwp를 업그레이드한 뒤 다시 시도하세요.`,
   "styles.unavailableHost": "이 호스트는 스타일 명령을 제공하지 않습니다. 호스트의 엔진 어댑터를 업데이트한 뒤 다시 시도하세요.",
   "styles.checkingHost": "이 호스트가 스타일을 지원하는지 확인하는 중...",
   "styles.loading": "스타일 읽는 중...",
@@ -1131,7 +1131,7 @@ export const ko: MessageTable = {
   "segment.directStyleUnknown": "문서의 스타일 표에 이 문단이 없어 스타일 이름을 알 수 없습니다. 덮어쓴 값을 안전하게 지울 수 없습니다. 문서를 다시 불러오고, 그래도 없으면 호스트의 스타일 명령이 이 문단을 알려주지 않는 것입니다.",
   "segment.directStyleLoading": "스타일 표를 아직 읽는 중이라 이 문단의 스타일 이름을 알 수 없습니다.",
   "segment.directStyleFailed": "스타일 표를 읽지 못해 이 문단의 스타일 이름을 알 수 없습니다. 덮어쓴 값을 안전하게 지울 수 없습니다. 스타일 탭에서 표를 다시 읽으세요.",
-  "segment.directStyleUnavailable": "이 엔진은 스타일 이름을 알려주지 않습니다. 스타일 명령에는 hwp-cli 1.4.0 이상이 필요하므로 여기서는 덮어쓴 값을 안전하게 지울 수 없습니다.",
+  "segment.directStyleUnavailable": "이 엔진은 스타일 이름을 알려주지 않습니다. 스타일 명령에는 agent-hwp 1.4.0 이상이 필요하므로 여기서는 덮어쓴 값을 안전하게 지울 수 없습니다.",
 
 };
 

@@ -50,7 +50,7 @@ describe("unmatched replace refusal classification", () => {
   it("carries the stable marker instead of the engine's own sentence", async () => {
     const error = await failure(UNMATCHED);
 
-    expect(error.message).toBe("hwp edit failed (exit 3): edit refused: unmatched_replace");
+    expect(error.message).toBe("ahwp edit failed (exit 3): edit refused: unmatched_replace");
     // What must not cross: the Korean sentence, the find text and the staged
     // path. The editor maps the marker onto its own localized sentence.
     expect(error.message).not.toContain("적용되지 않은");
@@ -67,7 +67,7 @@ describe("unmatched replace refusal classification", () => {
     const error = await failure('Error: replace address=0.1 (boom)');
 
     // Unclassified (#88): the engine's own Error: line and the step, no marker.
-    expect(error.message).toMatch(/^hwp edit failed \(exit 3\): .+\. Fix or remove the pending edit it names, then apply again\.$/u);
+    expect(error.message).toMatch(/^ahwp edit failed \(exit 3\): .+\. Fix or remove the pending edit it names, then apply again\.$/u);
     expect(error.message).not.toContain("edit refused:");
   });
 
@@ -83,7 +83,7 @@ describe("unmatched replace refusal classification", () => {
     );
 
     // Unclassified (#88): the engine's own Error: line and the step, no marker.
-    expect(error.message).toMatch(/^hwp edit failed \(exit 3\): .+\. Fix or remove the pending edit it names, then apply again\.$/u);
+    expect(error.message).toMatch(/^ahwp edit failed \(exit 3\): .+\. Fix or remove the pending edit it names, then apply again\.$/u);
     expect(error.message).not.toContain("edit refused:");
     expect(error.message).not.toContain("unmatched_replace");
   });
@@ -102,7 +102,7 @@ describe("unmatched replace refusal classification", () => {
     );
 
     // Unclassified (#88): the engine's own Error: line and the step, no marker.
-    expect(error.message).toMatch(/^hwp edit failed \(exit 3\): .+\. Fix or remove the pending edit it names, then apply again\.$/u);
+    expect(error.message).toMatch(/^ahwp edit failed \(exit 3\): .+\. Fix or remove the pending edit it names, then apply again\.$/u);
     expect(error.message).not.toContain("edit refused:");
     expect(error.message).not.toContain("unmatched_replace");
   });
@@ -116,7 +116,7 @@ describe("unmatched replace refusal classification", () => {
       "(--allow-partial로 일치한 요청만 적용 가능)",
     );
 
-    expect(error.message).toBe("hwp edit failed (exit 3): edit refused: unmatched_replace");
+    expect(error.message).toBe("ahwp edit failed (exit 3): edit refused: unmatched_replace");
   });
 
   it("splits an item whose value holds a Debug-escaped quote (t14-g14)", async () => {
@@ -131,7 +131,7 @@ describe("unmatched replace refusal classification", () => {
     );
 
     // Unclassified (#88): the engine's own Error: line and the step, no marker.
-    expect(error.message).toMatch(/^hwp edit failed \(exit 3\): .+\. Fix or remove the pending edit it names, then apply again\.$/u);
+    expect(error.message).toMatch(/^ahwp edit failed \(exit 3\): .+\. Fix or remove the pending edit it names, then apply again\.$/u);
     expect(error.message).not.toContain("edit refused:");
     expect(error.message).not.toContain("unmatched_replace");
   });
