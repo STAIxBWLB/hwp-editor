@@ -190,15 +190,18 @@ export function withCallerName(report: EditReport, name: string): EditReport {
  * addressable by the ops that reorder or remove them, so the ones kept here are
  * the shortest index chains that no other listed segment extends.
  *
- * `pieces_touched` counts the pieces the engine placed, which is not always the
- * number of ids it can name: a block that lands as an empty paragraph has no
- * segment to list, so it is counted and not named (measured on ahwp 1.6.0 with
- * the 붙임 starter's empty fourth param: `pieces_touched: 4`, three paragraph
- * ids, and the document holds an unaddressable empty paragraph). A shortfall is
- * therefore expected and the named ids are returned. A surplus is not — a
- * report listing more paragraphs than it touched is not this contract — and is
- * refused, as is a capped list (`changed_total`), which the caller checks
- * before calling this.
+ * `pieces_touched` counts the pieces the engine placed. From agent-hwp 1.6.2
+ * (#521) `changed` names every one of them, an empty or break-only paragraph
+ * included: such a paragraph publishes no `para` segment, so its id is absent
+ * from a fresh `cat --segments v2`, but `move_para` and `delete_para` accept it,
+ * and it is returned here like any other (measured on ahwp 1.6.2: three blocks,
+ * the middle one empty, give `pieces_touched: 3` and three top-level ids).
+ * Engines before 1.6.2 count such a paragraph without naming it (ahwp 1.6.0,
+ * the 붙임 starter's empty param: `pieces_touched: 4`, three ids), and
+ * MIN_VERSION is below 1.6.2, so a shortfall is still accepted and the named
+ * ids returned. A surplus is not — a report listing more paragraphs than it
+ * touched is not this contract — and is refused, as is a capped list
+ * (`changed_total`), which the caller checks before calling this.
  */
 export function insertedParagraphIds(outcome: EditOpOutcome): string[] {
   if (outcome.status !== "applied") return [];

@@ -281,7 +281,7 @@ describe("starter components", () => {
     }
   });
 
-  it("keeps ordered lists out of the starters (agent-hwp#472)", () => {
+  it("keeps lists out of the starters (a component cannot know the target's list definitions)", () => {
     for (const component of STARTER_COMPONENTS) {
       expect(JSON.stringify(component.blocks)).not.toContain('"list":');
     }
@@ -692,10 +692,10 @@ describe("validateComponent refusals", () => {
         ];
       }),
     ).toBe(
-      "components: src/components/broken.json: blocks[0].list: is not supported: a component's " +
-        "blocks are inserted into a document whose lists it cannot know, so ahwp compose refuses " +
-        "the reference; write the markers into the text runs instead (HWP 5.0 ordered lists " +
-        "also show Hangul numbering, agent-hwp#472)",
+      "components: src/components/broken.json: blocks[0].list: is not supported: a component is " +
+        "inserted into a document whose list definitions it cannot know, so a list it names may " +
+        "not exist there; write the markers into the text runs instead (the engine's HWP 5.0 " +
+        "list numbering fix, agent-hwp#472, shipped and does not change this)",
     );
   });
 

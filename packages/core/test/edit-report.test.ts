@@ -16,6 +16,9 @@ import type { EditOpOutcome, EditReport } from "../src/edit-report.js";
 
 const tableReport = (): unknown =>
   JSON.parse(readFileSync(new URL("./fixtures/edit-report-insert-table.json", import.meta.url), "utf8"));
+/** Real ahwp 1.6.2 output: three paragraphs inserted, the middle one empty (#521). */
+const emptyParagraphReport = (): unknown =>
+  JSON.parse(readFileSync(new URL("./fixtures/edit-report-insert-empty-paragraph.json", import.meta.url), "utf8"));
 
 /** A two-paragraph report as the engine writes it; ids are the ones it published. */
 function paragraphReport(): EditReport {
@@ -145,12 +148,31 @@ describe("insertedParagraphIds", () => {
     expect(insertedParagraphIds({ ...outcome, status: "failed", reason: "insert_blocks: no address" })).toEqual([]);
   });
 
-  it("keeps the named paragraphs when the engine counted a piece it could not name", () => {
-    // Measured with the 붙임 starter's empty fourth param: the block lands as
-    // an empty paragraph, so it is counted in pieces_touched and absent from
-    // changed. Returning the three named paragraphs is what makes a
-    // multi-paragraph starter movable at all; refusing the report left the
-    // palette with nothing to select.
+  it("names an inserted empty paragraph, as agent-hwp 1.6.2 reports it (#521)", () => {
+    // Real ahwp 1.6.2 output: three paragraphs inserted, the middle one empty.
+    // The empty one (574e1571417ea25d.0.2) publishes no segment in a fresh cat,
+    // but move_para and delete_para accept it, so it comes through like the rest.
+    const outcome = firstOutcome(parseEditReport(emptyParagraphReport()));
+    expect(outcome.pieces_touched).toBe(3);
+    expect(insertedParagraphIds(outcome)).toEqual([
+      "20fc1758f93d270e.0.1",
+      "574e1571417ea25d.0.2",
+      "8bca34345ba8e085.0.3",
+    ]);
+  });
+
+  it("refuses a 1.6.2-shaped report whose ids outnumber its pieces", () => {
+    const outcome = firstOutcome(parseEditReport(emptyParagraphReport()));
+    expect(() => insertedParagraphIds({ ...outcome, pieces_touched: 2 })).toThrow(
+      /reports 2 inserted paragraphs but lists 3 top-level ids/,
+    );
+  });
+
+  it("keeps the named paragraphs when an engine before 1.6.2 counted a piece it could not name", () => {
+    // Measured on ahwp 1.6.0 with the 붙임 starter's empty fourth param: the
+    // block lands as an empty paragraph, counted in pieces_touched and absent
+    // from changed. MIN_VERSION is below 1.6.2 (#521), so this shortfall is
+    // still accepted and the three named paragraphs returned.
     const outcome = firstOutcome(paragraphReport());
     expect(insertedParagraphIds({ ...outcome, pieces_touched: 3 })).toEqual([
       "a84ac20e7a012e4a.0.2",

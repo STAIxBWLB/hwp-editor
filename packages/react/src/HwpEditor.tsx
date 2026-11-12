@@ -511,6 +511,10 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     // envelope that reads the new document back, whose paths are the engine's.
     // One attempt per envelope: a host whose ids no paragraph carries leaves
     // nothing to select, and the ids are dropped rather than retried forever.
+    // An inserted empty paragraph is named by agent-hwp 1.6.2 (#521) but
+    // publishes no segment, so it is not selectable here; it sits between the
+    // selected paragraphs, which stay one contiguous run, so moving the run
+    // carries it along; deleting the run leaves it behind (not yet addressed).
     useEffect(() => {
       if (pendingInserted.length === 0 || envelope === null) return;
       if (insertedTriedFor.current === envelope) return;

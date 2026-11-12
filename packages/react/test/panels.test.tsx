@@ -1313,6 +1313,48 @@ describe("ComponentsPanel (TEST-03)", () => {
     });
   });
 
+  it("selects the published paragraphs when a 1.6.2 report also names an empty one (#521)", async () => {
+    // agent-hwp 1.6.2 names an inserted empty paragraph in `changed`, but a
+    // fresh cat publishes no segment for it. The two published ones are still
+    // selected, as one contiguous run, and nothing is refused.
+    const base = addressableEnvelope();
+    const ids = ["bbbbbbbbbbbbbbbb.0.2", "dddddddddddddddd.0.3", "cccccccccccccccc.0.4"];
+    const report: EditReport = {
+      ...insertReport,
+      ops: [{ ...insertReport.ops[0]!, pieces_touched: 3, changed: ids.map((id) => ({ before: null, after: id })) }],
+    };
+    const added: Array<[string, number]> = [["결재란 제목", 2], ["결재란 항목", 4]];
+    let markdown = base.markdown;
+    const segments = [...base.segments];
+    added.forEach(([text, para]) => {
+      const start = markdown.length;
+      markdown += `${text}\n\n`;
+      segments.push({ id: para === 2 ? ids[0]! : ids[2]!, indices: [para], start, end: start + text.length, kind: "para", section: 0, para });
+    });
+    const after: CatEnvelope = { markdown, segments };
+    const engine = composedEngine(base);
+    let reads = 0;
+    engine.read = async () => (reads++ === 0 ? base : after);
+    const baseEdit = engine.edit.bind(engine);
+    engine.edit = async (document, ops, options) => ({
+      ...(await baseEdit(document, ops, options)),
+      ...(options?.report === true ? { report } : {}),
+    });
+
+    await selectPara(engine, 1, base);
+    fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+    fireEvent.click(await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) }));
+    await waitFor(() => expect(engine.calls.edit).toHaveLength(1));
+
+    const again = await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) });
+    await waitFor(() => expect((again as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.queryByText(/reports \d+ inserted paragraphs/u)).toBeNull();
+    fireEvent.click(again);
+    await waitFor(() => expect(engine.calls.edit).toHaveLength(2));
+    // "after" addresses the run's last published paragraph.
+    expect(engine.calls.edit[1]!.ops[0]).toMatchObject({ kind: "insert-blocks", address: { id: ids[2] }, position: "after" });
+  });
+
   it("refuses to select from a truncated report and says why", async () => {
     // `changed_total` means the engine capped the id list, so the selection
     // would cover only part of what was inserted. The document is published

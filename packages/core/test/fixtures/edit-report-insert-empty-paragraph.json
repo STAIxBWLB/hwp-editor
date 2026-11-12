@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.0",
+  "contract": "hwp-edit-report-v1",
+  "output": "out.hwpx",
+  "dry_run": false,
+  "ops": [
+    {
+      "index": 0,
+      "op": "insert_blocks",
+      "status": "applied",
+      "pieces_touched": 3,
+      "changed": [
+        {
+          "before": null,
+          "after": "20fc1758f93d270e.0.1"
+        },
+        {
+          "before": null,
+          "after": "63c237d6d681493f.0.1.0"
+        },
+        {
+          "before": null,
+          "after": "574e1571417ea25d.0.2"
+        },
+        {
+          "before": null,
+          "after": "8bca34345ba8e085.0.3"
+        },
+        {
+          "before": null,
+          "after": "e077438e82bf30f4.0.3.0"
+        }
+      ],
+      "reason": null,
+      "missing_style": "create"
+    }
+  ],
+  "applied_count": 1,
+  "failed_count": 0
+}
