@@ -371,20 +371,75 @@ function argvSeparatorFields(op: LegacyEditOp): ArgvSeparatorField[] {
   }
 }
 
+/**
+ * The split `parse_image_size` makes of one `--insert-image` value (#108): the
+ * last `@` separates the path, the first `x` or `X` separates the two
+ * dimensions, and each side is trimmed the way `w.trim().parse::<f32>()` trims
+ * it. A side f32 cannot read, a missing `@` or a missing `x` leaves the whole
+ * value as a natural-size path, which is what the engine does.
+ */
+function imageSizeText(value: string): { path: string; width: string; height: string } | null {
+  const at = value.lastIndexOf("@");
+  if (at < 0) return null;
+  const dims = value.slice(at + 1);
+  const x = dims.search(/[xX]/);
+  if (x < 0) return null;
+  const width = rustTrim(dims.slice(0, x));
+  const height = rustTrim(dims.slice(x + 1));
+  if (!isRustFloat(width) || !isRustFloat(height)) return null;
+  return { path: value.slice(0, at), width, height };
+}
+
+/**
+ * The split `parse_seal_size` makes of one `--seal` value (#108): the last `@`
+ * separates the path, then one case-sensitive `mm` comes off the trimmed suffix
+ * and the rest is trimmed and read as f32 (`raw.trim().strip_suffix("mm")`, then
+ * `num.trim().parse::<f32>()`, in `edit.rs`). Without a number there, the whole
+ * value is the path and the size stays the engine's default.
+ */
+function sealSizeText(value: string): { path: string; size: string } | null {
+  const at = value.lastIndexOf("@");
+  if (at < 0) return null;
+  const trimmed = rustTrim(value.slice(at + 1));
+  const size = rustTrim(trimmed.endsWith("mm") ? trimmed.slice(0, -2) : trimmed);
+  return isRustFloat(size) ? { path: value.slice(0, at), size } : null;
+}
+
+/** Whether the engine reads a size out of this path, so writing it whole would be split. */
 function imagePathHasDimensionSuffix(path: string): boolean {
-  // hwp-cli parses each dimension with `w.trim().parse::<f32>()`
-  // (`parse_image_size`), so the trim here is Rust's, not JavaScript's.
-  const suffix = path.slice(path.lastIndexOf("@") + 1);
-  const dimensions = suffix.split(/[xX]/);
-  return dimensions.length === 2 && dimensions.every(part => isRustFloat(rustTrim(part)));
+  return imageSizeText(path) !== null;
 }
 
 function sealPathHasSizeSuffix(path: string): boolean {
-  // hwp-cli's `parse_seal_size` trims before stripping the unit and trims the
-  // rest again before parsing (`edit.rs`: `raw.trim().strip_suffix("mm")` then
-  // `num.trim().parse::<f32>()`), so `stamp@5 mm` is a size suffix too.
-  const suffix = rustTrim(rustTrim(path.slice(path.lastIndexOf("@") + 1)).replace(/mm$/, ""));
-  return isRustFloat(suffix);
+  return sealSizeText(path) !== null;
+}
+
+/** The `insert-image` fields `parse_image_size` fills, or null when it reads no dimensions (#108). */
+function splitImageSize(value: string): { path: string; width: number; height: number } | null {
+  const split = imageSizeText(value);
+  return split === null
+    ? null
+    : { path: split.path, width: rustFloat(split.width), height: rustFloat(split.height) };
+}
+
+/** The `seal` fields `parse_seal_size` fills, or null when it reads no size (#108). */
+function splitSealSize(value: string): { path: string; size: number } | null {
+  const split = sealSizeText(value);
+  return split === null ? null : { path: split.path, size: rustFloat(split.size) };
+}
+
+/**
+ * The number `f32::from_str` reads from text `isRustFloat` accepted (#108).
+ *
+ * The infinite spellings are mapped by hand because `Number("inf")` is NaN,
+ * which is a different value the engine never produces: `inf`, `infinity` and an
+ * overflow such as `1e400` all parse as infinity there. `nan` needs no mapping.
+ * A non-finite size has no plain-decimal form, so the edit-ops-v1 channel's
+ * `withUnit` refuses it; this side carries it because the argv engine does.
+ */
+function rustFloat(text: string): number {
+  if (/^[+-]?inf(?:inity)?$/i.test(text)) return text.startsWith("-") ? -Infinity : Infinity;
+  return Number(text);
 }
 
 /**
@@ -1006,18 +1061,24 @@ function parseOp(flag: string | undefined, value: string): LegacyEditOp {
       return { kind: "create-hyperlink", anchor, url };
     }
     case "--insert-image": {
+      // `parse_image_size` reads the last `@` and the first `x` or `X`, trimming
+      // each side the way f32's own parse does (#108), so `img@10 x 20` is the
+      // same image as `img@10x20` here as it is in the engine.
       const [anchor, rest] = need(splitFirst(value, "=>"), flag, value);
-      const at = rest.match(/^(.*)@(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)$/);
-      return at === null
+      const split = splitImageSize(rest);
+      return split === null
         ? { kind: "insert-image", anchor, path: rest }
-        : { kind: "insert-image", anchor, path: at[1]!, width: Number(at[2]), height: Number(at[3]) };
+        : { kind: "insert-image", anchor, path: split.path, width: split.width, height: split.height };
     }
     case "--seal": {
+      // `parse_seal_size` reads the last `@`, then one `mm` off the trimmed
+      // suffix, then a trimmed f32 (#108), so `stamp@5 mm` is the seal at
+      // `stamp` sized 5 mm here as it is in the engine.
       const [anchor, rest] = need(splitFirst(value, "=>"), flag, value);
-      const at = rest.match(/^(.*)@(\d+(?:\.\d+)?)$/);
-      return at === null
+      const split = splitSealSize(rest);
+      return split === null
         ? { kind: "seal", anchor, path: rest }
-        : { kind: "seal", anchor, path: at[1]!, size: Number(at[2]) };
+        : { kind: "seal", anchor, path: split.path, size: split.size };
     }
     case "--set-format": {
       const [find, propsStr] = need(splitFirst(value, ":"), flag, value);
