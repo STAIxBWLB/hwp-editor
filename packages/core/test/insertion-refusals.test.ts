@@ -280,5 +280,19 @@ describe("redaction and file-head follow-ups (#142)", () => {
     const reason = "staged_native_readback 실패: 게시 전 native 후보를 읽지 못했습니다. 출력을 게시하지 않았습니다. 출력 디렉터리의 읽기·쓰기 권한과 디스크 여유 공간을 확인한 뒤 다시 실행하세요";
     expect(unclassifiedEditLine(`Error: ${reason}`)).toBe(`${reason}.`);
   });
-});
 
+  it("keeps the colon after a redacted path (t67-1)", () => {
+    expect(withoutPaths("failed to open /tmp/w/stage: Permission denied")).toBe("failed to open <path>: Permission denied");
+    expect(withoutPaths("입출력 오류: /tmp/x: /tmp/y: z")).toBe("입출력 오류: <path>: <path>: z");
+  });
+
+  // Documents the open non-head limit (#142 item 2): with no file head the
+  // colon rule does not run, so a path with a space and no extension keeps its
+  // tail even before `: ` (the engine's `새 미디어 제거 실패 {dir}: {err}`).
+  // Passing the work dir closes it.
+  it("leaves a spaced, extension-less path's tail on a non-head line until the host passes workDir", () => {
+    const line = "failed to read C:\\Program Files (x86)\\Maru\\stage: Access is denied.";
+    expect(withoutPaths(line)).toBe("failed to read <path> Files (x86)\\Maru\\stage: Access is denied.");
+    expect(withoutPaths(line, "C:\\Program Files (x86)\\Maru")).toBe("failed to read <work dir>\\stage: Access is denied.");
+  });
+});

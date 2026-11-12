@@ -128,7 +128,8 @@ const PATH_END = String.raw`\.(?:hwpx|hwp|json|png|jpe?g|gif|bmp|svg|pdf|md|txt|
  * (`/in.hwpx`). A lone `/` between words (`제목 / 부제`, `수입 / 지출`) or a
  * bare `/word` is user text, not a path (#93): leaving an ambiguous token in
  * place beats swallowing an anchor. A first segment holding Hangul is never
- * a root either (`예산 /항목/세부` is prose, #142).
+ * a root either (`예산 /항목/세부` is prose, #142). The price is accepted: a
+ * path whose first segment is Hangul (`/사용자/a/in.hwpx`) stays unredacted.
  */
 const PATH_ROOT = String.raw`(?:file:\/\/\/?|(?<![A-Za-z]:)\/\/(?=[^\s/]+\/)|\\\\(?=[^\s\\]+\\)|[A-Za-z]:[\\/]|\/(?=[^\s/"'\p{Script=Hangul}]+\/)|\/(?=[^\s/"'\p{Script=Hangul}]+${PATH_END}))`;
 
@@ -143,7 +144,11 @@ const PATH_ROOT = String.raw`(?:file:\/\/\/?|(?<![A-Za-z]:)\/\/(?=[^\s/]+\/)|\\\
  *   never ends a path early). Any other line may hold user text before a
  *   later `: `, so the rule does not run there (#142);
  * - one that reaches a known file extension, through its file name;
- * - any other only through its first space, leaving the rest visible.
+ * - any other only through its first space, leaving the rest visible. So a
+ *   path with a space and no known extension keeps its tail on a line with
+ *   no file head even when `: ` follows it (`새 미디어 제거 실패 {dir}: {err}`,
+ *   output.rs:1226), and on a file-head line when no `: ` follows; passing
+ *   the work dir as workDir closes both (#142 item 2).
  * A replacement fires only where a path can start, so a Korean diagnostic's
  * own `블록/스타일/목록` slashes survive.
  */
@@ -155,7 +160,7 @@ export function withoutPaths(text: string, workDir?: string): string {
     : quoted;
   return colon
     .replace(new RegExp(String.raw`(^|[\s(\[{:])${PATH_ROOT}[^\n"']*?${PATH_END}`, "gu"), "$1<path>")
-    .replace(new RegExp(String.raw`(^|[\s(\[{:])${PATH_ROOT}[^\s"')\]}]*`, "gu"), "$1<path>")
+    .replace(new RegExp(String.raw`(^|[\s(\[{:])${PATH_ROOT}(?:[^\s"')\]}:]|:(?!\s|$))*`, "gu"), "$1<path>")
     // With no `: ` after it, a path with spaces stopped at its first space
     // above; the following words that still hold a separator inside them
     // (`b/c/data`, `Files\Maru`) are its tail. A lone `/`, a word with no
