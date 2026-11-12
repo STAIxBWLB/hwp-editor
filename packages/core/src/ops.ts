@@ -363,8 +363,8 @@ function argvSeparatorFields(op: LegacyEditOp): ArgvSeparatorField[] {
       return [];
     default: {
       // Exhaustive on purpose: a new op kind has to say what its value joins
-      // on, and the `default: return []` this replaces let one join on a
-      // structural separator without this guard ever seeing it.
+      // on, because a fallback here would let it join on a structural
+      // separator that this guard never sees.
       const unhandled: never = op;
       throw new Error(`argvSeparatorFields: unhandled op kind ${JSON.stringify(unhandled)}`);
     }
@@ -372,17 +372,51 @@ function argvSeparatorFields(op: LegacyEditOp): ArgvSeparatorField[] {
 }
 
 function imagePathHasDimensionSuffix(path: string): boolean {
+  // hwp-cli parses each dimension with `w.trim().parse::<f32>()`
+  // (`parse_image_size`), so the trim here is Rust's, not JavaScript's.
   const suffix = path.slice(path.lastIndexOf("@") + 1);
   const dimensions = suffix.split(/[xX]/);
-  return dimensions.length === 2 && dimensions.every(part => isRustFloat(part.trim()));
+  return dimensions.length === 2 && dimensions.every(part => isRustFloat(rustTrim(part)));
 }
 
 function sealPathHasSizeSuffix(path: string): boolean {
   // hwp-cli's `parse_seal_size` trims before stripping the unit and trims the
   // rest again before parsing (`edit.rs`: `raw.trim().strip_suffix("mm")` then
   // `num.trim().parse::<f32>()`), so `stamp@5 mm` is a size suffix too.
-  const suffix = path.slice(path.lastIndexOf("@") + 1).trim().replace(/mm$/, "").trim();
+  const suffix = rustTrim(rustTrim(path.slice(path.lastIndexOf("@") + 1)).replace(/mm$/, ""));
   return isRustFloat(suffix);
+}
+
+/**
+ * The `str::trim` hwp-cli applies before it reads a value: the Unicode
+ * White_Space set, which JavaScript's `trim()` does not match.
+ *
+ * `\s` and `String.prototype.trim` exclude U+0085 and include U+FEFF, while
+ * Rust does the opposite, so each of those two characters makes the engine read
+ * a value differently than this guard does: `"3\u0085"` is the index 3 to the
+ * engine and an anchor letter here, and `"\uFEFF3"` is the anchor it looks like
+ * here but not an index to the engine (#103 item 2). The set below is the 25
+ * code points `char::is_whitespace` returns, enumerated with `rustc` 1.99:
+ * U+0009..U+000D, U+0020, U+0085, U+00A0, U+1680, U+2000..U+200A, U+2028,
+ * U+2029, U+202F, U+205F, U+3000.
+ */
+const RUST_WHITESPACE = new Set<number>([
+  0x0009, 0x000a, 0x000b, 0x000c, 0x000d, 0x0020, 0x0085, 0x00a0, 0x1680,
+  0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008,
+  0x2009, 0x200a, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000,
+]);
+
+function rustTrim(value: string): string {
+  // Each end is scanned once. A regex alternation over the same set instead
+  // backtracks across a long interior whitespace run, which a hostile or
+  // generated anchor can carry (#103 review t47-a1). Every code point in the
+  // set is in the BMP, so `charCodeAt` reads one scalar per step and a
+  // surrogate half at either end is never stripped.
+  let start = 0;
+  let end = value.length;
+  while (start < end && RUST_WHITESPACE.has(value.charCodeAt(start))) start += 1;
+  while (end > start && RUST_WHITESPACE.has(value.charCodeAt(end - 1))) end -= 1;
+  return value.slice(start, end);
 }
 
 function isRustFloat(value: string): boolean {
@@ -409,6 +443,15 @@ function parsesAsUsize(value: string): boolean {
 }
 
 /**
+ * The index `parse::<usize>` makes of a value `parsesAsUsize` accepted, so a
+ * refusal can print the table the engine would act on rather than the text:
+ * `+3` and `007` both reach table 3 (#103 item 4).
+ */
+function usizeValue(value: string): string {
+  return BigInt(value).toString();
+}
+
+/**
  * The one value `--delete-table` can carry for this target.
  *
  * The argv form has no way to say "this anchor is the text 3": the engine reads
@@ -420,8 +463,9 @@ function parsesAsUsize(value: string): boolean {
  */
 function argvDeleteTableTarget(target: number | string): string {
   const value = String(target);
-  if (typeof target === "string" && parsesAsUsize(value.trim())) {
-    const cause = new Error(`delete-table anchor ${JSON.stringify(target)} is read as table index ${value.trim()}`);
+  const trimmed = rustTrim(value);
+  if (typeof target === "string" && parsesAsUsize(trimmed)) {
+    const cause = new Error(`delete-table anchor ${JSON.stringify(target)} is read as table index ${usizeValue(trimmed)}`);
     throw new HwpEngineError(
       "bad_request",
       `${cause.message}, so the anchor cannot be addressed in the argv form; pick an anchor that is not a number or upgrade the host to the edit-ops-v1 JSON transport.`,
@@ -1066,8 +1110,10 @@ function parseOp(flag: string | undefined, value: string): LegacyEditOp {
       // The engine trims and then parses a `usize` to decide index or anchor,
       // so the same predicate decides what this side hands back: `Number("")`
       // would have made the empty string index 0 and `Number("3.5")` a
-      // fractional index, and both are anchors to the engine.
-      const trimmed = value.trim();
+      // fractional index, and both are anchors to the engine. The trim is the
+      // engine's own, so a U+0085 tail is no more part of the anchor here than
+      // it is there (#103 item 2).
+      const trimmed = rustTrim(value);
       return { kind: "delete-table", target: parsesAsUsize(trimmed) ? Number(trimmed) : value };
     }
     case "--delete-field":

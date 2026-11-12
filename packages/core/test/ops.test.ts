@@ -67,12 +67,19 @@ describe("opsToArgv", () => {
       [{ kind: "create-hyperlink", anchor: "anchor", text: "label", url: "https://a.b/=>c" }, "create-hyperlink url", "=>"],
       [{ kind: "insert-image", anchor: "a=>b", path: "image.png" }, "insert-image anchor", "=>"],
       [{ kind: "insert-image", anchor: "anchor", path: "image.png@10x20" }, "insert-image path", "@"],
+      // Same trim rule as the seal case below: hwp-cli parses each dimension
+      // with its own trim (#103 item 2).
+      [{ kind: "insert-image", anchor: "anchor", path: "image.png@10\u0085x20" }, "insert-image path", "@"],
       [{ kind: "seal", anchor: "a=>b", path: "seal.png" }, "seal anchor", "=>"],
       [{ kind: "seal", anchor: "anchor", path: "seal@20" }, "seal path", "@"],
       // The unit may be spaced from the number: hwp-cli trims before stripping
       // `mm` and trims the rest again, so "5 mm" is a size and the path is a
       // path the engine would split (#58 item 11).
       [{ kind: "seal", anchor: "anchor", path: "stamp@5 mm" }, "seal path", "@"],
+      // Rust's White_Space set holds U+0085 and JavaScript's does not, so the
+      // second trim inside `parse_seal_size` is what makes the unit strip and
+      // the value a size the engine reads (#103 item 2).
+      [{ kind: "seal", anchor: "anchor", path: "stamp@5\u0085mm" }, "seal path", "@"],
       [{ kind: "set-format", find: "a:b", props: {} }, "set-format find", ":"],
       [{ kind: "set-format", find: "x", props: { "bold=on": "yes" } }, "set-format props.bold=on.key", "="],
       [{ kind: "set-format", find: "x", props: { "bold,on": "yes" } }, "set-format props.bold,on.key", ","],
@@ -330,16 +337,52 @@ describe("the argv delete-table value means what it says (#58 item 13e)", () => 
   };
 
   it("refuses an anchor the engine would read as a table index", () => {
-    for (const anchor of ["3", " 3 ", "+3", "007"]) {
+    const cases: Array<[string, number]> = [
+      ["3", 3],
+      [" 3 ", 3],
+      ["+3", 3],
+      ["007", 7],
+      // U+0085 is White_Space to Rust and not to JavaScript, so the engine's
+      // own trim makes this table 3 while a JavaScript trim leaves an anchor
+      // the engine never reads (#103 item 2).
+      ["3\u0085", 3],
+    ];
+    for (const [anchor, index] of cases) {
       const failure = refusal(anchor);
       expect(failure.code).toBe("bad_request");
       // The refusal prints the anchor it cannot address, so the caller can tell
-      // which op in a batch it came from.
+      // which op in a batch it came from, and the table the engine would act on
+      // rather than the text it was handed (#103 item 4).
       expect(failure.message).toContain(JSON.stringify(anchor));
-      expect(failure.message).toContain("is read as table index");
+      expect(failure.message).toContain(`is read as table index ${index}`);
       expect(failure.message).toContain("upgrade the host");
       expect(failure.cause).toBeInstanceOf(Error);
     }
+  });
+
+  it("leaves a value Rust does not trim an anchor", () => {
+    // U+FEFF is JavaScript's idea of whitespace, not Rust's, so the engine
+    // reads it as part of the anchor name and this side must not turn the rest
+    // into an index (#103 item 2).
+    expect(opsToArgv([{ kind: "delete-table", target: "\uFEFF3" }]))
+      .toEqual(["--delete-table", "\uFEFF3"]);
+    expect(argvToOps(["--delete-table", "\uFEFF3"]))
+      .toEqual([{ kind: "delete-table", target: "\uFEFF3" }]);
+  });
+
+  it("trims a long interior whitespace run in linear time", () => {
+    // The trim must not backtrack. The regex alternation this replaced took
+    // 0.7 s at 40k interior spaces and about 4 s at 100k, so an anchor a
+    // generator or a hostile document supplies could stall the edit path; a
+    // scan from each end takes microseconds at this size, so the bound leaves
+    // orders of magnitude of room and only a regression toward backtracking
+    // fails it (#103 review t47-a1).
+    const target = `  anchor${" ".repeat(100_000)}tail  `;
+    const started = performance.now();
+    const argv = opsToArgv([{ kind: "delete-table", target }]);
+    const elapsed = performance.now() - started;
+    expect(argv).toEqual(["--delete-table", target]);
+    expect(elapsed).toBeLessThan(1_000);
   });
 
   it("refuses a number the engine would read as an anchor name", () => {
@@ -378,6 +421,9 @@ describe("the argv delete-table value means what it says (#58 item 13e)", () => 
     // still its index.
     expect(argvToOps(["--delete-table", " 3 "])).toEqual([{ kind: "delete-table", target: 3 }]);
     expect(argvToOps(["--delete-table", "+3"])).toEqual([{ kind: "delete-table", target: 3 }]);
+    // Rust's White_Space holds U+0085, so the engine trims it before parsing
+    // and the reader takes the same index (#103 item 2).
+    expect(argvToOps(["--delete-table", "3\u0085"])).toEqual([{ kind: "delete-table", target: 3 }]);
     // `Number("")` is 0 and `Number("3.5")` is a fractional index; the engine
     // treats both as anchors, and so does the reader now, with "-3" and "0x3".
     for (const anchor of ["", "3.5", "-3", "0x3"]) {
