@@ -484,7 +484,8 @@ describe.each([["en", en], ["ko", ko]] as const)("Markdown run range selection (
     const textarea = await selectFirstParagraph(messages);
     await selectRange(textarea, 3, 6);
     expect(await screen.findByText(messages["segment.rangeWholeRunTargets"]({ count: 1 }))).toBeTruthy();
-    // Reaching the whitespace on both sides adds nothing to the op.
+    // Control (passes before and after): reaching the whitespace on both sides
+    // adds nothing to the op.
     await selectRange(textarea, 0, 9);
     expect(screen.queryByText(messages["segment.rangeWholeRunTargets"]({ count: 1 }))).toBeNull();
   });

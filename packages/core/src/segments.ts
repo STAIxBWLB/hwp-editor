@@ -835,15 +835,20 @@ function sameParagraph(a: Segment, b: Segment): boolean {
 /**
  * How the engine wrapped a piece's fragment in emphasis markers.
  *
- * `undefined` means the fragment is the piece's own text: the run carries no
- * emphasis property, or it carries one and its fragment shows no marker at all.
+ * `undefined` means the run carries no emphasis property, so the fragment is
+ * the piece's own text. `bare` is the other way a fragment can be its own text:
+ * the run is emphasis, and this piece's fragment holds no marker at all - which
+ * is what a block-control split leaves in the middle of a wrapped run.
  *
  * The marker width comes from the run's own character properties, never from
  * counting stars: a bold run whose text starts with a literal `*` projects as
  * `***x`, and only two of those three stars are its pair - the third is a
  * character the piece shows. A piece a block control split can carry one half
  * of the pair only (`**굵` and `게**` are the two pieces of one bold run), and
- * that half is `stars` wide for the same reason.
+ * that half is `stars` wide for the same reason. Both halves are read with a
+ * pattern of exactly that width: counting stars on either side would swallow a
+ * literal one, and would misread a closing piece whose text starts with a star
+ * (`*y**` is the text `*y` and then the pair) as an opening one.
  *
  * The edge whitespace is the run's, not the marker's: the engine wraps the
  * run's trimmed text and leaves the whitespace outside the pair, so `lead` and
@@ -851,7 +856,8 @@ function sameParagraph(a: Segment, b: Segment): boolean {
  */
 type EmphasisWrap =
   | { kind: "pair"; stars: number; lead: number; trail: number; inner: string }
-  | { kind: "half"; side: "open" | "close"; stars: number; lead: number; trail: number };
+  | { kind: "half"; side: "open" | "close"; stars: number; lead: number; trail: number }
+  | { kind: "bare"; stars: number };
 
 function emphasisWrap(run: Segment, fragment: string): EmphasisWrap | undefined {
   const direct = run.directChar;
@@ -869,15 +875,15 @@ function emphasisWrap(run: Segment, fragment: string): EmphasisWrap | undefined 
     };
   }
   // One half of a pair, opening or closing, never both.
-  const opening = /^(\s*)\*+/u.exec(fragment);
+  const opening = new RegExp(`^(\\s*)${marker}`, "u").exec(fragment);
   if (opening !== null) {
     return { kind: "half", side: "open", stars, lead: [...opening[1]!].length, trail: 0 };
   }
-  const closing = /\*+(\s*)$/u.exec(fragment);
+  const closing = new RegExp(`${marker}(\\s*)$`, "u").exec(fragment);
   if (closing !== null) {
     return { kind: "half", side: "close", stars, lead: 0, trail: [...closing[1]!].length };
   }
-  return undefined;
+  return { kind: "bare", stars };
 }
 
 /**
@@ -899,7 +905,7 @@ function emphasisWrap(run: Segment, fragment: string): EmphasisWrap | undefined 
 function visibleSpan(run: Segment, fragment: string): { start: number; end: number } {
   const chars = [...fragment];
   const wrap = emphasisWrap(run, fragment);
-  if (wrap === undefined) return { start: 0, end: chars.length };
+  if (wrap === undefined || wrap.kind === "bare") return { start: 0, end: chars.length };
   if (wrap.kind === "pair") return { start: wrap.lead + wrap.stars, end: wrap.lead + wrap.stars + [...wrap.inner].length };
   if (wrap.side === "open") return { start: wrap.lead + wrap.stars, end: chars.length };
   return { start: 0, end: chars.length - wrap.trail - wrap.stars };
@@ -908,13 +914,17 @@ function visibleSpan(run: Segment, fragment: string): { start: number; end: numb
 /**
  * The markdown scalars a piece shows, as absolute offsets.
  *
- * `runCoverage` asks this question to decide whether a window reaches a
- * character of the piece at all; a caller asking whether the selection covered
- * the piece needs the same span in the markdown's own coordinates. The marker
- * pair an emphasis run is wrapped in, and the edge whitespace the pair sits
- * inside, are not characters the piece shows: a selection of `굵게` inside
- * `**굵게**` covers the piece whole although it starts after `run.start`, and a
- * piece a block control split may carry only one half of that pair.
+ * The marker pair an emphasis run is wrapped in, and the edge whitespace the
+ * pair sits inside, are not characters the piece shows: a selection of `굵게`
+ * inside `**굵게**` covers the piece whole although it starts after
+ * `run.start`, and a piece a block control split may carry only one half of
+ * that pair.
+ *
+ * Nothing in the selection path reads this: `runCoverage` calls `visibleSpan`
+ * directly for its `none` answer, and whether a whole-piece op formats more
+ * than the selection asks `formattedSpan`, which keeps the edge whitespace.
+ * It stays exported for a caller that needs the shown span in the markdown's
+ * own coordinates.
  */
 export function shownSpan(envelope: CatEnvelope, run: Segment): { start: number; end: number } {
   const shown = visibleSpan(run, segmentText(envelope, run));
@@ -936,15 +946,15 @@ export function shownSpan(envelope: CatEnvelope, run: Segment): { start: number;
  * Keeping the edge whitespace widens the span over the marker characters that
  * sit between the whitespace and the text, and that is the honest answer: a
  * markdown interval cannot skip them, and no selection can reach the whitespace
- * without crossing the pair. A piece carrying half a pair, or a marker the
- * fragment does not show at all, keeps whichever edge it has.
+ * without crossing the pair. A piece carrying half a pair, or no marker at all,
+ * keeps whichever edge it has.
  */
 export function formattedSpan(envelope: CatEnvelope, run: Segment): { start: number; end: number } {
   const fragment = segmentText(envelope, run);
   const shown = visibleSpan(run, fragment);
   const wrap = emphasisWrap(run, fragment);
-  const lead = wrap === undefined ? 0 : wrap.lead;
-  const trail = wrap === undefined ? 0 : wrap.trail;
+  const lead = wrap === undefined || wrap.kind === "bare" ? 0 : wrap.lead;
+  const trail = wrap === undefined || wrap.kind === "bare" ? 0 : wrap.trail;
   return {
     start: run.start + (lead > 0 ? 0 : shown.start),
     end: run.start + (trail > 0 ? [...fragment].length : shown.end),
@@ -957,12 +967,13 @@ export function formattedSpan(envelope: CatEnvelope, run: Segment): { start: num
  *
  * A run that its character properties mark bold, italic or both is wrapped in
  * exactly that marker pair, and the wrapper is removed only when the wrapper
- * found and the properties agree. The engine wraps the run's TRIMMED text and
- * leaves its edge whitespace outside the markers (a bold `" / "` projects as
- * space, the bold marker pair, `/`, the pair again, space, measured on
- * 1.6.1), so the pattern allows whitespace around the pair and the returned
- * offset points at the first non-space character; a window in that edge
- * whitespace is refused.
+ * found and the properties agree. `emphasisWrap` reads that pair, so this
+ * reader and `visibleSpan` agree on where a wrapped run's text starts and ends.
+ * The engine wraps the run's TRIMMED text and leaves its edge whitespace
+ * outside the markers (a bold `" / "` projects as space, the bold marker pair,
+ * `/`, the pair again, space, measured on 1.6.1), so the returned offset points
+ * at the first non-space character; a window in that edge whitespace is
+ * refused.
  *
  * A plain run is read as itself: the engine does not escape `*`, so a literal
  * `*Note*` projects exactly like an italic run, and the direct level is what
@@ -974,17 +985,14 @@ function runWindowText(
   run: Segment,
   markdown: string,
 ): { text: string; offset: number; lead: number; trail: number } | undefined {
-  const direct = run.directChar;
-  if (direct === undefined) return undefined;
-  if (!direct.bold && !direct.italic) return { text: markdown, offset: 0, lead: 0, trail: 0 };
-  const stars = direct.bold && direct.italic ? 3 : direct.bold ? 2 : 1;
-  const marker = "\\*".repeat(stars);
-  const wrapped = new RegExp(`^(\\s*)${marker}([\\s\\S]+)${marker}(\\s*)$`, "u").exec(markdown);
-  if (wrapped === null) return undefined;
-  const text = wrapped[2]!;
-  if (text !== text.trim()) return undefined;
-  const lead = [...wrapped[1]!].length;
-  return { text, offset: lead + stars, lead, trail: [...wrapped[3]!].length };
+  if (run.directChar === undefined) return undefined;
+  const wrap = emphasisWrap(run, markdown);
+  if (wrap === undefined) return { text: markdown, offset: 0, lead: 0, trail: 0 };
+  // Half a pair is not a window, and neither is a piece that shows no marker:
+  // what it holds is its own share of the run's text, not the run's text.
+  if (wrap.kind !== "pair") return undefined;
+  if (wrap.inner !== wrap.inner.trim()) return undefined;
+  return { text: wrap.inner, offset: wrap.lead + wrap.stars, lead: wrap.lead, trail: wrap.trail };
 }
 
 /** Map a markdown offset to its source coordinate, if inside a segment. */
