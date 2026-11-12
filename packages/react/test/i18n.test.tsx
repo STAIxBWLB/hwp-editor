@@ -321,6 +321,34 @@ describe("table parity (I18N-06, I18N-08)", () => {
     expect(ko["image.unsupported"]).toContain("로컬 이미지 경로");
   });
 
+  it("names which way the table counts disagree, and singularises a count of 1", () => {
+    // `tableCountMismatch` reports both directions (#97 item 1), but the cause
+    // it gave was only true when the engine counts more, and its "counts 1
+    // tables" read as a bug (#101 item 2). The panels case compares the painted
+    // line with this table's own output, so it stays green through any reword:
+    // the bite has to be here. The parity probes hand every parameter the same
+    // value, so they only ever reach the reverse branch, which is the other
+    // reason both directions are pinned by hand.
+    const forward = en["table.indexMismatch"]({ engine: 2, published: 1 });
+    const singular = en["table.indexMismatch"]({ engine: 1, published: 0 });
+    const reverse = en["table.indexMismatch"]({ engine: 0, published: 1 });
+    expect(forward).toContain("2 tables");
+    // Only the numbers after the unpublished table move, not all of them.
+    expect(forward).toContain("after it");
+    expect(reverse).toContain("more than the engine's own table walk reached");
+    expect(reverse).not.toBe(forward);
+    expect(singular).toContain("1 table");
+    expect(singular).not.toContain("1 tables");
+
+    const koForward = ko["table.indexMismatch"]({ engine: 2, published: 1 });
+    const koReverse = ko["table.indexMismatch"]({ engine: 0, published: 1 });
+    expect(koForward).toContain("표 2개");
+    expect(koForward).toContain("뒤에 오는");
+    expect(koReverse).toContain("신뢰할 수 없습니다");
+    expect(koReverse).not.toBe(koForward);
+    for (const line of [koForward, koReverse]) expect(line).not.toContain("table");
+  });
+
   /**
    * The check above only reads strings, so a template function pasted from en
    * into ko passes it: the key exists and both values are functions.

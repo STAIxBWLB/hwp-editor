@@ -57,8 +57,10 @@ export function TableGrid(): JSX.Element {
 
   // The engine counts every table its own walk reaches, including one inside a
   // note, a header, a footer or a hidden comment, and the envelope draws none of
-  // those. One of them shifts every published index, so no number this panel
-  // could offer is the reader's table (#97 item 1).
+  // those. One of them shifts the number of every table published after it, and
+  // this panel cannot tell which side of that table the reader picked, so no
+  // index it could offer is certainly the reader's table (#97 item 1, #101
+  // item 3).
   const mismatch = envelope === null ? null : tableCountMismatch(envelope);
 
   if (mismatch !== null) {
