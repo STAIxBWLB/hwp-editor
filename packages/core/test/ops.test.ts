@@ -355,26 +355,34 @@ describe("the argv delete-table value means what it says (#58 item 13e)", () => 
     expect(opsToArgv([
       { kind: "delete-table", target: 3 },
       { kind: "delete-table", target: "불필요한 표" },
-      // The engine reads these as anchor names, so they may be carried as-is.
+      // `usize::from_str` takes no sign but `+`, no decimal point and no radix
+      // prefix, so the engine reads each of these as an anchor name and so may
+      // this side carry it.
+      { kind: "delete-table", target: "-3" },
       { kind: "delete-table", target: "3.5" },
-      { kind: "delete-table", target: "-1" },
+      { kind: "delete-table", target: "0x3" },
       { kind: "delete-table", target: "" },
     ])).toEqual([
       "--delete-table", "3",
       "--delete-table", "불필요한 표",
+      "--delete-table", "-3",
       "--delete-table", "3.5",
-      "--delete-table", "-1",
+      "--delete-table", "0x3",
       "--delete-table", "",
     ]);
   });
 
   it("reads the flag back with the engine's own rule", () => {
     expect(argvToOps(["--delete-table", "3"])).toEqual([{ kind: "delete-table", target: 3 }]);
+    // The engine trims and then parses, so a padded or plus-signed decimal is
+    // still its index.
     expect(argvToOps(["--delete-table", " 3 "])).toEqual([{ kind: "delete-table", target: 3 }]);
+    expect(argvToOps(["--delete-table", "+3"])).toEqual([{ kind: "delete-table", target: 3 }]);
     // `Number("")` is 0 and `Number("3.5")` is a fractional index; the engine
-    // treats both as anchors, and so does the reader now.
-    expect(argvToOps(["--delete-table", ""])).toEqual([{ kind: "delete-table", target: "" }]);
-    expect(argvToOps(["--delete-table", "3.5"])).toEqual([{ kind: "delete-table", target: "3.5" }]);
+    // treats both as anchors, and so does the reader now, with "-3" and "0x3".
+    for (const anchor of ["", "3.5", "-3", "0x3"]) {
+      expect(argvToOps(["--delete-table", anchor])).toEqual([{ kind: "delete-table", target: anchor }]);
+    }
   });
 });
 
