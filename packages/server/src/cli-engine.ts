@@ -714,21 +714,45 @@ export function protectedReasonFromStderr(stderr: string): string | null {
 }
 
 /**
+ * `hwp <subcommand> failed (exit N)`, the whole of it. `runCliOk` writes the
+ * subcommand and the exit code and nothing else, so the match cannot reach
+ * past the head into anything a later wrapper appended.
+ */
+const CLI_EXIT_HEAD = /^hwp \S+ failed \(exit -?\d+\)/u;
+
+/**
+ * The `hwp <subcommand> failed (exit N)` head of a failure's message, or null.
+ *
+ * The protected sentence prints this head rather than the whole message
+ * (#105 item 2): a failure's message can carry a wrapper's added text, and
+ * some of those name the engine's stderr or a staged path. What this returns
+ * is transport-authored for certain; anything after the head is not.
+ */
+export function cliExitHead(message: string): string | null {
+  const head = CLI_EXIT_HEAD.exec(message);
+  return head === null ? null : head[0];
+}
+
+/**
  * Rethrow a generic CLI failure as `protected` when its stderr carries a
  * protection marker. Applied at every call site that runs a command this
  * transport refuses on a protected document, never inside `runCliOk`: that is
  * what keeps `read` and `render` succeeding on protected documents hwp-cli
  * can still read (D-11).
  *
- * The sentence keeps `error.message` in front, which is `runCliOk`'s own
- * `hwp <command> failed (exit N)`, so a caller learns which command was
- * refused (lint, slots, fields, fill, edit, compose) instead of reading
- * `edit/compose` whatever ran (#105 item 2).
+ * The sentence names the command that was refused (lint, slots, fields, fill,
+ * edit, compose) by keeping `runCliOk`'s head in front, and takes only that
+ * head, never the rest of the message (#105 item 2). A failure with no
+ * readable head gets the kind and the next step alone: a neutral subject, as
+ * the issue allows, rather than text of unknown provenance.
  */
 function rethrowProtected(error: unknown): never {
   if (error instanceof HwpCliError && error.reason === "failed") {
     const reason = protectedReasonFromStderr(error.stderr ?? "");
-    if (reason !== null) throw new HwpCliError("protected", `${error.message}: ${reason}`, error.stderr);
+    if (reason !== null) {
+      const head = cliExitHead(error.message);
+      throw new HwpCliError("protected", head === null ? reason : `${head}: ${reason}`, error.stderr);
+    }
   }
   throw error;
 }

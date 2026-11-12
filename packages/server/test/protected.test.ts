@@ -8,9 +8,10 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { PROTECTED_NEXT_STEP } from "@hwp-editor/core";
+import { PROTECTED_NEXT_STEP, STOPPED_WITHOUT_DIAGNOSTIC } from "@hwp-editor/core";
 
 import {
+  cliExitHead,
   createCliEngine,
   documentEditability,
   HwpCliError,
@@ -105,6 +106,34 @@ describe("protectedReasonFromStderr", () => {
     expect(message).not.toContain("/tmp/hwp-editor-abc123");
     expect(message).not.toContain("in.hwpx");
     expect(message).not.toContain("exit 1");
+  });
+});
+
+/**
+ * The protected sentence carries the command that failed, and only that
+ * (review of #49, item 2). `runCliOk` writes nothing else, but a failure's
+ * message can hold a wrapper's added text, and some wrappers name the engine's
+ * stderr or a staged path, so the head is matched rather than assumed to be
+ * the whole message.
+ */
+describe("the command head a protected sentence may print", () => {
+  it("takes the head alone from a message that carries engine text after it", () => {
+    const message = "hwp lint failed (exit 1): Error: /private/tmp/hwp-editor-x/in.hwpx 암호화된 문서입니다";
+    expect(cliExitHead(message)).toBe("hwp lint failed (exit 1)");
+  });
+
+  it("keeps the head when runCliOk appended the stopped-without-diagnostic line", () => {
+    const message = `hwp edit failed (exit -1): ${STOPPED_WITHOUT_DIAGNOSTIC}`;
+    expect(cliExitHead(message)).toBe("hwp edit failed (exit -1)");
+  });
+
+  it.each([
+    ["a family sentence a template command replaced the failure with", "hwp lint could not inspect this document with hwp-cli 1.4.0; check that it opens with hwp info, then retry."],
+    ["a version refusal", "Template commands require hwp-cli 1.4.0 or newer"],
+    ["the head not at the start", "→ hwp edit failed (exit 1)"],
+    ["an empty message", ""],
+  ])("answers null for %s, so the sentence falls back to the neutral subject", (_name, message) => {
+    expect(cliExitHead(message)).toBeNull();
   });
 });
 
