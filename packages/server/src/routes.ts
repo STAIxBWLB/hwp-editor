@@ -426,10 +426,12 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
       }
     });
     if (assets.length > 0 && (await engine.capabilities()).imageAssets !== "v1") {
-      // The next step names the upgrade first: on a CLI host the only reason
-      // imageAssets is withheld is a binary below the 1.4.0 upload grammar,
-      // and "configure a host that advertises it" alone sent the caller
-      // looking for a different adapter (#58 item 31).
+      // Two causes reach this line, and the sentence names both: the CLI engine
+      // withholds `imageAssets` below 1.4.0 because that is the version this
+      // editor's upload path was verified against (#58 item 9), not because the
+      // binary lacks image insertion, and a supplied engine may advertise no
+      // uploads at all. Naming only "configure a host that advertises it" sent
+      // the caller hunting for another adapter (#58 item 31).
       throw new HwpCliError("bad_request", "the configured engine does not support image assets v1; upgrade hwp-cli to 1.4.0 or newer, or configure a host that advertises imageAssets v1, then retry");
     }
     const options: EditOptions = {};

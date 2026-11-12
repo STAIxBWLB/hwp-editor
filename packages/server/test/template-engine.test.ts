@@ -119,6 +119,10 @@ describe("template CLI failure guidance", () => {
     expect((error as Error).message).toContain("hwp info");
     expect((error as Error).message).not.toContain("invalid JSON");
     expect((error as Error).message).not.toContain("/private/fake/document.hwpx");
+    // lint rides runCliOk now, so the family sentence is a rewrite of the
+    // generic failure rather than a replacement for it: the engine's own text
+    // stays on `detail` for a host that logs it (#45 review t45-n1).
+    expect((error as { detail?: string }).detail).toContain("lint failed at /private/fake/document.hwpx");
   });
 });
 

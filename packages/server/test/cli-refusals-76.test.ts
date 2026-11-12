@@ -95,8 +95,10 @@ describe("hwp-cli 1.5-1.6 refusal classification (#76)", () => {
 
   it("gives an image batch on a tagged paragraph the classified cause, not an image remedy (t31-a3)", async () => {
     const image: EditOp[] = [{ kind: "insert-image", anchor: "a", path: "figure.png", width: 20, height: 15 }];
-    // 1.4.0 because the upload grammar only exists there: below it the engine
-    // refuses the batch before it runs, which is its own case (#58 item 31).
+    // 1.4.0 because this server's upload floor is 1.4.0, the version the upload
+    // path was verified against (#58 item 9), not because the binary could not
+    // insert an image; below it the engine refuses the batch before it runs,
+    // which is its own case (#58 item 31).
     const error = await failure(RANGE_TAG, image, [{ name: "figure.png", data: new Uint8Array(Buffer.from(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==", "base64")) }], "1.4.0");
     expect(error.message).toBe("hwp edit failed (exit 3): edit refused: range_tag");

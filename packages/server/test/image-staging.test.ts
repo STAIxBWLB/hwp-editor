@@ -83,21 +83,27 @@ it("names seal's upload restriction before resolving or spawning the binary", as
 });
 
 /**
- * The 1.4.0 upload grammar refuses where it runs, not only where it is
- * advertised (#58 item 31): `capabilities()` withholds `imageAssets` below the
- * floor, but a direct engine call never reads capabilities, so an older binary
- * took the naive path and staged `asset-0.png` for a grammar it does not have.
+ * The 1.4.0 upload floor refuses where it runs, not only where it is advertised
+ * (#58 item 31): `capabilities()` withholds `imageAssets` below the floor, but a
+ * direct engine call never reads capabilities, so an older binary took the naive
+ * path and staged `asset-0.png`. The floor is this editor's verified-against
+ * policy (#58 item 9), not a missing binary capability: hwp-cli could insert an
+ * image from v0.20.0 on, so the refusal has to say whose floor it is.
  */
-it("refuses uploaded assets on a binary below the 1.4.0 upload grammar", async () => {
-  // The default fake reports 0.20.0: above the floor, below the upload grammar.
+it("refuses uploaded assets on a binary below the 1.4.0 upload floor", async () => {
+  // The default fake reports 0.20.0: above the version floor, below this
+  // server's upload floor.
   const { bin, log } = createFakeBin();
   const failure = await createCliEngine({ bin }).edit({ name: "doc.hwpx", data: new Uint8Array([1]) }, [
     { kind: "insert-image", anchor: "x", path: "client.png" },
   ], { assets: [{ name: "client.png", data: new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]) }] })
     .catch((error: unknown) => error);
   expect(failure).toMatchObject({ reason: "version" });
-  expect((failure as Error).message).toContain("hwp 0.20.0 has no image asset uploads");
-  expect((failure as Error).message).toContain("upgrade hwp-cli to 1.4.0 or newer");
+  // The cause is this server's own floor, and the found version rides along.
+  expect((failure as Error).message).toContain("this server accepts uploaded images only with hwp-cli 1.4.0 or newer");
+  expect((failure as Error).message).toContain("(hwp 0.20.0 found)");
+  expect((failure as Error).message).toContain("upgrade hwp-cli, then retry the edit");
+  expect((failure as Error).message).not.toContain("has no image asset uploads");
   // The refusal precedes the edit spawn: nothing was staged, nothing ran.
   const edits = log().split("\n").filter((line) => /^edit\b/.test(line) && !/--help/.test(line));
   expect(edits).toEqual([]);

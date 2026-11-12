@@ -287,8 +287,9 @@ describe("the entry-module guard", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout.trim()).toBe("function");
-    // Surviving directories from a real run of the script are tolerated by
-    // comparing before against after rather than demanding none exist.
+    // This root starts empty and only the two children below write to it, so
+    // the import child must leave it empty. Comparing before against after
+    // keeps that exact if a first child ever does leave something behind.
     expect(strays()).toEqual(before);
   });
 
