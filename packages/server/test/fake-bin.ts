@@ -47,6 +47,12 @@ export interface FakeBinOptions {
    * unreadable document, which is not a lint failure a caller can fix.
    */
   templateFailureCode?: number;
+  /**
+   * stderr the failing template command writes; default `<command> failed at
+   * /private/fake/document.hwpx`. Overrides the text so a test can drive the
+   * Korean protected markers through a command other than `edit` (#105 item 2).
+   */
+  templateStderr?: string;
   /** `slow` sleep duration in ms; default 5000. */
   delayMs?: number;
   /** JSON printed for `info`, if the test needs the pre-flight to see one. */
@@ -151,7 +157,7 @@ export function createFakeBin(opts: FakeBinOptions = {}): { bin: string; log: ()
   const bin = path.join(dir, "hwp");
   const help = opts.helpFixture ?? DEFAULT_HELP_FIXTURE;
   const fail = (command: string) => opts.failTemplateCommand === command
-    ? [`printf '%s' ${JSON.stringify(`${command} failed at /private/fake/document.hwpx`)} >&2`, `exit ${opts.templateFailureCode ?? 3}`]
+    ? [`printf '%s' ${JSON.stringify(opts.templateStderr ?? `${command} failed at /private/fake/document.hwpx`)} >&2`, `exit ${opts.templateFailureCode ?? 3}`]
     : [];
   /**
    * A successful `edit` that publishes the staged input and writes the report.

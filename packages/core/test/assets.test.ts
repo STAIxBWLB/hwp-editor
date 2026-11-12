@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { imageAssetMediaType, imageAssetsMatchOps, validateImageAssets } from "../src/assets.js";
+import { imageAssetMediaType, imageAssetsMatchOps, imageAssetsMismatch, validateImageAssets } from "../src/assets.js";
 
 const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0]);
 const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0, 0]);
@@ -50,4 +50,41 @@ it("matches uploaded names exactly while permitting repeated insertions", () => 
   expect(imageAssetsMatchOps([], [{ name: "a.png" }])).toBe(false);
   expect(imageAssetsMatchOps([op], [{ name: "b.png" }])).toBe(false);
   expect(imageAssetsMatchOps([op, { ...op, path: "b.png" }], [{ name: "a.png" }, { name: "a.png" }])).toBe(false);
+});
+
+describe("the mismatch direction (#105 item 3)", () => {
+  const op = { kind: "insert-image" as const, anchor: "x", path: "a.png" };
+
+  it("answers null exactly when the predicate says the two sets match", () => {
+    // The predicate is the null test of this helper, so every case above reads
+    // through it; the two directions are what the transports act on.
+    expect(imageAssetsMismatch([op, op], [{ name: "a.png" }])).toBeNull();
+    expect(imageAssetsMismatch([], [])).toBeNull();
+    const cases: Array<[Parameters<typeof imageAssetsMismatch>[0], Parameters<typeof imageAssetsMismatch>[1]]> = [
+      [[op, op], [{ name: "a.png" }]],
+      [[], []],
+      [[op], []],
+      [[], [{ name: "a.png" }]],
+      [[op], [{ name: "b.png" }]],
+      [[op, { ...op, path: "b.png" }], [{ name: "a.png" }, { name: "a.png" }]],
+    ];
+    for (const [ops, assets] of cases) {
+      expect(imageAssetsMismatch(ops, assets) === null).toBe(imageAssetsMatchOps(ops, assets));
+    }
+  });
+
+  it("names an op whose path no upload supplied, which is the local-path case", () => {
+    expect(imageAssetsMismatch([op], [])).toBe("op_without_upload");
+    expect(imageAssetsMismatch([op], [{ name: "b.png" }])).toBe("op_without_upload");
+    // Both directions hold: two refs, two uploads, one name only on each side.
+    expect(imageAssetsMismatch([op, { ...op, path: "b.png" }], [{ name: "a.png" }, { name: "c.png" }]))
+      .toBe("op_without_upload");
+  });
+
+  it("names an upload no op referenced, which is the no-path case", () => {
+    expect(imageAssetsMismatch([], [{ name: "a.png" }])).toBe("upload_without_op");
+    // A duplicated upload of a referenced name is still unreferenced: the
+    // count is per asset, and the predicate has always counted it that way.
+    expect(imageAssetsMismatch([op], [{ name: "a.png" }, { name: "a.png" }])).toBe("upload_without_op");
+  });
 });

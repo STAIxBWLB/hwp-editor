@@ -11,7 +11,7 @@ import { base64 } from "../src/http-engine.js";
 import type { DocumentHandle, EditOp, HwpErrorCode } from "../src/index.js";
 import { HwpEngineError, isHwpEngineError } from "../src/index.js";
 import { createTauriEngine, type TauriInvoke } from "../src/tauri.js";
-import { STOPPED_WITHOUT_DIAGNOSTIC } from "../src/index.js";
+import { DISTRIBUTION_NEXT_STEP, PROTECTED_NEXT_STEP, STOPPED_WITHOUT_DIAGNOSTIC } from "../src/index.js";
 import { DRIFT, MIXED_CONFLICT, RANGE_TAG, RUN_CONFLICT, UNMATCHED } from "./fixtures/refusal-stderr.js";
 
 interface Call {
@@ -380,19 +380,16 @@ describe("createTauriEngine protection backstop", () => {
     ? Promise.resolve({version:"0.20.0",editable:true,formats:["hwp","hwpx"]} as T)
     : Promise.reject(detail);
 
-  const MARKER_CASES: readonly (readonly [string, string])[] = [
-    ["암호화된 문서", "encrypted document; hwp-cli refuses edit/compose"],
-    ["DRM", "DRM-protected document; hwp-cli refuses edit/compose"],
-    ["서명된 문서", "signed document; hwp-cli refuses edit/compose"],
-    [
-      "배포용 문서",
-      "distribution (배포용) document; hwp-cli refuses edit/compose",
-    ],
+  const MARKER_CASES: readonly (readonly [string, string, string])[] = [
+    ["암호화된 문서", "encrypted document", PROTECTED_NEXT_STEP],
+    ["DRM", "DRM-protected document", PROTECTED_NEXT_STEP],
+    ["서명된 문서", "signed document", PROTECTED_NEXT_STEP],
+    ["배포용 문서", "distribution (배포용) document", DISTRIBUTION_NEXT_STEP],
   ];
 
   it.each(MARKER_CASES)(
     "upgrades an edit refusal carrying %j to protected",
-    async (marker, message) => {
+    async (marker, kind, step) => {
       const engine = createTauriEngine(
         rejectWith(`hwp_failed: hwp exited with status 1: ${marker}는 편집할 수 없습니다`),
       );
@@ -400,7 +397,9 @@ describe("createTauriEngine protection backstop", () => {
         .edit(doc, [{ kind: "replace", find: "가", replace: "나" }])
         .then(() => null, (e: unknown) => e)) as HwpEngineError;
       expect(err.code).toBe("protected");
-      expect(err.message).toBe(`hwped_edit failed: ${message}`);
+      // The bridge prefixes the command it invoked, and the shared table adds
+      // the kind with the step that kind carries (#105 item 2).
+      expect(err.message).toBe(`hwped_edit failed: ${kind}; ${step}`);
     },
   );
 
@@ -412,8 +411,10 @@ describe("createTauriEngine protection backstop", () => {
       .compose({ version: "2.0", document: { sections: [] } } as never, "out.hwpx")
       .then(() => null, (e: unknown) => e)) as HwpEngineError;
     expect(err.code).toBe("protected");
+    // 배포용 carries its own step, not the word-processor one (#105 item 2
+    // review): the bridge reads the table, so it follows without a second copy.
     expect(err.message).toBe(
-      "hwped_compose failed: distribution (배포용) document; hwp-cli refuses edit/compose",
+      `hwped_compose failed: distribution (배포용) document; ${DISTRIBUTION_NEXT_STEP}`,
     );
   });
 

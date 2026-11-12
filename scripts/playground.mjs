@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /** Prepare and run the playground from source, using the caller's hwp binary. */
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
+import { accessSync, constants, statSync } from "node:fs";
+import { delimiter, dirname, extname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),"..");
@@ -15,13 +15,41 @@ const binary=bareName ? configuredBinary : resolve(callerDir,configuredBinary);
 // `spawn` searches PATH for a bare name, so a refusal that repeats the name
 // back ("cannot run hwp at hwp") says nothing about where it looked (#58 item
 // 31). Report the entry that search would pick, or say it was PATH-wide.
+//
+// A candidate counts only when `spawn` could run it: existsSync was also true
+// for a directory or a non-executable file named hwp, so the message could
+// name an entry that was never run (#105 item 4).
+function runnable(candidate){
+  try{
+    if(!statSync(candidate).isFile()) return null;
+    // X_OK says nothing on Windows, where the extension and the file type are
+    // what decide; on POSIX it is the bit the kernel checks.
+    if(process.platform!=="win32") accessSync(candidate,constants.X_OK);
+    return candidate;
+  }catch{ return null; }
+}
 function onPath(name){
-  const exts=process.platform==="win32" ? (process.env.PATHEXT ?? ".EXE").split(";") : [""];
-  for(const dir of (process.env.PATH ?? "").split(delimiter)){
-    if(!dir) continue;
+  // libuv's own search, which is what spawn runs (#105 item 4): on POSIX the
+  // PATH entries in order, on Windows the spawn's working directory before
+  // them, with a relative entry resolved against that working directory rather
+  // than against this process's. Windows tries the literal name only when the
+  // name already carries an extension, so `hwp` is looked for as hwp.com and
+  // hwp.exe and never as an extensionless file that spawn would skip; PATHEXT
+  // plays no part in either platform's search, so neither is it part of this
+  // report.
+  //
+  // Approximate on two Windows points that are not mirrored here:
+  // NeedCurrentDirectoryForExePathW (whether the working directory is searched
+  // at all) and quote stripping around the configured name.
+  const win32=process.platform==="win32";
+  const exts=win32 && extname(name)==="" ? [".com",".exe"] : [""];
+  const dirs=(process.env.PATH ?? "").split(delimiter).filter(dir=>dir!=="");
+  const search=win32 ? [root,...dirs] : dirs;
+  for(const dir of search){
+    const base=resolve(root,dir);
     for(const ext of exts){
-      const entry=join(dir,name+ext);
-      if(existsSync(entry)) return entry;
+      const found=runnable(join(base,name+ext));
+      if(found!==null) return found;
     }
   }
   return null;

@@ -306,19 +306,29 @@ describe("table parity (I18N-06, I18N-08)", () => {
     }
   });
 
-  it("names both causes of a missing upload command, with a step for each, in both locales", () => {
-    // One sentence reaches two very different hosts: a CLI server below the
-    // 1.4.0 this editor verifies uploads against, and a host with no upload
-    // command at all, such as the desktop app whose client deletes
+  it("gives every host that shows image.unsupported a step it can take, in both locales", () => {
+    // One sentence reaches three hosts: a CLI server below the 1.4.0 this
+    // editor verifies uploads against, an HTTP host serving a supplied engine
+    // that advertises no uploads, and the desktop app whose client deletes
     // `imageAssets` whatever the binary reports (`core/src/tauri.ts`). Leading
-    // with the upgrade alone left the second host with a step that changes
+    // with the upgrade alone left the other two with a step that changes
     // nothing (#58 item 31, review t45-a1).
+    //
+    // The desktop step is NOT a local insert-image path or a component block
+    // with a relative image path: ImagePanel disables every input and its only
+    // submit stages uploaded bytes, and `insertionPreflight` refuses any
+    // component whose blocks hold an image on every host, so neither route
+    // exists there (#105 item 1).
     expect(en["image.unsupported"]).toContain("1.4.0");
+    expect(en["image.unsupported"]).toContain("supplied engine");
     expect(en["image.unsupported"]).toContain("desktop app");
-    expect(en["image.unsupported"]).toContain("local image path");
+    expect(en["image.unsupported"]).toContain("insert the picture in a word processor");
+    expect(en["image.unsupported"]).not.toContain("local image path");
     expect(ko["image.unsupported"]).toContain("1.4.0");
+    expect(ko["image.unsupported"]).toContain("엔진을 직접 공급하는 호스트");
     expect(ko["image.unsupported"]).toContain("데스크톱 앱");
-    expect(ko["image.unsupported"]).toContain("로컬 이미지 경로");
+    expect(ko["image.unsupported"]).toContain("워드프로세서에서 그림을 넣은 뒤");
+    expect(ko["image.unsupported"]).not.toContain("로컬 이미지 경로");
   });
 
   it("says which names may carry =>, because hwp-cli keeps a bookmark's tail", () => {

@@ -53,9 +53,36 @@ export function validateImageAssets(assets: readonly ImageAsset[]): void {
   }
 }
 
-/** Every uploaded name must be referenced, and every insertion must name an upload. */
-export function imageAssetsMatchOps(ops: readonly EditOp[], assets: readonly Pick<ImageAsset, "name">[]): boolean {
+/**
+ * Which way one edit batch's uploads and its insert-image paths disagree.
+ *
+ * The two directions are two different mistakes with two different answers: an
+ * insert-image path no upload supplied asks a host to read a local path, and
+ * an upload no op references involves no path at all. Transports keep their
+ * own sentences and wire codes for each; this decides only which one it is, so
+ * the split cannot drift between them (#105 item 3).
+ */
+export type ImageAssetsMismatch = "op_without_upload" | "upload_without_op";
+
+/**
+ * The mismatch between a batch's uploads and its insert-image paths, or null
+ * when every upload is named once and every named path was uploaded.
+ *
+ * A path case is reported first whenever both hold, which is the precedence
+ * both transports already used: it is the direction that can send a host
+ * looking outside its staging directory (server `path_traversal`).
+ */
+export function imageAssetsMismatch(
+  ops: readonly EditOp[],
+  assets: readonly Pick<ImageAsset, "name">[],
+): ImageAssetsMismatch | null {
   const refs = new Set(ops.filter(op => op?.kind === "insert-image").map(op => op.path));
   const names = new Set(assets.map(asset => asset.name));
-  return refs.size === assets.length && [...refs].every(name => names.has(name));
+  if (refs.size === assets.length && [...refs].every(name => names.has(name))) return null;
+  return [...refs].some(name => !names.has(name)) ? "op_without_upload" : "upload_without_op";
+}
+
+/** Every uploaded name must be referenced, and every insertion must name an upload. */
+export function imageAssetsMatchOps(ops: readonly EditOp[], assets: readonly Pick<ImageAsset, "name">[]): boolean {
+  return imageAssetsMismatch(ops, assets) === null;
 }
