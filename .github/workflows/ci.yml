@@ -12,7 +12,121 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # #126: the docs-only fast path. A pull request that changes only prose
+  # cannot change what build-test and package prove, and 16 of the 49 commits
+  # merged to main between 2026-11-05 and 2026-11-12 were exactly that shape
+  # while each still ran the full matrix. This job is the only source of that
+  # answer: it reads GitHub's own list of the pull request's changed files, so
+  # no checkout and no history fetch is needed.
+  #
+  # The rule, in one line: docs_only is true only when every changed path is
+  # under `docs/` or is a `*.md` file at the repository root, no path arrived by
+  # a rename from outside that set, and RELEASING.md is not among them. `*.md`
+  # cannot cross a slash, so `packages/*/README.md` - which ships inside the
+  # tarballs `package` checks - is NOT docs-only, and neither is anything under
+  # `.github/`, `packages/`, `apps/` or `scripts/`.
+  #
+  # Those last two exclusions are review findings on #126, and each of them
+  # would have skipped the job that proves the change:
+  #
+  # - A rename counts by BOTH of its paths. `gh` reports a move as
+  #   `{filename: docs/x.mjs, previous_filename: scripts/smoke-consumer.mjs}`,
+  #   so a jq that takes `filename` alone calls `git mv
+  #   scripts/smoke-consumer.mjs docs/x.mjs` docs-only while the code that
+  #   moved is what the `package` script it came from still runs.
+  # - `RELEASING.md` is not prose. packages/server/test/release-guards.test.ts
+  #   reads it (REL-04) under `pnpm -r test`, which build-test runs, so a pull
+  #   request touching only that file has to run every gating job.
+  #
+  # The file list is read from the API when this job runs, not from the commit
+  # the run was queued for, so the head is read too and must still be this
+  # run's `pull_request.head.sha`: a push in between would otherwise hand the
+  # fast path a list describing a tree nobody reviewed.
+  #
+  # Seven ways it fails closed, because a fast path that guesses is worse than
+  # no fast path: a path outside the set, a path that only arrived by a rename
+  # from outside it, a root Markdown file the tests read, a head this job could
+  # not read, a head that is no longer the one the run was queued for, a list
+  # that could not be read or came back empty, and a list at the API's
+  # 3000-file cap where it may be truncated. `false` is written to the output
+  # FIRST and overwritten only by a list that passes, so every error path costs
+  # runner-minutes rather than skipping a check.
+  #
+  # The job itself never fails. A red `changes` would fail ci-ok through the
+  # gating rule below, which would turn an API hiccup into a blocked pull
+  # request; an uncomputable answer must degrade to the full run instead.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # A job-level permissions block replaces the workflow-level one for this
+    # job rather than adding to it. The file list is the only thing read here.
+    permissions:
+      pull-requests: read
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+    steps:
+      - name: Classify the changed paths
+        id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.pull_request.number }}
+          # GitHub's own cap on this endpoint. At it, the list may be
+          # truncated, so the answer is not provable and the run is full.
+          MAX_FILES: "3000"
+          # The commit this run was queued for. The file list below is read at
+          # query time, so it answers for whatever the pull request stands at
+          # then; the two are compared before the list is believed.
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -u
+          echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          api_head=$(gh api -H "Accept: application/vnd.github+json" \
+            "repos/$REPO/pulls/$NUMBER" --jq .head.sha) || {
+            echo "could not read this pull request's head commit; running every gating job"
+            exit 0
+          }
+          if [ "$api_head" != "$HEAD_SHA" ]; then
+            echo "this pull request now stands at $api_head, not at this run's $HEAD_SHA;" \
+              "running every gating job"
+            exit 0
+          fi
+          # `filename` and `previous_filename`: a rename is one entry naming both
+          # paths, and the old one is where the code came from (#126).
+          files=$(gh api --paginate -H "Accept: application/vnd.github+json" \
+            "repos/$REPO/pulls/$NUMBER/files?per_page=100" \
+            --jq '.[] | .filename, (.previous_filename // empty)') || {
+            echo "could not read this pull request's changed files; running every gating job"
+            exit 0
+          }
+          [ -n "$files" ] || {
+            echo "this pull request reported no changed file; running every gating job"
+            exit 0
+          }
+          total=$(printf '%s\n' "$files" | wc -l | tr -d ' ')
+          if [ "$total" -ge "$MAX_FILES" ]; then
+            echo "the list reached the API's cap of $MAX_FILES files; running every gating job"
+            exit 0
+          fi
+          outside=$(printf '%s\n' "$files" | grep -Ev '^(docs/|[^/]+\.md$)' || true)
+          if [ -n "$outside" ]; then
+            echo "not docs-only: $(printf '%s\n' "$outside" | head -5 | tr '\n' ' ')"
+            exit 0
+          fi
+          # The one root Markdown file that is read back by a test, so it is
+          # code for this purpose (#126): REL-04 in release-guards.test.ts.
+          read_by_tests=$(printf '%s\n' "$files" | grep -Ex 'RELEASING\.md' || true)
+          if [ -n "$read_by_tests" ]; then
+            echo "not docs-only: RELEASING.md is read by" \
+              "packages/server/test/release-guards.test.ts (REL-04)"
+            exit 0
+          fi
+          echo "docs_only=true" >> "$GITHUB_OUTPUT"
+          echo "changed files: $total, all under docs/ or root-level *.md"
+
   build-test:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -26,14 +140,14 @@ jobs:
         node: [22, 24]
         react: [18, 19]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       # setup-node's pnpm cache shells out to `pnpm store path`, so pnpm must
       # already exist or setup-node fails with "Unable to locate executable
       # file: pnpm". Order here is load-bearing.
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       # No version input on purpose: action-setup reads packageManager from the
       # root package.json, so this workflow cannot drift from the repo's pin.
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: ${{ matrix.node }}
           cache: pnpm
@@ -66,14 +180,16 @@ jobs:
       - run: pnpm -r test
 
   package:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # No needs: edge to build-test. Installability is a function of packaging
     # metadata, not of the runtime axis, so it need not wait for four cells.
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22
           cache: pnpm
@@ -115,22 +231,55 @@ jobs:
         run: node scripts/smoke-consumer.mjs
 
   # Owner-required check: ci-ok. Advisory workflows stay outside this graph.
+  #
+  # #126 adds one accepted skip to the rule this job enforces, and only one:
+  # `changes` succeeded, it said docs_only, and the jobs that were skipped are
+  # exactly build-test and package. Every other combination is a failure,
+  # including a skip announced by anything else in the graph, a docs_only answer
+  # whose `changes` job did not succeed, and a docs_only answer with one of the
+  # two jobs having actually run to a non-success result. The rule is written
+  # this way, rather than as "allow skipped when docs_only", so that a job added
+  # to this workflow later cannot silently become skippable.
   ci-ok:
     if: ${{ always() }}
-    needs: [build-test, package]
+    needs: [changes, build-test, package]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Require every gating job to succeed
+      - name: Require every gating job to succeed, or the docs-only skip
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
+          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
         run: |
           node <<'NODE'
+          // The only skip this aggregate may pass (#126).
+          const DOCS_SKIPS = ["build-test", "package"];
           const jobs = Object.entries(JSON.parse(process.env.NEEDS_JSON));
-          const failed = jobs.filter(([, job]) => job.result !== "success");
-          if (jobs.length === 0 || failed.length > 0) {
-            console.error("Gating jobs did not all succeed:", failed);
+          if (jobs.length === 0) {
+            console.error("No gating job reported a result");
             process.exit(1);
           }
-          console.log("All gating jobs succeeded");
+          const failed = jobs.filter(([, job]) => job.result !== "success");
+          if (failed.length === 0) {
+            console.log("All gating jobs succeeded");
+            process.exit(0);
+          }
+          const changesJob = jobs.find(([id]) => id === "changes");
+          const skipped = jobs
+            .filter(([, job]) => job.result === "skipped")
+            .map(([id]) => id)
+            .sort();
+          const excusable =
+            process.env.DOCS_ONLY === "true" &&
+            changesJob !== undefined &&
+            changesJob[1].result === "success" &&
+            failed.every(([, job]) => job.result === "skipped") &&
+            skipped.length === DOCS_SKIPS.length &&
+            skipped.every((id, index) => id === DOCS_SKIPS[index]);
+          if (excusable) {
+            console.log("Docs-only pull request: build-test and package were skipped, as #126 allows");
+            process.exit(0);
+          }
+          console.error("Gating jobs did not all succeed:", failed);
+          process.exit(1);
           NODE
