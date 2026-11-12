@@ -71,9 +71,9 @@ Run these passes and tag every finding with its pass:
   matching (`1.x`), never exact minor equality, and reject malformed consumed fields
   (`packages/core/src/templates.ts:reportSchemaVersion`,
   `packages/server/src/template-engine.ts:lint`).
-- **Both locales ship together.** `ko` is typed as `MessageTable = typeof en`
-  (`packages/react/src/messages.ts:153`, `:166`), so a missing Korean key fails typecheck. A new control
-  without strings in both tables is a finding.
+- **Both locales ship together.** `ko` is declared `const ko: MessageTable`, and `MessageTable` is
+  `typeof en` (`packages/react/src/messages.ts`), so a missing Korean key fails typecheck. A new
+  control without strings in both tables is a finding.
 - **No stored credential on the release path.** REL-02 (`packages/server/test/repo-guards.test.ts:739`)
   rejects any `secrets.` reference except the one documented dist-tag step.
 - **e2e never gates a publishing job.** PKG-10 (`packages/server/test/repo-guards.test.ts:647`) keeps
