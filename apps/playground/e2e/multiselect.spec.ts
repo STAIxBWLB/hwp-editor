@@ -89,7 +89,7 @@ test("AC3: five selected paragraphs use one edit request and one undo restores a
  *
  * The first occurrence is the six-character run "동일문 안내", and the e2e
  * selects its first three characters. hwp-cli 1.6.1 publishes `source_chars`
- * on run segments (schema 1.1, hwp-cli#517), so the op addresses the run with
+ * on run segments (schema 1.1, agent-hwp#517), so the op addresses the run with
  * the half-open source window `chars: [0, 3]` instead of snapping to the whole
  * run, and the untouched " 안내" and the second occurrence prove the window
  * landed where it was asked.

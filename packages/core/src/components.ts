@@ -16,7 +16,7 @@
  * A paragraph cannot carry a `list` here, so a starter that needs a bulleted
  * ladder writes the markers into the text. That is also what 개조식 notation
  * does, and it keeps HWP 5.0 ordered-list numbering out of the picture
- * (hwp-cli#472); the validator refuses the field rather than letting the
+ * (agent-hwp#472); the validator refuses the field rather than letting the
  * engine refuse the reference it cannot resolve. Style values follow the
  * engine's official profile: starters reference `바탕글` and `개요 1`..`개요
  * 6` by name and define only what the profile does not have (for example a
@@ -620,7 +620,7 @@ function validateParagraph(block: Record<string, unknown>, source: string, field
       at(field, "list"),
       "is not supported: a component's blocks are inserted into a document whose lists it " +
         "cannot know, so hwp compose refuses the reference; write the markers into the text " +
-        "runs instead (HWP 5.0 ordered lists also show Hangul numbering, hwp-cli#472)",
+        "runs instead (HWP 5.0 ordered lists also show Hangul numbering, agent-hwp#472)",
     );
   }
   const runsField = at(field, "runs");

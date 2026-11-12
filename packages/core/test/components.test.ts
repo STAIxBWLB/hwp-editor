@@ -175,7 +175,7 @@ describe("starter components", () => {
     }
   });
 
-  it("keeps ordered lists out of the starters (hwp-cli#472)", () => {
+  it("keeps ordered lists out of the starters (agent-hwp#472)", () => {
     for (const component of STARTER_COMPONENTS) {
       expect(JSON.stringify(component.blocks)).not.toContain('"list":');
     }
@@ -589,7 +589,7 @@ describe("validateComponent refusals", () => {
       "components: src/components/broken.json: blocks[0].list: is not supported: a component's " +
         "blocks are inserted into a document whose lists it cannot know, so hwp compose refuses " +
         "the reference; write the markers into the text runs instead (HWP 5.0 ordered lists " +
-        "also show Hangul numbering, hwp-cli#472)",
+        "also show Hangul numbering, agent-hwp#472)",
     );
   });
 
