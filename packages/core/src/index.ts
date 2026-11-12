@@ -17,16 +17,19 @@ export type {
 export {
   imageAssetMediaType,
   imageAssetsMatchOps,
+  imageAssetsMismatch,
   validateImageAssets,
   MAX_IMAGE_ASSET_BYTES,
   MAX_IMAGE_ASSET_MIB,
   MAX_IMAGE_ASSETS,
   MAX_IMAGE_ASSETS_TOTAL_BYTES,
 } from "./assets.js";
+export type { ImageAssetsMismatch } from "./assets.js";
 export {
   HwpEngineError,
   isHwpEngineError,
   isHwpErrorCode,
+  PROTECTED_NEXT_STEP,
   protectedReasonFromDiagnostics,
   toHwpErrorCode,
 } from "./errors.js";

@@ -13,9 +13,9 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
@@ -94,5 +94,53 @@ describe("playground startup failure", () => {
       expect(stderr).toContain(`The playground cannot run hwp at ${bin} (exit status 3)`);
       expect(stderr).not.toContain("at hwp (");
     } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  /**
+   * `existsSync` was also true for a directory named hwp, so the refusal named
+   * an entry `spawn` skips (#105 item 4). The message names the entry that
+   * would actually run, one PATH entry later.
+   */
+  it.runIf(process.platform !== "win32")("skips a directory named hwp and names the entry that would run", () => {
+    const first = mkdtempSync(join(tmpdir(), "hwp-playground-dir-"));
+    const second = mkdtempSync(join(tmpdir(), "hwp-playground-real-"));
+    try {
+      mkdirSync(join(first, "hwp"));
+      const bin = join(second, "hwp");
+      writeFileSync(bin, `#!${process.execPath}\nprocess.exit(3);\n`);
+      chmodSync(bin, 0o700);
+      const { status, stderr } = startup({
+        HWP_EDITOR_BIN: "", HWP_CLI: "",
+        PATH: `${first}${delimiter}${second}`,
+      });
+      expect(status).toBe(1);
+      expect(stderr).toContain(`The playground cannot run hwp at ${bin} (exit status 3)`);
+      expect(stderr).not.toContain(join(first, "hwp"));
+    } finally {
+      rmSync(first, { recursive: true, force: true });
+      rmSync(second, { recursive: true, force: true });
+    }
+  });
+
+  it.runIf(process.platform !== "win32")("skips a non-executable file named hwp and names the entry that would run", () => {
+    const first = mkdtempSync(join(tmpdir(), "hwp-playground-noexec-"));
+    const second = mkdtempSync(join(tmpdir(), "hwp-playground-exec-"));
+    try {
+      writeFileSync(join(first, "hwp"), "not an executable\n");
+      chmodSync(join(first, "hwp"), 0o600);
+      const bin = join(second, "hwp");
+      writeFileSync(bin, `#!${process.execPath}\nprocess.exit(3);\n`);
+      chmodSync(bin, 0o700);
+      const { status, stderr } = startup({
+        HWP_EDITOR_BIN: "", HWP_CLI: "",
+        PATH: `${first}${delimiter}${second}`,
+      });
+      expect(status).toBe(1);
+      expect(stderr).toContain(`The playground cannot run hwp at ${bin} (exit status 3)`);
+      expect(stderr).not.toContain(join(first, "hwp"));
+    } finally {
+      rmSync(first, { recursive: true, force: true });
+      rmSync(second, { recursive: true, force: true });
+    }
   });
 });

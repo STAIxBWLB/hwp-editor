@@ -11,7 +11,7 @@ import { base64 } from "../src/http-engine.js";
 import type { DocumentHandle, EditOp, HwpErrorCode } from "../src/index.js";
 import { HwpEngineError, isHwpEngineError } from "../src/index.js";
 import { createTauriEngine, type TauriInvoke } from "../src/tauri.js";
-import { STOPPED_WITHOUT_DIAGNOSTIC } from "../src/index.js";
+import { PROTECTED_NEXT_STEP, STOPPED_WITHOUT_DIAGNOSTIC } from "../src/index.js";
 import { DRIFT, MIXED_CONFLICT, RANGE_TAG, RUN_CONFLICT, UNMATCHED } from "./fixtures/refusal-stderr.js";
 
 interface Call {
@@ -381,18 +381,18 @@ describe("createTauriEngine protection backstop", () => {
     : Promise.reject(detail);
 
   const MARKER_CASES: readonly (readonly [string, string])[] = [
-    ["암호화된 문서", "encrypted document; hwp-cli refuses edit/compose"],
-    ["DRM", "DRM-protected document; hwp-cli refuses edit/compose"],
-    ["서명된 문서", "signed document; hwp-cli refuses edit/compose"],
+    ["암호화된 문서", "encrypted document"],
+    ["DRM", "DRM-protected document"],
+    ["서명된 문서", "signed document"],
     [
       "배포용 문서",
-      "distribution (배포용) document; hwp-cli refuses edit/compose",
+      "distribution (배포용) document",
     ],
   ];
 
   it.each(MARKER_CASES)(
     "upgrades an edit refusal carrying %j to protected",
-    async (marker, message) => {
+    async (marker, kind) => {
       const engine = createTauriEngine(
         rejectWith(`hwp_failed: hwp exited with status 1: ${marker}는 편집할 수 없습니다`),
       );
@@ -400,7 +400,9 @@ describe("createTauriEngine protection backstop", () => {
         .edit(doc, [{ kind: "replace", find: "가", replace: "나" }])
         .then(() => null, (e: unknown) => e)) as HwpEngineError;
       expect(err.code).toBe("protected");
-      expect(err.message).toBe(`hwped_edit failed: ${message}`);
+      // The bridge prefixes the command it invoked, the shared table adds the
+      // kind and the one next step (#105 item 2).
+      expect(err.message).toBe(`hwped_edit failed: ${kind}; ${PROTECTED_NEXT_STEP}`);
     },
   );
 
@@ -413,7 +415,7 @@ describe("createTauriEngine protection backstop", () => {
       .then(() => null, (e: unknown) => e)) as HwpEngineError;
     expect(err.code).toBe("protected");
     expect(err.message).toBe(
-      "hwped_compose failed: distribution (배포용) document; hwp-cli refuses edit/compose",
+      `hwped_compose failed: distribution (배포용) document; ${PROTECTED_NEXT_STEP}`,
     );
   });
 

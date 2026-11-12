@@ -280,7 +280,7 @@ describe("routes (stub engine)", () => {
     const { HwpCliError } = await import("../src/cli-engine.js");
     const engine = stubEngine({
       async edit() {
-        throw new HwpCliError("protected", "encrypted document; hwp-cli refuses edit/compose");
+        throw new HwpCliError("protected", "encrypted document; remove the protection in a word processor that can open it, save a copy, then reopen that copy here");
       },
     });
     const handler = createHwpEditorHandler({ engine, sessions: false });

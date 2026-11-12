@@ -31,11 +31,12 @@ import {
   RENDER_LAYOUT_NEXT_STEP,
   opsToJson,
   validateImageAssets,
-  imageAssetsMatchOps,
+  imageAssetsMismatch,
   imageAssetMediaType,
   parseCatEnvelope,
   parseStyleTable,
   protectedReasonFromDiagnostics,
+  PROTECTED_NEXT_STEP,
   sniffDocumentFormat,
   stylesVersionSupported,
   type Capabilities,
@@ -675,12 +676,12 @@ export function documentEditability(info: unknown): { editable: boolean; reason?
   if (typeof info !== "object" || info === null) return { editable: true };
   const record = info as Record<string, unknown>;
   if (record["encrypted"] === true) {
-    return { editable: false, reason: "encrypted document; hwp-cli refuses edit/fill" };
+    return { editable: false, reason: `encrypted document; ${PROTECTED_NEXT_STEP}` };
   }
   if (record["distribution"] === true) {
     return {
       editable: false,
-      reason: "distribution (배포용) document; hwp-cli refuses edit/fill",
+      reason: `distribution (배포용) document; ${PROTECTED_NEXT_STEP}`,
     };
   }
   const attributes = record["attributes"];
@@ -688,7 +689,7 @@ export function documentEditability(info: unknown): { editable: boolean; reason?
     for (const attribute of attributes) {
       const label = typeof attribute === "string" ? PROTECTED_ATTRIBUTES[attribute] : undefined;
       if (label !== undefined) {
-        return { editable: false, reason: `${label}; hwp-cli refuses edit/fill` };
+        return { editable: false, reason: `${label}; ${PROTECTED_NEXT_STEP}` };
       }
     }
   }
@@ -714,14 +715,20 @@ export function protectedReasonFromStderr(stderr: string): string | null {
 
 /**
  * Rethrow a generic CLI failure as `protected` when its stderr carries a
- * protection marker. Applied at the `edit` and `compose` call sites only,
- * never inside `runCliOk`: that is what keeps `read` and `render` succeeding
- * on protected documents hwp-cli can still read (D-11).
+ * protection marker. Applied at every call site that runs a command this
+ * transport refuses on a protected document, never inside `runCliOk`: that is
+ * what keeps `read` and `render` succeeding on protected documents hwp-cli
+ * can still read (D-11).
+ *
+ * The sentence keeps `error.message` in front, which is `runCliOk`'s own
+ * `hwp <command> failed (exit N)`, so a caller learns which command was
+ * refused (lint, slots, fields, fill, edit, compose) instead of reading
+ * `edit/compose` whatever ran (#105 item 2).
  */
 function rethrowProtected(error: unknown): never {
   if (error instanceof HwpCliError && error.reason === "failed") {
-    const message = protectedReasonFromStderr(error.stderr ?? "");
-    if (message !== null) throw new HwpCliError("protected", message, error.stderr);
+    const reason = protectedReasonFromStderr(error.stderr ?? "");
+    if (reason !== null) throw new HwpCliError("protected", `${error.message}: ${reason}`, error.stderr);
   }
   throw error;
 }
@@ -1404,17 +1411,18 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         if (ops.some(op => op?.kind === "seal")) {
           throw new HwpCliError("bad_request", "seal cannot be combined with uploaded assets; run seal without uploaded assets through a local host");
         }
-        if (!imageAssetsMatchOps(ops, uploads)) {
+        switch (imageAssetsMismatch(ops, uploads)) {
+          case null:
+            break;
           // Split as the HTTP route splits it (#58 item 31): an op naming an
           // image nobody uploaded and an upload no op references are two
           // different mistakes, and one sentence for both left the second
           // case telling the caller to upload files it had already uploaded.
-          const uploaded = new Set(uploads.map(asset => asset.name));
-          const named = ops.filter(op => op?.kind === "insert-image").map(op => op.path);
-          if (named.some(name => !uploaded.has(name))) {
+          // Which one it is decided once, in core (#105 item 3).
+          case "op_without_upload":
             throw new HwpCliError("bad_request", "insert-image paths must name exactly the uploaded assets; attach the PNG/JPEG file for each named path, then retry");
-          }
-          throw new HwpCliError("bad_request", "an uploaded image is not referenced by any insert-image op; remove the unreferenced upload, or add the insert-image op that uses it, then retry");
+          case "upload_without_op":
+            throw new HwpCliError("bad_request", "an uploaded image is not referenced by any insert-image op; remove the unreferenced upload, or add the insert-image op that uses it, then retry");
         }
         // The floor below is THIS server's, not a capability the binary lacks:
         // the engine could insert an image from v0.20.0 on, and 1.4.0 is the
@@ -1482,7 +1490,10 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         if (!capabilities.editable) {
           throw new HwpCliError(
             "protected",
-            capabilities.reason ?? "protected document; hwp-cli refuses edit/compose",
+            // The inspection's own reason names the kind and the next step;
+            // the fallback names neither command nor kind, since this path
+            // reads `info` rather than the command that would be refused.
+            capabilities.reason ?? `protected document; ${PROTECTED_NEXT_STEP}`,
           );
         }
         const output = path.join(dir, `out${ext}`);

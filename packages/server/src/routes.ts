@@ -33,7 +33,7 @@ import {
   MAX_IMAGE_ASSETS_TOTAL_BYTES,
   sniffDocumentFormat,
   validateImageAssets,
-  imageAssetsMatchOps,
+  imageAssetsMismatch,
   withCallerName,
   type ImageAsset,
 } from "@hwp-editor/core";
@@ -409,16 +409,17 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
       const reason = cause instanceof Error ? cause.message : "invalid image assets";
       throw new HwpCliError("bad_request", reason);
     }
-    if (!imageAssetsMatchOps(ops, assets)) {
+    switch (imageAssetsMismatch(ops, assets)) {
+      case null:
+        break;
       // An insert-image op naming something no upload supplied asks the
       // server to read a local path: that stays path_traversal. An upload no
-      // op names involves no path at all: bad_request (#58 item 7).
-      const uploaded = new Set(assets.map(asset => asset.name));
-      const named = ops.filter(op => op?.kind === "insert-image").map(op => op.path);
-      if (named.some(name => !uploaded.has(name))) {
+      // op names involves no path at all: bad_request (#58 item 7). Which one
+      // it is decided once, in core (#105 item 3).
+      case "op_without_upload":
         return error(400, "path_traversal", "insert-image paths must name exactly the uploaded assets; attach matching PNG/JPEG files instead of server-local paths");
-      }
-      return error(400, "bad_request", "an uploaded image is not referenced by any insert-image op; remove the unreferenced upload, or add the insert-image op that uses it, then retry");
+      case "upload_without_op":
+        return error(400, "bad_request", "an uploaded image is not referenced by any insert-image op; remove the unreferenced upload, or add the insert-image op that uses it, then retry");
     }
     form.forEach((value, key) => {
       if (value instanceof Blob && key !== "file" && key !== "asset") {

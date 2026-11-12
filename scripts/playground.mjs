@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /** Prepare and run the playground from source, using the caller's hwp binary. */
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { accessSync, constants, statSync } from "node:fs";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -15,13 +15,30 @@ const binary=bareName ? configuredBinary : resolve(callerDir,configuredBinary);
 // `spawn` searches PATH for a bare name, so a refusal that repeats the name
 // back ("cannot run hwp at hwp") says nothing about where it looked (#58 item
 // 31). Report the entry that search would pick, or say it was PATH-wide.
+//
+// A candidate counts only when `spawn` could run it: existsSync was also true
+// for a directory or a non-executable file named hwp, so the message could
+// name an entry that was never run (#105 item 4).
+function runnable(candidate){
+  try{
+    if(!statSync(candidate).isFile()) return null;
+    // X_OK says nothing on Windows, where the extension and the file type are
+    // what decide; on POSIX it is the bit the kernel checks.
+    if(process.platform!=="win32") accessSync(candidate,constants.X_OK);
+    return candidate;
+  }catch{ return null; }
+}
 function onPath(name){
-  const exts=process.platform==="win32" ? (process.env.PATHEXT ?? ".EXE").split(";") : [""];
-  for(const dir of (process.env.PATH ?? "").split(delimiter)){
-    if(!dir) continue;
+  // libuv's own search, which is what spawn runs: the current directory before
+  // PATH, and per directory the bare name before .com and before .exe. PATHEXT
+  // is not part of it, so neither is it part of this report.
+  const exts=process.platform==="win32" ? ["",".com",".exe"] : [""];
+  const dirs=(process.env.PATH ?? "").split(delimiter).filter(dir=>dir!=="");
+  const search=process.platform==="win32" ? [process.cwd(),...dirs] : dirs;
+  for(const dir of search){
     for(const ext of exts){
-      const entry=join(dir,name+ext);
-      if(existsSync(entry)) return entry;
+      const found=runnable(join(dir,name+ext));
+      if(found!==null) return found;
     }
   }
   return null;

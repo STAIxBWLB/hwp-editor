@@ -8,6 +8,8 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { PROTECTED_NEXT_STEP } from "@hwp-editor/core";
+
 import {
   createCliEngine,
   documentEditability,
@@ -15,20 +17,28 @@ import {
   protectedReasonFromStderr,
 } from "../src/cli-engine.js";
 import { createFakeBin, disposeFakeBins } from "./fake-bin.js";
+import type { FakeBinOptions } from "./fake-bin.js";
 
 const DOC = { name: "sample.hwpx", data: new Uint8Array([80, 75, 3, 4, 1, 2, 3]) };
 
+/**
+ * The next step as a literal, not read off the source: this sentence is what a
+ * caller acts on, so rewording it has to be a deliberate edit here too. The
+ * exported constant is asserted against it below.
+ */
+const STEP = "remove the protection in a word processor that can open it, save a copy, then reopen that copy here";
+
 const FIXED_MESSAGES = [
-  "encrypted document; hwp-cli refuses edit/compose",
-  "DRM-protected document; hwp-cli refuses edit/compose",
-  "signed document; hwp-cli refuses edit/compose",
-  "distribution (배포용) document; hwp-cli refuses edit/compose",
+  `encrypted document; ${STEP}`,
+  `DRM-protected document; ${STEP}`,
+  `signed document; ${STEP}`,
+  `distribution (배포용) document; ${STEP}`,
 ];
 
 afterEach(disposeFakeBins);
 
 /** The shared fake in `fail` mode: `info` answers, everything else exits 3. */
-function fakeBin(opts: { info: string; editStderr?: string }): { bin: string; log: () => string } {
+function fakeBin(opts: FakeBinOptions & { info: string }): { bin: string; log: () => string } {
   return createFakeBin({ mode: "fail", ...opts });
 }
 
@@ -66,6 +76,10 @@ describe("documentEditability", () => {
 });
 
 describe("protectedReasonFromStderr", () => {
+  it("pins the exported next step to the sentence these tests assert", () => {
+    expect(PROTECTED_NEXT_STEP).toBe(STEP);
+  });
+
   it.each([
     ["암호화된 문서는 지원하지 않습니다", FIXED_MESSAGES[0]],
     ["DRM으로 보호된 문서", FIXED_MESSAGES[1]],
@@ -108,7 +122,31 @@ describe("edit pre-flight and stderr backstop", () => {
   it("upgrades a failed edit to protected when stderr carries a Korean marker", async () => {
     const { bin } = fakeBin({ info: "{}", editStderr: "DRM으로 보호된 문서입니다" });
     const engine = createCliEngine({ bin });
-    await expect(engine.edit(DOC, [])).rejects.toMatchObject({ reason: "protected" });
+    // The command that failed and the next step, not a sentence naming
+    // edit/compose whatever ran (#105 item 2).
+    await expect(engine.edit(DOC, [])).rejects.toMatchObject({
+      reason: "protected",
+      message: `hwp edit failed (exit 3): ${FIXED_MESSAGES[1]}`,
+    });
+  });
+
+  it("names the command that failed when a lint is refused as protected", async () => {
+    // Since #104 lint rides `runCliOk`, so a protection marker on its stderr
+    // reaches a caller as `protected`; the sentence must name lint, which the
+    // shared table cannot know.
+    const { bin } = fakeBin({
+      // Template commands carry their own floor (1.4.0), unlike `edit`.
+      version: "1.4.0",
+      info: "{}",
+      failTemplateCommand: "lint",
+      templateStderr: "암호화된 문서는 지원하지 않습니다",
+      templateFailureCode: 1,
+    });
+    const engine = createCliEngine({ bin });
+    await expect(engine.lint(DOC)).rejects.toMatchObject({
+      reason: "protected",
+      message: `hwp lint failed (exit 1): ${FIXED_MESSAGES[0]}`,
+    });
   });
 
   it("leaves an unrelated edit failure classified as failed", async () => {

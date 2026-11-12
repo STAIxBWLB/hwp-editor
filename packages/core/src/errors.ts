@@ -143,8 +143,9 @@ export function isHwpEngineError(value: unknown): value is HwpEngineError {
 }
 
 /**
- * Korean markers in hwp-cli's runtime diagnostics, each paired with the
- * fixed, transport-authored message the client sees.
+ * Korean markers in hwp-cli's runtime diagnostics, each paired with the fixed,
+ * transport-authored kind of protection the client is told about. The next
+ * step is appended by `protectedReasonFromDiagnostics`, once for every kind.
  *
  * Lives in core, not in one transport, because it is hwp-cli's vocabulary
  * rather than any single transport's: the CLI server reads it out of
@@ -174,15 +175,34 @@ export function isHwpEngineError(value: unknown): value is HwpEngineError {
  * match and the failure would stay `failed`, a safe degradation.
  */
 const PROTECTED_MARKERS: ReadonlyArray<readonly [string, string]> = [
-  ["암호화된 문서", "encrypted document; hwp-cli refuses edit/compose"],
-  ["DRM", "DRM-protected document; hwp-cli refuses edit/compose"],
-  ["서명된 문서", "signed document; hwp-cli refuses edit/compose"],
-  ["배포용 문서", "distribution (배포용) document; hwp-cli refuses edit/compose"],
+  ["암호화된 문서", "encrypted document"],
+  ["DRM", "DRM-protected document"],
+  ["서명된 문서", "signed document"],
+  ["배포용 문서", "distribution (배포용) document"],
 ];
 
 /**
+ * The one next step every protected refusal carries (#105 item 2).
+ *
+ * Shared rather than written per transport: it is the same remedy whatever
+ * command the engine refused, and a sentence that names no step sends the
+ * caller back to the same document. Saving a copy is what makes it work for
+ * a 배포용 document too, where the word processor can open the file but not
+ * edit it.
+ */
+export const PROTECTED_NEXT_STEP =
+  "remove the protection in a word processor that can open it, save a copy, then reopen that copy here";
+
+/**
  * The protection backstop, shared by every transport that sees raw hwp-cli
- * diagnostics. Returns one of the four fixed constants above, or null.
+ * diagnostics. Returns the kind of protection with the shared next step, or
+ * null.
+ *
+ * The result names no command: the marker table is hwp-cli's vocabulary and
+ * the sentence is shared by `edit`, `compose`, `lint`, `slots`, `fields` and
+ * `fill`, so a transport that ran one of them puts its own `hwp <command>`
+ * line in front (the CLI server reuses `runCliOk`'s) rather than the table
+ * claiming `edit/compose` every time (#105 item 2).
  *
  * The argument is never interpolated into the result: raw CLI output stays
  * on whatever non-serialized field its transport keeps it on, so this path
@@ -190,8 +210,8 @@ const PROTECTED_MARKERS: ReadonlyArray<readonly [string, string]> = [
  * pre-existing one in the server's `runCliOk`).
  */
 export function protectedReasonFromDiagnostics(text: string): string | null {
-  for (const [marker, message] of PROTECTED_MARKERS) {
-    if (text.includes(marker)) return message;
+  for (const [marker, kind] of PROTECTED_MARKERS) {
+    if (text.includes(marker)) return `${kind}; ${PROTECTED_NEXT_STEP}`;
   }
   return null;
 }
