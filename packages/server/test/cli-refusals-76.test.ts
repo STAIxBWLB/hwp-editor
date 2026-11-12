@@ -41,8 +41,9 @@ const DRIFT =
   "Error: set_format 주소 [0, 2)의 문단은 앞선 연산(set_indent_level, replace 등)으로 글자 수가 5에서 9(으)로 바뀌어 " +
   "범위가 다른 글자를 가리킵니다. 아무것도 쓰지 않았습니다. 연산 순서를 바꿔 set_format을 앞에 두거나 별도 편집으로 나누어 실행하세요";
 
-async function failure(stderr: string | string[], ops: EditOp[] = OPS, assets?: Array<{ name: string; data: Uint8Array }>): Promise<HwpCliError> {
+async function failure(stderr: string | string[], ops: EditOp[] = OPS, assets?: Array<{ name: string; data: Uint8Array }>, version = "0.20.0"): Promise<HwpCliError> {
   const { bin } = createFakeBin({
+    version,
     info: "{}",
     mode: "fail",
     ...(Array.isArray(stderr) ? { editStderrLines: stderr } : { editStderr: stderr }),
@@ -94,8 +95,12 @@ describe("hwp-cli 1.5-1.6 refusal classification (#76)", () => {
 
   it("gives an image batch on a tagged paragraph the classified cause, not an image remedy (t31-a3)", async () => {
     const image: EditOp[] = [{ kind: "insert-image", anchor: "a", path: "figure.png", width: 20, height: 15 }];
+    // 1.4.0 because this server's upload floor is 1.4.0, the version the upload
+    // path was verified against (#58 item 9), not because the binary could not
+    // insert an image; below it the engine refuses the batch before it runs,
+    // which is its own case (#58 item 31).
     const error = await failure(RANGE_TAG, image, [{ name: "figure.png", data: new Uint8Array(Buffer.from(
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==", "base64")) }]);
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==", "base64")) }], "1.4.0");
     expect(error.message).toBe("hwp edit failed (exit 3): edit refused: range_tag");
     expect(error.message).not.toMatch(/Image insertion failed|re-export|operation targets/);
   });

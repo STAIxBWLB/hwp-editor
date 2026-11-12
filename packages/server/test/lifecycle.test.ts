@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 
 import { createCliEngine, HANDSHAKE_FLAGS, HwpCliError } from "../src/cli-engine.js";
 import { createHwpEditorHandler } from "../src/routes.js";
@@ -125,11 +125,11 @@ async function waitForSpawn(log: () => string, subcommand: string): Promise<void
 const helpDirs: string[] = [];
 
 /**
- * The captured `edit --help` with the `--ops` flag dropped while the other
- * handshake flags (`--verify`, `--allow-partial`) remain: the binary a
- * pre-0.20.0 release would be, accepted under the old per-op flag surface
- * and refused under the current one. Renaming rather than deleting keeps the
- * rest of the fixture byte-identical.
+ * The captured `edit --help` with the `--ops` flag renamed while the other
+ * handshake flags (`--verify`, `--allow-partial`) remain: a binary whose flag
+ * surface predates the typed ops channel. The engine must refuse it by naming
+ * the missing flag, never by running the edit. Renaming rather than deleting
+ * keeps the rest of the fixture byte-identical.
  *
  * The dir lives in the shared temp dir, never in an engine's own work root.
  */

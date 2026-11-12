@@ -1215,20 +1215,23 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         }
         return "hwp lint could not inspect this document with hwp-cli 1.4.0; check that it opens with hwp info, then retry.";
       };
-      const result = args[0] === "lint"
-        ? await runCli(resolveBin(), args, timeoutMs, opts.locale, call?.signal)
-         : await runCliOk(resolveBin(), args, timeoutMs, opts.locale, call?.signal).catch(error => {
-          try { return rethrowProtected(error); }
-          catch (failure) {
-            if (failure instanceof HwpCliError && failure.reason === "failed") {
-              throw new HwpCliError("failed", failureMessage(), failure.stderr, failure.detail);
-            }
-            throw failure;
+      // An exit 1 from `lint` is NOT a success. `lint::run` returns an anyhow
+      // `Result` and exits 1 only on that `Err` (an unreadable document; the
+      // 16 MiB cap it also enforces sits on the `-` stdin feeder, and this
+      // engine always stages a file), while findings move the code only under
+      // `--strict`, which this engine never passes. `lint.rs` is byte-identical
+      // at every tag v0.20.0..v1.6.1. Tolerating the exit handed `parse` empty
+      // stdout, so an unreadable document reached the host as "hwp lint
+      // returned invalid JSON" with an upgrade as its next step.
+      const result = await runCliOk(resolveBin(), args, timeoutMs, opts.locale, call?.signal).catch(error => {
+        try { return rethrowProtected(error); }
+        catch (failure) {
+          if (failure instanceof HwpCliError && failure.reason === "failed") {
+            throw new HwpCliError("failed", failureMessage(), failure.stderr, failure.detail);
           }
-        });
-      if (result.code !== 0 && !(args[0] === "lint" && result.code === 1)) {
-        throw new HwpCliError("failed", failureMessage(), result.stderr);
-      }
+          throw failure;
+        }
+      });
       return result.stdout;
     },
   });
@@ -1390,6 +1393,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       // route read it: an empty list is no uploads, so a local insert-image
       // path still works (#58 item 6).
       const uploads = options.assets !== undefined && options.assets.length > 0 ? options.assets : undefined;
+      let hostVersion: string | undefined;
       if (uploads !== undefined) {
         try {
           validateImageAssets(uploads);
@@ -1401,10 +1405,36 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
           throw new HwpCliError("bad_request", "seal cannot be combined with uploaded assets; run seal without uploaded assets through a local host");
         }
         if (!imageAssetsMatchOps(ops, uploads)) {
-          throw new HwpCliError("bad_request", "image upload and insert-image paths do not match; upload matching PNG/JPEG files for the referenced names");
+          // Split as the HTTP route splits it (#58 item 31): an op naming an
+          // image nobody uploaded and an upload no op references are two
+          // different mistakes, and one sentence for both left the second
+          // case telling the caller to upload files it had already uploaded.
+          const uploaded = new Set(uploads.map(asset => asset.name));
+          const named = ops.filter(op => op?.kind === "insert-image").map(op => op.path);
+          if (named.some(name => !uploaded.has(name))) {
+            throw new HwpCliError("bad_request", "insert-image paths must name exactly the uploaded assets; attach the PNG/JPEG file for each named path, then retry");
+          }
+          throw new HwpCliError("bad_request", "an uploaded image is not referenced by any insert-image op; remove the unreferenced upload, or add the insert-image op that uses it, then retry");
+        }
+        // The floor below is THIS server's, not a capability the binary lacks:
+        // the engine could insert an image from v0.20.0 on, and 1.4.0 is the
+        // version this editor's upload path was verified against (#58 item 9),
+        // which is also why `capabilities()` withholds `imageAssets` there. A
+        // direct engine call never reads capabilities, so the refusal belongs
+        // where the upload runs, as styles and the template methods do. Last in
+        // this block, which is the order the route uses: a payload mistake is
+        // the caller's whatever the binary is.
+        hostVersion = await ensureVersion();
+        if (!imageAssetsVersionSupported(hostVersion)) {
+          throw new HwpCliError(
+            "version",
+            `this server accepts uploaded images only with hwp-cli 1.4.0 or newer (hwp ${hostVersion} found); upgrade hwp-cli, then retry the edit`,
+          );
         }
       }
-      const version = await ensureVersion();
+      // One version for the whole call, awaited at the last moment that keeps
+      // the seal refusal above ahead of any spawn.
+      hostVersion ??= await ensureVersion();
       const bin = resolveBin();
       const ext = sniffExtension(document);
       // The preset switch is ONE batch, not two calls. `--style-tables` and
@@ -1416,8 +1446,8 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       // the batch atomically, and `--allow-partial` lets the rest of the batch
       // publish while the report says what the preset could not style.
       const presets = ops.filter((op) => op?.kind === "style-tables").length;
-      if (presets > 0 && !stylesVersionSupported(version)) {
-        throw new HwpCliError("version", `hwp ${version} has no style_tables op; >= 1.4.0 required for preset style tables`);
+      if (presets > 0 && !stylesVersionSupported(hostVersion)) {
+        throw new HwpCliError("version", `hwp ${hostVersion} has no style_tables op; >= 1.4.0 required for preset style tables`);
       }
       // The two flags a preset batch owes are decided by the shared rule, not
       // here: core's `presetBatchOptions` is what the HTTP and Tauri clients

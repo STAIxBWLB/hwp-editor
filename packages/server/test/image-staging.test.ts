@@ -2,8 +2,11 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { createCliEngine } from "../src/cli-engine.js";
+import { createFakeBin, disposeFakeBins } from "./fake-bin.js";
+
+afterEach(disposeFakeBins);
 
 describe("uploaded image private staging", () => {
   it.each([false,true])("keeps assets inside the call dir and removes them after failure=%s", async failure => {
@@ -76,5 +79,57 @@ it("names seal's upload restriction before resolving or spawning the binary", as
   ], { assets: [{ name: "upload.png", data: new Uint8Array([137,80,78,71,13,10,26,10]) }] })
     .catch((error: unknown) => error);
   expect(failure).toMatchObject({ reason: "bad_request", message: expect.stringMatching(/seal.*without uploaded assets.*local host/) });
-  expect((failure as Error).message).not.toContain("do not match");
+  expect((failure as Error).message).not.toContain("insert-image");
+});
+
+/**
+ * The 1.4.0 upload floor refuses where it runs, not only where it is advertised
+ * (#58 item 31): `capabilities()` withholds `imageAssets` below the floor, but a
+ * direct engine call never reads capabilities, so an older binary took the naive
+ * path and staged `asset-0.png`. The floor is this editor's verified-against
+ * policy (#58 item 9), not a missing binary capability: hwp-cli could insert an
+ * image from v0.20.0 on, so the refusal has to say whose floor it is.
+ */
+it("refuses uploaded assets on a binary below the 1.4.0 upload floor", async () => {
+  // The default fake reports 0.20.0: above the version floor, below this
+  // server's upload floor.
+  const { bin, log } = createFakeBin();
+  const failure = await createCliEngine({ bin }).edit({ name: "doc.hwpx", data: new Uint8Array([1]) }, [
+    { kind: "insert-image", anchor: "x", path: "client.png" },
+  ], { assets: [{ name: "client.png", data: new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]) }] })
+    .catch((error: unknown) => error);
+  expect(failure).toMatchObject({ reason: "version" });
+  // The cause is this server's own floor, and the found version rides along.
+  expect((failure as Error).message).toContain("this server accepts uploaded images only with hwp-cli 1.4.0 or newer");
+  expect((failure as Error).message).toContain("(hwp 0.20.0 found)");
+  expect((failure as Error).message).toContain("upgrade hwp-cli, then retry the edit");
+  expect((failure as Error).message).not.toContain("has no image asset uploads");
+  // The refusal precedes the edit spawn: nothing was staged, nothing ran.
+  const edits = log().split("\n").filter((line) => /^edit\b/.test(line) && !/--help/.test(line));
+  expect(edits).toEqual([]);
+});
+
+/**
+ * A mismatch has two shapes and the engine owes each its own next step, as the
+ * route learned in #98 (#58 item 31). One sentence for both told a caller with
+ * an unreferenced upload to upload files it had already uploaded.
+ */
+it("names an upload no op references, and an insert-image path with no upload", async () => {
+  const { bin } = createFakeBin({ version: "1.4.0" });
+  const engine = createCliEngine({ bin });
+  const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+  const unreferenced = await engine.edit({ name: "doc.hwpx", data: new Uint8Array([1]) }, [
+    { kind: "insert-image", anchor: "x", path: "client.png" },
+  ], { assets: [{ name: "client.png", data: png }, { name: "extra.png", data: png }] })
+    .catch((error: unknown) => error);
+  expect(unreferenced).toMatchObject({ reason: "bad_request" });
+  expect((unreferenced as Error).message).toContain("an uploaded image is not referenced by any insert-image op");
+  expect((unreferenced as Error).message).toContain("remove the unreferenced upload");
+  expect((unreferenced as Error).message).not.toContain("upload matching PNG/JPEG");
+  const missing = await engine.edit({ name: "doc.hwpx", data: new Uint8Array([1]) }, [
+    { kind: "insert-image", anchor: "x", path: "other.png" },
+  ], { assets: [{ name: "client.png", data: png }] })
+    .catch((error: unknown) => error);
+  expect((missing as Error).message).toContain("insert-image paths must name exactly the uploaded assets");
+  expect((missing as Error).message).toContain("attach the PNG/JPEG file for each named path");
 });

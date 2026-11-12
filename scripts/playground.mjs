@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /** Prepare and run the playground from source, using the caller's hwp binary. */
 import { spawn, spawnSync } from "node:child_process";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),"..");
@@ -9,9 +10,23 @@ const configuredBinary=process.env.HWP_EDITOR_BIN?.trim() || process.env.HWP_CLI
 // A relative path is the caller's: pnpm runs this from the repo root but sets
 // INIT_CWD to where the user ran it (#58 item 12).
 const callerDir=process.env.INIT_CWD?.trim() || process.cwd();
-const binary=isAbsolute(configuredBinary) || configuredBinary.includes("/") || configuredBinary.includes("\\")
-  ? resolve(callerDir,configuredBinary)
-  : configuredBinary;
+const bareName=!(isAbsolute(configuredBinary) || configuredBinary.includes("/") || configuredBinary.includes("\\"));
+const binary=bareName ? configuredBinary : resolve(callerDir,configuredBinary);
+// `spawn` searches PATH for a bare name, so a refusal that repeats the name
+// back ("cannot run hwp at hwp") says nothing about where it looked (#58 item
+// 31). Report the entry that search would pick, or say it was PATH-wide.
+function onPath(name){
+  const exts=process.platform==="win32" ? (process.env.PATHEXT ?? ".EXE").split(";") : [""];
+  for(const dir of (process.env.PATH ?? "").split(delimiter)){
+    if(!dir) continue;
+    for(const ext of exts){
+      const entry=join(dir,name+ext);
+      if(existsSync(entry)) return entry;
+    }
+  }
+  return null;
+}
+const place=bareName ? (onPath(configuredBinary) ?? `${configuredBinary} on PATH`) : binary;
 const env={...process.env,HWP_EDITOR_BIN:binary};
 const shell=process.platform==="win32";
 const probe=spawnSync(binary,["--version"],{cwd:root,env,encoding:"utf8"});
@@ -19,7 +34,7 @@ if(probe.error || probe.status!==0){
   const cause=probe.error
     ? `error ${probe.error.code ?? probe.error.message}`
     : probe.signal ? `signal ${probe.signal}` : `exit status ${probe.status}`;
-  process.stderr.write(`The playground cannot run hwp at ${binary} (${cause}); install hwp-cli or set HWP_EDITOR_BIN to its executable, then run pnpm playground again.\n`);
+  process.stderr.write(`The playground cannot run hwp at ${place} (${cause}); install hwp-cli or set HWP_EDITOR_BIN to its executable, then run pnpm playground again.\n`);
   process.exit(1);
 }
 const pnpm=process.platform==="win32"?"pnpm.cmd":"pnpm";

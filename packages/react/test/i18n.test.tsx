@@ -306,6 +306,21 @@ describe("table parity (I18N-06, I18N-08)", () => {
     }
   });
 
+  it("names both causes of a missing upload command, with a step for each, in both locales", () => {
+    // One sentence reaches two very different hosts: a CLI server below the
+    // 1.4.0 this editor verifies uploads against, and a host with no upload
+    // command at all, such as the desktop app whose client deletes
+    // `imageAssets` whatever the binary reports (`core/src/tauri.ts`). Leading
+    // with the upgrade alone left the second host with a step that changes
+    // nothing (#58 item 31, review t45-a1).
+    expect(en["image.unsupported"]).toContain("1.4.0");
+    expect(en["image.unsupported"]).toContain("desktop app");
+    expect(en["image.unsupported"]).toContain("local image path");
+    expect(ko["image.unsupported"]).toContain("1.4.0");
+    expect(ko["image.unsupported"]).toContain("데스크톱 앱");
+    expect(ko["image.unsupported"]).toContain("로컬 이미지 경로");
+  });
+
   /**
    * The check above only reads strings, so a template function pasted from en
    * into ko passes it: the key exists and both values are functions.

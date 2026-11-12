@@ -454,6 +454,13 @@ describe("HTTP image asset admission", () => {
     const unsupported = createHwpEditorHandler({ engine: stubEngine(), sessions: false });
     const res = await unsupported(request([{ name: "x.png", data: png }], [{ kind: "insert-image", anchor: "x", path: "x.png" }]));
     expect(res.status).toBe(400);
+    // The next step names the upgrade first: on the CLI engine `imageAssets` is
+    // withheld below 1.4.0 because that is the version this editor verifies
+    // uploads against (#58 item 9), and "configure a host that advertises it"
+    // alone sent the caller hunting for a different adapter (#58 item 31).
+    expect(await res.json()).toMatchObject({
+      error: { code: "bad_request", message: expect.stringMatching(/upgrade hwp-cli to 1\.4\.0 or newer/) },
+    });
   });
 
   it("checks asset count and Blob.size before reading uploaded bytes", async () => {
