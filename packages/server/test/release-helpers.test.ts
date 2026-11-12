@@ -78,6 +78,9 @@ seen=
 [ -n "\${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && seen="$seen url"
 [ -n "\${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ] && seen="$seen request_token"
 [ -n "\${NPM_ID_TOKEN:-}" ] && seen="$seen id_token"
+# The stored dist-tag secret is no input to any npm call: both attempts read
+# their credential from elsewhere, so the environment must never carry it.
+[ -n "\${NPM_DIST_TAG_TOKEN:-}" ] && seen="$seen dist_tag_token"
 printf 'oidc:%s\\n' "$seen" >> "$CALLS_NPM_OIDC"
 case "$1" in
   dist-tag)
@@ -97,12 +100,20 @@ case "$1" in
       exit 1
     fi
     if [ "$dtag" = "noop" ]; then
-      # Verbatim shape of npm 11.21.x's no-op: the tag list is fetched
+      # npm's real no-op line (lib/commands/dist-tag.js: log.warn('dist-tag add',
+      # t, 'is already set to version', version)): the tag list is fetched
       # anonymously, \`next\` already names the version, so npm warns and exits 0
       # without an authenticated write.
-      echo "npm warn dist-tag add $3 is already set to $4."
+      echo "npm warn dist-tag add $4 is already set to version \${3##*@}"
       exit 0
     fi
+    if [ "$dtag" = "silent" ]; then
+      # Exit 0 with neither the write line nor the no-op warn: nothing to credit.
+      exit 0
+    fi
+    # npm's own line after the authenticated PUT (lib/commands/dist-tag.js):
+    # \`+<tag>: <name>@<version>\`, the evidence the label keys on.
+    echo "+$4: $3"
     exit 0 ;;
   --userconfig)
     # The token attempt: npm skips the OIDC exchange only when no OIDC input is
@@ -115,6 +126,12 @@ case "$1" in
       echo "npm error 401 Unauthorized - the token in $2 was rejected"
       exit 1
     fi
+    # A package OIDC already moved is a no-op for the token: npm warns and
+    # writes nothing, exactly as on the bare path.
+    case " \${TOKEN_NOOP_PKGS:-} " in
+      *" $5 "*) echo "npm warn dist-tag add $6 is already set to version \${5##*@}"; exit 0 ;;
+    esac
+    echo "+$6: $5"
     exit 0 ;;
   install) ;;
   *) exit 0 ;;
@@ -233,7 +250,7 @@ function runHelpers(
    * One outcome per bare `npm dist-tag` call, in order: a move, a refusal, or
    * npm's no-op (the tag already named this version, so nothing was written).
    */
-  distTag: ("ok" | "denied" | "noop")[] = [],
+  distTag: ("ok" | "denied" | "noop" | "silent")[] = [],
 ): Run {
   const dir = mkdtempSync(join(tmpdir(), "hwped-release-helpers-"));
   const outcomesFile = join(dir, "outcomes");
@@ -556,7 +573,7 @@ describe("move_next_tag: next follows a stable release (#38, #45 item 5)", () =>
     const run = runHelpers(
       'move_next_tag "$VER"',
       [],
-      { ...OIDC_ENV, VER: "1.2.0", NPM_DIST_TAG_TOKEN: TOKEN },
+      { ...OIDC_ENV, VER: "1.2.0", NPM_DIST_TAG_TOKEN: TOKEN, TOKEN_NOOP_PKGS: "@hwp-editor/core@1.2.0" },
       ["ok", "denied"],
     );
     expect(run.status).toBe(0);
@@ -571,9 +588,13 @@ describe("move_next_tag: next follows a stable release (#38, #45 item 5)", () =>
       PKGS.map((pkg) => `dist-tag add @hwp-editor/${pkg}@1.2.0 next`),
     );
     expect(run.stdout).toContain("[ok] @hwp-editor/core next -> 1.2.0 (OIDC)");
-    // A successful earlier write is not a refusal line, and core appears again
-    // under the token path.
-    expect(run.stdout).toContain("[ok] @hwp-editor/core next -> 1.2.0 (token)");
+    // The token pass re-adds core, which OIDC already moved: npm answers with
+    // its no-op warn, so core is NOT credited to the token, while react and
+    // server, which only the token wrote, are.
+    expect(run.stdout).toContain("[ok] @hwp-editor/core next already at 1.2.0 (no write)");
+    expect(run.stdout).not.toContain("[ok] @hwp-editor/core next -> 1.2.0 (token)");
+    expect(run.stdout).toContain("[ok] @hwp-editor/react next -> 1.2.0 (token)");
+    expect(run.stdout).toContain("[ok] @hwp-editor/server next -> 1.2.0 (token)");
   });
 
   it("reports an add that wrote nothing without naming an auth path", () => {
@@ -593,6 +614,42 @@ describe("move_next_tag: next follows a stable release (#38, #45 item 5)", () =>
     expect(run.stdout).not.toContain("(OIDC)");
     expect(run.stdout).not.toContain("(token)");
     expect(run.stdout).not.toContain("falling back");
+  });
+
+  it("credits no path to an add that exited 0 without npm's +next: line", () => {
+    // Exit status alone is not evidence of a write: only npm's own
+    // \`+next: <name>@<version>\` line is, so a bare success without it is
+    // reported as unconfirmed, never as (OIDC).
+    const run = runHelpers(
+      'move_next_tag "$VER"',
+      [],
+      { ...OIDC_ENV, VER: "1.2.0", NPM_DIST_TAG_TOKEN: TOKEN },
+      ["silent", "silent", "silent"],
+    );
+    expect(run.status).toBe(0);
+    expect(run.stdout).not.toContain("(OIDC)");
+    expect(run.stdout).toContain("::warning::npm dist-tag add for @hwp-editor/core@1.2.0 exited 0 without its +next: line");
+  });
+
+  it("keeps NPM_DIST_TAG_TOKEN out of every npm call's environment, the OIDC attempt included", () => {
+    // The env -u on both attempts: the OIDC attempt needs no credential, and
+    // the token attempt reads it from the throwaway userconfig.
+    const oidcOnly = runHelpers(
+      'move_next_tag "$VER"',
+      [],
+      { ...OIDC_ENV, VER: "1.2.0", NPM_DIST_TAG_TOKEN: TOKEN },
+      ["ok", "ok", "ok"],
+    );
+    expect(oidcOnly.npmOidc).toHaveLength(3);
+    for (const seen of oidcOnly.npmOidc) expect(seen).not.toContain("dist_tag_token");
+    const fallback = runHelpers(
+      'move_next_tag "$VER"',
+      [],
+      { ...OIDC_ENV, VER: "1.2.0", NPM_DIST_TAG_TOKEN: TOKEN },
+      ["denied"],
+    );
+    expect(fallback.npmOidc).toHaveLength(4);
+    for (const seen of fallback.npmOidc) expect(seen).not.toContain("dist_tag_token");
   });
 
   it("removes the userconfig when a token call fails", () => {

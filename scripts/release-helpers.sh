@@ -274,8 +274,10 @@ publish_package() {
 # workflow's own inputs; NPM_ID_TOKEN is npm's alternative spelling of the same
 # token.
 #
-# The success line names the path that moved the tag, and an add that wrote
-# nothing is NOT one of them. `npm dist-tag add` fetches the tags anonymously
+# The success line names the path that moved the tag, and only npm's own
+# `+next: <pkg>@<version>` line (lib/commands/dist-tag.js, printed after the
+# authenticated PUT) proves a write; exit status alone does not. An add that
+# wrote nothing is NOT one of them. `npm dist-tag add` fetches the tags anonymously
 # first and, when `next` already names this version, prints "is already set" and
 # exits 0 without an authenticated write - which is the ordinary shape of a
 # re-run, and of a release whose `next` a maintainer already moved by hand
@@ -287,6 +289,21 @@ publish_package() {
 # No token and no OIDC permission is a warning and a skip, not a failure: the
 # packages are already published, and the manual commands in RELEASING.md step 7
 # finish the job.
+# mnt_label <pkg> <version> <path> <log>
+# The [ok] line for one successful `npm dist-tag add`, read from npm's output:
+# `+next: @hwp-editor/<pkg>@<version>` is the write, the "is already set" warn
+# is a no-op, and anything else exited 0 without either line, which is
+# reported as unconfirmed rather than credited to a path.
+mnt_label() {
+  if grep -qxF "+next: @hwp-editor/$1@$2" "$4"; then
+    echo "[ok] @hwp-editor/$1 next -> $2 ($3)"
+  elif grep -q "is already set" "$4"; then
+    echo "[ok] @hwp-editor/$1 next already at $2 (no write)"
+  else
+    echo "::warning::npm dist-tag add for @hwp-editor/$1@$2 exited 0 without its +next: line; check next by hand"
+  fi
+}
+
 move_next_tag() {
   mnt_version="$1"
   if is_prerelease "$mnt_version"; then
@@ -303,11 +320,7 @@ move_next_tag() {
     # is that call's own output.
     if env -u NPM_DIST_TAG_TOKEN \
       npm dist-tag add "@hwp-editor/$mnt_pkg@$mnt_version" next >"$mnt_log" 2>&1; then
-      if grep -q "is already set" "$mnt_log"; then
-        echo "[ok] @hwp-editor/$mnt_pkg next already at $mnt_version (no write)"
-      else
-        echo "[ok] @hwp-editor/$mnt_pkg next -> $mnt_version (OIDC)"
-      fi
+      mnt_label "$mnt_pkg" "$mnt_version" "OIDC" "$mnt_log"
     else
       mnt_oidc=0
       break
@@ -336,10 +349,16 @@ move_next_tag() {
     # The token reads from the userconfig alone, so the secret is stripped here
     # as well as on the OIDC attempt: no call in this helper needs it in the
     # environment.
-    env -u ACTIONS_ID_TOKEN_REQUEST_URL -u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+    # Captured like the OIDC attempt, so the label keys on npm's `+next:` line:
+    # after a partial OIDC pass the package OIDC already moved is a no-op here,
+    # and calling it `(token)` would credit the token with a write it never made.
+    if ! env -u ACTIONS_ID_TOKEN_REQUEST_URL -u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
       -u NPM_ID_TOKEN -u NPM_DIST_TAG_TOKEN \
-      npm --userconfig "$mnt_cfg" dist-tag add "@hwp-editor/$mnt_pkg@$mnt_version" next
-    echo "[ok] @hwp-editor/$mnt_pkg next -> $mnt_version (token)"
+      npm --userconfig "$mnt_cfg" dist-tag add "@hwp-editor/$mnt_pkg@$mnt_version" next >"$mnt_log" 2>&1; then
+      cat "$mnt_log"
+      return 1
+    fi
+    mnt_label "$mnt_pkg" "$mnt_version" "token" "$mnt_log"
   done
   rm -f "$mnt_cfg"
 }

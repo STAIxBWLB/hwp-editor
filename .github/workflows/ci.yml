@@ -281,5 +281,9 @@ jobs:
             process.exit(0);
           }
           console.error("Gating jobs did not all succeed:", failed);
+          console.error(
+            "Next step: open the log of each job named above in this run, fix what it reports, " +
+              "and push the fix; ci-ok re-runs with the gating jobs.",
+          );
           process.exit(1);
           NODE

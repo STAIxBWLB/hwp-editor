@@ -1433,6 +1433,12 @@ const USES_STRICT = /^(\S+)(?:\s+#\s*(\S+))?\s*$/;
  * that the pinned-commit rule never saw. Rather than teaching the scanner every
  * YAML form, any line naming the key that `USES_LINE` does not parse is a
  * violation, so an unreadable form fails instead of passing.
+ *
+ * What it covers is a line-level match: the key spelled `uses` on the same
+ * line as its colon, bare or with one quote before the colon. A key split over
+ * lines (`? uses` then `: x@v1`), written with escapes (`"u\x73es"`), or
+ * reached through an anchor or alias names no such line and is not reported;
+ * none of those shapes occurs in this repository's workflows.
  */
 const USES_KEY_ANYWHERE = /\buses\b\s*["']?\s*:/;
 
@@ -1494,8 +1500,9 @@ interface UseScan {
  *
  * Two readings decide each line. `USES_LINE` reads the shape this repository
  * writes; a line that names the key in any other shape is captured by
- * `USES_KEY_ANYWHERE` and reported unread, so a YAML spelling nobody tested
- * cannot carry an unpinned action past the rule. A comment is the one place the
+ * `USES_KEY_ANYWHERE` and reported unread, so a spelling that keeps the key and
+ * its colon on one line cannot carry an unpinned action past the rule (see
+ * `USES_KEY_ANYWHERE` for the shapes it does not see). A comment is the one place the
  * key is discussed rather than used, so it is the one line skipped.
  */
 function scanUses(dir: string): UseScan {
