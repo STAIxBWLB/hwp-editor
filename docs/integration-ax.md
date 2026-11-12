@@ -73,7 +73,7 @@ Provision the binary with a pinned fetch script that follows this shape:
 
 - The release tag lives in `.hwp-cli-version` (must be `>= v0.20.0` and below `v2.0.0`).
 - Releases are published on
-  [`STAIxBWLB/hwp-cli`](https://github.com/STAIxBWLB/hwp-cli/releases). Each tag
+  [`STAIxBWLB/agent-hwp`](https://github.com/STAIxBWLB/agent-hwp/releases). Each tag
   ships one archive per target plus a sibling `.sha256`:
 
   | Target | Asset |
@@ -84,7 +84,7 @@ Provision the binary with a pinned fetch script that follows this shape:
   | `x86_64-pc-windows-msvc` | `hwp-<tag>-x86_64-pc-windows-msvc.zip` |
 
   Every asset has a `<asset>.sha256` next to it, so the download URL is
-  `https://github.com/STAIxBWLB/hwp-cli/releases/download/<tag>/<asset>`.
+  `https://github.com/STAIxBWLB/agent-hwp/releases/download/<tag>/<asset>`.
 - The script downloads the archive and its `.sha256` and compares them locally;
   it never pipes upstream's installer into a shell (a git tag is mutable).
 - Install goes to `bin/hwp` via a temp file + atomic `mv`; a stamp file

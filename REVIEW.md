@@ -38,7 +38,7 @@ Run these passes and tag every finding with its pass:
   (`packages/core/src/refusals.ts`, `packages/core/src/insertion-refusals.ts`) matches the fixed
   head and tail of the engine's own `Error:` line and never searches text where hwp-cli interpolates
   a user value (anchors, style names, issue paths). Otherwise a crafted value selects a refusal
-  sentence or a measured width. The one exception until STAIxBWLB/hwp-cli#531 ships
+  sentence or a measured width. The one exception until STAIxBWLB/agent-hwp#531 ships
   machine-readable refusal codes: `insertion-refusals.ts` reads `layout_overflow` entries from the
   insert_blocks issue list, where a style name can forge an entry; add no other reader of that list
   or of any other text that carries a user value.

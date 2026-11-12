@@ -68,7 +68,7 @@ const HWP_MAX_BUFFER = 32 * 1024 * 1024;
  */
 const KILL_GRACE_MS = 3_000;
 // v0.20.0 is the first released edit-ops-v1 channel with all nine address ops.
-// https://github.com/STAIxBWLB/hwp-cli/releases/tag/v0.20.0
+// https://github.com/STAIxBWLB/agent-hwp/releases/tag/v0.20.0
 const MIN_VERSION: readonly [number, number, number] = [0, 20, 0];
 
 /**
