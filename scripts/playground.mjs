@@ -1,17 +1,19 @@
 #!/usr/bin/env node
-/** Prepare and run the playground from source, using the caller's hwp binary. */
+/** Prepare and run the playground from source, using the caller's engine binary. */
 import { spawn, spawnSync } from "node:child_process";
 import { accessSync, constants, statSync } from "node:fs";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),"..");
-const configuredBinary=process.env.HWP_EDITOR_BIN?.trim() || process.env.HWP_CLI?.trim() || "hwp";
+const configured=process.env.HWP_EDITOR_BIN?.trim() || process.env.HWP_CLI?.trim() || null;
 // A relative path is the caller's: pnpm runs this from the repo root but sets
 // INIT_CWD to where the user ran it (#58 item 12).
 const callerDir=process.env.INIT_CWD?.trim() || process.cwd();
-const bareName=!(isAbsolute(configuredBinary) || configuredBinary.includes("/") || configuredBinary.includes("\\"));
-const binary=bareName ? configuredBinary : resolve(callerDir,configuredBinary);
+// The default is `ahwp`; `hwp` is the 1.x compatibility name, and it is tried
+// only when the first command is absent, never when it was found and failed
+// (#121). A configured binary is used as given, with no second candidate.
+const candidates=configured===null ? ["ahwp","hwp"] : [configured];
 // `spawn` searches PATH for a bare name, so a refusal that repeats the name
 // back ("cannot run hwp at hwp") says nothing about where it looked (#58 item
 // 31). Report the entry that search would pick, or say it was PATH-wide.
@@ -89,17 +91,36 @@ function onPath(name){
   }
   return null;
 }
-const place=bareName ? (onPath(configuredBinary) ?? `${configuredBinary} on PATH`) : binary;
-const env={...process.env,HWP_EDITOR_BIN:binary};
-const shell=process.platform==="win32";
-const probe=spawnSync(binary,["--version"],{cwd:root,env,encoding:"utf8"});
-if(probe.error || probe.status!==0){
+let chosen=null;
+let failed=null;
+for(const name of candidates){
+  const bare=!(isAbsolute(name) || name.includes("/") || name.includes("\\"));
+  const binary=bare ? name : resolve(callerDir,name);
+  const place=bare ? (onPath(name) ?? `${name} on PATH`) : binary;
+  const env={...process.env,HWP_EDITOR_BIN:binary};
+  const probe=spawnSync(binary,["--version"],{cwd:root,env,encoding:"utf8"});
+  if(!probe.error && probe.status===0){ chosen={binary,env}; break; }
   const cause=probe.error
     ? `error ${probe.error.code ?? probe.error.message}`
     : probe.signal ? `signal ${probe.signal}` : `exit status ${probe.status}`;
-  process.stderr.write(`The playground cannot run hwp at ${place} (${cause}); install hwp-cli or set HWP_EDITOR_BIN to its executable, then run pnpm playground again.\n`);
+  // Only an absent command moves on to the next name: a binary that was found
+  // and failed to answer is this install's problem, and reporting it under a
+  // second name would hide which one ran.
+  failed={name,place,cause,absent:probe.error?.code==="ENOENT"};
+  if(!failed.absent) break;
+}
+if(chosen===null){
+  const tail="; install agent-hwp so `ahwp` is on PATH, or set HWP_EDITOR_BIN to its executable, then run pnpm playground again.\n";
+  // The default search has two names; when neither is there, the refusal names
+  // both rather than the one that happened to be probed last.
+  const message=candidates.length>1 && failed.absent
+    ? `The playground cannot run ahwp or hwp: neither is on PATH (${failed.cause})${tail}`
+    : `The playground cannot run ${candidates.length>1 ? failed.name : "hwp"} at ${failed.place} (${failed.cause})${tail}`;
+  process.stderr.write(message);
   process.exit(1);
 }
+const env=chosen.env;
+const shell=process.platform==="win32";
 const pnpm=process.platform==="win32"?"pnpm.cmd":"pnpm";
 function run(args){
   const result=spawnSync(pnpm,args,{cwd:root,env,stdio:"inherit",shell});

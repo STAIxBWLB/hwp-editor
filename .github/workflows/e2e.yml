@@ -73,25 +73,30 @@ jobs:
       # rather than being unpacked and then executed.
       #
       # The sidecar drops the archive extension - it is named
-      # hwp-<tag>-<target>.sha256, not hwp-<tag>-<target>.tar.gz.sha256 -
+      # ahwp-<tag>-<target>.sha256, not ahwp-<tag>-<target>.tar.gz.sha256 -
       # while its single line still records the .tar.gz filename, so
-      # `sha256sum -c` resolves the archive from the working directory. The
-      # archive unpacks `ahwp` and its `hwp` compatibility name at the top level,
-      # mode preserved plus the two licences and NOTICE, so no chmod is needed.
-      # HWP_EDITOR_BIN names the `hwp` alias on purpose: it behaves identically,
-      # and its one deprecation line goes to stderr only when stderr is a
-      # terminal, so every piped call here stays byte-identical.
-      - name: Install hwp-cli
+      # `sha256sum -c` resolves the archive from the working directory.
+      #
+      # The asset is `ahwp-<tag>-<target>` from STAIxBWLB/agent-hwp, and the
+      # 1.x legacy `hwp-` name is deliberately not used (#121): proving this
+      # repo needs neither it nor the `hwp` command name is half of what this
+      # job is for. The archive carries `ahwp` and a `hwp` compatibility name at
+      # the top level; only `ahwp` is extracted, so a stray call to the second
+      # name fails here instead of surfacing when 2.0.0 removes it. The
+      # directory goes on PATH rather than into HWP_EDITOR_BIN, because the
+      # engine's default resolution (cli-engine.ts resolveBin) is exactly what
+      # that exercises.
+      - name: Install agent-hwp
         run: |
           base="https://github.com/STAIxBWLB/agent-hwp/releases/download/$HWP_CLI_TAG"
-          asset="hwp-$HWP_CLI_TAG-x86_64-unknown-linux-gnu.tar.gz"
-          sums="hwp-$HWP_CLI_TAG-x86_64-unknown-linux-gnu.sha256"
+          asset="ahwp-$HWP_CLI_TAG-x86_64-unknown-linux-gnu.tar.gz"
+          sums="ahwp-$HWP_CLI_TAG-x86_64-unknown-linux-gnu.sha256"
           curl --retry 3 --retry-all-errors -fsSL -O "$base/$asset" -O "$base/$sums"
           sha256sum -c "$sums"
-          tar xzf "$asset"
-          echo "HWP_EDITOR_BIN=$PWD/hwp" >> "$GITHUB_ENV"
+          tar xzf "$asset" ahwp
+          echo "$PWD" >> "$GITHUB_PATH"
 
-      # HWP_EDITOR_BIN reaches the API route through the `pnpm dev` child that
+      # PATH reaches the API route through the `pnpm dev` child that
       # playwright.config.ts's webServer spawns, which inherits this
       # environment; the config carries no env override precisely so it does.
       - run: pnpm --filter playground seed

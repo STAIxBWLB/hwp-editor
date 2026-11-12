@@ -2,23 +2,23 @@
 
 Embeddable GUI editor for Korean HWP/HWPX documents. All document
 functionality (reading, rendering, editing, composing, validating) is
-delegated to the external [`hwp`](https://github.com/STAIxBWLB/agent-hwp)
-binary (hwp-cli **>= 0.20.0, < 2.0.0**); this repo contains UI and thin engine
-adapters only.
+delegated to the external [`agent-hwp`](https://github.com/STAIxBWLB/agent-hwp)
+binary, whose command is `ahwp` (the 1.x `hwp` name is accepted as a fallback;
+**>= 0.20.0, < 2.0.0**). This repo contains UI and thin engine adapters only.
 
-Editing model: segment-based structured editing. `hwp render` visualizes
-pages, clicked segments map to `hwp edit` operations, and edits are verified
+Editing model: segment-based structured editing. `ahwp render` visualizes
+pages, clicked segments map to `ahwp edit` operations, and edits are verified
 by re-rendering.
 
 ## Layout
 
 - `packages/core` — framework-free TypeScript core: engine interface, typed
-  edit ops (`hwp edit` argv mapping), segment parsing, spec types, editor
+  edit ops (`ahwp edit` argv mapping), segment parsing, spec types, editor
   state store, HTTP engine client, Tauri engine client.
 - `packages/react` — embeddable React UI: page canvas, segment inspector,
   table grid, fields panel, compose panel. Themeable via `--hwped-*` CSS
   variables only.
-- `packages/server` — Node adapter that spawns the hwp-cli binary behind the
+- `packages/server` — Node adapter that spawns the agent-hwp binary behind the
   `protocol.ts` HTTP contract (framework-agnostic handler + Next.js factory).
 - `apps/playground` — smoke-test harness + Playwright e2e over the real
   binary.
@@ -79,18 +79,19 @@ pnpm -r typecheck
 Requires Node >= 22 and pnpm 10.
 
 Run the playground from a clean checkout (Node >= 22, the pinned pnpm version,
-and hwp-cli >= 0.20.0 installed, tested with 1.6.1):
+and agent-hwp installed as `ahwp` >= 0.20.0, tested with 1.6.1):
 
 ```sh
 pnpm playground
 ```
 
-`HWP_EDITOR_BIN=/path/to/hwp pnpm playground` selects a particular binary. The
+`HWP_EDITOR_BIN=/path/to/ahwp pnpm playground` selects a particular binary. The
 command installs locked dependencies, builds the packages, seeds fixtures and
 starts the editor at http://localhost:3100/editor. It does not install system
 tools or change an existing hwp binary.
 
-Playground e2e (real binary; `HWP_EDITOR_BIN` selects it, otherwise `hwp` on PATH):
+Playground e2e (real binary; `HWP_EDITOR_BIN` selects it, otherwise `ahwp` on
+PATH, and `hwp` only where that 1.x name is all that is installed):
 
 ```sh
 pnpm --filter playground seed

@@ -9,8 +9,9 @@ import { describe } from "vitest";
  *
  * This order deliberately mirrors `resolveBin` in
  * `packages/server/src/cli-engine.ts`, minus its first link (the `bin`
- * option, which no test passes): HWP_EDITOR_BIN, then HWP_CLI, then the bare
- * name `hwp` off PATH. Restating the chain here is a knowing tier violation —
+ * option, which no test passes): HWP_EDITOR_BIN, then HWP_CLI, then `ahwp`
+ * off PATH, and `hwp` only when `ahwp` is not runnable (the 1.x compatibility
+ * name, #121). Restating the chain here is a knowing tier violation —
  * binary resolution belongs to `cli-engine.ts` and a test should contribute
  * nothing but an environment variable — but `resolveBin` is a closure inside
  * `createCliEngine` and is not exported, so this file cannot call it. It is
@@ -24,8 +25,19 @@ import { describe } from "vitest";
  * the run still reported green. So a value carrying a path separator is
  * checked with `existsSync`, and a bare name is probed by actually running it.
  */
-export const BIN =
-  process.env.HWP_EDITOR_BIN?.trim() || process.env.HWP_CLI?.trim() || "hwp";
+export const BIN = resolveTestBin();
+
+/**
+ * The default half of the chain: `ahwp` when it runs, else `hwp`. The probe
+ * is the same one `HAS_BIN` uses, so a found-but-broken `ahwp` is reported as
+ * `ahwp` here and fails the suites visibly rather than being retried under
+ * the compatibility name the engine would not have chosen.
+ */
+function resolveTestBin(): string {
+  const configured = process.env.HWP_EDITOR_BIN?.trim() || process.env.HWP_CLI?.trim();
+  if (configured !== undefined) return configured;
+  return runnable("ahwp") ? "ahwp" : "hwp";
+}
 
 function runnable(bin: string): boolean {
   try {
@@ -40,9 +52,9 @@ export const HAS_BIN = BIN.includes(sep) ? existsSync(BIN) : runnable(BIN);
 
 if (!HAS_BIN) {
   console.warn(
-    `[hwp-editor/server tests] no runnable hwp binary at ${BIN} — ` +
-      "real-binary integration tests are skipped. Install hwp-cli, or set " +
-      "HWP_EDITOR_BIN / HWP_CLI.",
+    `[hwp-editor/server tests] no runnable engine binary at ${BIN} — ` +
+      "real-binary integration tests are skipped. Install agent-hwp so `ahwp` " +
+      "is on PATH, or set HWP_EDITOR_BIN / HWP_CLI.",
   );
 }
 

@@ -98,8 +98,29 @@ function imageAssetsVersionSupported(version: string): boolean {
  * Raised from [1, 0, 0] for hwp-cli 1.0.0, which carries 0.20.2's surface
  * plus dependency security fixes: the flag handshake and the real-binary
  * suites pass against it, so the next contract signal is 2.0.0.
+ *
+ * Unchanged by the rename to agent-hwp / `ahwp` (#121). agent-hwp#510 scopes
+ * 2.0.0 to removing the `hwp` compatibility name, the legacy `hwp-` assets and
+ * the Homebrew rename shim, but it does not state that 2.0.0 carries no other
+ * breaking change - its own decision table keeps "a 2.0 contract bump" as a
+ * revisit trigger for the contract names it left alone. Admitting 2.x on the
+ * strength of the rename plan alone would retire the one automated signal that
+ * the contract moved, and the flag handshake cannot see a flag that was
+ * replaced rather than dropped. The bump therefore waits for 2.0.0's own
+ * changelog; this engine keeps refusing it, loudly, until then.
  */
 const MAX_VERSION_EXCLUSIVE: readonly [number, number, number] = [2, 0, 0];
+
+/**
+ * The command this engine runs when nothing configures one, and the 1.x name
+ * it falls back to when that command is absent from `PATH` (#121).
+ *
+ * The fallback is temporary: 1.x ships `hwp` as a compatibility name, 2.0.0
+ * removes it, and the ceiling above keeps this engine on 1.x until that
+ * release's changelog is read. Nothing else in the resolution chain moves.
+ */
+const DEFAULT_COMMAND = "ahwp";
+const LEGACY_COMMAND = "hwp";
 
 /**
  * A long flag as `--help` prints it, matched on both boundaries.
@@ -208,6 +229,19 @@ export class HwpCliError extends Error {
   }
 }
 
+/**
+ * The command itself is absent: the spawn failed with ENOENT, so there was no
+ * binary to run and nothing to report about one.
+ *
+ * Separate from `HwpCliError` because the default command name falls back from
+ * `ahwp` to `hwp`, and that fallback is legal for exactly this cause. A binary
+ * that was found and then failed its own check arrives as a plain
+ * `HwpCliError`, so an installed-but-broken `ahwp` is never retried under the
+ * compatibility name. Callers catching `HwpCliError` see this as one, and
+ * routes.ts maps it by the same `code`.
+ */
+class HwpCliNotFound extends HwpCliError {}
+
 /** `bin` alone, or `bin: output` — the standard shape of a `detail`. */
 function detailFor(bin: string, output?: string): string {
   const trimmed = output?.trim() ?? "";
@@ -216,8 +250,9 @@ function detailFor(bin: string, output?: string): string {
 
 export interface CliEngineOptions {
   /**
-   * Explicit path to the hwp binary. Resolution order: this option ->
-   * HWP_EDITOR_BIN env -> HWP_CLI env -> `hwp` on PATH.
+   * Explicit path to the engine binary. Resolution order: this option ->
+   * HWP_EDITOR_BIN env -> HWP_CLI env -> `ahwp` on PATH, and `hwp` only when
+   * `ahwp` is not there (the 1.x compatibility name, #121).
    */
   bin?: string;
   /**
@@ -497,9 +532,10 @@ function runCli(
           // `binary not found` is pinned: packages/react/src/errors.ts
           // substring-matches it for the pre-1.0 fallback classifier. The
           // scrub moves the path off the message, it does not reword this.
-          reject(new HwpCliError(
+          // The install hint names the package as it is called now (#121).
+          reject(new HwpCliNotFound(
             "unavailable",
-            "hwp binary not found (install hwp-cli >= 0.20.0, or set HWP_EDITOR_BIN / the bin option)",
+            "hwp binary not found (install agent-hwp, whose command is `ahwp`, or set HWP_EDITOR_BIN / the bin option)",
             undefined,
             detailFor(bin),
           ));
@@ -1049,39 +1085,100 @@ function parseSinglePage(pages: string | undefined): number | null {
 export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
   const timeoutMs = opts.timeoutMs ?? HWP_TIMEOUT_MS;
 
-  function resolveBin(): string {
+  /** What the caller configured: used as given, never second-guessed. */
+  function explicitBin(): string | undefined {
     const fromOpts = opts.bin?.trim();
     if (fromOpts) return fromOpts;
     const fromEditorEnv = process.env.HWP_EDITOR_BIN?.trim();
     if (fromEditorEnv) return fromEditorEnv;
-    const fromCliEnv = process.env.HWP_CLI?.trim();
-    if (fromCliEnv) return fromCliEnv;
-    return "hwp";
+    return process.env.HWP_CLI?.trim() || undefined;
+  }
+
+  /**
+   * The default command name, once the version check has settled it: `ahwp`,
+   * or `hwp` where only the 1.x compatibility name is installed (#121).
+   * Undefined until then, which is why every spawn site awaits `binPath`.
+   */
+  let resolvedDefault: string | undefined;
+
+  function resolveBin(): string {
+    return explicitBin() ?? resolvedDefault ?? DEFAULT_COMMAND;
+  }
+
+  /**
+   * The binary to spawn, after the version memo: that memo is where a default
+   * name is chosen, so a spawn ordered before it could name a command the
+   * check was about to find missing.
+   */
+  async function binPath(): Promise<string> {
+    await ensureVersion();
+    return resolveBin();
+  }
+
+  /**
+   * The `--version` spawn. A throw that is not already an `HwpCliError` means
+   * the binary could not be executed at all; ENOENT arrives as
+   * `HwpCliNotFound`, rethrown untouched so the caller can tell an absent
+   * command from one that ran and failed.
+   */
+  async function versionProbe(bin: string): Promise<RunResult> {
+    try {
+      // No request signal, deliberately: this memo is shared by every later
+      // request in the process, so one cancellation must not poison binary
+      // verification for all of them.
+      return await runCli(bin, ["--version"], timeoutMs, opts.locale, undefined);
+    } catch (error) {
+      if (error instanceof HwpCliError) throw error;
+      // `not executable` is pinned: packages/react/src/errors.ts
+      // substring-matches it for the pre-1.0 fallback classifier. The path
+      // and the underlying error text move to `detail`; the phrase stays.
+      throw new HwpCliError(
+        "unavailable",
+        "hwp binary is not executable (set HWP_EDITOR_BIN or the bin option)",
+        undefined,
+        detailFor(bin, error instanceof Error ? error.message : String(error)),
+      );
+    }
+  }
+
+  /** Both names absent: the one error that can name the whole search. */
+  function noCommandError(): HwpCliError {
+    return new HwpCliError(
+      "unavailable",
+      `hwp binary not found: neither \`${DEFAULT_COMMAND}\` nor \`${LEGACY_COMMAND}\` is on PATH ` +
+        `(install agent-hwp so \`${DEFAULT_COMMAND}\` is on PATH, or set HWP_EDITOR_BIN / the bin option)`,
+      undefined,
+      detailFor(`${DEFAULT_COMMAND}, ${LEGACY_COMMAND}`),
+    );
   }
 
   // One version verification per resolved binary per process.
   let verifiedVersion: Promise<string> | null = null;
   function ensureVersion(): Promise<string> {
     verifiedVersion ??= (async () => {
-      const bin = resolveBin();
+      const explicit = explicitBin();
+      let bin = explicit ?? DEFAULT_COMMAND;
       let result: RunResult;
       try {
-        // No request signal, deliberately: this memo is shared by every
-        // later request in the process, so one cancellation must not poison
-        // binary verification for all of them.
-        result = await runCli(bin, ["--version"], timeoutMs, opts.locale, undefined);
+        result = await versionProbe(bin);
       } catch (error) {
-        if (error instanceof HwpCliError) throw error;
-        // `not executable` is pinned: packages/react/src/errors.ts
-        // substring-matches it for the pre-1.0 fallback classifier. The path
-        // and the underlying error text move to `detail`; the phrase stays.
-        throw new HwpCliError(
-          "unavailable",
-          "hwp binary is not executable (set HWP_EDITOR_BIN or the bin option)",
-          undefined,
-          detailFor(bin, error instanceof Error ? error.message : String(error)),
-        );
+        // The 1.x compatibility name covers exactly one cause: the default
+        // command is absent from PATH. An `ahwp` that exists and fails its own
+        // check is reported as it is - retrying it as `hwp` would hide a
+        // broken install behind a second name.
+        if (explicit !== undefined || !(error instanceof HwpCliNotFound)) throw error;
+        bin = LEGACY_COMMAND;
+        try {
+          result = await versionProbe(bin);
+        } catch (fallbackError) {
+          if (fallbackError instanceof HwpCliNotFound) throw noCommandError();
+          throw fallbackError;
+        }
       }
+      // Recorded only after a probe returned, so a failed check leaves no name
+      // behind for a later spawn. The explicit chain bypasses this entirely.
+      if (explicit === undefined) resolvedDefault = bin;
+
       if (result.code !== 0) {
         throw new HwpCliError(
           "unavailable",
@@ -1270,7 +1367,13 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       // at every tag v0.20.0..v1.6.1. Tolerating the exit handed `parse` empty
       // stdout, so an unreadable document reached the host as "hwp lint
       // returned invalid JSON" with an upgrade as its next step.
-      const result = await runCliOk(resolveBin(), args, timeoutMs, opts.locale, call?.signal).catch(error => {
+      //
+      // Resolved through the version memo, which is where a default name is
+      // chosen: this is the one spawn site that runs before any other check,
+      // so a bare `resolveBin()` here would spawn `ahwp` on a host that only
+      // has the 1.x compatibility name.
+      const bin = await binPath();
+      const result = await runCliOk(bin, args, timeoutMs, opts.locale, call?.signal).catch(error => {
         try { return rethrowProtected(error); }
         catch (failure) {
           if (failure instanceof HwpCliError && failure.reason === "failed") {
@@ -1693,7 +1796,10 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
     },
 
     async binaryInfo() {
-      return { bin: resolveBin(), version: await ensureVersion() };
+      // The version first: it decides the command name, which the same object
+      // then reports, so the two cannot disagree inside one response.
+      const version = await ensureVersion();
+      return { bin: resolveBin(), version };
     },
   };
 

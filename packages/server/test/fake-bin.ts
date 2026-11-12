@@ -35,6 +35,16 @@ const OVERFLOW_LINE = "012345678901234567890123456789012345678";
 export type FakeBinMode = "ok" | "fail" | "overflow" | "hang" | "slow" | "graceful";
 
 export interface FakeBinOptions {
+  /**
+   * File name the fake is written under; default `hwp`. The engine's default
+   * command is `ahwp` and falls back to `hwp` on ENOENT (#121), so a fallback
+   * case needs one fake per name on the same PATH.
+   */
+  name?: string;
+  /** Make `--version` exit with this status rather than print a version. */
+  failVersion?: number;
+  /** Make `--version` never answer, so a probe with a small timeout times out. */
+  hangVersion?: boolean;
   /** What `--version` prints; default `0.20.0`. */
   version?: string;
   /** What every subcommand other than `--version`/`edit --help`/`info` does. */
@@ -174,7 +184,7 @@ export function createFakeBin(opts: FakeBinOptions = {}): { bin: string; log: ()
   dirs.push(dir);
   const logPath = path.join(dir, "argv.log");
   writeFileSync(logPath, "");
-  const bin = path.join(dir, "hwp");
+  const bin = path.join(dir, opts.name ?? "hwp");
   const help = opts.helpFixture ?? DEFAULT_HELP_FIXTURE;
   /**
    * The failing template command's stderr, one `printf` per line when asked.
@@ -189,6 +199,17 @@ export function createFakeBin(opts: FakeBinOptions = {}): { bin: string; log: ()
   const fail = (command: string) => opts.failTemplateCommand === command
     ? [templateStderr(command), `exit ${opts.templateFailureCode ?? 3}`]
     : [];
+  /**
+   * The `--version` branch: answered, failed, or silent. A probe that must time
+   * out cannot be driven through `mode`, which runs only after the dispatcher,
+   * and `--version` is answered by the dispatcher itself.
+   */
+  const versionCase =
+    opts.hangVersion === true
+      ? `  --version) ${['trap "" TERM', ...sleepSlices(60_000)].join("; ")} ;;`
+      : opts.failVersion === undefined
+        ? `  --version) echo ${JSON.stringify(`ahwp ${opts.version ?? DEFAULT_VERSION}`)}; exit 0 ;;`
+        : `  --version) printf '%s' 'no version for you' >&2; exit ${opts.failVersion} ;;`;
   /**
    * A successful `edit` that publishes the staged input and writes the report.
    * The `-o` and `--report` paths are read from argv rather than assumed, so
@@ -209,7 +230,7 @@ export function createFakeBin(opts: FakeBinOptions = {}): { bin: string; log: ()
       // once, at the one place values enter the script.
       `echo "$@" >> ${JSON.stringify(logPath)}`,
       'case "$1" in',
-      `  --version) echo ${JSON.stringify(`hwp ${opts.version ?? DEFAULT_VERSION}`)}; exit 0 ;;`,
+      versionCase,
       // `|| exit 1` rather than an unconditional `exit 0`: an unreadable
       // fixture is the only way to give the handshake a failing `edit --help`.
       `  edit) if [ "$2" = "--help" ]; then cat ${JSON.stringify(help)} || exit 1; exit 0; fi; ${reportEdit !== null ? reportEdit.join(" ") : fail("edit").join("; ")} ;;`,

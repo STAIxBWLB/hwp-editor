@@ -5,7 +5,8 @@
  * Writes to fixtures/ (canonical) and public/fixtures/ (served statically so
  * the page can fetch them), plus public/fixtures/manifest.json.
  *
- * Usage: pnpm seed   (HWP_EDITOR_BIN selects the binary; otherwise `hwp` on PATH)
+ * Usage: pnpm seed   (HWP_EDITOR_BIN selects the binary; otherwise `ahwp` on
+ * PATH, and `hwp` only where the 1.x compatibility name is all that is there)
  */
 
 import { execFileSync } from "node:child_process";
@@ -14,7 +15,36 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
-const BIN = process.env.HWP_EDITOR_BIN?.trim() || "hwp";
+
+/**
+ * The command to compose with: what the caller configured, else `ahwp`, else
+ * `hwp` when `ahwp` is not on PATH (#121).
+ *
+ * Only ENOENT moves on to the second name. A binary that is present and fails
+ * its own check is reported as it is: falling back would compose the fixtures
+ * with a different install than the engine runs them with.
+ */
+function resolveBin() {
+  const configured = process.env.HWP_EDITOR_BIN?.trim();
+  if (configured) return configured;
+  for (const name of ["ahwp", "hwp"]) {
+    try {
+      execFileSync(name, ["--version"], { stdio: "ignore" });
+      return name;
+    } catch (error) {
+      if (error.code !== "ENOENT") {
+        throw new Error(
+          `cannot run ${name} (${error.code ?? error.message}); install agent-hwp, or set HWP_EDITOR_BIN to its executable`,
+        );
+      }
+    }
+  }
+  throw new Error(
+    "neither `ahwp` nor `hwp` is on PATH; install agent-hwp so `ahwp` is on PATH, or set HWP_EDITOR_BIN to its executable",
+  );
+}
+
+const BIN = resolveBin();
 
 const fixturesDir = join(appDir, "fixtures");
 const publicDir = join(appDir, "public", "fixtures");

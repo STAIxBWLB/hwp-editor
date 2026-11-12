@@ -35,14 +35,18 @@ jobs:
       # working directory, which would hand the bare run the fonts too.
       # Both classes: a serif request (함초롬바탕, compose's default) only falls
       # back to serif faces, so a sans-only directory still renders blank text.
-      - name: Fetch hwp-cli and the pinned Noto Sans and Serif CJK KR faces
+      - name: Fetch agent-hwp and the pinned Noto Sans and Serif CJK KR faces
         run: |
           base="https://github.com/STAIxBWLB/agent-hwp/releases/download/$HWP_CLI_TAG"
-          asset="hwp-$HWP_CLI_TAG-x86_64-unknown-linux-gnu.tar.gz"
-          sums="hwp-$HWP_CLI_TAG-x86_64-unknown-linux-gnu.sha256"
+          asset="ahwp-$HWP_CLI_TAG-x86_64-unknown-linux-gnu.tar.gz"
+          sums="ahwp-$HWP_CLI_TAG-x86_64-unknown-linux-gnu.sha256"
           curl --retry 3 --retry-all-errors -fsSL -O "$base/$asset" -O "$base/$sums"
           sha256sum -c "$sums"
-          tar xzf "$asset"
+          # Only the `ahwp` member: the 1.x archive also carries a `hwp`
+          # compatibility name, and this job is meant to prove neither that
+          # name nor the legacy `hwp-` asset is needed (#121).
+          tar xzf "$asset" ahwp
+          echo "$PWD" >> "$GITHUB_PATH"
           mkdir cjk-fonts
           curl --retry 3 --retry-all-errors -fsSL -o cjk-fonts/NotoSansCJKkr-Regular.otf \
             https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/Sans/OTF/Korean/NotoSansCJKkr-Regular.otf
@@ -55,16 +59,18 @@ jobs:
       # Fixtures are not committed; the playground's seed script composes them
       # with the binary. It is stdlib only, so the runner's preinstalled Node is
       # enough (setup-node would try to cache pnpm, which this job never
-      # installs). Composing needs no fonts; only rendering does.
+      # installs). Composing needs no fonts; only rendering does. No
+      # HWP_EDITOR_BIN is set: the script resolves `ahwp` off PATH, which is the
+      # default this change introduces.
       - name: Compose the Korean fixture
-        run: HWP_EDITOR_BIN="$PWD/hwp" node apps/playground/scripts/seed-fixtures.mjs
+        run: node apps/playground/scripts/seed-fixtures.mjs
       - name: Render with and without HWP_FONT_DIR where no fonts exist
         run: |
           docker run --rm -v "$PWD:/w" -w /w debian:bookworm-slim sh -euc '
             test -z "$(ls -A /usr/share/fonts 2>/dev/null)"
             test ! -e fonts
-            ./hwp render apps/playground/fixtures/table-demo.hwpx -o /tmp/bare.svg
-            HWP_FONT_DIR=/w/cjk-fonts ./hwp render apps/playground/fixtures/table-demo.hwpx -o /tmp/fonts.svg
+            ./ahwp render apps/playground/fixtures/table-demo.hwpx -o /tmp/bare.svg
+            HWP_FONT_DIR=/w/cjk-fonts ./ahwp render apps/playground/fixtures/table-demo.hwpx -o /tmp/fonts.svg
             bare=$(grep -o "<path" /tmp/bare.svg | wc -l)
             with=$(grep -o "<path" /tmp/fonts.svg | wc -l)
             echo "path elements: no fonts=$bare, HWP_FONT_DIR=$with"

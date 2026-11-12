@@ -1,7 +1,8 @@
 # @hwp-editor/server
 
 Node adapter that serves the `@hwp-editor/core` HTTP contract by spawning the
-external [hwp-cli](https://github.com/STAIxBWLB/agent-hwp) binary. All document
+external [agent-hwp](https://github.com/STAIxBWLB/agent-hwp) binary, run as
+`ahwp`. All document
 work (read/render/edit/compose/validate) is delegated to that binary; this
 package contains no HWP parsing, only a hardened subprocess wrapper and a
 framework-agnostic `(Request) => Response` handler.
@@ -96,7 +97,7 @@ Its return value answers two questions in one call, deliberately:
   different scopes share no entry of any kind. Because one call decides both,
   admission and isolation cannot disagree.
 
-`GET /capabilities` is gated too; it discloses the resolved hwp-cli version.
+`GET /capabilities` is gated too; it discloses the resolved engine version.
 
 With no hook supplied every request is allowed and every request uses the same
 fixed scope, which is the correct behaviour for a single-tenant host and the
@@ -174,7 +175,15 @@ Resolution order, first match wins:
 1. the `bin` option
 2. `HWP_EDITOR_BIN`
 3. `HWP_CLI`
-4. `hwp` on `PATH`
+4. `ahwp` on `PATH`
+5. `hwp` on `PATH`, only when `ahwp` is not there
+
+Links 1-3 are used as given. Link 4 is the default; link 5 is the 1.x
+compatibility name for the rename (agent-hwp#510), tried only when spawning
+`ahwp` failed with ENOENT. A binary that was found and then failed its own
+check is reported as that binary: it is never retried under the other name.
+Link 5 goes away with 2.0.0, and the version ceiling below keeps refusing 2.x
+until that release's changelog says what else moved.
 
 The resolved binary is verified once per engine instance, and must satisfy both
 checks:
@@ -182,7 +191,7 @@ checks:
 - **Version range**: at least `0.20.0`, and below `2.0.0`. The floor is hard: a
   binary under it lacks flags this package emits. The ceiling is only a
   major-version gate, because a version string is what a binary calls itself.
-- **Flag handshake**: `hwp edit --help` must list the flags the edit path
+- **Flag handshake**: `ahwp edit --help` must list the flags the edit path
   emits — `--ops`, `--verify` and `--allow-partial` — matched on word
   boundaries. A binary that reports an acceptable version but has dropped a flag
   is refused with `error.code` `version`. That is the check that actually
