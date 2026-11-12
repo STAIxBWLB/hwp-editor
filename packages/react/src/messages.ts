@@ -392,7 +392,7 @@ export const en = {
   "table.indexMismatch": (p: { engine: number; published: number }): string =>
     p.engine > p.published
       ? `The engine counts ${p.engine} ${p.engine === 1 ? "table" : "tables"} in this document but this editor shows ${p.published}, because a table inside a note, a header, a footer or a hidden comment is counted there and not shown here. The numbers of the tables after it point at a different table than the one you picked, so table edits are off: move that table into the body and reload, or edit the document in a word processor.`
-      : `The engine counts ${p.engine} ${p.engine === 1 ? "table" : "tables"} in this document but this editor shows ${p.published}, which is more than the engine's own table walk reached. The two walks then disagree about which tables they pass or in what order (a table inside a text box is one known cause), so a table number cannot be trusted wherever it falls. Table edits are off: reload the document, and if the two counts still disagree, edit it in a word processor.`,
+      : `The engine counts ${p.engine} ${p.engine === 1 ? "table" : "tables"} in this document but this editor shows ${p.published}, which is more than the engine's own table walk reached. The two walks disagree about which tables they count, so a table number cannot be trusted wherever it falls. Table edits are off: reload the document, and if the two counts still disagree, edit it in a word processor.`,
   "table.htmlTable": (p: { index: number }): string =>
     `Table #${p.index} holds a merged cell, or a cell with block content such as a nested table, a list or a paragraph of its own, so the engine writes it as HTML and there is no cell grid to show here. Its number still holds this table's slot in the numbering. To edit it here, unmerge the cell, or move the nested block out of the cell, in a word processor, then reopen the document.`,
   "table.cellLabel": (p: { row: number; col: number }): string =>
@@ -918,7 +918,7 @@ export const ko: MessageTable = {
   "table.indexMismatch": (p) =>
     p.engine > p.published
       ? `엔진은 이 문서에서 표 ${p.engine}개를 세지만 이 편집기는 ${p.published}개를 보여 줍니다. 각주·미주, 머리말·꼬리말, 숨은 설명 안의 표는 엔진이 세지만 여기에는 표시되지 않습니다. 그 표 뒤에 오는 표의 번호가 고른 표가 아닌 다른 표를 가리키게 되므로 표 편집을 꺼 두었습니다. 해당 표를 본문으로 옮긴 뒤 다시 열거나, 워드프로세서에서 문서를 편집하세요.`
-      : `엔진은 이 문서에서 표 ${p.engine}개를 세지만 이 편집기는 ${p.published}개를 보여 줍니다. 엔진이 센 수보다 많이 보인다는 것은 두 쪽이 거치는 표나 그 순서가 다르다는 뜻이므로(글상자 안의 표가 알려진 원인 중 하나입니다), 어느 자리의 표 번호도 신뢰할 수 없습니다. 표 편집을 꺼 두었습니다. 문서를 다시 열고, 그래도 두 수가 다르면 워드프로세서에서 문서를 편집하세요.`,
+      : `엔진은 이 문서에서 표 ${p.engine}개를 세지만 이 편집기는 ${p.published}개를 보여 줍니다. 엔진이 센 수보다 많이 보인다는 것은 두 쪽이 세는 표가 다르다는 뜻이므로, 어느 자리의 표 번호도 신뢰할 수 없습니다. 표 편집을 꺼 두었습니다. 문서를 다시 열고, 그래도 두 수가 다르면 워드프로세서에서 문서를 편집하세요.`,
   "table.htmlTable": (p) =>
     `표 #${p.index}에 병합된 셀이 있거나 셀 안에 중첩 표·목록·별도 문단 같은 블록 내용이 있어 엔진이 HTML로 기록하므로 여기에는 셀 격자를 그릴 수 없습니다. 표 번호는 번호 체계에서 이 표의 자리를 그대로 차지합니다. 여기서 편집하려면 워드프로세서에서 셀 병합을 풀거나 셀 안의 블록을 셀 밖으로 옮긴 뒤 문서를 다시 여세요.`,
   "table.cellLabel": (p) => `셀 (${p.row}, ${p.col})`,
