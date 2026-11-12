@@ -123,7 +123,7 @@ describe("insertionFailure", () => {
       "failed",
       "hwped_edit failed: hwp edit failed (exit 1): 구역 정의 문단 앞에는 삽입할 수 없습니다",
     );
-    const shown = insertionFailure(error, WIDE, en);
+    const shown = insertionFailure(error, WIDE, en) as Error;
     expect(shown.message).toBe(en("components.insertionRefused", { reason: "구역 정의 문단 앞에는 삽입할 수 없습니다" }));
   });
 
