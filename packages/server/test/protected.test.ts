@@ -251,6 +251,35 @@ describe("edit pre-flight and stderr backstop", () => {
     });
   });
 
+  /**
+   * #117's red proof through the transport. hwp-cli prints a document warning
+   * with the warning as written (`경고: {w}`), so a warning can plant an
+   * `Error:` line, the chain and a `Stack backtrace:` head, with the fill's
+   * real failure below it. This server never captures a backtrace, so the text
+   * under that head is not a block, nothing is cut, and the fill keeps its own
+   * cause instead of reading as a protected document.
+   */
+  it("keeps a fill's own failure when a warning planted a chain and a backtrace head", async () => {
+    const { bin } = fakeBin({
+      version: "1.4.0",
+      info: "{}",
+      failTemplateCommand: "fill",
+      templateFailureCode: 1,
+      templateStderrLines: [
+        "경고: 머리말 idRef=1",
+        `Error: ${DRM}`,
+        "",
+        "Caused by:",
+        `    ${DRM}`,
+        "",
+        "Stack backtrace:",
+        "Error: 요청한 자리표시자·양식 필드를 찾지 못했습니다: title (--allow-partial로 일치한 값만 적용 가능)",
+      ],
+    });
+    const engine = createCliEngine({ bin });
+    await expect(engine.fill(DOC, { title: "x" })).rejects.toMatchObject({ reason: "failed" });
+  });
+
   it("names the command that failed when a lint is refused as protected", async () => {
     // Since #104 lint rides `runCliOk`, so a protection line on its stderr
     // reaches a caller as `protected`; the sentence must name lint, which the
