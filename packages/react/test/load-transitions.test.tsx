@@ -1204,4 +1204,38 @@ describe("#58 item 30: undo's read failure and the re-read line", () => {
     await vi.waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
     expect(screen.getByText(file.name)).toBeTruthy();
   });
+
+  /**
+   * t43-a1: after a failed undo this line is the only answer to the press, so
+   * its next step has to be one the reader can take. The editor ships no
+   * Refresh control (refresh lives on `HwpEditorHandle`), and what a failed
+   * undo asks for is the undo again - so the sentence says nothing changed and
+   * names the repeated action, in both locales.
+   */
+  it("asks for the same action again instead of a refresh the page does not offer", async () => {
+    const h = editorEngine();
+    const ref = createRef<HwpEditorHandle>();
+    const view = render(<HwpEditor ref={ref} engine={h.engine} file={file} />);
+    await selectAndQueueReplace(en);
+    await applyOne(en);
+    await screen.findByText(pending(en, 0));
+
+    // Only the undo's read fails, so the re-read line is the whole answer.
+    h.engine.read = async () => { throw new Error("undo read failed"); };
+    fireEvent.click(screen.getByRole("button", { name: en["toolbar.revert"] }));
+    await vi.waitFor(() => expect(lineHas(en["error.prefix.refresh"], "undo read failed")).toBe(true));
+
+    const english = alertTexts().find((text) => text.includes("undo read failed")) ?? "";
+    expect(english).toContain("so nothing changed");
+    expect(english).toContain("try the same action again");
+    expect(english.toLowerCase()).not.toContain("refresh");
+
+    view.rerender(<HwpEditor ref={ref} locale="ko" engine={h.engine} file={file} />);
+    await vi.waitFor(() => expect(lineHas(ko["error.prefix.refresh"], "undo read failed")).toBe(true));
+
+    const korean = alertTexts().find((text) => text.includes("undo read failed")) ?? "";
+    expect(korean).toContain("아무것도 바뀌지 않았습니다");
+    expect(korean).toContain("같은 작업을 다시 시도하세요");
+    expect(korean).not.toContain("새로 고치");
+  });
 });

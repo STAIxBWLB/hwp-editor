@@ -279,11 +279,14 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
      * A failure of a RE-READ, kept apart from `loadError` on purpose: the
      * document on screen is still the one the host chose, so "could not open
      * the document" would be false (#58 item 29). Two flows paint it, because
-     * both read the open document without replacing it: the Refresh control,
-     * and the read undo performs before it restores a snapshot (#58 item 30).
-     * A later refresh, apply or undo that succeeds clears it, and nothing
-     * either read does can clear a real load failure, because that one lives
-     * in the state above.
+     * both read the open document without replacing it: a refresh the host
+     * asks for through `HwpEditorHandle.refresh`, and the read undo performs
+     * before it restores a snapshot (#58 item 30). Neither read changes the
+     * document, so the line says so and asks for the same action again rather
+     * than naming a Refresh control the editor does not have (t43-a1). A later
+     * refresh, apply or undo that succeeds clears it, and nothing either read
+     * does can clear a real load failure, because that one lives in the state
+     * above.
      */
     const [refreshError, setRefreshError] = useState<EditorError | null>(null);
     /**
