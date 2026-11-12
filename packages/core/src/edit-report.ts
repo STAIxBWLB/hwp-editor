@@ -97,8 +97,12 @@ function array(raw: unknown, field: string): unknown[] {
  */
 const SEGMENT_ID = /^[0-9a-f]{16}(?:\.[0-9]+){1,33}$/;
 
-/** The positional index chain inside a segment id, without its checksum. */
-function segmentPath(id: string): number[] {
+/**
+ * The positional chain inside a segment id, `[section, ...indices]`, without
+ * its hash: the one reader of the `<hash>.<section>.<indices...>` shape, used
+ * here and by the editor for an inserted paragraph that publishes no segment.
+ */
+export function segmentIdPath(id: string): number[] {
   return id.split(".").slice(1).map(Number);
 }
 
@@ -209,7 +213,7 @@ export function insertedParagraphIds(outcome: EditOpOutcome): string[] {
   for (const pair of outcome.changed) {
     // A re-key or a removal is not a paragraph this op created.
     if (pair.before !== null || pair.after === null) continue;
-    paths.set(pair.after, segmentPath(pair.after));
+    paths.set(pair.after, segmentIdPath(pair.after));
   }
   const top: string[] = [];
   for (const [id, path] of paths) {

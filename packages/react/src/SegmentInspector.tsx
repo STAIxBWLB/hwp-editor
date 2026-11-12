@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import type { JSX } from "react";
 import type { ParagraphAddress, ParagraphAlignment, ParaShapeKey, SelectionRefusal, Segment } from "@hwp-editor/core";
-import { compareSegments, documentFormat, formatTargets as collectFormatTargets, hasDirectFormatting, hasOwnRef, isSectionDefinitionParagraph, paragraphAddress, paragraphRuns, resolveSelection, segmentAtRef, segmentPath, segmentRef, segmentText, selectSimilar, selectedParagraphs, selectionAction, stylesVersionSupported } from "@hwp-editor/core";
+import { compareSegments, documentFormat, formatTargets as collectFormatTargets, hasDirectFormatting, hasOwnRef, isSectionDefinitionParagraph, paragraphAddress, paragraphRuns, resolveSelection, segmentAtRef, segmentIdPath, segmentPath, segmentRef, segmentText, selectSimilar, selectedParagraphs, selectionAction, stylesVersionSupported } from "@hwp-editor/core";
 import { plainSegmentText } from "./text.js";
 import { useHwpEditorContext } from "./context.js";
 import type { MessageKey } from "./messages.js";
@@ -227,7 +227,7 @@ export function SegmentInspector(): JSX.Element {
     if (insertedHidden.envelope !== envelope || insertedHidden.selections !== state.selections) return [];
     const section = paragraphRun![0]!.section;
     return insertedHidden.ids.flatMap((id) => {
-      const [idSection, ...indices] = id.split(".").slice(1).map(Number);
+      const [idSection, ...indices] = segmentIdPath(id);
       if (idSection !== section || indices.length !== runParent.length + 1) return [];
       if (!runParent.every((index, at) => indices[at] === index)) return [];
       return [{ id, index: indices[indices.length - 1]! }];

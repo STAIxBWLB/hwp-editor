@@ -184,6 +184,7 @@ export {
   EDIT_REPORT_MIN_VERSION,
   editReportSupported,
   insertedParagraphIds,
+  segmentIdPath,
   parseEditReport,
   withCallerName,
 } from "./edit-report.js";
