@@ -551,9 +551,128 @@ function validateArgvSeparators(op: LegacyEditOp): void {
   }
 }
 
+/** One caller-supplied field of an argv op, named for a refusal message. */
+type ArgvLineBreakField = { field: string; value: string };
+
+/**
+ * The argv fields whose value the engine prints with `Display`, which is the
+ * only way a CR or LF in one of them reaches stderr as a line of its own
+ * (#115 item 2). Everything else is echoed with `{:?}`, which escapes a line
+ * break onto the engine's own line, or is not echoed at all.
+ *
+ * Measured kind by kind against `crates/hwp-cli/src/commands/edit.rs` and
+ * ahwp 1.6.1, reading how each confirmation line interpolates the caller's
+ * text:
+ *
+ * - `Display`, so refused: `set-meta`, whose `:1394` line is
+ *   `메타데이터 설정: {spec}` with `spec` the raw `key=value`. A LF in the
+ *   value is printed verbatim, so `--set-meta "author=a<LF>Error: <sentence>"`
+ *   puts a line of the caller's text on stderr, above the line Termination
+ *   writes when a later op fails.
+ * - `Debug` (`{:?}`, escaped onto one line): every other kind that echoes a
+ *   value, namely `replace` (:1216), `set-cell` (:1235), `set-field` (:1377),
+ *   `create-field` (:1294), `create-bookmark` (:1310), `create-hyperlink`
+ *   (:1332), `insert-image` (:1348), `seal` (:1361), `set-format` (:1416),
+ *   `set-align` (:1441), `insert-para` and `insert-para-before` (:1480,
+ *   :1463), `delete-para` (:1498), `add-table` (:1599), `clone-table` (:1616),
+ *   `delete-image` (:1704), `delete-table` (:1726), `delete-field` (:1740),
+ *   `delete-bookmark` (:1757), plus the unapplied list any kind can land in
+ *   (`:2021`, whose `{request}` is built with `{:?}` fields).
+ * - Parsed numbers only, so nothing of the caller's reaches a line: `add-row`,
+ *   `add-col`, `delete-row`, `delete-col`, `merge-cells`, `split-cell`, and
+ *   `set-page`, which prints a count (`:1682`).
+ *
+ * Two fields sit on a raw insertion but are not refused here, because the
+ * engine's own validator answers first with a `{:?}`-quoted message and the
+ * echo is never reached. Both were measured on ahwp 1.6.1:
+ *
+ * - `set-meta`'s `key`: `--set-meta "auth<LF>or=v"` is refused as
+ *   `Error: 메타데이터 키는 title|author|subject|keywords 입니다: "auth\nor"`,
+ *   so the spec is never printed.
+ * - `set-para`'s `value`, which arrives inside the raw `kv` tail of
+ *   `문단 모양: {pattern:?} {kv}` (`:1632`). Reaching that line means
+ *   `parse::<f32>` already read the value, and a LF inside it makes that
+ *   refuse (`Error: mm 값이 숫자가 아닙니다: "1\nError: ..."`). A trailing LF
+ *   alone survives `str::trim` and adds a blank line after text the engine
+ *   wrote, which plants nothing.
+ *
+ * Nothing beyond those is scoped in. `--insert-para "anchor=>a<LF>b"` is
+ * accepted by the engine and stores a real paragraph break, echoing it with
+ * `{:?}`, so paragraph text is a value a line break legitimately belongs to
+ * and `opsToArgv` keeps serializing it.
+ *
+ * Exhaustive on purpose (the `never` default), like `argvSeparatorFields`: a
+ * new op kind has to say whether its echo is `Display`, because a fallback
+ * would let one reach stderr unrefused.
+ */
+function argvLineBreakFields(op: LegacyEditOp): ArgvLineBreakField[] {
+  switch (op.kind) {
+    case "set-meta":
+      return [{ field: "value", value: op.value }];
+    // `{:?}`-escaped echoes: a CR or LF stays inside one line of the engine's.
+    case "replace":
+    case "set-cell":
+    case "set-field":
+    case "create-field":
+    case "create-bookmark":
+    case "create-hyperlink":
+    case "insert-image":
+    case "seal":
+    case "set-format":
+    case "set-align":
+    case "insert-para":
+    case "insert-para-before":
+    case "delete-para":
+    case "add-table":
+    case "clone-table":
+    case "set-para":
+    case "delete-image":
+    case "delete-table":
+    case "delete-field":
+    case "delete-bookmark":
+    // Parsed numbers, or a count: no caller text on the line at all.
+    case "add-row":
+    case "add-col":
+    case "delete-row":
+    case "delete-col":
+    case "merge-cells":
+    case "split-cell":
+    case "set-page":
+      return [];
+    default: {
+      const unhandled: never = op;
+      throw new Error(`argvLineBreakFields: unhandled op kind ${JSON.stringify(unhandled)}`);
+    }
+  }
+}
+
+/**
+ * Refuse a line break in a value the engine would print with `Display`, before
+ * serialization, the same way a value that joins on a structural separator is.
+ *
+ * The value is never echoed: it is caller text, and repeating it is the very
+ * thing this guard exists to stop reaching a message.
+ */
+function validateArgvLineBreaks(op: LegacyEditOp): void {
+  for (const { field, value } of argvLineBreakFields(op)) {
+    if (!/[\r\n]/u.test(value)) continue;
+    const cause = new Error(`${op.kind} ${field} on the argv path cannot carry a line break`);
+    throw new HwpEngineError(
+      "bad_request",
+      `${cause.message}: the engine prints this field as text of its own line on stderr, so a CR or LF in it would stand there as a line the engine never wrote; remove the line break.`,
+      { cause },
+    );
+  }
+}
+
 /** Serialize one op to its CLI value string (the part after the flag). */
 function opValue(op: LegacyEditOp): string {
   validateArgvSeparators(op);
+  validateArgvLineBreaks(op);
+  return serializeArgvValue(op);
+}
+
+function serializeArgvValue(op: LegacyEditOp): string {
   switch (op.kind) {
     case "replace":
       return `${op.find}=>${op.replace}`;

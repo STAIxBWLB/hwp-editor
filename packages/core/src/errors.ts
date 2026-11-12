@@ -208,7 +208,8 @@ export const DISTRIBUTION_NEXT_STEP =
  * `LoadDocumentError::source` (cat.rs:107-114) returns the root cause, so
  * anyhow's Debug follows it with a blank line, `Caused by:`, and the same
  * sentence indented four spaces. Two copies of the sentence, both authored by
- * the engine, but only the first one counts (see `lineCarriesRefusal`):
+ * the engine, but only the first one is read, and only when the second ends
+ * the report (see `firstEngineErrorLine` and `terminationChain`):
  *
  *     Error: DRM으로 보호된 문서는 지원하지 않습니다. 한글에서 DRM 보안을 ...
  *
@@ -277,35 +278,95 @@ const ENGINE_ERROR_LABEL = "Error: ";
 const TRANSPORT_HEAD = /^hwp_failed: hwp \S+ failed \(exit -?\d+\): /u;
 
 /**
- * The message of the FIRST line-start `Error:` line in `text`, or null when
- * there is none. In the bridge's form that line arrives as the tail of its
- * head line, so the head is stripped first.
+ * The engine's own diagnostics: `text` with the bridge's head taken off its
+ * first line, which is where maru pastes hwp-cli's stderr.
+ */
+function engineDiagnostics(text: string): string {
+  const lines = text.split(/\r?\n/u);
+  const head = TRANSPORT_HEAD.exec(lines[0] ?? "");
+  if (head === null) return lines.join("\n");
+  lines[0] = (lines[0] ?? "").slice(head[0].length);
+  return lines.join("\n");
+}
+
+/**
+ * The message of the FIRST line-start `Error:` line in the engine's report, or
+ * null when there is none.
  *
  * Only the first one can be the engine's. `Termination` writes the failure
  * line once, before the process exits, and everything hwp-cli prints before it
  * is fixed text (`cat.rs`'s `정보: 배포용 문서를 해제했습니다 ...`) or a value it
- * escapes with `{:?}` (`edit.rs`'s anchors and field names). The one raw
- * interpolation is `fill`'s unmatched key list, and it sits INSIDE the failure
- * message, after the fixed `... 찾지 못했습니다: ` prefix - so it can only add
- * lines below the engine's, never replace the first one. A later `Error: `
- * line is therefore caller text, and a key such as
- * `a\nError: <sentence>\nb` must not select a protection reading by itself.
+ * escapes with `{:?}` (`edit.rs`'s anchors and field names). The raw
+ * interpolations - `fill`'s unmatched key list, and `edit.rs:1394`'s
+ * `메타데이터 설정: {spec}` for a `set-meta` key or value - sit INSIDE a message
+ * the engine wrote, after a fixed prefix, so they add lines instead of
+ * replacing the engine's own. That line alone is not proof, though: the one
+ * that lands before Termination's is kept out by `terminationChain`, which
+ * every caller must also require.
  *
  * The message is compared whole, so nothing may follow the sentence either:
  * `fill`'s ` (--allow-partial로 ...)` hint and `edit`'s `{anchor:?}` quoting
- * both leave a value that holds a sentence with text after it on its line, and
- * the `Caused by:` copy anyhow prints is not read at all.
+ * both leave a value that holds a sentence with text after it on its line.
  */
-function firstEngineErrorLine(text: string): string | null {
-  const lines = text.split(/\r?\n/u);
-  const head = TRANSPORT_HEAD.exec(lines[0] ?? "");
-  if (head !== null) lines[0] = (lines[0] ?? "").slice(head[0].length);
-  for (const line of lines) {
+function firstEngineErrorLine(report: string): string | null {
+  for (const line of report.split(/\r?\n/u)) {
     if (line.startsWith(ENGINE_ERROR_LABEL)) {
       return line.slice(ENGINE_ERROR_LABEL.length);
     }
   }
   return null;
+}
+
+/**
+ * The lines Termination puts between its `Error:` line and the copy of the
+ * message: a blank line, the `Caused by:` label, and four spaces of indent.
+ */
+const CAUSE_BLOCK = "\n\nCaused by:\n    ";
+
+/**
+ * Termination's whole chain for one message: the `Error:` line, the blank
+ * line, `Caused by:` and the root cause indented four spaces. Measured on
+ * ahwp 1.6.1 through both `hwp cat` and `hwp edit` against a file that is not
+ * a document, and spot-checked at v0.20.0.
+ *
+ * Only an error carrying a root cause prints the block: `map_hwp5_read_error`
+ * (cat.rs:122-127) wraps the hwp5 error with no context and
+ * `LoadDocumentError::source` (cat.rs:107-114) returns it, which is why a
+ * protection refusal has one, while a plain `anyhow::bail!` prints the
+ * `Error:` line alone. A contexted error puts `<input path>: ` in front of the
+ * indented copy, so a copy the engine printed twice verbatim is the only shape
+ * that matches.
+ */
+function terminationChain(message: string): string {
+  return `${ENGINE_ERROR_LABEL}${message}${CAUSE_BLOCK}${message}`;
+}
+
+/**
+ * The head anyhow's Debug appends when a backtrace is captured: a blank line
+ * and `Stack backtrace:`, then one frame per line. Read from anyhow 1.0.104
+ * (`fmt.rs:46-61`, the version in hwp-cli v1.6.1's Cargo.lock) and measured on
+ * ahwp 1.6.1 with `RUST_BACKTRACE=1 hwp cat` on a file that is not a document:
+ * the block follows the `Caused by:` copy, so the diagnostics no longer END
+ * with the chain while a protection refusal still printed it.
+ *
+ * `RUST_BACKTRACE` reaches the engine through maru, whose `run_hwp` passes the
+ * environment through unchanged (`dev/maru/src-tauri/src/hwped.rs`, it sets
+ * only `PATH`), so this is a shape the desktop transport really produces and
+ * not a hypothetical.
+ */
+const BACKTRACE_HEAD = "\n\nStack backtrace:";
+
+/**
+ * The engine's report with any backtrace block cut off, so the chain check
+ * reads the same with and without `RUST_BACKTRACE`.
+ *
+ * Cut at the LAST occurrence: the engine appends its block once, after
+ * Termination's, so anything earlier is caller text an op value planted, and
+ * dropping the tail there only ever rejects a reading.
+ */
+function withoutBacktrace(diagnostics: string): string {
+  const traced = diagnostics.lastIndexOf(BACKTRACE_HEAD);
+  return traced < 0 ? diagnostics : diagnostics.slice(0, traced);
 }
 
 /**
@@ -324,9 +385,13 @@ function firstEngineErrorLine(text: string): string | null {
  * puts its own `hwp <command>` line in front rather than this function
  * claiming `edit/compose` every time (#105 item 2).
  *
- * The line read is the engine's first `Error:` line and the comparison is
- * exact (see `firstEngineErrorLine`), so no echoed value, warning,
- * informational line or pattern can select a kind.
+ * The line read is the engine's first `Error:` line, the comparison is exact,
+ * and the report must END with Termination's chain for that line (see
+ * `firstEngineErrorLine` and `terminationChain`), so no echoed value, warning,
+ * informational line or pattern can select a kind. A `Stack backtrace:` block
+ * anyhow appends below the chain is cut first (`withoutBacktrace`), because a
+ * host that captures backtraces would otherwise lose a reading this transport
+ * makes today.
  *
  * The argument is never interpolated into the result: raw CLI output stays on
  * whatever non-serialized field its transport keeps it on, so this path adds
@@ -334,8 +399,13 @@ function firstEngineErrorLine(text: string): string | null {
  * in the server's `runCliOk`).
  */
 export function protectedReasonFromDiagnostics(text: string): string | null {
-  const message = firstEngineErrorLine(text);
+  const report = withoutBacktrace(engineDiagnostics(text));
+  const message = firstEngineErrorLine(report);
   if (message === null) return null;
+  // The tail is what proves the line above is Termination's and not a line an
+  // op value planted: the engine writes the block once, last, and only when
+  // the failure carries the root cause a protection refusal has.
+  if (!report.trimEnd().endsWith(terminationChain(message))) return null;
   for (const [sentence, kind, step] of PROTECTED_REFUSALS) {
     if (message === sentence) return `${kind}; ${step}`;
   }

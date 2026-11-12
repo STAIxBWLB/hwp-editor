@@ -424,6 +424,25 @@ describe("createTauriEngine protection backstop", () => {
     },
   );
 
+  /**
+   * t51-a2: a host that captures backtraces gets anyhow's `Stack backtrace:`
+   * block below the `Caused by:` copy, and maru passes the environment through
+   * (`run_hwp` sets only `PATH`), so a desktop user with `RUST_BACKTRACE` set
+   * sees this shape on a real protection refusal. Classification must survive
+   * it: before the tail was cut, this dropped to `failed`.
+   */
+  it("upgrades an edit refusal whose stderr carries a backtrace block", async () => {
+    const detail =
+      `${bridgeFailure("edit", DRM)}` +
+      "\n\nStack backtrace:\n   0: std::backtrace::Backtrace::create\n   1: anyhow::error::<impl anyhow::Error>::new";
+    const engine = createTauriEngine(rejectWith(detail));
+    const err = (await engine
+      .edit(doc, [{ kind: "replace", find: "가", replace: "나" }])
+      .then(() => null, (e: unknown) => e)) as HwpEngineError;
+    expect(err.code).toBe("protected");
+    expect(err.message).toBe(`hwped_edit failed: DRM-protected document; ${PROTECTED_NEXT_STEP}`);
+  });
+
   it("upgrades a compose refusal the same way", async () => {
     const engine = createTauriEngine(rejectWith(bridgeFailure("compose", DISTRIBUTION)));
     const err = (await engine
