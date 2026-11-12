@@ -523,7 +523,7 @@ describe("no leak: engine messages carry no path and no CLI output", () => {
     });
     const error = await thrown(createCliEngine({ bin }).edit(DOC, []));
     expect(error.message).toBe(
-      "ahwp edit failed (exit 3): failed to read <path> at byte 3. Fix or remove the pending edit it names, then apply again.",
+      "ahwp edit failed (exit 3): failed to read <path> at byte 3. Check that the document and any uploaded image can be read, reopen the document, then apply again.",
     );
     expect(error.message).not.toContain("progress");
     expect(error.message).not.toContain("chatter");

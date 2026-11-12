@@ -7,6 +7,9 @@ import {
   classifyInsertionRefusal,
   insertionRefusalLine,
   isInsertionRefusal,
+  NO_ENGINE_CAUSE,
+  UNCLASSIFIED_EDIT_STEP,
+  UNCLASSIFIED_FILE_STEP,
   unclassifiedEditLine,
   withoutPaths,
 } from "../src/index.js";
@@ -148,11 +151,58 @@ describe("unclassifiedEditLine and path scrubbing (t37-a2)", () => {
     ["no extension", "Error: no such dir /var/folders/ab/T/stage", "no such dir <path>"],
   ])("redacts an absolute path: %s", (_label, stderr, reason) => {
     const line = unclassifiedEditLine(stderr);
-    expect(line).toBe(`${reason}. Fix or remove the pending edit it names, then apply again.`);
+    // A line that held a path names a file, not a pending edit (#93).
+    expect(line).toBe(`${reason}. ${UNCLASSIFIED_FILE_STEP}`);
     expect(line).not.toMatch(/Users|Library|AppData|folders/u);
   });
 
   it("keeps the Korean diagnostic's own slashes", () => {
     expect(withoutPaths("블록/스타일/목록 정의")).toBe("블록/스타일/목록 정의");
+  });
+});
+
+describe("engine-line display after #90 (#93)", () => {
+  it.each([
+    ["POSIX, spaces, no extension", "failed to read /var/tmp/a b/c/data at byte 3", "failed to read <path> at byte 3"],
+    ["Windows, spaces, no extension", "cannot open C:\\Program Files\\Maru Data\\stage now", "cannot open <path> now"],
+  ])("redacts the whole path, tail included: %s", (_label, text, shown) => {
+    expect(withoutPaths(text)).toBe(shown);
+  });
+
+  it.each([
+    "수입 / 지출 내역은 별첨 결산.hwp 참조",
+    "제목 / 부제",
+    "앵커를 찾을 수 없습니다: 제목 / 부제",
+    "앵커를 찾을 수 없습니다: a /b c",
+  ])("leaves user text with a lone slash alone: %s", (text) => {
+    expect(withoutPaths(text)).toBe(text);
+  });
+
+  it("keeps a Hangul word after a path rather than guessing it is the path's tail", () => {
+    expect(withoutPaths("no such dir /var/x/stage 제목/부제")).toBe("no such dir <path> 제목/부제");
+  });
+
+  it("names a cause class and a step when stderr holds no Error: line (a panic)", () => {
+    const panic = "thread 'main' panicked at src/edit.rs:12:5:\nindex out of bounds\nnote: run with `RUST_BACKTRACE=1`";
+    expect(unclassifiedEditLine(panic)).toBe(NO_ENGINE_CAUSE);
+    expect(NO_ENGINE_CAUSE).toMatch(/without naming a cause.*Apply again/u);
+  });
+
+  it("keeps the pending-edit step for a line that names an edit target", () => {
+    expect(unclassifiedEditLine("Error: 앵커를 찾을 수 없습니다: 회의록")).toBe(`앵커를 찾을 수 없습니다: 회의록. ${UNCLASSIFIED_EDIT_STEP}`);
+  });
+
+  it("gives a document/IO line the file step, not the pending-edit one", () => {
+    expect(unclassifiedEditLine("Error: failed to read /tmp/w/in.hwpx at byte 3")).toBe(`failed to read <path> at byte 3. ${UNCLASSIFIED_FILE_STEP}`);
+  });
+
+  it("keys the file step on the engine's fixed head, not on a path-like anchor", () => {
+    expect(unclassifiedEditLine("Error: 앵커를 찾을 수 없습니다: /tmp/x/y")).toBe(`앵커를 찾을 수 없습니다: <path>. ${UNCLASSIFIED_EDIT_STEP}`);
+  });
+
+  it("never shows a progress line as an insertion's cause", () => {
+    const line = insertionRefusalLine("progress /tmp/a b/in.hwpx 50%\nthread 'main' panicked at x");
+    expect(line).toBe(`insert_blocks refused: ${NO_ENGINE_CAUSE}`);
+    expect(line).not.toMatch(/progress|50%/u);
   });
 });

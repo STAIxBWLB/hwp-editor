@@ -192,10 +192,14 @@ export { classifyEditRefusal, editRefusalMarker, isEditRefusalKind } from "./ref
 export type { EditRefusalKind } from "./refusals.js";
 export {
   classifyInsertionRefusal,
+  engineErrorReason,
+  FILE_LINE_HEAD,
   insertionRefusalLine,
+  NO_ENGINE_CAUSE,
   isInsertionRefusal,
   STOPPED_WITHOUT_DIAGNOSTIC,
   UNCLASSIFIED_EDIT_STEP,
+  UNCLASSIFIED_FILE_STEP,
   unclassifiedEditLine,
   withoutPaths,
 } from "./insertion-refusals.js";

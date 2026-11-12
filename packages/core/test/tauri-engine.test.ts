@@ -715,7 +715,7 @@ describe("Tauri unclassified edit failures keep no path (t37-a2)", () => {
     const err = (await createTauriEngine(reject(raw)).edit(doc, [{ kind: "replace", find: "a", replace: "b" }])
       .then(() => null, (e: unknown) => e)) as HwpEngineError;
     expect(err.message).toBe(
-      "hwped_edit failed: hwp edit failed (exit 1): failed to read <path> at byte 3. Fix or remove the pending edit it names, then apply again.",
+      "hwped_edit failed: hwp edit failed (exit 1): failed to read <path> at byte 3. Check that the document and any uploaded image can be read, reopen the document, then apply again.",
     );
     expect(err.message).not.toMatch(/Users|Library|b\//u);
     expect(err.cause).toBe(raw);
