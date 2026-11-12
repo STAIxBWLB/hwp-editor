@@ -64,7 +64,7 @@ describe("hwp-cli 1.5-1.6 refusal classification (#76)", () => {
     expect(error.stderr).toBe(RANGE_TAG);
   });
 
-  it("marks a run-range length conflict as run_range_conflict (agent-hwp#420)", async () => {
+  it("marks a run-range length conflict as run_range_conflict (STAIxBWLB/agent-hwp#297)", async () => {
     const error = await failure(RUN_CONFLICT);
     expect(error.reason).toBe("failed");
     expect(error.message).toBe("ahwp edit failed (exit 3): edit refused: run_range_conflict");
