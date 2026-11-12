@@ -599,6 +599,22 @@ describe("the argv size readers mirror hwp-cli (#108)", () => {
       .toEqual([{ kind: "seal", anchor: "anchor", path: "stamp", size: Infinity }]);
     expect(argvToOps(["--insert-image", "anchor=>img@infx-inf"]))
       .toEqual([{ kind: "insert-image", anchor: "anchor", path: "img", width: Infinity, height: -Infinity }]);
+
+    // What the argv channel sends for a non-finite size is this side's own
+    // spelling of the number, so the round trip pins the mirror: argvToOps reads
+    // back exactly what opsToArgv wrote. The engine-side fact it rests on is
+    // Rust's `f32::from_str`, which reads `inf`, `infinity` and `nan` in any
+    // case, so `@Infinity` and `@NaN` are sizes to hwp-cli as they are here
+    // (#110).
+    const nonFinite: EditOp[] = [
+      { kind: "seal", anchor: "anchor", path: "stamp", size: Infinity },
+      { kind: "seal", anchor: "anchor", path: "stamp", size: Number.NaN },
+      { kind: "insert-image", anchor: "anchor", path: "img", width: Infinity, height: -Infinity },
+      { kind: "insert-image", anchor: "anchor", path: "img", width: Number.NaN, height: Number.NaN },
+    ];
+    for (const op of nonFinite) expect(argvToOps(opsToArgv([op]))).toEqual([op]);
+    expect(opsToArgv([nonFinite[0]!])).toEqual(["--seal", "anchor=>stamp@Infinity"]);
+    expect(opsToArgv([nonFinite[2]!])).toEqual(["--insert-image", "anchor=>img@Infinityx-Infinity"]);
   });
 });
 

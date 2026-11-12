@@ -429,13 +429,34 @@ function splitSealSize(value: string): { path: string; size: number } | null {
 }
 
 /**
- * The number `f32::from_str` reads from text `isRustFloat` accepted (#108).
+ * The f64 reading of a size text `isRustFloat` accepted; the engine reads that
+ * value rounded to f32 (#108, #110).
+ *
+ * `f32::from_str` is a correctly rounded read of the text, so the two agree
+ * only where rounding to f32 does not move the value, which is not the same as
+ * "inside the f32 range": `0.1` is 0.1 here and 0.10000000149011612 to the
+ * engine, `stamp@1e39` is infinity there, and `stamp@1e-50` is 0. None of that
+ * changes what this side decides, because the path and size split only asks
+ * whether the text is a number, and `opsToArgv` prints the number back for the
+ * engine to read. That print is the shortest decimal for the f64 value, so it
+ * lands on the same f32 unless the text sits within about half an f64 ulp of an
+ * f32 midpoint, where it can double-round: the 17-digit `1.0000000596046447` is
+ * 1 to the engine, this side reads 1+2^-24, prints 1.0000000596046448, and the
+ * engine reads 1.0000001.
  *
  * The infinite spellings are mapped by hand because `Number("inf")` is NaN,
- * which is a different value the engine never produces: `inf`, `infinity` and an
- * overflow such as `1e400` all parse as infinity there. `nan` needs no mapping.
- * A non-finite size has no plain-decimal form, so the edit-ops-v1 channel's
- * `withUnit` refuses it; this side carries it because the argv engine does.
+ * which is a different value the engine never produces: `inf` and `infinity`,
+ * either case and either sign, are sizes there. `nan` needs no mapping.
+ *
+ * No f32 overflow is mapped here, because the rounding happens in the engine on
+ * both channels: `opsToArgv` re-emits this number as text and hwp-cli's argv
+ * parser reads it with its own f32 parse (`parse_seal_size` in
+ * `commands/edit.rs`), so `stamp@1e39` is a size of infinity there.
+ * edit-ops-v1 needs no map either, because its parser refuses a size that is
+ * not finite or is above 5000 mm (`parse_mm_f32` and `MM_MAX` in
+ * `edit_ops.rs`), which already covers what f32 would overflow to. A
+ * non-finite size has no plain-decimal form, so this side's `withUnit` refuses
+ * it before the op is sent.
  */
 function rustFloat(text: string): number {
   if (/^[+-]?inf(?:inity)?$/i.test(text)) return text.startsWith("-") ? -Infinity : Infinity;
