@@ -120,11 +120,13 @@ case "$1" in
     # in the environment, so a case that reaches here with one set is the bug
     # the \`oidc:\` log exists to expose. It answers success unless
     # TOKEN_DIST_TAG_FAIL is set, which is the case that proves the userconfig
-    # is removed on the failure path too.
+    # is removed on the failure path too. TOKEN_DIST_TAG_EXIT picks the status
+    # npm failed with, so a case can prove the helper hands npm's own code back
+    # rather than a fixed 1; it defaults to the 1 every older case asserts.
     if [ "\${TOKEN_DIST_TAG_FAIL:-}" = "1" ]; then
       echo "npm error code E401"
       echo "npm error 401 Unauthorized - the token in $2 was rejected"
-      exit 1
+      exit "\${TOKEN_DIST_TAG_EXIT:-1}"
     fi
     # A package OIDC already moved is a no-op for the token: npm warns and
     # writes nothing, exactly as on the bare path.
@@ -666,6 +668,31 @@ describe("move_next_tag: next follows a stable release (#38, #45 item 5)", () =>
     const cfg = run.npmCalls[1]!.split(" ")[1]!;
     expect(existsSync(cfg)).toBe(false);
     expect(run.stdout).not.toContain("[ok] @hwp-editor/core next -> 1.2.0 (token)");
+  });
+
+  it("returns npm's own exit code from the token fallback, not a fixed 1", () => {
+    // release.yml keeps this step continue-on-error, so the status in the job
+    // log is the operator's only signal: E401/E403 means fix the token, a 5xx
+    // or a timeout means re-run. Collapsing every failure to 1 erases that.
+    // 7 stands in for any status that is neither 0 nor the old fixed 1.
+    const run = runHelpers(
+      'move_next_tag "$VER"',
+      [],
+      {
+        ...OIDC_ENV,
+        VER: "1.2.0",
+        NPM_DIST_TAG_TOKEN: TOKEN,
+        TOKEN_DIST_TAG_FAIL: "1",
+        TOKEN_DIST_TAG_EXIT: "7",
+      },
+      ["denied"],
+    );
+    expect(run.status).toBe(7);
+    // The refusal is still printed, and the userconfig holding the secret is
+    // still gone: returning npm's code must not trade either away.
+    expect(run.stdout).toContain("the token in");
+    const cfg = run.npmCalls[1]!.split(" ")[1]!;
+    expect(existsSync(cfg)).toBe(false);
   });
 
   it("makes no npm call for a prerelease, which already published under next", () => {

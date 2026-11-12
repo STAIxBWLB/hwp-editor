@@ -150,12 +150,32 @@ never established before the first release. This is the check that settles it.
 ### 7. Move the `next` dist-tag - automatic for stable releases
 
 The `publish` job's last step, `Move the next dist-tag (stable releases)`, points `next` at
-`$VERSION` for all three packages (`move_next_tag` in `scripts/release-helpers.sh`, #38). Check
-it in the job log: three `[ok] @hwp-editor/<pkg> next -> $VERSION (OIDC)` lines, or the same
-three ending in `(token)` when the OIDC attempt was refused. A line reading
-`[ok] @hwp-editor/<pkg> next already at $VERSION (no write)` is the third outcome and is not a
-credential path: npm fetched the tags anonymously, found `next` already naming this version, and
-wrote nothing - the ordinary shape of a re-run, or of a `next` you moved by hand. Then confirm:
+`$VERSION` for all three packages (`move_next_tag` in `scripts/release-helpers.sh`, #38). It
+prints one line per package, and the parenthesised word on that line says which path wrote the
+tag:
+
+- `[ok] @hwp-editor/<pkg> next -> $VERSION (OIDC)` - the OIDC attempt wrote it. These lines,
+  one per package, are the evidence that the `Allow npm dist-tag` switch is on.
+- `[ok] @hwp-editor/<pkg> next -> $VERSION (token)` - the OIDC attempt was refused and
+  `NPM_DIST_TAG_TOKEN` did the write.
+- `[ok] @hwp-editor/<pkg> next already at $VERSION (no write)` - npm fetched the tags
+  anonymously, found `next` already naming this version, and wrote nothing. Not a credential
+  path: the ordinary shape of a re-run, or of a `next` you moved by hand.
+- `::warning::npm dist-tag add for @hwp-editor/<pkg>@$VERSION exited 0 without its +next: line`
+  - npm exited 0 and printed neither line, so the step cannot say whether the tag moved. Treat
+  the tag as unmoved: run `npm dist-tag ls @hwp-editor/<pkg>` yourself, and if `next` is behind
+  `latest` finish with the manual commands at the end of this step. A warning line is never the
+  `(OIDC)` evidence described below, however green the job reads.
+
+One run can mix them, and a mixed log is expected rather than broken. A partial OIDC pass
+writes the packages the switch allows and is refused on the rest, and the fallback then re-adds
+all three - including the ones OIDC already moved, because a partial pass must not leave a
+package on an older `next`. Such a log reads `(OIDC)` for what the first attempt moved, then
+`(no write)` for those same packages when the fallback re-added them idempotently, then
+`(token)` for the rest. Nothing to do about it: each package's own line names its path, and only
+the `(OIDC)` lines count as evidence for removing the token.
+
+Then confirm:
 
 ```sh
 npm dist-tag ls @hwp-editor/core          # latest and next both at $VERSION
