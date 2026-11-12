@@ -243,7 +243,10 @@ export const en = {
   // Error line — the prefix names which operation failed. The `{message}`
   // tail stays engine-authored and is never translated.
   "error.prefix.load": "Failed to open document",
-  "error.prefix.refresh": "Failed to re-read the open document; refresh again",
+  // Both re-reads land here (a refresh the host asks for, and the read an undo
+  // performs), and the editor has no Refresh control, so the next step is the
+  // action the reader just took rather than a button that is not on the page.
+  "error.prefix.refresh": "Could not re-read the open document, so nothing changed; try the same action again",
   "error.prefix.apply": "Failed to apply edits",
   "error.prefix.compose": "Failed to create document",
   "error.prefix.template": "Template operation failed",
@@ -781,7 +784,7 @@ export const ko: MessageTable = {
   "components.step.load": "구성 요소 파일의 경로나 URL과 JSON을 확인한 뒤 다시 불러오세요.",
 
   "error.prefix.load": "문서 열기 실패",
-  "error.prefix.refresh": "열린 문서를 다시 읽지 못했습니다. 다시 새로 고치세요",
+  "error.prefix.refresh": "열린 문서를 다시 읽지 못해 아무것도 바뀌지 않았습니다. 같은 작업을 다시 시도하세요",
   "error.prefix.apply": "편집 적용 실패",
   "error.prefix.compose": "문서 생성 실패",
   "error.prefix.template": "템플릿 작업 실패",

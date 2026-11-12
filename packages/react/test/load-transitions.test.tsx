@@ -1113,3 +1113,129 @@ describe("#58 item 29: a re-read failure has its own line", () => {
     )).toBe(true);
   });
 });
+
+/**
+ * #58 item 30: the undo reads the document it would restore, so its failure is
+ * the same kind of failure a refresh has and belongs on the same line, while a
+ * load failure keeps the reason it was painted with. And a re-read failure is
+ * retired by any transition that reads and installs the document, not only by
+ * the next refresh.
+ */
+describe("#58 item 30: undo's read failure and the re-read line", () => {
+  const lineHas = (prefix: string, reason: string): boolean =>
+    alertTexts().some((text) => text.includes(prefix) && text.includes(reason));
+
+  it("keeps a failed load's reason when the undo that follows also fails", async () => {
+    const h = editorEngine({ failRead: (document) => document.name === broken.name });
+    const ref = createRef<HwpEditorHandle>();
+    const view = render(<HwpEditor ref={ref} engine={h.engine} file={file} />);
+    await selectAndQueueReplace(en);
+    await applyOne(en);
+    // The snapshot exists only once the edit settled, and that is what the
+    // undo below restores. A load that FAILS does not drop it: the previous
+    // document stays open.
+    await screen.findByText(pending(en, 0));
+
+    view.rerender(<HwpEditor ref={ref} engine={h.engine} file={broken} />);
+    await vi.waitFor(() => expect(
+      lineHas(en["error.prefix.load"], "read failed: broken.hwpx"),
+    ).toBe(true));
+
+    // Undo is still offered on the document that remains open, and now its own
+    // read is the one that fails.
+    h.engine.read = async () => { throw new Error("undo read failed"); };
+    const revert = screen.getByRole("button", { name: en["toolbar.revert"] }) as HTMLButtonElement;
+    expect(revert.disabled).toBe(false);
+    fireEvent.click(revert);
+    await vi.waitFor(() => expect(
+      lineHas(en["error.prefix.refresh"], "undo read failed"),
+    ).toBe(true));
+
+    // The open document is still open, so nothing claims it could not be
+    // opened, and the file the host asked for keeps its own reason.
+    expect(lineHas(en["error.prefix.load"], "undo read failed")).toBe(false);
+    expect(lineHas(en["error.prefix.load"], "read failed: broken.hwpx")).toBe(true);
+
+    // The prefix is chrome, so it follows the locale like every other line.
+    view.rerender(<HwpEditor ref={ref} locale="ko" engine={h.engine} file={broken} />);
+    await vi.waitFor(() => expect(
+      lineHas(ko["error.prefix.refresh"], "undo read failed"),
+    ).toBe(true));
+  });
+
+  it("retires the re-read line when an apply lands", async () => {
+    const h = editorEngine();
+    const ref = createRef<HwpEditorHandle>();
+    render(<HwpEditor ref={ref} engine={h.engine} file={file} />);
+    await screen.findByText(file.name);
+    const renderPages = h.engine.render.bind(h.engine);
+    h.engine.render = async () => { throw new Error("render failed"); };
+    await act(async () => {
+      await expect(handle(ref).refresh()).rejects.toThrow("render failed");
+    });
+    expect(screen.getByRole("alert").textContent).toContain(en["error.prefix.refresh"]);
+
+    // The apply reads the edited bytes and installs them, so the failed
+    // reading describes nothing on screen any more.
+    h.engine.render = renderPages;
+    await selectAndQueueReplace(en);
+    await applyOne(en);
+    await screen.findByText(pending(en, 0));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("retires the re-read line when an undo lands", async () => {
+    const h = editorEngine();
+    const ref = createRef<HwpEditorHandle>();
+    render(<HwpEditor ref={ref} engine={h.engine} file={file} />);
+    await selectAndQueueReplace(en);
+    await applyOne(en);
+    await screen.findByText(pending(en, 0));
+
+    const renderPages = h.engine.render.bind(h.engine);
+    h.engine.render = async () => { throw new Error("render failed"); };
+    await act(async () => {
+      await expect(handle(ref).refresh()).rejects.toThrow("render failed");
+    });
+    expect(screen.getByRole("alert").textContent).toContain(en["error.prefix.refresh"]);
+
+    h.engine.render = renderPages;
+    fireEvent.click(screen.getByRole("button", { name: en["toolbar.revert"] }));
+    await vi.waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(screen.getByText(file.name)).toBeTruthy();
+  });
+
+  /**
+   * t43-a1: after a failed undo this line is the only answer to the press, so
+   * its next step has to be one the reader can take. The editor ships no
+   * Refresh control (refresh lives on `HwpEditorHandle`), and what a failed
+   * undo asks for is the undo again - so the sentence says nothing changed and
+   * names the repeated action, in both locales.
+   */
+  it("asks for the same action again instead of a refresh the page does not offer", async () => {
+    const h = editorEngine();
+    const ref = createRef<HwpEditorHandle>();
+    const view = render(<HwpEditor ref={ref} engine={h.engine} file={file} />);
+    await selectAndQueueReplace(en);
+    await applyOne(en);
+    await screen.findByText(pending(en, 0));
+
+    // Only the undo's read fails, so the re-read line is the whole answer.
+    h.engine.read = async () => { throw new Error("undo read failed"); };
+    fireEvent.click(screen.getByRole("button", { name: en["toolbar.revert"] }));
+    await vi.waitFor(() => expect(lineHas(en["error.prefix.refresh"], "undo read failed")).toBe(true));
+
+    const english = alertTexts().find((text) => text.includes("undo read failed")) ?? "";
+    expect(english).toContain("so nothing changed");
+    expect(english).toContain("try the same action again");
+    expect(english.toLowerCase()).not.toContain("refresh");
+
+    view.rerender(<HwpEditor ref={ref} locale="ko" engine={h.engine} file={file} />);
+    await vi.waitFor(() => expect(lineHas(ko["error.prefix.refresh"], "undo read failed")).toBe(true));
+
+    const korean = alertTexts().find((text) => text.includes("undo read failed")) ?? "";
+    expect(korean).toContain("아무것도 바뀌지 않았습니다");
+    expect(korean).toContain("같은 작업을 다시 시도하세요");
+    expect(korean).not.toContain("새로 고치");
+  });
+});

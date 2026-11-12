@@ -278,9 +278,15 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     /**
      * A failure of a RE-READ, kept apart from `loadError` on purpose: the
      * document on screen is still the one the host chose, so "could not open
-     * the document" would be false (#58 item 29). A later refresh that
-     * succeeds clears it, and nothing a refresh does can clear a real load
-     * failure, because that one lives in the state above.
+     * the document" would be false (#58 item 29). Two flows paint it, because
+     * both read the open document without replacing it: a refresh the host
+     * asks for through `HwpEditorHandle.refresh`, and the read undo performs
+     * before it restores a snapshot (#58 item 30). Neither read changes the
+     * document, so the line says so and asks for the same action again rather
+     * than naming a Refresh control the editor does not have (t43-a1). A later
+     * refresh, apply or undo that succeeds clears it, and nothing either read
+     * does can clear a real load failure, because that one lives in the state
+     * above.
      */
     const [refreshError, setRefreshError] = useState<EditorError | null>(null);
     /**
@@ -700,6 +706,11 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           // Cleared here rather than when the attempt starts: a failed apply
           // leaves the document alone, and the notice is still true of it.
           setNotice(null);
+          // A re-read failure is retired by the apply that moved the document,
+          // for the same reason a successful refresh retires it: this apply
+          // read the new bytes and installed them, so the failure describes a
+          // reading nothing on screen is showing (#58 item 30).
+          setRefreshError(null);
           emitChange(next);
         } catch (e) {
           // As above: a failure belongs to the document this attempt read, so
@@ -1079,6 +1090,11 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           // longer holds. Cleared after the undo lands: a failed undo leaves
           // the document where it was, and the notice is still true of it.
           setNotice(null);
+          // Same reasoning for the re-read line: this undo's read succeeded
+          // and installed the envelope now on screen, so a failure an earlier
+          // refresh left up describes a reading that has been replaced (#58
+          // item 30). A load failure is not this line and stays.
+          setRefreshError(null);
           emitChange(previous);
         } catch (e) {
           // The store was never touched, so store and canvas stay consistent;
@@ -1087,7 +1103,10 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           // document the host has left, so it is not painted over the one on
           // screen — the load owns the error line — and the host still hears
           // the engine's failure as it arrived.
-          if (generation === loadGeneration.current) setLoadError(toEditorError(e));
+          // The undo's read failed, not a load: the open document is still
+          // open and undo changed nothing, so this belongs on the re-read line
+          // (#58 item 30, the item 29 rule). A load failure keeps its reason.
+          if (generation === loadGeneration.current) setRefreshError(toEditorError(e));
           emitError(e);
         }
       })();
