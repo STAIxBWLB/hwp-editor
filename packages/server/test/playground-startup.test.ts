@@ -16,12 +16,13 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
 const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const SCRIPT = join(REPO_ROOT, "scripts", "playground.mjs");
+const SCRIPT_URL = pathToFileURL(SCRIPT).href;
 
 /** Run the script with only the given hwp-selection variables set. */
 function startup(env: Record<string, string>, cwd = REPO_ROOT) {
@@ -30,6 +31,29 @@ function startup(env: Record<string, string>, cwd = REPO_ROOT) {
     cwd,
     env: { ...process.env, HWP_EDITOR_BIN: "", HWP_CLI: "", INIT_CWD: "", ...env },
   });
+}
+
+/**
+ * The same run with `process.platform` faked, which is the only way to reach
+ * the Windows branch of the PATH search from a POSIX test machine: the script
+ * reads the platform when it looks the name up, so a preload that redefines it
+ * before the import drives the Windows order.
+ */
+function startupAs(platform: string, env: Record<string, string>, cwd = REPO_ROOT) {
+  return spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `Object.defineProperty(process,"platform",{value:${JSON.stringify(platform)}});` +
+        `await import(${JSON.stringify(SCRIPT_URL)});`,
+    ],
+    {
+      encoding: "utf8",
+      cwd,
+      env: { ...process.env, HWP_EDITOR_BIN: "", HWP_CLI: "", INIT_CWD: "", ...env },
+    },
+  );
 }
 
 describe("playground startup failure", () => {
@@ -142,5 +166,53 @@ describe("playground startup failure", () => {
       rmSync(first, { recursive: true, force: true });
       rmSync(second, { recursive: true, force: true });
     }
+  });
+
+  /**
+   * A relative PATH entry resolves against the spawn's working directory, which
+   * is this repository's root, and not against wherever the caller ran the
+   * script from (#105 item 4 review). Naming the caller-relative path pointed
+   * the reader at a file `spawn` would never have run, in a directory it never
+   * looked in.
+   */
+  it("does not name a relative PATH entry that resolves outside the spawn's working directory", () => {
+    const caller = mkdtempSync(join(tmpdir(), "hwp-playground-relcwd-"));
+    try {
+      mkdirSync(join(caller, "rel"));
+      const bin = join(caller, "rel", "hwp");
+      writeFileSync(bin, `#!${process.execPath}\nprocess.exit(3);\n`);
+      chmodSync(bin, 0o700);
+      const { status, stderr } = startup({ HWP_EDITOR_BIN: "", HWP_CLI: "", PATH: "rel" }, caller);
+      expect(status).toBe(1);
+      expect(stderr).toContain("The playground cannot run hwp at hwp on PATH (");
+      expect(stderr).not.toContain(join("rel", "hwp"));
+    } finally { rmSync(caller, { recursive: true, force: true }); }
+  });
+
+  /**
+   * Windows tries the literal name only when it already carries an extension,
+   * so `hwp` is looked for as hwp.com and hwp.exe and an extensionless hwp in
+   * the same directory is never what `spawn` runs (#105 item 4 review). The
+   * report named that file before, sending the caller to something the kernel
+   * would skip.
+   */
+  it("on the Windows search order, names hwp.com rather than an extensionless hwp", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hwp-playground-win-"));
+    try {
+      writeFileSync(join(dir, "hwp"), "not an executable\n");
+      writeFileSync(join(dir, "hwp.com"), "not an executable\n");
+      const env = { HWP_EDITOR_BIN: "", HWP_CLI: "", PATH: dir };
+      const extensionless = startupAs("win32", env);
+      expect(extensionless.status).toBe(1);
+      expect(extensionless.stderr).toContain(`The playground cannot run hwp at ${join(dir, "hwp.com")} (`);
+      expect(extensionless.stderr).not.toContain(`${join(dir, "hwp")} (`);
+
+      // A name that already carries an extension is tried as written, and only
+      // as written: hwp.exe is found as hwp.exe, never as hwp.exe.com.
+      writeFileSync(join(dir, "hwp.exe"), "not an executable\n");
+      const named = startupAs("win32", { ...env, HWP_EDITOR_BIN: "hwp.exe" });
+      expect(named.status).toBe(1);
+      expect(named.stderr).toContain(`The playground cannot run hwp at ${join(dir, "hwp.exe")} (`);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

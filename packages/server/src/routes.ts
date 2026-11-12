@@ -409,7 +409,8 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
       const reason = cause instanceof Error ? cause.message : "invalid image assets";
       throw new HwpCliError("bad_request", reason);
     }
-    switch (imageAssetsMismatch(ops, assets)) {
+    const mismatch = imageAssetsMismatch(ops, assets);
+    switch (mismatch) {
       case null:
         break;
       // An insert-image op naming something no upload supplied asks the
@@ -420,6 +421,13 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
         return error(400, "path_traversal", "insert-image paths must name exactly the uploaded assets; attach matching PNG/JPEG files instead of server-local paths");
       case "upload_without_op":
         return error(400, "bad_request", "an uploaded image is not referenced by any insert-image op; remove the unreferenced upload, or add the insert-image op that uses it, then retry");
+      default: {
+        // Exhaustive on purpose: a new mismatch direction has to say which
+        // wire code it becomes, because falling through here would let it past
+        // the check with no refusal at all.
+        const unhandled: never = mismatch;
+        throw new HwpCliError("bad_request", `imageAssetsMismatch: unhandled mismatch ${JSON.stringify(unhandled)}`);
+      }
     }
     form.forEach((value, key) => {
       if (value instanceof Blob && key !== "file" && key !== "asset") {

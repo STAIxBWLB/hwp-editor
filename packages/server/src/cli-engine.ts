@@ -35,6 +35,7 @@ import {
   imageAssetMediaType,
   parseCatEnvelope,
   parseStyleTable,
+  DISTRIBUTION_NEXT_STEP,
   protectedReasonFromDiagnostics,
   PROTECTED_NEXT_STEP,
   sniffDocumentFormat,
@@ -681,7 +682,9 @@ export function documentEditability(info: unknown): { editable: boolean; reason?
   if (record["distribution"] === true) {
     return {
       editable: false,
-      reason: `distribution (배포용) document; ${PROTECTED_NEXT_STEP}`,
+      // Not the shared step: a 배포용 document is opened by a word processor
+      // without becoming editable there (#105 item 2 review).
+      reason: `distribution (배포용) document; ${DISTRIBUTION_NEXT_STEP}`,
     };
   }
   const attributes = record["attributes"];
@@ -1435,7 +1438,8 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         if (ops.some(op => op?.kind === "seal")) {
           throw new HwpCliError("bad_request", "seal cannot be combined with uploaded assets; run seal without uploaded assets through a local host");
         }
-        switch (imageAssetsMismatch(ops, uploads)) {
+        const mismatch = imageAssetsMismatch(ops, uploads);
+        switch (mismatch) {
           case null:
             break;
           // Split as the HTTP route splits it (#58 item 31): an op naming an
@@ -1447,6 +1451,13 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
             throw new HwpCliError("bad_request", "insert-image paths must name exactly the uploaded assets; attach the PNG/JPEG file for each named path, then retry");
           case "upload_without_op":
             throw new HwpCliError("bad_request", "an uploaded image is not referenced by any insert-image op; remove the unreferenced upload, or add the insert-image op that uses it, then retry");
+          default: {
+            // Exhaustive on purpose: a new mismatch direction has to say which
+            // refusal it becomes, because falling through here would let it
+            // past the check with no sentence at all.
+            const unhandled: never = mismatch;
+            throw new HwpCliError("bad_request", `imageAssetsMismatch: unhandled mismatch ${JSON.stringify(unhandled)}`);
+          }
         }
         // The floor below is THIS server's, not a capability the binary lacks:
         // the engine could insert an image from v0.20.0 on, and 1.4.0 is the

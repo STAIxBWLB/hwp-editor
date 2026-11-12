@@ -143,9 +143,48 @@ export function isHwpEngineError(value: unknown): value is HwpEngineError {
 }
 
 /**
+ * The next step a protected refusal carries, for the kinds whose protection a
+ * word processor can lift (#105 item 2).
+ *
+ * Shared rather than written per transport: it is the same remedy whatever
+ * command the engine refused, and one sentence that names no step sends the
+ * caller back to the same document. hwp-cli's own messages for these four
+ * kinds say the same thing - `한글에서 ... 해제한 뒤/제거한 뒤 다시 저장하세요`
+ * (crates/hwp5/src/error.rs) - so the step restates the engine's remedy in
+ * English rather than inventing one.
+ *
+ * Not used for a 배포용 document: see `DISTRIBUTION_NEXT_STEP`.
+ */
+export const PROTECTED_NEXT_STEP =
+  "remove the protection in a word processor that can open it, save a copy, then reopen that copy here";
+
+/**
+ * The next step for a 배포용 (distribution) document, which the shared step
+ * does not fit: hwp-cli's DistributionDoc message ("배포용 문서(ViewText)의 원본
+ * 구조는 지원하지 않습니다") offers no word-processor remedy at all, because a
+ * word processor opens such a file without being able to edit it, so "remove
+ * the protection and save a copy" names nothing its reader can perform.
+ *
+ * The two steps here are the ones the engine documents. It reads these
+ * documents where it will not edit them (`hwp cat/convert/render는 배포용
+ * 문서를 읽을 수 있습니다`, same message), and
+ * crates/hwp-cli/src/commands/cat.rs:200-219 records the measurement behind
+ * the second step: the hwp5 writer builds every IR output with a fixed
+ * attribute word, so a cross-format write does not carry the distribution bit
+ * over, while the source-preserving edit path fails closed. hwp-cli's load
+ * notice states the same limit to its own users
+ * ("다른 형식으로 변환해 저장하면 배포용 보호는 유지되지 않습니다"), which is why
+ * this step says what the conversion costs instead of promising a copy that
+ * keeps it.
+ */
+export const DISTRIBUTION_NEXT_STEP =
+  "open the original this copy was published from, or convert this copy with hwp convert --to hwpx and open the converted file here; saving in another format does not keep the distribution protection";
+
+/**
  * Korean markers in hwp-cli's runtime diagnostics, each paired with the fixed,
- * transport-authored kind of protection the client is told about. The next
- * step is appended by `protectedReasonFromDiagnostics`, once for every kind.
+ * transport-authored kind of protection the client is told about and the next
+ * step that kind carries. `protectedReasonFromDiagnostics` writes no step of
+ * its own, so a kind cannot be added without saying what its reader can do.
  *
  * Lives in core, not in one transport, because it is hwp-cli's vocabulary
  * rather than any single transport's: the CLI server reads it out of
@@ -174,29 +213,17 @@ export function isHwpEngineError(value: unknown): value is HwpEngineError {
  * (NFC) to mirror the Rust source literals. Decomposed (NFD) input would not
  * match and the failure would stay `failed`, a safe degradation.
  */
-const PROTECTED_MARKERS: ReadonlyArray<readonly [string, string]> = [
-  ["암호화된 문서", "encrypted document"],
-  ["DRM", "DRM-protected document"],
-  ["서명된 문서", "signed document"],
-  ["배포용 문서", "distribution (배포용) document"],
+const PROTECTED_MARKERS: ReadonlyArray<readonly [string, string, string]> = [
+  ["암호화된 문서", "encrypted document", PROTECTED_NEXT_STEP],
+  ["DRM", "DRM-protected document", PROTECTED_NEXT_STEP],
+  ["서명된 문서", "signed document", PROTECTED_NEXT_STEP],
+  ["배포용 문서", "distribution (배포용) document", DISTRIBUTION_NEXT_STEP],
 ];
 
 /**
- * The one next step every protected refusal carries (#105 item 2).
- *
- * Shared rather than written per transport: it is the same remedy whatever
- * command the engine refused, and a sentence that names no step sends the
- * caller back to the same document. Saving a copy is what makes it work for
- * a 배포용 document too, where the word processor can open the file but not
- * edit it.
- */
-export const PROTECTED_NEXT_STEP =
-  "remove the protection in a word processor that can open it, save a copy, then reopen that copy here";
-
-/**
  * The protection backstop, shared by every transport that sees raw hwp-cli
- * diagnostics. Returns the kind of protection with the shared next step, or
- * null.
+ * diagnostics. Returns the kind of protection with the next step that kind
+ * carries, or null.
  *
  * The result names no command: the marker table is hwp-cli's vocabulary and
  * the sentence is shared by `edit`, `compose`, `lint`, `slots`, `fields` and
@@ -210,8 +237,8 @@ export const PROTECTED_NEXT_STEP =
  * pre-existing one in the server's `runCliOk`).
  */
 export function protectedReasonFromDiagnostics(text: string): string | null {
-  for (const [marker, kind] of PROTECTED_MARKERS) {
-    if (text.includes(marker)) return `${kind}; ${PROTECTED_NEXT_STEP}`;
+  for (const [marker, kind, step] of PROTECTED_MARKERS) {
+    if (text.includes(marker)) return `${kind}; ${step}`;
   }
   return null;
 }

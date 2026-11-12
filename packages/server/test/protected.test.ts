@@ -8,7 +8,7 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { PROTECTED_NEXT_STEP, STOPPED_WITHOUT_DIAGNOSTIC } from "@hwp-editor/core";
+import { DISTRIBUTION_NEXT_STEP, PROTECTED_NEXT_STEP, STOPPED_WITHOUT_DIAGNOSTIC } from "@hwp-editor/core";
 
 import {
   cliExitHead,
@@ -25,15 +25,23 @@ const DOC = { name: "sample.hwpx", data: new Uint8Array([80, 75, 3, 4, 1, 2, 3])
 /**
  * The next step as a literal, not read off the source: this sentence is what a
  * caller acts on, so rewording it has to be a deliberate edit here too. The
- * exported constant is asserted against it below.
+ * exported constants are asserted against these below.
  */
 const STEP = "remove the protection in a word processor that can open it, save a copy, then reopen that copy here";
+
+/**
+ * A 배포용 document keeps a step of its own (#105 item 2 review): hwp-cli's
+ * DistributionDoc message offers no word-processor remedy, because a word
+ * processor opens one without being able to edit it, so the shared step would
+ * name nothing its reader can do. The two steps must not converge.
+ */
+const DIST_STEP = "open the original this copy was published from, or convert this copy with hwp convert --to hwpx and open the converted file here; saving in another format does not keep the distribution protection";
 
 const FIXED_MESSAGES = [
   `encrypted document; ${STEP}`,
   `DRM-protected document; ${STEP}`,
   `signed document; ${STEP}`,
-  `distribution (배포용) document; ${STEP}`,
+  `distribution (배포용) document; ${DIST_STEP}`,
 ];
 
 afterEach(disposeFakeBins);
@@ -49,7 +57,10 @@ describe("documentEditability", () => {
     const distribution = documentEditability({ distribution: true });
     expect(encrypted.editable).toBe(false);
     expect(distribution.editable).toBe(false);
-    expect(encrypted.reason).not.toBe(distribution.reason);
+    expect(encrypted.reason).toBe(FIXED_MESSAGES[0]);
+    // The pre-flight and the stderr backstop must name the same step for the
+    // same kind, or the sentence depends on which path noticed the protection.
+    expect(distribution.reason).toBe(FIXED_MESSAGES[3]);
   });
 
   it.each([
@@ -77,8 +88,20 @@ describe("documentEditability", () => {
 });
 
 describe("protectedReasonFromStderr", () => {
-  it("pins the exported next step to the sentence these tests assert", () => {
+  it("pins the exported next steps to the sentences these tests assert", () => {
     expect(PROTECTED_NEXT_STEP).toBe(STEP);
+    expect(DISTRIBUTION_NEXT_STEP).toBe(DIST_STEP);
+    expect(STEP).not.toBe(DIST_STEP);
+  });
+
+  it("gives 배포용 its own step and leaves it off the word-processor kinds", () => {
+    const distribution = protectedReasonFromStderr("배포용 문서(ViewText)");
+    // The step a word processor can lift is exactly what a 배포용 refusal must
+    // not print: nothing in the engine's DistributionDoc message says a word
+    // processor can make an editable copy of it.
+    expect(distribution).not.toContain(STEP);
+    expect(distribution).toContain("hwp convert --to hwpx");
+    expect(protectedReasonFromStderr("DRM으로 보호된 문서")).not.toContain(DIST_STEP);
   });
 
   it.each([
@@ -111,10 +134,10 @@ describe("protectedReasonFromStderr", () => {
 
 /**
  * The protected sentence carries the command that failed, and only that
- * (review of #49, item 2). `runCliOk` writes nothing else, but a failure's
- * message can hold a wrapper's added text, and some wrappers name the engine's
- * stderr or a staged path, so the head is matched rather than assumed to be
- * the whole message.
+ * (#105 item 2). `runCliOk` writes nothing else, but a failure's message can
+ * hold a wrapper's added text, and some wrappers name the engine's stderr or a
+ * staged path, so the head is matched rather than assumed to be the whole
+ * message.
  */
 describe("the command head a protected sentence may print", () => {
   it("takes the head alone from a message that carries engine text after it", () => {

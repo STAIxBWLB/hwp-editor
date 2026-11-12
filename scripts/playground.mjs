@@ -2,7 +2,7 @@
 /** Prepare and run the playground from source, using the caller's hwp binary. */
 import { spawn, spawnSync } from "node:child_process";
 import { accessSync, constants, statSync } from "node:fs";
-import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
+import { delimiter, dirname, extname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),"..");
@@ -29,15 +29,26 @@ function runnable(candidate){
   }catch{ return null; }
 }
 function onPath(name){
-  // libuv's own search, which is what spawn runs: the current directory before
-  // PATH, and per directory the bare name before .com and before .exe. PATHEXT
-  // is not part of it, so neither is it part of this report.
-  const exts=process.platform==="win32" ? ["",".com",".exe"] : [""];
+  // libuv's own search, which is what spawn runs (#105 item 4): on POSIX the
+  // PATH entries in order, on Windows the spawn's working directory before
+  // them, with a relative entry resolved against that working directory rather
+  // than against this process's. Windows tries the literal name only when the
+  // name already carries an extension, so `hwp` is looked for as hwp.com and
+  // hwp.exe and never as an extensionless file that spawn would skip; PATHEXT
+  // plays no part in either platform's search, so neither is it part of this
+  // report.
+  //
+  // Approximate on two Windows points that are not mirrored here:
+  // NeedCurrentDirectoryForExePathW (whether the working directory is searched
+  // at all) and quote stripping around the configured name.
+  const win32=process.platform==="win32";
+  const exts=win32 && extname(name)==="" ? [".com",".exe"] : [""];
   const dirs=(process.env.PATH ?? "").split(delimiter).filter(dir=>dir!=="");
-  const search=process.platform==="win32" ? [process.cwd(),...dirs] : dirs;
+  const search=win32 ? [root,...dirs] : dirs;
   for(const dir of search){
+    const base=resolve(root,dir);
     for(const ext of exts){
-      const found=runnable(join(dir,name+ext));
+      const found=runnable(join(base,name+ext));
       if(found!==null) return found;
     }
   }

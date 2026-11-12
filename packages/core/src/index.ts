@@ -26,6 +26,7 @@ export {
 } from "./assets.js";
 export type { ImageAssetsMismatch } from "./assets.js";
 export {
+  DISTRIBUTION_NEXT_STEP,
   HwpEngineError,
   isHwpEngineError,
   isHwpErrorCode,
