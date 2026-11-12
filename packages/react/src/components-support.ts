@@ -30,8 +30,14 @@
  * no transport can leave a caller with a causeless exit code. The three
  * refusals that are certain before the document is touched are answered
  * without a round trip at all.
+ *
+ * An insertion the engine was stopped out of is the one case where that
+ * inner cause is NOT the transport's text: the sentence both transports
+ * append for an empty stderr is English, so the locale's own sentence for the
+ * structured `stopped` marker takes the slot (#91).
  */
 import type { MessageKey, TFunction } from "./messages.js";
+import { engineStoppedWithoutDiagnostic } from "./errors.js";
 import { isComponentError, isHwpEngineError, isInsertionRefusal, HwpEngineError } from "@hwp-editor/core";
 import type { Blocks, ComponentErrorCode, InsertionRefusal } from "@hwp-editor/core";
 
@@ -154,6 +160,10 @@ function wrapped(error: unknown, text: string, detail: string): Error {
         ...(error.status === undefined ? {} : { status: error.status }),
         cause: error,
         ...(insertion === undefined ? {} : { insertion }),
+        // The marker survives too: a host's `onError` branches on the same
+        // structured fields the transport set, so a wrapper that drops one
+        // hands it a failure it cannot classify (#91).
+        ...(error.stopped === true ? { stopped: true as const } : {}),
       }),
       { detail },
     );
@@ -238,7 +248,12 @@ export function insertionFailure(
   if (insertion?.kind === "invalid_definition") {
     return wrapped(error, t("components.invalidDefinition"), message);
   }
-  const reason = refusalReason(message);
+  // An insertion the engine was stopped out of gets the locale's own sentence
+  // for it (#91): the transports append an English one to the message, which
+  // would otherwise sit inside this frame in English.
+  const reason = engineStoppedWithoutDiagnostic(error)
+    ? t("error.stoppedWithoutDiagnostic")
+    : refusalReason(message);
   // The frame is the whole point: a refusal with no readable cause still names
   // both things the caller can vary, rather than an empty slot after a colon.
   return wrapped(error, t("components.insertionRefused", { reason }), message);

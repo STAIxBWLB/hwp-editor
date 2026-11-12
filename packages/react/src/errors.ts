@@ -54,6 +54,20 @@ export function engineRefusalKind(e: unknown): EngineRefusalKind | undefined {
 }
 
 /**
+ * Whether a failure is an edit that wrote no diagnostic at all (#91), so the
+ * engine was stopped from outside and nothing was applied.
+ *
+ * Read from the structured `stopped` field both transports set, never from the
+ * message: the sentence the core message already carries is English, and a
+ * host that predates the field still has only that text, which is the fallback
+ * rather than something this guesses at. Duck-typed and narrowed, so a foreign
+ * error carrying any other value cannot select the sentence.
+ */
+export function engineStoppedWithoutDiagnostic(e: unknown): boolean {
+  return typeof e === "object" && e !== null && (e as { stopped?: unknown }).stopped === true;
+}
+
+/**
  * Badge per code. A total Record on purpose, not a switch with a default:
  * adding a sixteenth HwpErrorCode must fail `tsc --noEmit` here and force
  * an explicit badge decision rather than silently rendering "generic".

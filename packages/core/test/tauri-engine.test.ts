@@ -352,6 +352,16 @@ describe("createTauriEngine errors", () => {
     expect(bad.insertion).toBeUndefined();
   });
 
+  it("reads the stopped marker from a structured rejection, and only `true` (#91)", async () => {
+    const good = (await rejectionOf({ code: "failed", message: "x", stopped: true })) as HwpEngineError;
+    expect(good.stopped).toBe(true);
+    expect(good.message).toBe("hwped_capabilities failed: x");
+    for (const stopped of [false, "true", 1, null]) {
+      const bad = (await rejectionOf({ code: "failed", message: "x", stopped })) as HwpEngineError;
+      expect(bad.stopped).toBeUndefined();
+    }
+  });
+
   it("narrows an unknown structured code to internal instead of casting it in", async () => {
     const err = (await rejectionOf({ code: "not-a-real-code" })) as HwpEngineError;
     expect(err.code).toBe("internal");
@@ -680,6 +690,17 @@ describe("Tauri insert_blocks parity with HTTP (#88)", () => {
     const err = (await createTauriEngine(reject("hwp_failed: hwp edit failed (exit 1): ")).edit(doc, INSERT)
       .then(() => null, (e: unknown) => e)) as HwpEngineError;
     expect(err.message).toBe(`hwped_edit failed: hwp edit failed (exit 1): ${STOPPED_WITHOUT_DIAGNOSTIC}`);
+    // The sentence stays for a host that reads text; the marker is what a
+    // client localizes (#91), so both travel on one failure.
+    expect(err.stopped).toBe(true);
+  });
+
+  it("sets no stopped marker on a failure that wrote a diagnostic (#91)", async () => {
+    const err = (await createTauriEngine(reject(
+      "hwp_failed: hwp edit failed (exit 3): Error: insert_blocks 구역 정의 문단 앞에는 삽입할 수 없습니다",
+    )).edit(doc, INSERT).then(() => null, (e: unknown) => e)) as HwpEngineError;
+    expect(err.stopped).toBeUndefined();
+    expect(err.message).not.toContain(STOPPED_WITHOUT_DIAGNOSTIC);
   });
 });
 

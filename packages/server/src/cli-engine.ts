@@ -183,6 +183,9 @@ export type HwpCliErrorReason = Extract<
  * an operator, discard them. This module does not make that choice for it.
  */
 export class HwpCliError extends Error {
+  /** The edit wrote no diagnostic, so the engine was stopped (#91). */
+  declare readonly stopped?: true;
+
   constructor(
     public readonly reason: HwpCliErrorReason,
     message: string,
@@ -194,9 +197,14 @@ export class HwpCliError extends Error {
     public readonly refusal?: EditRefusalKind,
     /** The `insert_blocks` refusal class (#88), sent the same way. */
     public readonly insertion?: InsertionRefusal,
+    /** The stopped-without-diagnostic marker (#91), sent the same way. */
+    stopped?: true,
   ) {
     super(message);
     this.name = "HwpCliError";
+    // Conditional like the core error's fields: an error built without the
+    // marker has no own `stopped` key, so a wrapper can test for its presence.
+    if (stopped !== undefined) this.stopped = stopped;
   }
 }
 
@@ -519,13 +527,18 @@ async function runCliOk(
     // routinely names the staged input file, so interpolating it here would
     // hand a temp path to whoever made the request.
     // An edit that wrote no stderr was stopped from outside; say so and give
-    // the step, the same sentence the Tauri client prints (#88).
-    const silent = args[0] === "edit" && result.stderr.trim() === "" ? `: ${STOPPED_WITHOUT_DIAGNOSTIC}` : "";
+    // the step, the same sentence the Tauri client prints (#88). The marker
+    // lets a client show that sentence in its own locale (#91).
+    const stopped = args[0] === "edit" && result.stderr.trim() === "";
+    const silent = stopped ? `: ${STOPPED_WITHOUT_DIAGNOSTIC}` : "";
     throw new HwpCliError(
       "failed",
       `hwp ${args[0] ?? ""} failed (exit ${result.code})${silent}`,
       result.stderr,
       detailFor(bin, result.stderr.trim() || result.stdout.trim()),
+      undefined,
+      undefined,
+      stopped ? true : undefined,
     );
   }
   return result;

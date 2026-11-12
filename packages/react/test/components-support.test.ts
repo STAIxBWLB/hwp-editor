@@ -16,7 +16,13 @@
  *   step included, while the engine-side English reason survives on `detail`.
  */
 import { describe, expect, it } from "vitest";
-import { classifyInsertionRefusal, ComponentError, createHttpEngine, HwpEngineError } from "@hwp-editor/core";
+import {
+  classifyInsertionRefusal,
+  ComponentError,
+  createHttpEngine,
+  HwpEngineError,
+  STOPPED_WITHOUT_DIAGNOSTIC,
+} from "@hwp-editor/core";
 import type { Blocks, ComponentErrorCode, InsertionRefusal } from "@hwp-editor/core";
 
 import { componentFailure, insertionFailure } from "../src/components-support.js";
@@ -109,6 +115,7 @@ describe("insertionFailure", () => {
     expect(shown.message).toContain("Check the component and the insertion point, then retry.");
     expect(shown.detail).toContain("exit 1");
     expect(shown.code).toBe("failed");
+    expect(shown).not.toHaveProperty("stopped");
   });
 
   it("strips the Tauri transport's own prefixes from the cause", () => {
@@ -139,6 +146,23 @@ describe("insertionFailure", () => {
       en("components.insertionRefused", { reason: "구역 정의 문단 앞에는 삽입할 수 없습니다" }),
     );
     expect(shown.message).not.toContain("Caused by");
+  });
+
+  it("puts the locale's own sentence in the frame for a stopped edit (#91)", () => {
+    // Both transports append the English sentence to the message for an empty
+    // stderr, so reading it into the {reason} slot would print English inside
+    // the Korean frame. The structured marker selects the locale's sentence.
+    const error = new HwpEngineError("failed", `hwp edit failed (exit 137): ${STOPPED_WITHOUT_DIAGNOSTIC}`, {
+      stopped: true,
+    });
+    const shown = insertionFailure(error, WIDE, ko) as HwpEngineError;
+
+    expect(shown.message).toBe(ko("components.insertionRefused", { reason: ko("error.stoppedWithoutDiagnostic") }));
+    expect(shown.message).not.toContain("the engine stopped without writing");
+    // The wrapper keeps the marker beside the code, status and insertion it
+    // already copies, so a host reading `onError` can still tell (#91).
+    expect(shown.stopped).toBe(true);
+    expect(shown.code).toBe("failed");
   });
 
   it("leaves a failure that is not a refusal with the handling it has", () => {

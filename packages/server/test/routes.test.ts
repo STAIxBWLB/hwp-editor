@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { STOPPED_WITHOUT_DIAGNOSTIC } from "@hwp-editor/core";
 import type {
   DocumentHandle,
   EditOp,
@@ -261,6 +262,22 @@ describe("routes (stub engine)", () => {
     const body = await res.json();
     expect(body.error.insertion).toEqual({ kind: "invalid_definition" });
     expect(body.error).not.toHaveProperty("refusal");
+  });
+
+  it("sends the stopped-without-diagnostic marker as error.stopped (#91)", async () => {
+    const { HwpCliError } = await import("../src/cli-engine.js");
+    const message = `hwp edit failed (exit 137): ${STOPPED_WITHOUT_DIAGNOSTIC}`;
+    const engine = stubEngine({
+      async edit() {
+        throw new HwpCliError("failed", message, "", undefined, undefined, undefined, true);
+      },
+    });
+    const handler = createHwpEditorHandler({ engine, sessions: false });
+    const res = await handler(multipartRequest(`${BASE}/edit`, { file: DOC, ops: JSON.stringify([]) }));
+    const body = await res.json();
+    expect(body.error).toEqual({ code: "failed", message, stopped: true });
+    expect(body.error).not.toHaveProperty("refusal");
+    expect(body.error).not.toHaveProperty("insertion");
   });
 
   it("sends no refusal field for an unclassified failure, whatever its message says (#82)", async () => {

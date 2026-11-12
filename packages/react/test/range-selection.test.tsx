@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { CatEnvelope, DirectChar, DocumentHandle } from "@hwp-editor/core";
-import { createHttpEngine, createTauriEngine, HwpEngineError } from "@hwp-editor/core";
+import { createHttpEngine, createTauriEngine, HwpEngineError, STOPPED_WITHOUT_DIAGNOSTIC } from "@hwp-editor/core";
 import { HwpEditor } from "../src/HwpEditor.js";
 import { en, ko } from "../src/messages.js";
 import type { MessageTable } from "../src/messages.js";
@@ -1022,5 +1022,27 @@ describe.each([["en", en], ["ko", ko]] as const)("Transport failures end to end 
       "hwp_failed: hwp edit failed (exit 3): Error: 미해석 PARA_RANGE_TAG 구간 표시가 있어 WCHAR 위치가 바뀌거나 표시를 잃는 문단 재작성을 지원하지 않습니다.",
     ));
     expect(await shown(failure)).toContain(messages["error.rangeTagRefused"]);
+  });
+
+  // #91: the sentence both transports append for an empty stderr is English,
+  // whichever locale the editor runs in. The structured marker is what picks
+  // the locale's own sentence; the message keeps the English one for a host
+  // that reads text.
+  it("HTTP: a stopped-without-diagnostic edit shows the locale's sentence", async () => {
+    const failure = await failureOf(http({
+      code: "failed",
+      message: `hwp edit failed (exit 137): ${STOPPED_WITHOUT_DIAGNOSTIC}`,
+      stopped: true,
+    }));
+    const text = await shown(failure);
+    expect(text).toContain(messages["error.stoppedWithoutDiagnostic"]);
+    if (locale === "ko") expect(text).not.toContain("the engine stopped without writing");
+  });
+
+  it("Tauri: an empty-stderr edit shows the locale's sentence", async () => {
+    const failure = await failureOf(tauri("hwp_failed: hwp edit failed (exit 137): "));
+    const text = await shown(failure);
+    expect(text).toContain(messages["error.stoppedWithoutDiagnostic"]);
+    if (locale === "ko") expect(text).not.toContain("the engine stopped without writing");
   });
 });

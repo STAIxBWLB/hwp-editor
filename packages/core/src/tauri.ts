@@ -152,7 +152,13 @@ function toEngineError(cmd: string, error: unknown, insertion = false): HwpEngin
   // `-> Result<T, String>` today, so this branch is dead now and goes live
   // for free when the Rust side moves to a structured Err.
   if (typeof error === "object" && error !== null && !(error instanceof Error)) {
-    const rec = error as { code?: unknown; message?: unknown; refusal?: unknown; insertion?: unknown };
+    const rec = error as {
+      code?: unknown;
+      message?: unknown;
+      refusal?: unknown;
+      insertion?: unknown;
+      stopped?: unknown;
+    };
     if (typeof rec.code === "string") {
       const detail =
         typeof rec.message === "string" ? rec.message : String(error);
@@ -163,9 +169,12 @@ function toEngineError(cmd: string, error: unknown, insertion = false): HwpEngin
         `${cmd} failed: ${detail}`,
         {
           cause: error,
-          // The same fields the HTTP body carries, narrowed the same way (#88).
+          // The same fields the HTTP body carries, narrowed the same way (#88),
+          // and the marker read the way the HTTP client reads it too: only
+          // `true` counts (#91).
           ...(isEditRefusalKind(rec.refusal) ? { refusal: rec.refusal } : {}),
           ...(isInsertionRefusal(rec.insertion) ? { insertion: rec.insertion } : {}),
+          ...(rec.stopped === true ? { stopped: true as const } : {}),
         },
       );
     }
@@ -198,7 +207,8 @@ const MARU_EDIT_FAILURE = /^hwp_failed: (hwp edit failed \(exit -?\d+\)): ([\s\S
  * An edit failure as the HTTP transport words the same stderr (#88), so the
  * two transports cannot drift:
  * - a classified refusal: the exit line plus its marker, and `refusal`;
- * - empty stderr: the exit line plus STOPPED_WITHOUT_DIAGNOSTIC;
+ * - empty stderr: the exit line plus STOPPED_WITHOUT_DIAGNOSTIC, and `stopped`
+ *   so a client shows that sentence in its own locale (#91);
  * - a batch carrying an insertion: the exit line plus the insert_blocks
  *   cause line, and `insertion` when the class is known;
  * - anything else: the engine's first Error: line with paths removed, then
@@ -210,7 +220,7 @@ function editFailure(
   code: HwpErrorCode,
   detail: string,
   insertion: boolean,
-): { message: string; fields: { refusal?: EditRefusalKind; insertion?: InsertionRefusal } } | null {
+): { message: string; fields: { refusal?: EditRefusalKind; insertion?: InsertionRefusal; stopped?: true } } | null {
   if (code !== "failed" || cmd !== "hwped_edit") return null;
   const failure = MARU_EDIT_FAILURE.exec(detail);
   if (failure === null) return null;
@@ -218,7 +228,7 @@ function editFailure(
   const stderr = failure[2]!;
   const kind = classifyEditRefusal(stderr);
   if (kind !== undefined) return { message: `${head}: ${editRefusalMarker(kind)}`, fields: { refusal: kind } };
-  if (stderr.trim() === "") return { message: `${head}: ${STOPPED_WITHOUT_DIAGNOSTIC}`, fields: {} };
+  if (stderr.trim() === "") return { message: `${head}: ${STOPPED_WITHOUT_DIAGNOSTIC}`, fields: { stopped: true } };
   if (insertion) {
     const cls = classifyInsertionRefusal(stderr);
     return {

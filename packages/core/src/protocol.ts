@@ -132,5 +132,11 @@ export interface ErrorResponse {
     refusal?: string;
     /** The `insert_blocks` refusal class (`InsertionRefusal`), when there is one (#88). */
     insertion?: unknown;
+    /**
+     * The edit wrote no diagnostic, so the engine was stopped (#91). Presence
+     * is the signal; the message still carries the English sentence for a
+     * client that reads text only.
+     */
+    stopped?: true;
   };
 }

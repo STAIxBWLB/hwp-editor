@@ -44,7 +44,7 @@ import type { InsertPosition } from "./ComponentsPanel.js";
 import { componentFailure, insertionFailure, insertionPreflight } from "./components-support.js";
 import { pendingKindKey, pendingTargetLabel } from "./pending-ops.js";
 import { ErrorLine } from "./ErrorLine.js";
-import { engineRefusalKind, toEditorError } from "./errors.js";
+import { engineRefusalKind, engineStoppedWithoutDiagnostic, toEditorError } from "./errors.js";
 import type { EngineRefusalKind } from "./errors.js";
 import { createT } from "./messages.js";
 import type { HwpEditorMessages, Locale } from "./messages.js";
@@ -728,12 +728,19 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           // The classified refusals (#76) each get their own cause and next
           // step. A run-range conflict (agent-hwp#420) is classified rather than
           // blocked at queue time: the queue and the applying lock stay as
-          // they are, and the batch fails whole with nothing written.
+          // they are, and the batch fails whole with nothing written. An edit
+          // the engine was stopped out of (#91) gets the same treatment: its
+          // marker selects the sentence, because the text the transports
+          // append to the message is English whatever the UI locale.
           const refusal = engineRefusalKind(e);
-          const refusalSentence = refusal === undefined ? undefined : t(REFUSAL_MESSAGE[refusal]);
+          const sentence = refusal !== undefined
+            ? t(REFUSAL_MESSAGE[refusal])
+            : engineStoppedWithoutDiagnostic(e)
+              ? t("error.stoppedWithoutDiagnostic")
+              : undefined;
           store.dispatch({
             type: "applyFailed",
-            error: refusalSentence === undefined ? stored : { ...stored, message: refusalSentence },
+            error: sentence === undefined ? stored : { ...stored, message: sentence },
           });
           emitError(e);
         }
