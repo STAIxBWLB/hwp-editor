@@ -10,9 +10,11 @@ name: e2e (non-required)
 # computation as ci.yml's `changes` classifier and is not meant to be: GitHub
 # applies its own filter, with its own diff-size limit and whatever head it reads
 # at that moment, so a pull request this workflow skips can be one ci.yml runs in
-# full. Nothing is lost by that, because this workflow is advisory - the only
-# required check is `ci-ok` - and ci.yml answers for itself, running every gating
-# job whenever it cannot prove the change is docs-only.
+# full. The merge gate loses nothing by that, because this workflow is advisory -
+# the only required check is `ci-ok` - and ci.yml answers for itself, running every
+# gating job whenever it cannot prove the change is docs-only. What a skipped run
+# does cost is this workflow's own signal: this pull request's e2e evidence stays
+# unmeasured until someone re-runs the workflow on it.
 on:
   pull_request:
     paths-ignore:

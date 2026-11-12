@@ -587,10 +587,16 @@ compared against.
 
 ### A6. The settings-side constraint, carried forward
 
-`main` carries no branch protection and no rulesets, and this phase deliberately added none.
-If one is ever added, **the e2e check name must stay out of it**: a required e2e check would
-put fork-supplied code and a network-downloaded binary on the release path, which is the
-settings half of the guarantee `.github/workflows/e2e.yml`'s header records and
+This phase added no branch protection rule and no ruleset, and none existed when it ran; A4
+records that read-back. `main` has carried one ruleset since 2026-11-10 - `main: require ci-ok`,
+scoped to the default branch, with one rule: the required status check `ci-ok`. Classic branch
+protection is still absent (`gh api .../branches/main/protection` answers 404, "Branch not
+protected"), so the ruleset is the whole of the settings half, and `ci-ok` is the only required
+check a merge waits on.
+
+**The e2e check name must stay out of it**, and out of any ruleset added later: a required e2e
+check would put fork-supplied code and a network-downloaded binary on the release path, which is
+the settings half of the guarantee `.github/workflows/e2e.yml`'s header records and
 `packages/server/test/repo-guards.test.ts` asserts in the tree.
 
 The approval gate this release uses is a deployment environment protection rule. That is a
