@@ -37,6 +37,7 @@ import {
   segmentRef,
   segmentText,
   tableCountMismatch,
+  validateCatEnvelope,
   validateProjectedMetadata,
 } from "../src/segments.js";
 import type { CatEnvelope, DirectChar, DocumentFormat, Segment } from "../src/segments.js";
@@ -721,6 +722,53 @@ describe("the engine's table count against the published segments (#97)", () => 
       // Dropping is the same answer as "the host published none": allowed.
       expect(tableCountMismatch(projected)).toBeNull();
     }
+  });
+});
+
+/**
+ * #147: the selection fields a decoded envelope resolves a ref through.
+ *
+ * `projectSegment` already holds the wire's `path.section`, `path.indices` and
+ * `id` to these rules, so nothing a valid v2 envelope carries is newly refused.
+ * What reaches this function is a host's own `HwpEngine.read` result, whose
+ * TypeScript type says the fields are there without anything having checked
+ * them: a non-array `indices` throws inside `resolveSelection`, one frame above
+ * the boundary that could report it.
+ */
+describe("validateCatEnvelope selection fields", () => {
+  /** The wire fixture the projection tests use, decoded. */
+  const valid = (): CatEnvelope => parseCatEnvelope(fixture("cat-segments-basic.json"));
+  const firstSegment = (envelope: CatEnvelope): Record<string, unknown> =>
+    envelope.segments[0] as unknown as Record<string, unknown>;
+
+  it("accepts the envelope the projection just produced, unchanged", () => {
+    const envelope = valid();
+    // The caller's own object comes back, so `bodyTables` and identity survive.
+    expect(validateCatEnvelope(envelope)).toBe(envelope);
+  });
+
+  it("accepts an id-less legacy envelope, whose segments carry no indices either", () => {
+    // What an older host projects, and what the playground's own stub carries:
+    // `section` and `para` are required of every published segment, `id` and
+    // `indices` are not.
+    const legacy: CatEnvelope = {
+      markdown: "가나다",
+      segments: [{ start: 0, end: 3, kind: "para", section: 0, para: 0 }],
+    };
+    expect(validateCatEnvelope(legacy)).toBe(legacy);
+  });
+
+  it.each([
+    ["indices is not an array", { indices: "0.0" }, /segment indices is not an array of non-negative integers/],
+    ["indices holds a non-integer", { indices: [0, 1.5] }, /segment indices is not an array/],
+    ["indices holds a negative index", { indices: [0, -1] }, /segment indices is not an array/],
+    ["section is not a non-negative integer", { section: 0.5 }, /segment section or para is not a non-negative integer/],
+    ["para is negative", { para: -1 }, /segment section or para is not a non-negative integer/],
+    ["id is not a string", { id: 7 }, /segment id is not a string/],
+  ])("refuses a segment whose %s", (_label, patch, expected) => {
+    const envelope = valid();
+    Object.assign(firstSegment(envelope), patch);
+    expect(() => validateCatEnvelope(envelope)).toThrow(expected);
   });
 });
 

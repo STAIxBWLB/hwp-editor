@@ -171,6 +171,18 @@ function isNumberArray(v: unknown): v is number[] {
   return Array.isArray(v) && v.every((n) => typeof n === "number");
 }
 
+/**
+ * A v2 nesting path: an array of non-negative integers.
+ *
+ * Stricter than {@link isNumberArray}, which accepts `2.5` and `-1`. The
+ * projection already holds the wire's `path.indices` to this rule; a decoded
+ * envelope is held to it here, because `segmentPath` and the run addressing
+ * that read these indices cannot do anything else with them (#147).
+ */
+function isIndexPath(v: unknown): v is number[] {
+  return Array.isArray(v) && v.every((index) => typeof index === "number" && Number.isInteger(index) && index >= 0);
+}
+
 /** Validate one wire segment and project it to the published shape. */
 function projectSegment(raw: unknown): Segment {
   if (typeof raw !== "object" || raw === null) {
@@ -427,6 +439,29 @@ export function validateCatEnvelope(raw: unknown): CatEnvelope {
   if (!segments.every((segment) => typeof segment === "object" && segment !== null &&
       SEGMENT_KINDS.includes((segment as { kind: SegmentKind }).kind))) {
     throw new Error("segments envelope: unknown segment kind; upgrade the host adapter to project the seven segment-envelope-v2 kinds, then reload.");
+  }
+  // The selection fields render resolves a ref through. Each is optional only
+  // where the published shape says so: `id` and `indices` exist on a v2
+  // envelope and not on an older host-projected one, so absent is allowed and
+  // a present-but-wrong value is not (#147).
+  if (!segments.every((segment) => {
+    const indices = (segment as { indices?: unknown }).indices;
+    return indices === undefined || isIndexPath(indices);
+  })) {
+    throw new Error("segments envelope: segment indices is not an array of non-negative integers; upgrade the host adapter to project valid segment-envelope-v2 nesting paths, then reload.");
+  }
+  if (!segments.every((segment) => {
+    const { section, para } = segment as { section?: unknown; para?: unknown };
+    return Number.isInteger(section) && Number.isInteger(para) &&
+      (section as number) >= 0 && (para as number) >= 0;
+  })) {
+    throw new Error("segments envelope: segment section or para is not a non-negative integer; upgrade the host adapter to project valid segment-envelope-v2 locations, then reload.");
+  }
+  if (!segments.every((segment) => {
+    const { id } = segment as { id?: unknown };
+    return id === undefined || typeof id === "string";
+  })) {
+    throw new Error("segments envelope: segment id is not a string; upgrade the host adapter to project valid segment-envelope-v2 ids, then reload.");
   }
   // The caller's own object, not a rebuilt copy: a published envelope carries
   // fields beyond markdown and segments (the engine's `bodyTables`, for one),

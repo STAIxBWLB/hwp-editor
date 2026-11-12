@@ -1294,6 +1294,28 @@ describe("#58 item 19d: a read result this editor cannot render", () => {
     expect(alert.textContent).toContain(sentenceLead(ko));
   });
 
+  it("refuses a load whose read result carries a nesting path that is not a list", async () => {
+    // The selection fields are the part of the envelope nothing held before:
+    // the published type says `indices` is there, a host's own projection may
+    // have put anything in it, and `resolveSelection` reads it one frame above
+    // the boundary that can report it (#147).
+    const engine = createMockEngine({ envelope: makeEnvelope() });
+    engine.read = async () => ({
+      markdown: "가나다",
+      segments: [{ id: "bad-indices", start: 0, end: 3, kind: "para", section: 0, para: 0, indices: "0.0" }],
+    }) as unknown as CatEnvelope;
+    render(<HwpEditor engine={engine} file={file} />);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain(en["error.prefix.load"]);
+    expect(alert.textContent).toContain(sentenceLead(en));
+    expect(alert.textContent).toContain("segment indices is not an array of non-negative integers");
+    expect(alert.textContent).not.toContain("upgrade the host adapter");
+    // Nothing reached render: no page was drawn over a segment whose nesting
+    // path cannot be walked.
+    expect(screen.queryByRole("button", { name: en["page.label"]({ page: 1 }) })).toBeNull();
+  });
+
   it("refuses a malformed envelope on an apply's re-read and keeps the queued op", async () => {
     // The apply re-reads the document it just wrote, which is the read a user
     // reaches without any host change: the envelope the engine hands back
