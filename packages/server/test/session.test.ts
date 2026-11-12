@@ -1,5 +1,6 @@
-import { readdir } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -17,11 +18,6 @@ function inspection(markdown: string): DocumentInspection {
   };
 }
 
-/** Entries the old on-disk store left under os.tmpdir(). */
-async function sessionDirs(): Promise<string[]> {
-  return (await readdir(tmpdir())).filter((e) => e.startsWith("hwp-editor-sessions-"));
-}
-
 describe("session store", () => {
   it("creates a session and hands back the attached inspection", () => {
     const store: SessionStore = createSessionStore();
@@ -36,14 +32,30 @@ describe("session store", () => {
   });
 
   it("touches the filesystem on no code path", async () => {
-    const before = await sessionDirs();
-    const store = createSessionStore();
-    const session = store.create("doc.hwpx");
-    store.attachInspection(session.id, inspection("x"));
-    store.get(session.id);
-    store.sweep(Date.now() + 60 * 60 * 1000);
-    store.dispose();
-    expect(await sessionDirs()).toEqual(before);
+    // A root this case owns, not the shared tmpdir (#58 item 31): another
+    // worker writing there mid-run would land in a listing of the whole
+    // machine, and this case is about what the store creates. Pointing
+    // TMPDIR here means anything the store wrote would land in this tree.
+    const root = await mkdtemp(join(tmpdir(), "hwped-session-root-"));
+    const previous = process.env.TMPDIR;
+    process.env.TMPDIR = root;
+    try {
+      // The mechanism, asserted rather than assumed: if os.tmpdir() ever
+      // stopped following TMPDIR, the empty listing below would read as proof
+      // while the store wrote somewhere else.
+      expect(tmpdir()).toBe(root);
+      const store = createSessionStore();
+      const session = store.create("doc.hwpx");
+      store.attachInspection(session.id, inspection("x"));
+      store.get(session.id);
+      store.sweep(Date.now() + 60 * 60 * 1000);
+      store.dispose();
+      expect(await readdir(root)).toEqual([]);
+    } finally {
+      if (previous === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = previous;
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("retains no document bytes and exposes no filesystem surface", () => {

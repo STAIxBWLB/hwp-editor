@@ -101,6 +101,25 @@ describe("template CLI failure guidance", () => {
     expect(error).toMatchObject({ message: expect.stringContaining(guidance) });
     expect((error as Error).message).not.toContain("/private/fake/document.hwpx");
   });
+
+  /**
+   * `lint` was the one command whose exit 1 the wrapper read as success (#58
+   * item 31). hwp-cli's `lint::run` returns an anyhow `Result` and exits 1 only
+   * on that `Err` (an unreadable document, or input over the size cap), while
+   * findings move the code only under `--strict`, which this engine never
+   * passes; measured identical at v0.20.0 and v1.4.0. Tolerating it handed
+   * `parse` empty stdout, so the host was told the report was invalid JSON and
+   * that its next step was an upgrade.
+   */
+  it("refuses a lint that exits 1 with the lint sentence, not an invalid-JSON one", async () => {
+    const { bin } = createFakeBin({ version: "1.4.0", failTemplateCommand: "lint", templateFailureCode: 1 });
+    const error = await createCliEngine({ bin }).lint(document).then(() => null, (reason: unknown) => reason);
+    expect(error).toMatchObject({ reason: "failed" });
+    expect((error as Error).message).toContain("hwp lint could not inspect this document");
+    expect((error as Error).message).toContain("hwp info");
+    expect((error as Error).message).not.toContain("invalid JSON");
+    expect((error as Error).message).not.toContain("/private/fake/document.hwpx");
+  });
 });
 
 /**

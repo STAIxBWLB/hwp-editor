@@ -41,6 +41,12 @@ export interface FakeBinOptions {
   mode?: FakeBinMode;
   /** Fail one template command after the version/help handshake. */
   failTemplateCommand?: "slots" | "fields" | "fill" | "template" | "lint" | "list-templates" | "create" | "edit";
+  /**
+   * Exit code that failing template command uses; default 3. `lint` is the one
+   * command whose exit 1 is meaningful on its own: hwp-cli exits 1 for an
+   * unreadable document, which is not a lint failure a caller can fix.
+   */
+  templateFailureCode?: number;
   /** `slow` sleep duration in ms; default 5000. */
   delayMs?: number;
   /** JSON printed for `info`, if the test needs the pre-flight to see one. */
@@ -145,7 +151,7 @@ export function createFakeBin(opts: FakeBinOptions = {}): { bin: string; log: ()
   const bin = path.join(dir, "hwp");
   const help = opts.helpFixture ?? DEFAULT_HELP_FIXTURE;
   const fail = (command: string) => opts.failTemplateCommand === command
-    ? [`printf '%s' ${JSON.stringify(`${command} failed at /private/fake/document.hwpx`)} >&2`, "exit 3"]
+    ? [`printf '%s' ${JSON.stringify(`${command} failed at /private/fake/document.hwpx`)} >&2`, `exit ${opts.templateFailureCode ?? 3}`]
     : [];
   /**
    * A successful `edit` that publishes the staged input and writes the report.

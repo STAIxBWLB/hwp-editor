@@ -1215,6 +1215,14 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         }
         return "hwp lint could not inspect this document with hwp-cli 1.4.0; check that it opens with hwp info, then retry.";
       };
+      // `lint` takes the raw result rather than runCliOk, because this family
+      // owns the sentence for every command it drives. Its exit 1 is NOT a
+      // success: `lint::run` returns an anyhow `Result` and exits 1 only on
+      // that `Err` (an unreadable document, or input over the size cap), while
+      // findings move the code only under `--strict`, which this engine never
+      // passes. Measured identical at v0.20.0 and v1.4.0. Tolerating it handed
+      // `parse` empty stdout, so an unreadable document reached the host as
+      // "hwp lint returned invalid JSON" with an upgrade as the next step.
       const result = args[0] === "lint"
         ? await runCli(resolveBin(), args, timeoutMs, opts.locale, call?.signal)
          : await runCliOk(resolveBin(), args, timeoutMs, opts.locale, call?.signal).catch(error => {
@@ -1226,7 +1234,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
             throw failure;
           }
         });
-      if (result.code !== 0 && !(args[0] === "lint" && result.code === 1)) {
+      if (result.code !== 0) {
         throw new HwpCliError("failed", failureMessage(), result.stderr);
       }
       return result.stdout;
@@ -1401,7 +1409,28 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
           throw new HwpCliError("bad_request", "seal cannot be combined with uploaded assets; run seal without uploaded assets through a local host");
         }
         if (!imageAssetsMatchOps(ops, uploads)) {
-          throw new HwpCliError("bad_request", "image upload and insert-image paths do not match; upload matching PNG/JPEG files for the referenced names");
+          // Split as the HTTP route splits it (#58 item 31): an op naming an
+          // image nobody uploaded and an upload no op references are two
+          // different mistakes, and one sentence for both left the second
+          // case telling the caller to upload files it had already uploaded.
+          const uploaded = new Set(uploads.map(asset => asset.name));
+          const named = ops.filter(op => op?.kind === "insert-image").map(op => op.path);
+          if (named.some(name => !uploaded.has(name))) {
+            throw new HwpCliError("bad_request", "insert-image paths must name exactly the uploaded assets; attach the PNG/JPEG file for each named path, then retry");
+          }
+          throw new HwpCliError("bad_request", "an uploaded image is not referenced by any insert-image op; remove the unreferenced upload, or add the insert-image op that uses it, then retry");
+        }
+        // `capabilities()` withholds `imageAssets` below 1.4.0, but a direct
+        // engine call never reads capabilities, so the upload grammar has to
+        // refuse where it runs, as styles and the template methods do. Last in
+        // this block, which is the order the route uses: a payload mistake is
+        // the caller's whatever the binary is.
+        const hostVersion = await ensureVersion();
+        if (!imageAssetsVersionSupported(hostVersion)) {
+          throw new HwpCliError(
+            "version",
+            `hwp ${hostVersion} has no image asset uploads; upgrade hwp-cli to 1.4.0 or newer, then retry the edit`,
+          );
         }
       }
       const version = await ensureVersion();

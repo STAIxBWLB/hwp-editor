@@ -42,7 +42,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 
 import {
   assertResolvedPeer,
@@ -267,10 +267,15 @@ describe("REL-01: the dedupe count can fail", () => {
  * stages ran.
  */
 describe("the entry-module guard", () => {
-  const strays = () => readdirSync(tmpdir()).filter((name) => name.startsWith(SCRATCH_PREFIX));
+  // The scratch tree the script leaves behind IS the evidence, so it is read in
+  // a root this test owns: TMPDIR points both children there, and the listing
+  // never reads the shared tmpdir another worker is writing to (#58 item 31).
+  const entryRoot = mkdtempSync(join(tmpdir(), "hwped-release-entry-"));
+  afterAll(() => { rmSync(entryRoot, { recursive: true, force: true }); });
+  const strays = () => readdirSync(entryRoot).filter((name) => name.startsWith(SCRATCH_PREFIX));
 
   /** A PATH with nothing on it, so `npm` cannot be spawned by either child. */
-  const noTools = { ...process.env, PATH: join(tmpdir(), "hwped-no-such-bin") };
+  const noTools = { ...process.env, PATH: join(entryRoot, "hwped-no-such-bin"), TMPDIR: entryRoot };
 
   it("runs no stage when the module is imported rather than executed", () => {
     const before = strays();
@@ -296,7 +301,7 @@ describe("the entry-module guard", () => {
     expect(result.status).not.toBe(0);
     const created = strays().filter((name) => !before.includes(name));
     expect(created.length).toBeGreaterThan(0);
-    for (const name of created) rmSync(join(tmpdir(), name), { recursive: true, force: true });
+    for (const name of created) rmSync(join(entryRoot, name), { recursive: true, force: true });
   });
 });
 

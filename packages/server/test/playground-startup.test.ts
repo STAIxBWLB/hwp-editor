@@ -65,4 +65,34 @@ describe("playground startup failure", () => {
       expect(stderr).toContain(`The playground cannot run hwp at ${bin} (exit status 3)`);
     } finally { rmSync(caller, { recursive: true, force: true }); }
   });
+
+  /**
+   * The default is the bare name `hwp`, which `spawn` resolves on PATH, so the
+   * old message repeated the name back: "cannot run hwp at hwp" (#58 item 31).
+   * The refusal names the PATH entry the search would have picked, and says the
+   * lookup was PATH-wide when there is no entry to name.
+   */
+  it("says a bare hwp was looked up on PATH when no entry matches", () => {
+    const empty = mkdtempSync(join(tmpdir(), "hwp-playground-path-"));
+    try {
+      const { status, stderr } = startup({ HWP_EDITOR_BIN: "", HWP_CLI: "", PATH: empty });
+      expect(status).toBe(1);
+      expect(stderr).toContain("The playground cannot run hwp at hwp on PATH (error ENOENT)");
+      expect(stderr).not.toContain("at hwp (");
+    } finally { rmSync(empty, { recursive: true, force: true }); }
+  });
+
+  it("names the resolved PATH entry for a bare hwp that runs but fails", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hwp-playground-onpath-"));
+    try {
+      const bin = join(dir, "hwp");
+      writeFileSync(bin, `#!${process.execPath}\nprocess.exit(3);\n`);
+      chmodSync(bin, 0o700);
+      // Nothing configures a path anywhere: the name alone, found on this PATH.
+      const { status, stderr } = startup({ HWP_EDITOR_BIN: "", HWP_CLI: "", PATH: dir });
+      expect(status).toBe(1);
+      expect(stderr).toContain(`The playground cannot run hwp at ${bin} (exit status 3)`);
+      expect(stderr).not.toContain("at hwp (");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
 });

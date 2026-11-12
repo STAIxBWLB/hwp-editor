@@ -426,7 +426,11 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
       }
     });
     if (assets.length > 0 && (await engine.capabilities()).imageAssets !== "v1") {
-      throw new HwpCliError("bad_request", "the configured engine does not support image assets v1; configure a host that advertises imageAssets v1");
+      // The next step names the upgrade first: on a CLI host the only reason
+      // imageAssets is withheld is a binary below the 1.4.0 upload grammar,
+      // and "configure a host that advertises it" alone sent the caller
+      // looking for a different adapter (#58 item 31).
+      throw new HwpCliError("bad_request", "the configured engine does not support image assets v1; upgrade hwp-cli to 1.4.0 or newer, or configure a host that advertises imageAssets v1, then retry");
     }
     const options: EditOptions = {};
     const verify = formFlag(form, "verify");

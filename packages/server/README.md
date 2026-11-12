@@ -57,6 +57,13 @@ its own and forwards yours whole, so every field below reaches both.
 | `sessions` | `SessionStore \| false` | In-memory cache of read-pipeline extras (fields/bookmarks/slots/info), keyed by an opaque id with a 30-minute idle TTL. It retains no document bytes and touches no filesystem. Pass `false` to disable. |
 | `authorize` | `AuthorizeFn` | `(req, action) => Promise<string \| null>`. The trust boundary; see below. Defaults to allow-all. |
 
+One more field belongs to the engine rather than to the route, so it is not in
+the table above: `CliEngineOptions.workRoot` is the directory each call's
+private staging directory is created under, default `os.tmpdir()`. `createCliEngine`
+is exported for hosts that build the engine themselves; point `workRoot` at a
+directory you own when you need to watch cleanup or keep staging off a shared
+system temp directory, as this package's lifecycle tests do.
+
 ## Trust boundary
 
 **This package owns no authentication and by default admits every request.**

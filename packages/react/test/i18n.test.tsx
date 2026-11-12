@@ -306,6 +306,16 @@ describe("table parity (I18N-06, I18N-08)", () => {
     }
   });
 
+  it("names the hwp-cli upgrade as the image-upload next step in both locales", () => {
+    // A CLI host withholds imageAssets below 1.4.0, so "ask the administrator"
+    // alone left the actual fix unnamed in the one place a person reads it
+    // (#58 item 31). The version is spelled rather than read from a constant:
+    // it is an engine fact, not one of this package's bounds.
+    for (const table of [en, ko]) {
+      expect(table["image.unsupported"]).toContain("1.4.0");
+    }
+  });
+
   /**
    * The check above only reads strings, so a template function pasted from en
    * into ko passes it: the key exists and both values are functions.
