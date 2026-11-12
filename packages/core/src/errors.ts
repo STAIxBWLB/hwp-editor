@@ -208,7 +208,7 @@ export const DISTRIBUTION_NEXT_STEP =
  * `LoadDocumentError::source` (cat.rs:107-114) returns the root cause, so
  * anyhow's Debug follows it with a blank line, `Caused by:`, and the same
  * sentence indented four spaces. Two copies of the sentence, both authored by
- * the engine:
+ * the engine, but only the first one counts (see `lineCarriesRefusal`):
  *
  *     Error: DRM으로 보호된 문서는 지원하지 않습니다. 한글에서 DRM 보안을 ...
  *
@@ -270,22 +270,43 @@ const PROTECTED_REFUSALS: ReadonlyArray<readonly [string, string, string]> = [
 const ENGINE_ERROR_LABEL = "Error: ";
 
 /**
- * Whether some line of `text` is the engine's own `sentence`, and nothing
- * accumulates around it.
+ * The head the desktop bridge puts in front of hwp-cli's stderr
+ * (dev/maru/src-tauri/src/hwped.rs run_hwp_ok): `hwp_failed: hwp <cmd> failed
+ * (exit N): ` and then that stderr verbatim, so the engine's `Error:` line
+ * starts right after it.
+ */
+const TRANSPORT_HEAD = /^hwp_failed: hwp \S+ failed \(exit -?\d+\): $/u;
+
+/**
+ * Whether some line of `text` is the engine's own `Error:` line for
+ * `sentence`, and nothing accumulates around it.
  *
- * A line qualifies when the sentence ends it and the only text before it is
- * either whitespace (the `Caused by:` copy) or a prefix closing with
- * `Error: ` (the head line, and the desktop bridge's
- * `hwp_failed: hwp edit failed (exit N): Error: ...`). Ending the line is what
- * keeps an echoed value out: `edit` writes an anchor as `{anchor:?}` and
- * `fill` appends `(--allow-partial로 ...)`, so a value that happens to hold
- * one of these sentences is followed by more text on its line.
+ * Two shapes qualify, and nothing else:
+ * - `Error: <sentence>`: the line `Termination` writes, at a line start;
+ * - `hwp_failed: hwp <cmd> failed (exit N): Error: <sentence>`: the same line
+ *   behind the bridge's fixed head, which pastes hwp-cli's stderr on after its
+ *   own.
+ *
+ * The `Caused by:` copy is deliberately NOT a second chance, even though the
+ * engine prints it. hwp-cli interpolates caller text with `{}` in places
+ * (fill.rs's unmatched field names, joined and printed raw), so a value the
+ * user typed can hold a newline and put any sentence at the start of a line;
+ * accepting an indented line as the engine's would let that value pick a
+ * protection reading by itself. The one place the sentence is known to be the
+ * engine's is after `Error: `, so that prefix is required.
+ *
+ * Ending the line is the other half: `edit` writes anchors and field names as
+ * `{anchor:?}` and `fill` appends `(--allow-partial로 ...)`, so a value that
+ * happens to hold one of these sentences is followed by more text on its line.
  */
 function lineCarriesRefusal(text: string, sentence: string): boolean {
   for (const line of text.split(/\r?\n/u)) {
     if (!line.endsWith(sentence)) continue;
-    const head = line.slice(0, line.length - sentence.length);
-    if (head.trim() === "" || head.endsWith(ENGINE_ERROR_LABEL)) return true;
+    const before = line.slice(0, line.length - sentence.length);
+    if (before === ENGINE_ERROR_LABEL) return true;
+    if (!before.endsWith(ENGINE_ERROR_LABEL)) continue;
+    const outer = before.slice(0, before.length - ENGINE_ERROR_LABEL.length);
+    if (TRANSPORT_HEAD.test(outer)) return true;
   }
   return false;
 }

@@ -153,6 +153,10 @@ describe("protectedReasonFromStderr", () => {
         .map((line) => (line.includes(DRM) ? line.replace(DRM, `/tmp/hwp-editor-abc123/in.hwpx ${DRM}`) : line))
         .join("\n"),
     ],
+    [
+      "a field name carrying a newline, which puts the sentence alone on its own line",
+      `Error: 요청한 자리표시자·양식 필드를 찾지 못했습니다: x\n${DRM}\n (--allow-partial로 일치한 값만 적용 가능)`,
+    ],
   ])("returns null for %s", (_name, stderr) => {
     expect(protectedReasonFromStderr(stderr)).toBeNull();
   });

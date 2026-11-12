@@ -61,10 +61,6 @@ describe("the protection backstop", () => {
     expect(protectedReasonFromDiagnostics(`Error: ${sentence}\n`)).toBe(`${kind}; ${step}`);
   });
 
-  it.each(REFUSALS)("classifies %s from the Caused by copy alone", (sentence, kind, step) => {
-    expect(protectedReasonFromDiagnostics(`\nCaused by:\n    ${sentence}\n`)).toBe(`${kind}; ${step}`);
-  });
-
   it("classifies the desktop bridge's one-line detail, where maru's head precedes the engine's", () => {
     expect(
       protectedReasonFromDiagnostics(`hwp_failed: hwp edit failed (exit 1): Error: ${DRM}`),
@@ -75,6 +71,17 @@ describe("the protection backstop", () => {
     expect(protectedReasonFromDiagnostics(printed(DRM).replaceAll("\n", "\r\n"))).toBe(
       `DRM-protected document; ${PROTECTED_NEXT_STEP}`,
     );
+  });
+
+  /**
+   * The `Caused by:` copy is the engine's too, but it is not accepted, and
+   * this is the case that says so: `fill` prints unmatched field names with
+   * `{}` (fill.rs, joined and not escaped), so a caller's value can put a
+   * newline and then a protection sentence at the start of a line. An
+   * indented line is therefore not evidence of anything.
+   */
+  it.each(REFUSALS)("does not classify %s from the Caused by copy alone", (sentence) => {
+    expect(protectedReasonFromDiagnostics(`\nCaused by:\n    ${sentence}\n`)).toBeNull();
   });
 
   it("keeps the two DRM variants on one reading and the rest apart", () => {
@@ -113,6 +120,10 @@ describe("the protection backstop", () => {
     [
       "an unmatched field list, which appends its hint after the names",
       `Error: 요청한 자리표시자·양식 필드를 찾지 못했습니다: ${DRM} (--allow-partial로 일치한 값만 적용 가능)`,
+    ],
+    [
+      "a field name carrying a newline, which puts the sentence alone on its own line",
+      `Error: 요청한 자리표시자·양식 필드를 찾지 못했습니다: x\n${DRM}\n (--allow-partial로 일치한 값만 적용 가능)`,
     ],
     [
       "a password refusal, which is a credential problem rather than protection",
