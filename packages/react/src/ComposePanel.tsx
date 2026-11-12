@@ -302,6 +302,13 @@ export function ComposePanel(props: ComposePanelProps): JSX.Element {
         aria-modal="true"
         aria-label={t("compose.title")}
         onClick={(e) => e.stopPropagation()}
+        // The editor root turns Cmd/Ctrl+Enter into an apply, and a press
+        // inside this dialog is the dialog's: the click is stopped above and
+        // the chord is stopped here, where the gesture is, instead of being
+        // left for the root's `composing` check to refuse (#58 item 20k).
+        onKeyDown={(e) => {
+          if ((e.metaKey || e.ctrlKey) && e.key === "Enter") e.stopPropagation();
+        }}
       >
         <h2 className="hwped-dialog-title">{t("compose.title")}</h2>
 

@@ -24,7 +24,7 @@ import type {
   ValidationReport,
 } from "@hwp-editor/core";
 import type { AddressedEditOp } from "@hwp-editor/core";
-import { compareSegments, componentStyleMap, createStore, insertedParagraphIds, isSectionDefinitionParagraph, resolveSelection, segmentAtRef, segmentRef, substituteParams, validateImageAssets, HwpEngineError, MAX_IMAGE_ASSETS, MAX_IMAGE_ASSETS_TOTAL_BYTES, STARTER_COMPONENTS } from "@hwp-editor/core";
+import { compareSegments, componentStyleMap, createStore, insertedParagraphIds, isSectionDefinitionParagraph, resolveSelection, segmentAtRef, segmentRef, substituteParams, validateCatEnvelope, validateImageAssets, HwpEngineError, MAX_IMAGE_ASSETS, MAX_IMAGE_ASSETS_TOTAL_BYTES, STARTER_COMPONENTS } from "@hwp-editor/core";
 import type { EditorError, EditorState, EditorStore } from "@hwp-editor/core";
 import { HwpEditorContext } from "./context.js";
 import type { HwpEditorContextValue, StylesStatus } from "./context.js";
@@ -180,6 +180,24 @@ function insertAnchor(covered: readonly Segment[], position: InsertPosition): Pa
 /** Whatever a refusal path threw, as the `Error` the error line renders. */
 function toError(value: unknown): Error {
   return value instanceof Error ? value : new Error(String(value));
+}
+
+/** How core's `parseCatEnvelope`, `projectSegment` and `validateCatEnvelope` open every message. */
+const ENVELOPE_PREFIX = "segments envelope: ";
+
+/**
+ * The problem half of a core envelope message.
+ *
+ * Core writes each of its envelope refusals as
+ * `segments envelope: <problem>; <next step>.`, and the sentence this editor
+ * paints beside it names the next step in its own vocabulary, so only the
+ * problem travels: otherwise one line carries two instructions and reads
+ * `(... then reload.). Have the host emit ..., then reload.` (t71-1).
+ */
+function envelopeProblem(message: string): string {
+  const body = message.startsWith(ENVELOPE_PREFIX) ? message.slice(ENVELOPE_PREFIX.length) : message;
+  const [problem] = body.split("; ");
+  return (problem ?? body).replace(/\.$/, "");
 }
 
 /**
@@ -450,6 +468,36 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       staleRevertSentence.current = "";
       setNotice((current) => (current === sentence ? null : current));
     }, []);
+    /**
+     * Read a document, refusing a result this editor cannot render.
+     *
+     * A host's own `HwpEngine` hands back a decoded envelope, and its type says
+     * nothing about whether the fields parsed: an offset past the end of the
+     * markdown, a character range that is not a range, or a segment kind
+     * outside the contract throws from `segmentText` inside render, where no
+     * boundary catches it. The checks are core's own — `validateCatEnvelope`
+     * answers with the same kind vocabulary and the same offset contract the
+     * wire projection applies — so a custom engine is held to one answer and
+     * the editor adds no notion of its own. The sentence names the cause and
+     * the next step, and `envelopeProblem` carries only the cause half of the
+     * core message for it, because core's own text already ends with a next
+     * step of its own (#58 item 19d, t71-1).
+     *
+     * `latestT`, so the sentence is in the locale on screen without making any
+     * effect that reads a document depend on `t` (#58 item 19d).
+     */
+    const readEnvelope = useCallback(async (target: DocumentHandle): Promise<CatEnvelope> => {
+      const read = await engine.read(target);
+      try {
+        return validateCatEnvelope(read);
+      } catch (e) {
+        throw new HwpEngineError(
+          "failed",
+          latestT.current("error.badEnvelope", { detail: envelopeProblem(e instanceof Error ? e.message : String(e)) }),
+          { cause: e },
+        );
+      }
+    }, [engine]);
     /** The envelope an attempt has already been made against, so none repeats. */
     const insertedTriedFor = useRef<CatEnvelope | null>(null);
     const imageAssets = useRef(new Map<EditOp, ImageAsset>());
@@ -511,7 +559,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         try {
           const caps = await engine.capabilities();
           const [nextEnvelope, pages, report] = await Promise.all([
-            engine.read(file),
+            readEnvelope(file),
             engine.render(file, RENDER_SVG),
             engine.validate(file).catch(() => null),
           ]);
@@ -572,7 +620,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       return () => {
         cancelled = true;
       };
-    }, [engine, file, markLoaded, retireStaleRevert, store]);
+    }, [engine, file, markLoaded, readEnvelope, retireStaleRevert, store]);
 
     // Single fan-out point: every panel, both toolbar buttons and the
     // applyPendingOps guard read `editable`, so `readOnly` works everywhere
@@ -687,7 +735,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
             ...(assets.length ? { assets } : {}),
           });
           const [nextEnvelope, pages, report] = await Promise.all([
-            engine.read(next),
+            readEnvelope(next),
             engine.render(next, RENDER_SVG),
             engine.validate(next).catch(() => null),
           ]);
@@ -747,7 +795,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           emitError(e);
         }
       })();
-    }, [editable, engine, noteRefusal, store, t]);
+    }, [editable, engine, noteRefusal, readEnvelope, store, t]);
 
     const replaceDocument = useCallback(
       (
@@ -799,7 +847,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
               return false;
             }
             const [nextEnvelope, pages, report] = await Promise.all([
-              engine.read(next),
+              readEnvelope(next),
               engine.render(next, RENDER_SVG),
               engine.validate(next).catch(() => null),
             ]);
@@ -849,7 +897,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           }
         })();
       },
-      [emitChange, emitError, engine, noteRefusal, store, t],
+      [emitChange, emitError, engine, noteRefusal, readEnvelope, store, t],
     );
 
     /** Ids of an insertion belong to one document; a new file retires them. */
@@ -1063,7 +1111,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           // re-validate the restored one. Same shape as applyPendingOps; a
           // validate failure leaves the previous badge rather than clearing it.
           const [nextEnvelope, pages, report] = await Promise.all([
-            engine.read(previous),
+            readEnvelope(previous),
             engine.render(previous, RENDER_SVG),
             engine.validate(previous).catch(() => null),
           ]);
@@ -1119,7 +1167,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           emitError(e);
         }
       })();
-    }, [engine, noteRefusal, store, t]);
+    }, [engine, noteRefusal, readEnvelope, store, t]);
 
     const refresh = useCallback(async () => {
       const snapshot = store.getState();
@@ -1141,7 +1189,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       let discarded = false;
       try {
         const [nextEnvelope, pages, report] = await Promise.all([
-          engine.read(snapshot.document),
+          readEnvelope(snapshot.document),
           engine.render(snapshot.document, RENDER_SVG),
           engine.validate(snapshot.document).catch(() => null),
         ]);
@@ -1190,7 +1238,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         emitError(e);
         throw e;
       }
-    }, [engine, noteRefusal, store, t]);
+    }, [engine, noteRefusal, readEnvelope, store, t]);
 
     const openCompose = useCallback(() => setComposing(true), []);
     const loadEpoch = useCallback(() => loadGeneration.current, []);
@@ -1335,11 +1383,12 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         if (composing) return;
         store.dispatch({ type: "select", selection: null });
       } else if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-        // With the compose dialog open the chord belongs to nobody: focus is
-        // still on the toolbar trigger when it opens, so the dialog cannot
-        // stop a press that never reaches it, and an apply here would rewrite
-        // the document the compose is about to replace. Refused at the root,
-        // like Escape above; the dialog's own buttons remain the way through.
+        // With the compose dialog open the chord belongs to nobody, and an
+        // apply here would rewrite the document the compose is about to
+        // replace. A press INSIDE the dialog is stopped at the dialog itself
+        // (#58 item 20k); this is the one that never reaches it, because
+        // focus is still on the toolbar trigger when it opens. The dialog's
+        // own buttons remain the way through.
         if (composing) return;
         e.preventDefault();
         void applyPendingOps();
@@ -1585,7 +1634,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
                 void (async () => {
                   try {
                     const [nextEnvelope, pages, caps, report] = await Promise.all([
-                      engine.read(document),
+                      readEnvelope(document),
                       engine.render(document, RENDER_SVG),
                       engine.capabilities(),
                       engine.validate(document).catch(() => null),

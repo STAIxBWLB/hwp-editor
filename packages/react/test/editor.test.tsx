@@ -582,6 +582,37 @@ describe.each(LOCALES)("HwpEditor compose flow — locale=%s", (locale) => {
     cleanup();
   });
 
+  it("stops Cmd/Ctrl+Enter inside the compose dialog before the editor root sees it (#58 item 20k)", async () => {
+    // The editor root turns the chord into an apply. A listener outside the
+    // editor stands in for that bubbling path - the dialog sits inside the
+    // root, so anything the root sees on the way out passes it - and the two
+    // presses below say the chord stops at the dialog while an ordinary key
+    // still travels.
+    const chord = vi.fn();
+    const plain = vi.fn();
+    render(
+      <div
+        onKeyDown={(e) => {
+          if ((e.metaKey || e.ctrlKey) && e.key === "Enter") chord();
+          else plain();
+        }}
+      >
+        <HwpEditor locale={locale} engine={createMockEngine()} file={null} />
+      </div>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: t["canvas.createCta"] }));
+    await screen.findByRole("dialog", { name: t["compose.title"] });
+    const title = screen.getByLabelText(t["compose.titleLabel"]);
+
+    fireEvent.keyDown(title, { key: "Enter", ctrlKey: true });
+    expect(chord).not.toHaveBeenCalled();
+    // Control: the same field still bubbles an ordinary key, so the assertion
+    // above is about this chord and not about a detached listener.
+    fireEvent.keyDown(title, { key: "a" });
+    expect(plain).toHaveBeenCalled();
+    cleanup();
+  });
+
   it("ignores Escape while a compose is in flight, like the disabled Cancel", async () => {
     const engine = createMockEngine();
     engine.compose = () => new Promise(() => {});

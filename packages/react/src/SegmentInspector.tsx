@@ -90,7 +90,7 @@ export function SegmentInspector(): JSX.Element {
     : capabilities.styles !== "v1"
       ? (stylesVersionSupported(capabilities.version) ? "styles.unavailableHost" : "segment.directStyleUnavailable")
     : "segment.directStyleUnknown";
-  // One table of reasons serves both the current selection and a refused
+  // One reason vocabulary serves both the current selection and a refused
   // click, so a segment kind names its own obstacle either way.
   const refusalText = (reason: SelectionRefusal | null | undefined): string | null =>
     reason === null || reason === undefined ? null
@@ -98,6 +98,21 @@ export function SegmentInspector(): JSX.Element {
       : reason === "table" ? t("segment.tableSelectionRefused")
       : reason === "container" ? t("segment.containerSelectionRefused")
       : t("segment.noParagraphSelection");
+  /**
+   * A refused click, worded as the click it was.
+   *
+   * The sentences above say what the SELECTION is, so reusing one for a click
+   * answered the wrong question - and a click whose reason matched the
+   * primary's was dropped from the list entirely, which left a cell primary
+   * plus Ctrl on an empty cell saying nothing at all. The two reports are now
+   * separate sentences, and the click's is never suppressed (#58 item 19b).
+   */
+  const clickRefusedText = (reason: SelectionRefusal | null | undefined): string | null =>
+    reason === null || reason === undefined ? null
+      : reason === "cell" ? t("segment.clickRefusedCell")
+      : reason === "table" ? t("segment.clickRefusedTable")
+      : reason === "container" ? t("segment.clickRefusedContainer")
+      : t("segment.clickRefusedUnaddressable");
   const refusalReason = refusalText(targets?.refusal);
   const targetLabel = segment === undefined ? "" : segment.kind === "cell"
     ? t("segment.selectedCell", { path: segmentPath(segment), count: paragraphTargets.length })
@@ -235,6 +250,20 @@ export function SegmentInspector(): JSX.Element {
   // trimmed publishes the same span an HWP5 break does.
   const formatTargets = envelope === null ? [] : collectFormatTargets(envelope, formatInputs, state.range, documentFormat(state.document?.name, state.document?.data));
   const runs = envelope === null || singleParagraph === undefined ? [] : paragraphRuns(envelope, singleParagraph);
+  /**
+   * The whole-paragraph format this host cannot address.
+   *
+   * The envelope publishes no run for the paragraph and no nesting path
+   * either, so `formatTargets` has nothing to name: `edit-ops-v1` addresses
+   * character format per run, and `run: 0` would format one run of a
+   * paragraph the panel promised whole. A v2 paragraph without immediate runs
+   * is refused the same way, so the reason has to be said rather than left as
+   * a dead button (#58 item 19e). An empty paragraph is not this case: it has
+   * no runs to publish, and its own sentence already names the whole
+   * paragraph, so the length check keeps it out (t71-2).
+   */
+  const formatNoRuns = state.range == null && singleParagraph !== undefined &&
+    singleParagraph.start !== singleParagraph.end && singleParagraph.indices === undefined && runs.length === 0;
   const rangeAvailable = !multiSelection && runs.some(run => run.id !== undefined || (singleParagraph?.indices?.length === 1 && run.indices?.length === 2));
   const charPrimary = segment?.kind === "run" ? segment
     : envelope !== null && state.range != null && formatTargets[0]?.address.id !== undefined
@@ -489,10 +518,12 @@ export function SegmentInspector(): JSX.Element {
          // starts a paragraph selection over instead of joining the runs.
         hasRunSelection && <p className="hwped-hint" role="status">{t("segment.runSelectionTerminal")}</p>}
         {// A modifier click that had no paragraph to add left the selection
-         // alone; say why, unless the selection itself is what was clicked and
-         // its own reason is already below.
-        state.selectionRefusal != null && state.selectionRefusal !== targets?.refusal &&
-          <p className="hwped-hint" role="status">{refusalText(state.selectionRefusal)}</p>}
+         // alone, and reports the click here whatever the selection's own
+         // reason is: the reader's action is what was refused, and a click
+         // that shares the primary's obstacle is still a click that did
+         // nothing (#58 item 19b).
+        state.selectionRefusal != null &&
+          <p className="hwped-hint" role="status">{clickRefusedText(state.selectionRefusal)}</p>}
       </div>
       {segment === undefined || selection === null ? (
         <p className="hwped-hint">{t("segment.hint")}</p>
@@ -767,6 +798,7 @@ export function SegmentInspector(): JSX.Element {
       <div className="hwped-field">
         <span className="hwped-label">{t("segment.formatLabel")}</span>
         <p className="hwped-hint">{t("segment.formatRunCount", { count: formatTargets.length })}</p>
+        {formatNoRuns && <p className="hwped-hint" role="status">{t("segment.formatUnavailableNoRuns")}</p>}
         <div className="hwped-row">
           <label className="hwped-check">
             <input

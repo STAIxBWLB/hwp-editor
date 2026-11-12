@@ -1239,3 +1239,78 @@ describe("#58 item 30: undo's read failure and the re-read line", () => {
     expect(korean).not.toContain("새로 고치");
   });
 });
+
+/**
+ * #58 item 19d: a host's own `HwpEngine` hands back a decoded envelope, and
+ * nothing held it to the contract before render did - `segmentText` throws
+ * from inside a component, where no boundary catches it, so the surface broke
+ * instead of saying what was wrong. Every read the editor performs now projects
+ * the result first, and a refusal names the cause and the next step.
+ */
+describe("#58 item 19d: a read result this editor cannot render", () => {
+  /** A paragraph whose range runs past the markdown it publishes. */
+  const brokenEnvelope = (): CatEnvelope => ({
+    markdown: "가나다",
+    segments: [{ id: "past-end", start: 0, end: 9, kind: "para", section: 0, para: 0 }],
+  });
+
+  /**
+   * The localized clause of the sentence, up to the cause core supplies after
+   * its ": ". The cause is core's own problem phrase, and pinning it whole here
+   * would make this test a copy of that wording.
+   */
+  const sentenceLead = (t: MessageTable): string =>
+    t["error.badEnvelope"]({ detail: "" }).split(": ")[0] ?? "";
+
+  it("refuses a load whose read result names an offset past its markdown", async () => {
+    const engine = createMockEngine({ envelope: makeEnvelope() });
+    engine.read = async () => brokenEnvelope();
+    render(<HwpEditor engine={engine} file={file} />);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain(en["error.prefix.load"]);
+    // The localized sentence leads and the core cause rides inside it, so the
+    // reader gets both the reason and what to do about it.
+    expect(alert.textContent).toContain(sentenceLead(en));
+    expect(alert.textContent).toContain("character range exceeds markdown");
+    // Only the cause half of core's message travels: core's own text ends with
+    // a next step of its own, and carrying it here would put two instructions
+    // and a "(... reload.)." sequence in one line (t71-1).
+    expect(alert.textContent).not.toContain("upgrade the host adapter");
+    expect(alert.textContent).not.toContain(".).");
+    // Nothing reached render: no page was drawn, and the panel is the empty
+    // state rather than a crash over a segment it cannot read.
+    expect(screen.queryByRole("button", { name: en["page.label"]({ page: 1 }) })).toBeNull();
+    expect(screen.getByText(en["segment.hint"])).toBeTruthy();
+  });
+
+  it("says the same thing in Korean", async () => {
+    const engine = createMockEngine({ envelope: makeEnvelope() });
+    engine.read = async () => brokenEnvelope();
+    render(<HwpEditor locale="ko" engine={engine} file={file} />);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain(ko["error.prefix.load"]);
+    expect(alert.textContent).toContain(sentenceLead(ko));
+  });
+
+  it("refuses a malformed envelope on an apply's re-read and keeps the queued op", async () => {
+    // The apply re-reads the document it just wrote, which is the read a user
+    // reaches without any host change: the envelope the engine hands back
+    // after an edit is held to the same contract as the one at load.
+    const envelope = makeEnvelope();
+    const engine = createMockEngine({ envelope });
+    let reads = 0;
+    engine.read = async () => (reads++ === 0 ? envelope : brokenEnvelope());
+    render(<HwpEditor engine={engine} file={file} />);
+    await selectAndQueueReplace(en);
+    await applyOne(en);
+
+    await vi.waitFor(() =>
+      expect(alertTexts().some((text) => text.includes(sentenceLead(en)))).toBe(true));
+    expect(alertTexts().some((text) => text.includes("character range exceeds markdown"))).toBe(true);
+    // Nothing was replaced: the document on screen is the one the apply
+    // started from, and the op it could not settle is still queued.
+    expect(await screen.findByText(pending(en, 1))).toBeTruthy();
+  });
+});

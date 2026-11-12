@@ -313,6 +313,7 @@ export const en = {
   "segment.rangeWholeRunTargets": (p: { count: number }): string =>
     p.count === 1 ? "1 target formats the whole run" : `${p.count} targets format the whole run`,
   "segment.formatRunCount": (p: { count: number }): string => `Formatting targets: ${p.count}`,
+  "segment.formatUnavailableNoRuns": "The host publishes no runs for this paragraph, so a whole-paragraph format cannot name the text it would write. Update the host to provide segment-envelope-v2 run information, then reload.",
   "segment.rangeClear": "Use whole paragraph",
   "segment.placeholderLabel": "Template placeholder",
   "segment.placeholderHint": "Replaces the selected runs with a {{name}} slot that the Template panel can fill in.",
@@ -338,6 +339,17 @@ export const en = {
   "segment.cellSelectionRefused": "This selection is a table cell. Alignment and spacing apply to every paragraph in the cell, but replace, insert and delete address exactly one paragraph, and the engine refuses to delete a cell's last one. Pick a paragraph from the list above.",
   "segment.tableSelectionRefused": "This selection is a table, not a paragraph. The paragraph that holds the table also holds its own text, so editing or deleting it would take the table with it. Pick a paragraph from the list above.",
   "segment.containerSelectionRefused": "This selection is an image, a field or a bookmark. It has no text of its own: its range belongs to the paragraph that holds it, and deleting that paragraph would delete the text with it. Pick a paragraph from the list above.",
+  // A refused modifier click reports THE CLICK, not the standing selection:
+  // the sentences above describe what is selected, and one whose reason
+  // matched the primary's used to be suppressed outright, so a click on an
+  // empty cell while a cell was selected said nothing at all (#58 item 19b).
+  // The last one also answers a plain click, which refuses the same way
+  // (`selectionAction`, single mode), so it says what the click selected
+  // rather than what it added (t71-3).
+  "segment.clickRefusedCell": "The click added nothing: that cell has no paragraph the engine can address, so there is none to add. Click a cell that has text.",
+  "segment.clickRefusedTable": "The click added nothing: a table has no paragraph of its own, so there is none to add. Click a paragraph or a cell.",
+  "segment.clickRefusedContainer": "The click added nothing: an image, a field or a bookmark has no text of its own, so there is no paragraph to add. Click a paragraph or a cell.",
+  "segment.clickRefusedUnaddressable": "That unit does not name a paragraph the engine can address, so the click selected nothing. Click a paragraph or a cell.",
   "segment.selectSimilar": "Select content with matching direct formatting",
   "segment.similarChar": "Matching character format",
   "segment.similarPara": "Matching paragraph format",
@@ -482,6 +494,8 @@ export const en = {
   "error.stoppedWithoutDiagnostic": STOPPED_WITHOUT_DIAGNOSTIC,
   // The same rule for a failure with stderr but no Error: line (#140).
   "error.noEngineCause": NO_ENGINE_CAUSE,
+  "error.badEnvelope": (p: { detail: string }): string =>
+    `The host returned a document read this editor cannot use: ${p.detail}. Have the host emit segment-envelope-v2 data, then reload.`,
   "error.readOnlyReplacement": "The editor became read-only before the template could be applied; switch to an editable document and retry.",
   "error.pendingReplacement": "Pending edits would be lost; apply or clear them before replacing this document.",
   "error.loadingReplacement": "A new document is still loading; wait for it to finish, then retry.",
@@ -856,6 +870,7 @@ export const ko: MessageTable = {
   "segment.rangeRunCount": (p) => p.count === 1 ? "대상 1개 선택" : `대상 ${p.count}개 선택`,
   "segment.rangeWholeRunTargets": (p) => p.count === 1 ? "대상 1개는 run 전체에 적용됩니다" : `대상 ${p.count}개는 run 전체에 적용됩니다`,
   "segment.formatRunCount": (p) => `서식 적용 대상: ${p.count}개`,
+  "segment.formatUnavailableNoRuns": "호스트가 이 문단의 run을 제공하지 않아 문단 전체 서식이 쓸 텍스트를 지정할 수 없습니다. segment-envelope-v2의 run 정보를 제공하도록 호스트를 업데이트한 뒤 다시 불러오세요.",
   "segment.rangeClear": "문단 전체 사용",
   "segment.placeholderLabel": "템플릿 자리표시자",
   "segment.placeholderHint": "선택한 run을 {{name}} 슬롯으로 바꾸어 템플릿 탭에서 값을 채울 수 있게 합니다.",
@@ -876,6 +891,10 @@ export const ko: MessageTable = {
   "segment.cellSelectionRefused": "이 선택은 표의 셀입니다. 정렬과 문단 모양은 셀 안의 모든 문단에 적용되지만, 교체, 삽입, 삭제는 문단 하나만 대상으로 하며, 엔진은 셀의 마지막 문단 삭제도 거부합니다. 위 목록에서 문단을 선택하세요.",
   "segment.tableSelectionRefused": "이 선택은 문단이 아니라 표입니다. 표를 담고 있는 문단은 자기 텍스트도 함께 담고 있어, 그 문단을 편집하거나 삭제하면 표가 사라집니다. 위 목록에서 문단을 선택하세요.",
   "segment.containerSelectionRefused": "이 선택은 그림, 필드 또는 책갈피입니다. 자체 텍스트가 없어 그 범위는 그것을 담은 문단에 속하고, 그 문단을 삭제하면 텍스트까지 함께 삭제됩니다. 위 목록에서 문단을 선택하세요.",
+  "segment.clickRefusedCell": "클릭으로 추가된 문단이 없습니다. 그 셀에는 엔진이 주소로 지정할 수 있는 문단이 없어 추가할 대상이 없습니다. 텍스트가 있는 셀을 클릭하세요.",
+  "segment.clickRefusedTable": "클릭으로 추가된 문단이 없습니다. 표는 자체 문단이 없어 추가할 대상이 없습니다. 문단이나 셀을 클릭하세요.",
+  "segment.clickRefusedContainer": "클릭으로 추가된 문단이 없습니다. 그림, 필드 또는 책갈피는 자체 텍스트가 없어 추가할 문단이 없습니다. 문단이나 셀을 클릭하세요.",
+  "segment.clickRefusedUnaddressable": "그 요소는 엔진이 주소로 지정할 수 있는 문단을 가리키지 않으므로 클릭으로 선택된 것이 없습니다. 문단이나 셀을 클릭하세요.",
   "segment.selectSimilar": "직접 서식이 같은 내용 선택",
   "segment.similarChar": "같은 글자 서식",
   "segment.similarPara": "같은 문단 서식",
@@ -1006,6 +1025,7 @@ export const ko: MessageTable = {
   "error.rangeTagRefused": "이 HWP 문서에는 엔진이 옮길 수 없는 구간 표시가 있어 대기 중인 편집이 거부되었고, 아무것도 적용되지 않았습니다. 구간 표시 주변의 글자를 움직이는 편집은 거부됩니다: 문단 텍스트 길이 변경, 길이가 다른 필드 값으로의 변경, 링크·필드·책갈피·이미지의 삽입이나 삭제, 표 삭제. 구간 표시가 있는 표 셀은 내용을 어떻게 바꾸든 거부합니다. 엔진은 어느 편집인지 알려 주지 않습니다. 대기 목록에서 해당 편집을 제거하고(문단 안의 같은 길이 텍스트 치환과 같은 길이의 필드 값은 허용됩니다) 나머지를 적용하세요. 그런 편집이 필요하면 문서를 HWPX로 변환하거나(변환하면 구간 표시가 사라집니다) 한글에서 구간 표시를 제거한 뒤 다시 여세요. 다시 열면 대기 목록은 사라집니다.",
   "error.noEngineCause": "엔진이 원인을 밝히지 않고 실패했으므로(대개 비정상 종료된 경우입니다) 아무것도 적용되지 않았습니다. 다시 적용하고, 같은 방식으로 실패하면 호스트 로그와 함께 알려 주세요.",
   "error.stoppedWithoutDiagnostic": "엔진이 진단 메시지를 남기지 않고 멈췄으므로(대개 강제 종료되었거나 메모리가 부족한 경우입니다) 아무것도 적용되지 않았습니다. 다시 적용하고, 같은 방식으로 실패하면 호스트 로그와 함께 알려 주세요.",
+  "error.badEnvelope": (p) => `호스트가 편집기가 사용할 수 없는 문서 읽기 결과를 돌려주었습니다: ${p.detail}. 호스트가 segment-envelope-v2 데이터를 내보내도록 한 뒤 다시 불러오세요.`,
   "error.readOnlyReplacement": "템플릿을 적용하기 전에 편집기가 읽기 전용으로 바뀌었습니다. 편집 가능한 문서에서 다시 시도하세요.",
   "error.pendingReplacement": "대기 중인 편집이 사라질 수 있습니다. 문서를 바꾸기 전에 편집을 적용하거나 지우세요.",
   "error.loadingReplacement": "새 문서를 아직 불러오는 중입니다. 불러오기가 끝난 뒤에 다시 시도하세요.",
