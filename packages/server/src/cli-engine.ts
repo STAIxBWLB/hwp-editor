@@ -70,6 +70,18 @@ const KILL_GRACE_MS = 3_000;
 const MIN_VERSION: readonly [number, number, number] = [0, 20, 0];
 
 /**
+ * The hwp-cli version the upload grammar was verified against: a staged
+ * absolute path in the `--ops` JSON (#58 item 9). MIN_VERSION is below it, so
+ * this is a real gate and not a note.
+ */
+const IMAGE_ASSETS_MIN_VERSION: readonly [number, number, number] = [1, 4, 0];
+
+function imageAssetsVersionSupported(version: string): boolean {
+  const parsed = parseVersion(version);
+  return parsed !== null && versionAtLeast(parsed, IMAGE_ASSETS_MIN_VERSION);
+}
+
+/**
  * Upper bound on the accepted binary, EXCLUSIVE.
  *
  * The floor is hard because a binary below it lacks flags this engine emits.
@@ -212,6 +224,12 @@ export interface CliEngineOptions {
    * while changing its language.
    */
   locale?: string;
+  /**
+   * Directory the per-call work dirs are created in, default `os.tmpdir()`.
+   * A host (or a test) that needs to observe or confine its own staging sets
+   * this rather than relying on the shared system temp directory.
+   */
+  workRoot?: string;
 }
 
 /** Everything `read` gathers beyond the pinned CatEnvelope wire shape. */
@@ -1073,7 +1091,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
    * while the child still held the directory.
    */
   async function withWorkDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
-    const dir = await mkdtemp(path.join(tmpdir(), "hwp-editor-"));
+    const dir = await mkdtemp(path.join(opts.workRoot ?? tmpdir(), "hwp-editor-"));
     try {
       return await fn(dir);
     } finally {
@@ -1339,9 +1357,13 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         throw new HwpCliError("bad_request", "ops must be an array of edit operations");
       }
       let stagedOps = ops;
-      if (options.assets !== undefined) {
+      // Upload mode is `assets?.length`, as the Tauri client and the HTTP
+      // route read it: an empty list is no uploads, so a local insert-image
+      // path still works (#58 item 6).
+      const uploads = options.assets !== undefined && options.assets.length > 0 ? options.assets : undefined;
+      if (uploads !== undefined) {
         try {
-          validateImageAssets(options.assets);
+          validateImageAssets(uploads);
         } catch (cause) {
           const reason = cause instanceof Error ? cause.message : "invalid image assets";
           throw new HwpCliError("bad_request", reason);
@@ -1349,7 +1371,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         if (ops.some(op => op?.kind === "seal")) {
           throw new HwpCliError("bad_request", "seal cannot be combined with uploaded assets; run seal without uploaded assets through a local host");
         }
-        if (!imageAssetsMatchOps(ops, options.assets)) {
+        if (!imageAssetsMatchOps(ops, uploads)) {
           throw new HwpCliError("bad_request", "image upload and insert-image paths do not match; upload matching PNG/JPEG files for the referenced names");
         }
       }
@@ -1376,10 +1398,10 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       const allowPartial = effective.allowPartial === true;
       const edited = await withWorkDir(async (dir) => {
         const input = await stage(dir, document);
-        if (options.assets !== undefined) {
+        if (uploads !== undefined) {
           const rewritten = new Map<string, string>();
-          for (let i = 0; i < options.assets.length; i++) {
-            const asset = options.assets[i]!;
+          for (let i = 0; i < uploads.length; i++) {
+            const asset = uploads[i]!;
             const suffix = asset.name.toLowerCase().endsWith(".png") ? ".png" : ".jpg";
             const stagedName = `asset-${i}${suffix}`;
             await writeFile(path.join(dir, stagedName), asset.data, { mode: 0o600 });
@@ -1541,12 +1563,14 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         version,
         editable: true,
         editOps: "v1",
-        imageAssets: "v1",
         // Its own gate, not `templateMethods`': the two command families share
         // the 1.4.0 floor today, but a host can carry one and not the other.
         ...(stylesVersionSupported(version) ? { styles: "v1" as const } : {}),
         formats: ["hwp", "hwpx"],
         templateMethods: templateVersionSupported(version) ? [...TEMPLATE_METHODS] : [],
+        // Gated like templateMethods (#58 item 9): the upload grammar was
+        // verified against 1.4.0 only, so an older host must not advertise it.
+        ...(imageAssetsVersionSupported(version) ? { imageAssets: "v1" as const } : {}),
       };
     },
 

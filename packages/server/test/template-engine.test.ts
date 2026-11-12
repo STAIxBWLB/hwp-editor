@@ -7,6 +7,7 @@ import { templateVersionSupported } from "@hwp-editor/core";
 import type { DocumentSpecV2, TemplateSpecV1 } from "@hwp-editor/core";
 import { createCliEngine } from "../src/cli-engine.js";
 import { createHwpEditorHandler } from "../src/routes.js";
+import type { createTemplateCommands } from "../src/template-engine.js";
 import { createFakeBin, disposeFakeBins } from "./fake-bin.js";
 import { BIN, jsonRequest, multipartRequest } from "./helpers.js";
 
@@ -99,6 +100,51 @@ describe("template CLI failure guidance", () => {
     const error = await invoke(engine).then(() => null, (reason: unknown) => reason);
     expect(error).toMatchObject({ message: expect.stringContaining(guidance) });
     expect((error as Error).message).not.toContain("/private/fake/document.hwpx");
+  });
+});
+
+/**
+ * The five subcommands whose stdout `template-engine.ts` parses itself. A
+ * producer that answers one of them with something other than JSON must be
+ * named: "hwp template" for a `slots` failure sends the reader to the wrong
+ * command (#58 item 4).
+ */
+describe("template CLI invalid JSON names its command", () => {
+  type Commands = ReturnType<typeof createTemplateCommands>;
+  const document = { name: "sample.hwpx", data: new Uint8Array([1]) };
+  const goodSlots = JSON.stringify({ placeholders: [{ name: "title", occurrences: 1 }], fields: [] });
+  const cases: Array<[string, (commands: Commands) => Promise<unknown>]> = [
+    ["slots", (commands) => commands.slots(document)],
+    ["fields", (commands) => commands.slots(document)],
+    ["fill", (commands) => commands.fill(document, { title: "Hello" })],
+    ["template", (commands) => commands.template(templateSpec, { version: "1.0", values: { title: "Hello" } }, "out.hwpx")],
+    ["lint", (commands) => commands.lint(document)],
+  ];
+
+  it.each(cases)("names %s, not a fixed command, when its output is not JSON", async (broken, invoke) => {
+    const { createTemplateCommands } = await import("../src/template-engine.js");
+    const dir = await mkdtemp(join(tmpdir(), "hwp-bad-json-"));
+    try {
+      const commands = createTemplateCommands({
+        version: async () => "1.4.0",
+        work: async <T>(fn: (dir: string) => Promise<T>) => fn(dir),
+        stage: async () => join(dir, "input.hwpx"),
+        run: async args => {
+          if (args[0] === broken) return "<html>not the JSON contract</html>";
+          if (args[0] === "slots") return goodSlots;
+          if (args[0] === "fields") return "[]";
+          // `fill` and `template` publish a document at their `-o` path.
+          const out = args.indexOf("-o");
+          if (out >= 0) await writeFile(args[out + 1]!, new Uint8Array([1]));
+          return "";
+        },
+      });
+      const error = await invoke(commands).then(() => null, (reason: unknown) => reason);
+      expect(error).toMatchObject({ reason: "failed" });
+      expect((error as Error).message).toBe(
+        `hwp ${broken} returned invalid JSON; check hwp --version, use hwp-cli 1.4.0 or newer, and retry.`,
+      );
+    } finally { await rm(dir, { recursive: true, force: true }); }
   });
 });
 

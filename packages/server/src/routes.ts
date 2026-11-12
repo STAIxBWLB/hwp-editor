@@ -410,7 +410,15 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
       throw new HwpCliError("bad_request", reason);
     }
     if (!imageAssetsMatchOps(ops, assets)) {
-      return error(400, "path_traversal", "insert-image paths must name exactly the uploaded assets; attach matching PNG/JPEG files instead of server-local paths");
+      // An insert-image op naming something no upload supplied asks the
+      // server to read a local path: that stays path_traversal. An upload no
+      // op names involves no path at all: bad_request (#58 item 7).
+      const uploaded = new Set(assets.map(asset => asset.name));
+      const named = ops.filter(op => op?.kind === "insert-image").map(op => op.path);
+      if (named.some(name => !uploaded.has(name))) {
+        return error(400, "path_traversal", "insert-image paths must name exactly the uploaded assets; attach matching PNG/JPEG files instead of server-local paths");
+      }
+      return error(400, "bad_request", "an uploaded image is not referenced by any insert-image op; remove the unreferenced upload, or add the insert-image op that uses it, then retry");
     }
     form.forEach((value, key) => {
       if (value instanceof Blob && key !== "file" && key !== "asset") {

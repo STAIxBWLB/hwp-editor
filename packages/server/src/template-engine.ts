@@ -19,11 +19,16 @@ interface Dependencies {
 function bad(message: string): never {
   throw new HwpCliError("bad_request", message);
 }
-function parse<T>(stdout: string, parser: (raw: unknown) => T): T {
+/**
+ * Parse a template-family command's JSON output. `command` is the hwp
+ * subcommand that produced it (slots, fields, fill, template, lint), so an
+ * invalid-JSON failure names the command that actually returned bad output.
+ */
+function parse<T>(command: string, stdout: string, parser: (raw: unknown) => T): T {
   try { return parser(JSON.parse(stdout)); }
   catch (error) {
     throw new HwpCliError("failed", error instanceof SyntaxError
-      ? "hwp template command returned invalid JSON; use hwp-cli 1.4.0 and retry."
+      ? `hwp ${command} returned invalid JSON; check hwp --version, use hwp-cli 1.4.0 or newer, and retry.`
       : error instanceof Error ? error.message : "Invalid template report; upgrade hwp-cli and retry.");
   }
 }
@@ -57,7 +62,7 @@ export function createTemplateCommands(deps: Dependencies) {
     }
   }
   async function rawInputs(input: string, call?: CliCallOptions): Promise<TemplateInputs & { fieldCounts: Map<string, number> }> {
-    const slots = parse(await deps.run(["slots", input, "--json", "--forms"], call), raw => {
+    const slots = parse("slots", await deps.run(["slots", input, "--json", "--forms"], call), raw => {
       const value = reportObject(raw, "slots");
       const placeholders = reportArray(value.placeholders, "slots.placeholders").map(entry => {
         const row = reportObject(entry, "placeholder");
@@ -78,7 +83,7 @@ export function createTemplateCommands(deps: Dependencies) {
       for (const item of forms) byKey.set(item.key, item);
       return { items: [...byKey.values()] } as TemplateInputs;
     });
-    const fields = parse(await deps.run(["fields", input, "--json"], call), raw => reportArray(raw, "fields").flatMap(entry => {
+    const fields = parse("fields", await deps.run(["fields", input, "--json"], call), raw => reportArray(raw, "fields").flatMap(entry => {
       const field = reportObject(entry, "fields[]");
       // Hyperlinks and other unnamed fields cannot be set by name.
       if (field.name === null) return [];
@@ -119,7 +124,7 @@ export function createTemplateCommands(deps: Dependencies) {
           const data = path.join(dir, "data.json");
           output = path.join(dir, "filled.hwpx");
           await writeFile(data, JSON.stringify(slotValues), { mode: 0o600 });
-          report = parse(await deps.run(["fill", input, "-o", output, "--data", data, "--forms", "--json"], call), parseFillReport);
+          report = parse("fill", await deps.run(["fill", input, "-o", output, "--data", data, "--forms", "--json"], call), parseFillReport);
         }
         if (fieldOps.length) {
           const opsFile = path.join(dir, "fields.json");
@@ -152,7 +157,7 @@ export function createTemplateCommands(deps: Dependencies) {
         const output = path.join(dir, "template.hwpx");
         await writeFile(specFile, JSON.stringify(spec), { mode: 0o600 });
         await writeFile(dataFile, JSON.stringify(data), { mode: 0o600 });
-        const report = parse(await deps.run(["template", specFile, "--data", dataFile, "-o", output, "--report"], call), parseTemplateReport);
+        const report = parse("template", await deps.run(["template", specFile, "--data", dataFile, "-o", output, "--report"], call), parseTemplateReport);
         return { document: { name: outputName(name), data: new Uint8Array(await readFile(output)) }, report };
       });
     },
@@ -161,7 +166,7 @@ export function createTemplateCommands(deps: Dependencies) {
       if (profile !== "gongmun" && profile !== "report") bad("Unknown lint profile; select gongmun or report and retry.");
       return deps.work(async dir => {
         const input = await deps.stage(dir, document);
-        return parse(await deps.run(["lint", input, "--json", "--profile", profile], call), raw => {
+        return parse("lint", await deps.run(["lint", input, "--json", "--profile", profile], call), raw => {
           const value = reportObject(raw, "lint");
           if (value.contract !== "hwp-lint-report-v1") throw new Error("Invalid lint contract; use hwp-cli 1.4.0 and retry.");
           reportSchemaVersion(value.schema_version, "lint.schema_version");

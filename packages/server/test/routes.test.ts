@@ -422,6 +422,27 @@ describe("HTTP image asset admission", () => {
     expect(calls).toBe(0);
   });
 
+  /**
+   * A mismatch has two shapes and they are not the same refusal (#58 item 7).
+   * An upload no op names involves no path, so it is the caller's form to
+   * correct: bad_request. An insert-image op naming a path no upload supplied
+   * asks the server to read a local file: path_traversal.
+   */
+  it("answers an unreferenced upload as bad_request and a server-local path as path_traversal", async () => {
+    let calls = 0;
+    const handler = createHwpEditorHandler({ engine: stubEngine({ async edit() { calls++; return { name: "x", data: png }; } }), sessions: false });
+    const unreferenced = await handler(request([{ name: "extra.png", data: png }], []));
+    expect(unreferenced.status).toBe(400);
+    expect(await unreferenced.json()).toMatchObject({
+      error: { code: "bad_request", message: expect.stringMatching(/not referenced by any insert-image op.*remove the unreferenced upload/i) },
+    });
+    expect(calls).toBe(0);
+    const local = await handler(request([{ name: "figure.png", data: png }], [{ kind: "insert-image", anchor: "x", path: "/etc/passwd.png" }]));
+    expect(local.status).toBe(400);
+    expect(await local.json()).toMatchObject({ error: { code: "path_traversal" } });
+    expect(calls).toBe(0);
+  });
+
   it("rejects missing assets, seal, and unsupported engines before edit", async () => {
     let calls = 0;
     const handler = createHwpEditorHandler({ engine: stubEngine({ async edit() { calls++; return { name: "x", data: png }; } }), sessions: false });

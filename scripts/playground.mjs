@@ -6,14 +6,20 @@ import { fileURLToPath } from "node:url";
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),"..");
 const configuredBinary=process.env.HWP_EDITOR_BIN?.trim() || process.env.HWP_CLI?.trim() || "hwp";
+// A relative path is the caller's: pnpm runs this from the repo root but sets
+// INIT_CWD to where the user ran it (#58 item 12).
+const callerDir=process.env.INIT_CWD?.trim() || process.cwd();
 const binary=isAbsolute(configuredBinary) || configuredBinary.includes("/") || configuredBinary.includes("\\")
-  ? resolve(root,configuredBinary)
+  ? resolve(callerDir,configuredBinary)
   : configuredBinary;
 const env={...process.env,HWP_EDITOR_BIN:binary};
 const shell=process.platform==="win32";
 const probe=spawnSync(binary,["--version"],{cwd:root,env,encoding:"utf8"});
 if(probe.error || probe.status!==0){
-  process.stderr.write("The playground cannot run hwp; install hwp-cli or set HWP_EDITOR_BIN to its executable, then run pnpm playground again.\n");
+  const cause=probe.error
+    ? `error ${probe.error.code ?? probe.error.message}`
+    : probe.signal ? `signal ${probe.signal}` : `exit status ${probe.status}`;
+  process.stderr.write(`The playground cannot run hwp at ${binary} (${cause}); install hwp-cli or set HWP_EDITOR_BIN to its executable, then run pnpm playground again.\n`);
   process.exit(1);
 }
 const pnpm=process.platform==="win32"?"pnpm.cmd":"pnpm";

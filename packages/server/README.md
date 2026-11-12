@@ -240,10 +240,11 @@ request limit (50 MiB by default) also includes the document and multipart
 headers. Every uploaded name must be referenced; one upload may serve multiple
 insertions.
 
-The CLI adapter writes controlled `asset-<index>` files with mode 0600 inside
-the same private call directory as the input and ops file. Only matched image
-references are rewritten to those staged paths. The directory is removed after
-success or failure. Signature checks admit the supported formats; hwp-cli owns
-image decoding, validation and embedding. HTTP never accepts server-local image
-paths or `seal` operations. The Tauri client does not support uploaded image
-bytes; desktop-local image paths remain a separate host operation.
+The CLI adapter writes controlled `asset-<index>.png` or `asset-<index>.jpg`
+files with mode 0600 inside the same private call directory as the input and ops
+file. Only matched image references are rewritten to those staged paths. The
+directory is removed after success or failure. Signature checks admit the
+supported formats; hwp-cli owns image decoding, validation and embedding. HTTP
+never accepts server-local image paths or `seal` operations. The Tauri client
+does not support uploaded image bytes; desktop-local image paths remain a
+separate host operation.
