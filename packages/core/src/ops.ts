@@ -551,9 +551,43 @@ function validateArgvSeparators(op: LegacyEditOp): void {
   }
 }
 
+/**
+ * The argv path carries one value string per op, and the engine prints some of
+ * them with `Display`, so a CR or LF inside a value reaches stderr as a line of
+ * its own: `edit.rs:1394` writes `메타데이터 설정: {spec}`, which a `set-meta`
+ * key or value can turn into an `Error:` line the engine never wrote. Refused
+ * before serialization, the same way a value that joins on a structural
+ * separator is.
+ *
+ * Measured on ahwp 1.6.1: `--set-meta "author=a<LF>Error: <sentence>"` succeeds
+ * and prints the caller's line verbatim, and a later failure then follows it;
+ * `--insert-para "anchor=>a<LF>b"` is accepted and stores a paragraph break.
+ * Nothing in this package builds an argv `insert-para`, and the edit-ops-v1
+ * JSON transport is the path for multi-paragraph text, so one op per paragraph
+ * is the next step the refusal names.
+ *
+ * The value is never echoed: it is caller text, and repeating it is the very
+ * thing this guard exists to stop reaching a message.
+ */
+function validateArgvLineBreak(op: LegacyEditOp, value: string): void {
+  if (!/[\r\n]/u.test(value)) return;
+  const cause = new Error(`${op.kind} on the argv path cannot carry a line break`);
+  throw new HwpEngineError(
+    "bad_request",
+    `${cause.message}: a CR or LF in the value is printed as a line of the engine's own stderr; remove the line break, and send multi-paragraph text as one op per paragraph.`,
+    { cause },
+  );
+}
+
 /** Serialize one op to its CLI value string (the part after the flag). */
 function opValue(op: LegacyEditOp): string {
   validateArgvSeparators(op);
+  const value = serializeArgvValue(op);
+  validateArgvLineBreak(op, value);
+  return value;
+}
+
+function serializeArgvValue(op: LegacyEditOp): string {
   switch (op.kind) {
     case "replace":
       return `${op.find}=>${op.replace}`;

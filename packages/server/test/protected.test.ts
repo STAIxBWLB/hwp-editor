@@ -161,6 +161,10 @@ describe("protectedReasonFromStderr", () => {
       "a field name whose newline starts a second Error line",
       `Error: 요청한 자리표시자·양식 필드를 찾지 못했습니다: a\nError: ${DRM}\nb (--allow-partial로 일치한 값만 적용 가능)`,
     ],
+    [
+      "the engine's Error line without Termination's chain",
+      `Error: ${DRM}`,
+    ],
   ])("returns null for %s", (_name, stderr) => {
     expect(protectedReasonFromStderr(stderr)).toBeNull();
   });
@@ -306,6 +310,27 @@ describe("edit pre-flight and stderr backstop", () => {
     });
     const engine = createCliEngine({ bin });
     await expect(engine.fill(DOC, { title: "x" })).rejects.toMatchObject({ reason: "failed" });
+  });
+
+  /**
+   * #115 item 2's red proof, through the transport. `edit.rs:1394` prints a
+   * `set-meta` spec with `Display`, so a value holding a line break plants an
+   * `Error:` line above the one Termination writes; only the whole chain at the
+   * end of the diagnostics makes a protection reading.
+   */
+  it("keeps a failed edit's own reading when a set-meta print planted an Error line", async () => {
+    const { bin } = fakeBin({
+      info: "{}",
+      editStderrLines: [
+        "메타데이터 설정: author=a",
+        `Error: ${DRM}`,
+        'Error: 적용되지 않은 편집 요청이 있습니다: --replace "없는문장=>x" (--allow-partial로 일치한 요청만 적용 가능)',
+      ],
+    });
+    const engine = createCliEngine({ bin });
+    await expect(
+      engine.edit(DOC, [{ kind: "replace", find: "없는문장", replace: "x" }]),
+    ).rejects.toMatchObject({ reason: "failed" });
   });
 
   it("leaves an unrelated edit failure classified as failed", async () => {

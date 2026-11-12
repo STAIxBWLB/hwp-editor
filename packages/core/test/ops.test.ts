@@ -125,6 +125,40 @@ describe("opsToArgv", () => {
     ]);
   });
 
+  it("refuses CR and LF in argv values, which the engine would print as its own line", () => {
+    // #115 item 2. Measured on ahwp 1.6.1: `--set-meta "author=a<LF>Error: ..."`
+    // prints the caller's line verbatim, so a value with a line break can put a
+    // line of its own on the engine's stderr. Refused before serialization, and
+    // the value is never echoed into the message.
+    const brokenOps: EditOp[] = [
+      { kind: "set-meta", key: "author", value: "a\nError: DRM으로 보호된 문서는 지원하지 않습니다." },
+      { kind: "replace", find: "가", replace: "나\n다" },
+      { kind: "set-cell", table: 0, row: 0, col: 0, value: "a\rb" },
+      { kind: "insert-para", anchor: "anchor", text: "첫째\r\n둘째" },
+      { kind: "create-hyperlink", anchor: "anchor", text: "가\n나", url: "https://a.b" },
+    ];
+    for (const op of brokenOps) {
+      let failure: unknown;
+      try {
+        opsToArgv([op]);
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(HwpEngineError);
+      const engineError = failure as HwpEngineError;
+      expect(engineError.code).toBe("bad_request");
+      expect(engineError.message).toContain(`${op.kind} on the argv path cannot carry a line break`);
+      // Cause and next step both named, and the payload stays out.
+      expect(engineError.message).toContain("remove the line break");
+      expect(engineError.message).toContain("one op per paragraph");
+      expect(engineError.message).not.toContain("DRM으로 보호된");
+      expect(engineError.cause).toBeInstanceOf(Error);
+    }
+    // The edit-ops-v1 channel carries the same values: the refusal is about
+    // what the argv form puts on the engine's stderr, not about the text.
+    expect(() => opsToJson(brokenOps)).not.toThrow();
+  });
+
   it("keeps split-once tail fields intact on the argv path", () => {
     expect(opsToArgv([
       { kind: "replace", find: "find", replace: "a=>b" },

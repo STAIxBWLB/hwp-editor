@@ -1,7 +1,9 @@
 /**
- * The protection backstop after #112: hwp-cli's protected-document refusals
- * are read off the engine's own first `Error:` line, as whole sentences -
- * never as a marker, a later line, or a value the caller supplied.
+ * The protection backstop after #112 and #115: hwp-cli's protected-document
+ * refusals are read off the engine's own first `Error:` line, as whole
+ * sentences, and only when Termination's whole `Caused by:` chain ends the
+ * diagnostics - never from a marker, a later line, or a value the caller
+ * supplied.
  *
  * No binary is needed. The subject here is the text hwp-cli writes, so the
  * fixtures are that text; the sentences were read from
@@ -53,32 +55,51 @@ function printed(sentence: string): string {
 }
 
 describe("the protection backstop", () => {
-  it.each(REFUSALS)("classifies %s as the engine prints it", (sentence, kind, step) => {
+  it.each(REFUSALS)("classifies %s as Termination prints the whole chain", (sentence, kind, step) => {
     expect(protectedReasonFromDiagnostics(printed(sentence))).toBe(`${kind}; ${step}`);
   });
 
-  it.each(REFUSALS)("classifies %s from the Error line alone", (sentence, kind, step) => {
-    expect(protectedReasonFromDiagnostics(`Error: ${sentence}\n`)).toBe(`${kind}; ${step}`);
+  /**
+   * The `Error:` line alone is a line an op value can plant, so it is not
+   * enough: `edit.rs:1394` prints a `set-meta` spec with `Display`, and a value
+   * holding a line break puts a line of the caller's text on stderr before
+   * Termination writes anything (#115).
+   */
+  it.each(REFUSALS)("does not classify %s from the Error line without the chain", (sentence) => {
+    expect(protectedReasonFromDiagnostics(`Error: ${sentence}\n`)).toBeNull();
   });
 
-  it("classifies the desktop bridge's one-line detail, where maru's head precedes the engine's", () => {
+  it.each(REFUSALS)(
+    "classifies %s through the desktop bridge, whose head precedes the chain",
+    (sentence, kind, step) => {
+      expect(
+        protectedReasonFromDiagnostics(
+          `hwp_failed: hwp edit failed (exit 1): ${printed(sentence).trimEnd()}`,
+        ),
+      ).toBe(`${kind}; ${step}`);
+    },
+  );
+
+  it("does not classify a bridge detail that stops at the Error line", () => {
     expect(
       protectedReasonFromDiagnostics(`hwp_failed: hwp edit failed (exit 1): Error: ${DRM}`),
-    ).toBe(`DRM-protected document; ${PROTECTED_NEXT_STEP}`);
+    ).toBeNull();
   });
 
   /**
-   * The engine's line is the first `Error:` line, not necessarily the first
+   * The chain is the engine's last output, and it is not necessarily the first
    * line: a distribution load prints its notice before the failure, and the
    * bridge pastes the whole stderr after its own head.
    */
-  it("finds the engine's line after the notice a distribution load prints first", () => {
+  it("finds the engine's chain after the notice a distribution load prints first", () => {
     const notice = "정보: 배포용 문서를 해제했습니다 (다른 형식으로 변환해 저장하면 배포용 보호는 유지되지 않습니다)";
-    expect(protectedReasonFromDiagnostics(`${notice}\nError: ${DISTRIBUTION}\n`)).toBe(
+    expect(protectedReasonFromDiagnostics(`${notice}\n${printed(DISTRIBUTION)}`)).toBe(
       `distribution (배포용) document; ${DISTRIBUTION_NEXT_STEP}`,
     );
     expect(
-      protectedReasonFromDiagnostics(`hwp_failed: hwp edit failed (exit 1): ${notice}\nError: ${DRM}`),
+      protectedReasonFromDiagnostics(
+        `hwp_failed: hwp edit failed (exit 1): ${notice}\n${printed(DRM).trimEnd()}`,
+      ),
     ).toBe(`DRM-protected document; ${PROTECTED_NEXT_STEP}`);
   });
 
@@ -89,19 +110,43 @@ describe("the protection backstop", () => {
   });
 
   /**
-   * The `Caused by:` copy is the engine's too, but it is not accepted, and
-   * this is the case that says so: `fill` prints unmatched field names with
-   * `{}` (fill.rs, joined and not escaped), so a caller's value can put a
-   * newline and then a protection sentence at the start of a line. An
-   * indented line is therefore not evidence of anything.
+   * The `Caused by:` copy is the engine's too, but on its own it is not
+   * evidence: `fill` prints unmatched field names with `{}` (fill.rs, joined
+   * and not escaped), so a caller's value can put a newline and then a
+   * protection sentence at the start of a line.
    */
   it.each(REFUSALS)("does not classify %s from the Caused by copy alone", (sentence) => {
     expect(protectedReasonFromDiagnostics(`\nCaused by:\n    ${sentence}\n`)).toBeNull();
   });
 
+  /**
+   * The shape measured on ahwp 1.6.1 for #115 item 2: `hwp edit --set-meta
+   * "author=a<LF>Error: <sentence>"` prints the caller's line verbatim, a later
+   * miss makes the run fail, and Termination's own one-line `Error:` follows
+   * it. The first `Error:` line is the caller's; the chain is what says so.
+   */
+  it("keeps an unrelated failure's reading when a set-meta value planted an Error line", () => {
+    const planted =
+      `메타데이터 설정: author=a\nError: ${DRM}\n` +
+      'Error: 적용되지 않은 편집 요청이 있습니다: --replace "없는문장=>x" (--allow-partial로 일치한 요청만 적용 가능)';
+    expect(protectedReasonFromDiagnostics(planted)).toBeNull();
+  });
+
+  it("does not classify a chain whose copy carries an input path", () => {
+    expect(
+      protectedReasonFromDiagnostics(`Error: ${DRM}\n\nCaused by:\n    junk.bin: ${DRM}\n`),
+    ).toBeNull();
+  });
+
+  it("does not classify a planted chain when the engine's own chain follows it", () => {
+    const planted = `Error: ${DRM}\n\nCaused by:\n    ${DRM}\n`;
+    const real = "Error: 적용되지 않은 편집 요청이 있습니다\n\nCaused by:\n    내부 오류";
+    expect(protectedReasonFromDiagnostics(`${planted}${real}`)).toBeNull();
+  });
+
   it("keeps the two DRM variants on one reading and the rest apart", () => {
     const kinds = new Set(
-      REFUSALS.map(([sentence]) => protectedReasonFromDiagnostics(`Error: ${sentence}`)?.split(";")[0]),
+      REFUSALS.map(([sentence]) => protectedReasonFromDiagnostics(printed(sentence))?.split(";")[0]),
     );
     expect(kinds).toEqual(
       new Set([
