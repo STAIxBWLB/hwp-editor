@@ -2,7 +2,7 @@
 /** Prepare and run the playground from source, using the caller's hwp binary. */
 import { spawn, spawnSync } from "node:child_process";
 import { accessSync, constants, statSync } from "node:fs";
-import { delimiter, dirname, extname, isAbsolute, join, resolve } from "node:path";
+import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),"..");
@@ -28,27 +28,62 @@ function runnable(candidate){
     return candidate;
   }catch{ return null; }
 }
+// The entries searched when the child environment carries no PATH, which is
+// not one value across POSIX: the platform picks the spawn path, and the spawn
+// path picks the default. macOS resolves the name itself and falls back to
+// _PATH_DEFPATH, /usr/bin:/bin (src/unix/process.c uv__spawn_resolve_and_spawn,
+// the value the SDK's paths.h:65 defines). Linux never takes that path: it
+// forks and calls glibc execvp (src/unix/process.c:413), whose unset-PATH
+// default is confstr CS_PATH, /bin:/usr/bin (glibc posix/execvpe.c). The order
+// differs, so neither platform's header settles the other's.
+const DEFAULT_PATH=process.platform==="darwin"?"/usr/bin:/bin":"/bin:/usr/bin";
+// libuv's Windows extension rule (src/win/process.c search_path): the name has
+// an extension when its first dot is followed by a character, so `hwp.` counts
+// as extensionless and `.hwp` does not.
+function winNameHasExtension(name){
+  const dot=name.indexOf(".");
+  return dot>=0 && dot<name.length-1;
+}
+// An appended extension is joined with a dot unless the name already ends with
+// one, so `hwp.` is probed as hwp.com and never as hwp..com.
+function withExtension(name,ext){
+  if(ext==="") return name;
+  return (name.endsWith(".") ? name : `${name}.`)+ext;
+}
+// The entries libuv walks, in its order (src/win/process.c search_path,
+// src/unix/process.c uv__spawn_resolve_and_spawn). An empty entry is the
+// spawn's working directory: kept on POSIX, and dropped on Windows because that
+// directory is already the first entry of the search. An unset PATH is that
+// directory alone on Windows and the libc default on POSIX.
+function pathEntries(){
+  const raw=process.env.PATH;
+  if(process.platform==="win32") return raw===undefined ? [] : raw.split(delimiter).filter(dir=>dir!=="");
+  return (raw ?? DEFAULT_PATH).split(delimiter);
+}
 function onPath(name){
-  // libuv's own search, which is what spawn runs (#105 item 4): on POSIX the
-  // PATH entries in order, on Windows the spawn's working directory before
-  // them, with a relative entry resolved against that working directory rather
-  // than against this process's. Windows tries the literal name only when the
-  // name already carries an extension, so `hwp` is looked for as hwp.com and
-  // hwp.exe and never as an extensionless file that spawn would skip; PATHEXT
-  // plays no part in either platform's search, so neither is it part of this
-  // report.
+  // libuv's own search, which is what spawn runs (#105 item 4, #113 items 1 and
+  // 2): on POSIX the PATH entries in order, on Windows the spawn's working
+  // directory before them, with a relative entry resolved against that working
+  // directory rather than against this process's. Windows tries the literal
+  // name only when it already carries an extension, and appends .com and .exe
+  // whether or not it does, so `hwp` is looked for as hwp.com then hwp.exe,
+  // `hwp.exe` as hwp.exe then hwp.exe.com, and `hwp.` as hwp.com. PATHEXT plays
+  // no part in either platform's search, so neither is it part of this report.
   //
   // Approximate on two Windows points that are not mirrored here:
   // NeedCurrentDirectoryForExePathW (whether the working directory is searched
-  // at all) and quote stripping around the configured name.
+  // at all) and the quote stripping libuv applies around each PATH entry before
+  // joining (src/win/process.c:402-430). The configured name is not stripped.
   const win32=process.platform==="win32";
-  const exts=win32 && extname(name)==="" ? [".com",".exe"] : [""];
-  const dirs=(process.env.PATH ?? "").split(delimiter).filter(dir=>dir!=="");
+  const exts=win32 ? (winNameHasExtension(name) ? ["","com","exe"] : ["com","exe"]) : [""];
+  const dirs=pathEntries();
   const search=win32 ? [root,...dirs] : dirs;
   for(const dir of search){
+    // resolve(root,"") is root, which is the spawn's working directory: the
+    // thing an empty POSIX entry names.
     const base=resolve(root,dir);
     for(const ext of exts){
-      const found=runnable(join(base,name+ext));
+      const found=runnable(join(base,withExtension(name,ext)));
       if(found!==null) return found;
     }
   }

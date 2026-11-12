@@ -564,14 +564,33 @@ describe("Tauri JSON edit channel", () => {
   });
 });
 
+/**
+ * The refusal covers uploaded bytes, not pictures: the JSON op channel carries
+ * an `insert-image` path and the sidecar passes the ops to `hwp edit --ops`
+ * unchanged, so an API caller has a route (#113 item 4). The app UI does not,
+ * so the sentence names the API route, adds what the legacy argv channel needs
+ * around the file, and sends a caller holding only bytes to the HTTP client
+ * rather than to a desktop-local path it cannot produce.
+ */
 it("does not advertise or silently drop unsupported Tauri image bytes", async () => {
   const {invoke,calls}=mockInvoke({hwped_capabilities:{version:"1.4.0",editable:true,editOps:"v1",imageAssets:"v1",formats:["hwpx"],templateMethods:["slots","template"]}});
   const engine=createTauriEngine(invoke);
   const caps = await engine.capabilities();
   expect(caps).not.toHaveProperty("imageAssets");
   expect(caps).toMatchObject({editOps:"v1",templateMethods:["slots","template"]});
-  await expect(engine.edit(doc,[{kind:"insert-image",anchor:"x",path:"x.png"}],{assets:[{name:"x.png",data:new Uint8Array([1])}]})).rejects.toThrow(/unsupported.*Tauri.*HTTP/);
+  await expect(engine.edit(doc,[{kind:"insert-image",anchor:"x",path:"x.png"}],{assets:[{name:"x.png",data:new Uint8Array([1])}]})).rejects.toThrow(
+    "Image-byte uploads are unsupported by this Tauri client; an API caller can send an insert-image op with a local path instead, which the JSON op channel passes to `hwp edit --ops` unchanged while the legacy argv channel needs workspaceRoot containing the file, and a caller holding only bytes needs the HTTP client with an engine that advertises image-asset uploads (hwp-cli 1.4.0 or newer).",
+  );
   expect(calls.filter(call=>call.cmd==="hwped_edit")).toEqual([]);
+});
+
+it("sends a local-path insert-image op through the op channel, which the refusal leaves open", async () => {
+  const {invoke,calls}=mockInvoke({hwped_capabilities:{version:"1.4.0",editable:true,editOps:"v1",formats:["hwpx"]},hwped_edit:{name:doc.name,dataBase64:"AQI="}});
+  const engine=createTauriEngine(invoke);
+  await engine.edit(doc,[{kind:"insert-image",anchor:"x",path:"/work/pic.png"}]);
+  expect(calls.find(call=>call.cmd==="hwped_edit")!.args).toMatchObject({
+    ops:[{op:"insert_image",anchor:"x",path:"/work/pic.png"}],
+  });
 });
 
 describe("Tauri edit refusal classification (#80)", () => {
