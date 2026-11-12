@@ -313,7 +313,7 @@ describe("routes (stub engine)", () => {
     const unavailable = async (): Promise<never> => {
       throw new HwpCliError(
         "unavailable",
-        "hwp binary not found: /missing/hwp (install agent-hwp, whose command is `ahwp`, or set HWP_EDITOR_BIN / the bin option)",
+        "ahwp binary not found: /missing/hwp (install agent-hwp, whose command is `ahwp`, or set HWP_EDITOR_BIN / the bin option)",
       );
     };
     const engine = stubEngine({
@@ -326,7 +326,7 @@ describe("routes (stub engine)", () => {
     expect(caps.status).toBe(503);
     const body = await caps.json();
     expect(body.error.code).toBe("unavailable");
-    expect(body.error.message).toContain("hwp binary not found");
+    expect(body.error.message).toContain("ahwp binary not found");
     expect(body.error.message).toContain("HWP_EDITOR_BIN");
 
     const read = await handler(multipartRequest(`${BASE}/read`, { file: DOC }));

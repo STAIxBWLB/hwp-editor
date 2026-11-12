@@ -539,7 +539,7 @@ function runCli(
           // The install hint names the package as it is called now (#121).
           reject(new HwpCliNotFound(
             "unavailable",
-            "hwp binary not found (install agent-hwp, whose command is `ahwp`, or set HWP_EDITOR_BIN / the bin option)",
+            "ahwp binary not found (install agent-hwp, whose command is `ahwp`, or set HWP_EDITOR_BIN / the bin option)",
             undefined,
             detailFor(bin),
           ));
@@ -1149,7 +1149,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
   function noCommandError(): HwpCliError {
     return new HwpCliError(
       "unavailable",
-      `hwp binary not found: neither \`${DEFAULT_COMMAND}\` nor \`${LEGACY_COMMAND}\` is on PATH ` +
+      `ahwp binary not found: neither \`${DEFAULT_COMMAND}\` nor \`${LEGACY_COMMAND}\` is on PATH ` +
         `(install agent-hwp so \`${DEFAULT_COMMAND}\` is on PATH, or set HWP_EDITOR_BIN / the bin option)`,
       undefined,
       detailFor(`${DEFAULT_COMMAND}, ${LEGACY_COMMAND}`),

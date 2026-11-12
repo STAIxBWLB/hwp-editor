@@ -118,6 +118,15 @@ describe("insertionFailure", () => {
     expect(shown).not.toHaveProperty("stopped");
   });
 
+  it("strips maru's hwp edit head through the Tauri bridge the same way (#133)", () => {
+    const error = new HwpEngineError(
+      "failed",
+      "hwped_edit failed: hwp edit failed (exit 1): 구역 정의 문단 앞에는 삽입할 수 없습니다",
+    );
+    const shown = insertionFailure(error, WIDE, en);
+    expect(shown.message).toBe(en("components.insertionRefused", { reason: "구역 정의 문단 앞에는 삽입할 수 없습니다" }));
+  });
+
   it("strips the Tauri transport's own prefixes from the cause", () => {
     // The bridge refuses with maru's prefix over the engine's own, so the
     // frame would read as one long chain if the reason were not the last link.
