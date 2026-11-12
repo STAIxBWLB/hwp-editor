@@ -3,7 +3,17 @@ name: e2e (non-required)
 # pull_request only, never the _target variant: this job runs a fork's code and
 # additionally executes a binary downloaded from the network, so it must never
 # hold this repository's secrets. It references none.
-on: [pull_request]
+#
+# #126: this workflow runs no job for a docs-only pull request. `paths-ignore`
+# skips the run only when EVERY changed path matches, which is the same rule
+# ci.yml's `changes` job computes for the gating jobs; it is available here
+# because this workflow is advisory and nothing depends on its result. `*.md`
+# does not cross a slash, so packages/*/README.md still runs it.
+on:
+  pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
 
 permissions:
   contents: read
@@ -62,11 +72,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       # pnpm before setup-node: setup-node's pnpm cache shells out to
       # `pnpm store path`. No version input - the pin comes from packageManager.
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22
           cache: pnpm
@@ -105,9 +115,34 @@ jobs:
       # playwright.config.ts's webServer spawns, which inherits this
       # environment; the config carries no env override precisely so it does.
       - run: pnpm --filter playground seed
-      # --with-deps is the CI-only difference from the README's local command:
-      # a fresh runner lacks Chromium's system libraries.
-      - run: pnpm --filter playground exec playwright install --with-deps chromium
+      # #126: the browser download is the single largest fixed cost in this job
+      # and does not change between runs, so the browser directory is cached;
+      # only the system libraries it links against live outside the cache, and a
+      # fresh runner still needs those. The key carries the installed
+      # @playwright/test version, because a test-runner bump can pin a different
+      # browser build and a stale cache would then be the wrong one.
+      - name: Read the Playwright version
+        id: playwright-version
+        run: |
+          version=$(node -p "require('./apps/playground/node_modules/@playwright/test/package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Cache the Playwright browser
+        id: playwright-cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright-version.outputs.version }}
+      # --with-deps is the CI-only difference from the README's local command
+      # on a cache miss: a fresh runner lacks both the browser and Chromium's
+      # system libraries. On a hit the browser is already there, so only the
+      # libraries are installed.
+      - name: Install the Playwright browser
+        run: |
+          if [ "${{ steps.playwright-cache.outputs.cache-hit }}" = "true" ]; then
+            pnpm --filter playground exec playwright install-deps chromium
+          else
+            pnpm --filter playground exec playwright install --with-deps chromium
+          fi
       - run: pnpm --filter playground test:e2e
 
       - name: Report e2e advisory failure

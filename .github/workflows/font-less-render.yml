@@ -9,7 +9,15 @@ name: font-less render (non-required)
 # Its own file for the reason e2e.yml gives: a job alone in its workflow cannot
 # be reached by a needs: edge, so it cannot gate a publishing job. pull_request
 # only, no secrets: it runs a binary and a font downloaded from the network.
-on: [pull_request]
+#
+# #126: no run for a docs-only pull request, by the same rule ci.yml's `changes`
+# job computes; `paths-ignore` skips only when every changed path matches, and
+# `*.md` does not cross a slash, so packages/*/README.md still runs this.
+on:
+  pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
 
 permissions:
   contents: read
@@ -30,7 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       # cjk-fonts/, not fonts/: hwp-cli falls back to `fonts/` relative to its
       # working directory, which would hand the bare run the fonts too.
       # Both classes: a serif request (함초롬바탕, compose's default) only falls
