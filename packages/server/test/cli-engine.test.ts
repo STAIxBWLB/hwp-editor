@@ -16,7 +16,7 @@ import type { DocumentHandle, DocumentSpecV2, EditOp } from "@hwp-editor/core";
 
 import { createCliEngine, HwpCliError } from "../src/cli-engine.js";
 import { createHwpEditorHandler } from "../src/routes.js";
-import { BIN, describeBin, multipartRequest, sampleSpec } from "./helpers.js";
+import { BIN, describeBin, multipartRequest, resolveTestBin, sampleSpec } from "./helpers.js";
 import { createFakeBin, disposeFakeBins } from "./fake-bin.js";
 
 afterEach(disposeFakeBins);
@@ -175,6 +175,43 @@ describe("default command resolution (#121)", () => {
 
     expect(info.bin).toBe(legacy.bin);
   });
+
+  /**
+   * The test helper mirrors this chain but cannot call it (see helpers.ts), so
+   * the two properties that made the mirror wrong are pinned here: `hwp` on
+   * ENOENT only, and an empty selection variable not becoming the binary name.
+   */
+  it("keeps a found-but-broken ahwp as ahwp in the test helper", async () => {
+    const primary = createFakeBin({ name: "ahwp", failVersion: 3 });
+    const legacy = createFakeBin({ name: "hwp" });
+    const dir = dirname(legacy.bin);
+    copyFileSync(primary.bin, join(dir, "ahwp"));
+    chmodSync(join(dir, "ahwp"), 0o700);
+
+    const resolved = await withEnv({ PATH: `${dir}:/usr/bin:/bin` }, async () => resolveTestBin());
+
+    expect(resolved).toBe("ahwp");
+  });
+
+  it("falls back to hwp in the test helper only when ahwp is absent", async () => {
+    const legacy = createFakeBin({ name: "hwp" });
+
+    const resolved = await withEnv({ PATH: `${dirname(legacy.bin)}:/usr/bin:/bin` }, async () =>
+      resolveTestBin());
+
+    expect(resolved).toBe("hwp");
+  });
+
+  it("treats an empty selection variable as unset in the test helper", async () => {
+    const primary = createFakeBin({ name: "ahwp" });
+
+    const resolved = await withEnv(
+      { PATH: `${dirname(primary.bin)}:/usr/bin:/bin`, HWP_EDITOR_BIN: "", HWP_CLI: "" },
+      async () => resolveTestBin(),
+    );
+
+    expect(resolved).toBe("ahwp");
+  });
 });
 
 const engine = () => createCliEngine({ bin: BIN });
@@ -183,14 +220,15 @@ const engine = () => createCliEngine({ bin: BIN });
  * Mirrors the engine's MIN_VERSION floor ([0, 20, 0] in cli-engine.ts).
  *
  * The accepted range is now bounded at both ends — MAX_VERSION_EXCLUSIVE is
- * [2, 0, 0] — but this still asserts the floor rather than an exact release,
- * for the reason in the file header: the dev binary moves ahead of the floor
- * as hwp-cli ships. Pinning the range here would mean editing this suite on
- * every upstream patch release, and the ceiling itself is proven against a
- * fake binary in `lifecycle.test.ts` rather than against whichever real one
- * happens to be installed. Reaching this assertion at all already proves the
- * ceiling and the flag handshake passed: `ensureVersion` runs both before it
- * resolves a version string.
+ * [3, 0, 0], admitting 2.x on agent-hwp#510's Phase 4 scope (#121) — but this
+ * still asserts the floor rather than an exact release, for the reason in the
+ * file header: the dev binary moves ahead of the floor as hwp-cli ships.
+ * Pinning the range here would mean editing this suite on every upstream patch
+ * release, and the ceiling itself is proven against a fake binary in
+ * `lifecycle.test.ts` rather than against whichever real one happens to be
+ * installed. Reaching this assertion at all already proves the ceiling and the
+ * flag handshake passed: `ensureVersion` runs both before it resolves a
+ * version string.
  */
 function expectVersionAtLeast0200(version: string) {
   const [major = 0, minor = 0, patch = 0] = version.split(".").map(Number);

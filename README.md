@@ -4,7 +4,7 @@ Embeddable GUI editor for Korean HWP/HWPX documents. All document
 functionality (reading, rendering, editing, composing, validating) is
 delegated to the external [`agent-hwp`](https://github.com/STAIxBWLB/agent-hwp)
 binary, whose command is `ahwp` (the 1.x `hwp` name is accepted as a fallback;
-**>= 0.20.0, < 2.0.0**). This repo contains UI and thin engine adapters only.
+**>= 0.20.0, < 3.0.0**). This repo contains UI and thin engine adapters only.
 
 Editing model: segment-based structured editing. `ahwp render` visualizes
 pages, clicked segments map to `ahwp edit` operations, and edits are verified

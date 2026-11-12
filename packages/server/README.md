@@ -14,7 +14,8 @@ pnpm add @hwp-editor/server
 ```
 
 `@hwp-editor/core` arrives as a peer, deduped to a single copy. This package
-also needs the external `hwp` binary at runtime — see **Binary resolution**
+also needs the external `ahwp` binary at runtime (the 1.x `hwp` name works as a
+fallback) — see **Binary resolution**
 below; it is not an npm dependency and nothing installs it for you.
 
 ## Usage
@@ -51,7 +52,7 @@ its own and forwards yours whole, so every field below reaches both.
 | Option | Type | Notes |
 | ------ | ---- | ----- |
 | `engine` | `HwpEngine` | Serve a supplied engine instead of the default `CliEngine`. A plain `HwpEngine` receives no per-call options, so its children are not cancellable from here and its caches are not scope-salted. |
-| `bin` | `string` | Default engine only: explicit path to the `hwp` binary. First in the resolution order below. |
+| `bin` | `string` | Default engine only: explicit path to the engine binary. First in the resolution order below. |
 | `timeoutMs` | `number` | Default engine only: per-invocation timeout, default `60000`. On a host with a hard request budget (a 60s serverless function), set this a few seconds under it so this package's 504 beats the platform's kill. |
 | `locale` | `string` | Default engine only: language passed to the child as `HWP_LANG`, default `en`. Accepts `en`/`eng`/`english`/`c`/`posix` and `ko`/`kor`/`korean`. Unrelated to `@hwp-editor/react`'s `locale` prop, which is UI chrome only. |
 | `maxRequestBytes` | `number` | Largest request admitted, default `52428800` (50 MiB). Compared against `Content-Length` before any buffering, so the figure covers the whole request envelope (multipart boundaries and part headers included), not the document alone. **Not a memory bound**; see Deployment assumptions. |
@@ -182,15 +183,18 @@ Links 1-3 are used as given. Link 4 is the default; link 5 is the 1.x
 compatibility name for the rename (agent-hwp#510), tried only when spawning
 `ahwp` failed with ENOENT. A binary that was found and then failed its own
 check is reported as that binary: it is never retried under the other name.
-Link 5 goes away with 2.0.0, and the version ceiling below keeps refusing 2.x
-until that release's changelog says what else moved.
+Link 5 goes away with 2.0.0, which the ceiling below now admits: agent-hwp#510
+scopes that release to removing the `hwp` name, the legacy assets and the
+formula shim, and any other 2.x break arrives here as an issue before it ships.
 
 The resolved binary is verified once per engine instance, and must satisfy both
 checks:
 
-- **Version range**: at least `0.20.0`, and below `2.0.0`. The floor is hard: a
+- **Version range**: at least `0.20.0`, and below `3.0.0`. The floor is hard: a
   binary under it lacks flags this package emits. The ceiling is only a
   major-version gate, because a version string is what a binary calls itself.
+  It admits 2.x on the basis above; the flag handshake and the real-binary
+  suites are what keep a moved surface from going unnoticed.
 - **Flag handshake**: `ahwp edit --help` must list the flags the edit path
   emits — `--ops`, `--verify` and `--allow-partial` — matched on word
   boundaries. A binary that reports an acceptable version but has dropped a flag

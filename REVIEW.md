@@ -13,7 +13,7 @@ Run these passes and tag every finding with its pass:
   message missing either is a finding; Important when it is the only signal of a blocked action (a
   refused edit, a failed render), otherwise a nit.
 - **Security**: path traversal or unchecked sizes on uploaded documents and assets, argv injection into
-  the `hwp` binary, secrets in workflows or logs.
+  the `ahwp` binary, secrets in workflows or logs.
 - **Compliance**: the change matches the issue spec and the approved plan, and respects the invariants
   below. Workflow changes are also checked for a timeout on every job and PR-only cancellation.
 - **Instruction prose** (changes to REVIEW.md, agent instructions, skill files or prompts): each
@@ -43,10 +43,11 @@ Run these passes and tag every finding with its pass:
   insert_blocks issue list, where a style name can forge an entry; add no other reader of that list
   or of any other text that carries a user value.
 
-- **hwp-cli is the only document engine.** The server drives the released `hwp` binary and gates its
-  version (`packages/server/src/cli-engine.ts:54` minimum, `:72` exclusive maximum). Wire shapes come
-  from hwp-cli contracts (`segment-envelope-v2`, `render-layout-v1`, `edit-ops-v1`, `edit-report-v1`);
-  a field the engine does not publish is a finding, not a client-side guess.
+- **hwp-cli is the only document engine.** The server drives the released `ahwp` binary (`hwp` is
+  its 1.x compatibility name) and gates its version (`packages/server/src/cli-engine.ts:72` minimum,
+  `:114` exclusive maximum). Wire shapes come from hwp-cli contracts (`segment-envelope-v2`,
+  `render-layout-v1`, `edit-ops-v1`, `edit-report-v1`); a field the engine does not publish is a
+  finding, not a client-side guess.
 - **Envelope projection is validated.** `packages/core/src/segments.ts:89` refuses unknown segment kinds.
   New engine artifacts the client relies on are validated the same way before they drive behavior.
 - **Check that each selection action maps to exactly the selected content.** Every canvas and

@@ -1,7 +1,7 @@
 # Host integration: ax (Next.js 16, Vercel)
 
 The canonical server-side recipe. ax installs the editor from npm and drives it
-with the HTTP engine against its own API routes; the `hwp` binary is
+with the HTTP engine against its own API routes; the `ahwp` binary is
 provisioned at build time by a pinned fetch script.
 
 ```
@@ -71,7 +71,7 @@ discipline as the binary pin below.
 
 Provision the binary with a pinned fetch script that follows this shape:
 
-- The release tag lives in `.hwp-cli-version` (must be `>= v0.20.0` and below `v2.0.0`).
+- The release tag lives in `.hwp-cli-version` (must be `>= v0.20.0` and below `v3.0.0`).
 - Releases are published on
   [`STAIxBWLB/agent-hwp`](https://github.com/STAIxBWLB/agent-hwp/releases). Each tag
   ships one archive per target plus a sibling `.sha256`, under the `ahwp-` name
@@ -237,4 +237,4 @@ Theming: map ax's tokens onto the `--hwped-*` contract — see
 - **Timeout**: the engine caps every CLI call at 60s (`HWP_TIMEOUT_MS`);
   the Vercel function limit must exceed that for big renders.
 - **Cold start**: the first call per process verifies `ahwp --version`
-  (>= 0.20.0 and < 2.0.0); subsequent calls reuse the memoized result.
+  (>= 0.20.0 and < 3.0.0); subsequent calls reuse the memoized result.

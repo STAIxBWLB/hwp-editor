@@ -388,7 +388,7 @@ describe("handshake", () => {
   }, 30_000);
 
   it("refuses a binary at the major-version ceiling, not just above it", async () => {
-    const { bin } = createFakeBin({ version: "2.0.0" });
+    const { bin } = createFakeBin({ version: "3.0.0" });
     const engine = createCliEngine({ bin });
     const error = await engine.capabilities().then(
       () => null,
@@ -398,12 +398,13 @@ describe("handshake", () => {
     expect((error as HwpCliError).reason).toBe("version");
   }, 30_000);
 
-  it("accepts the 1.x line the raised ceiling admits", async () => {
-    // 1.0.0 sat exactly on the old ceiling and was refused; it straddles the
-    // change the way 0.19.3 straddles the floor.
-    const { bin } = createFakeBin({ version: "1.0.0" });
+  it("accepts the 2.x line the raised ceiling admits", async () => {
+    // 2.0.0 sat exactly on the old ceiling and was refused; it straddles this
+    // change the way 0.19.3 straddles the floor. agent-hwp#510 scopes that
+    // release to removing the `hwp` name and the legacy assets (#121).
+    const { bin } = createFakeBin({ version: "2.0.0" });
     const engine = createCliEngine({ bin });
-    await expect(engine.capabilities()).resolves.toMatchObject({ version: "1.0.0" });
+    await expect(engine.capabilities()).resolves.toMatchObject({ version: "2.0.0" });
   }, 30_000);
 
   it("accepts a binary reporting exactly the floor", async () => {

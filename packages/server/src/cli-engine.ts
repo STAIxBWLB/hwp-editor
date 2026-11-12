@@ -87,37 +87,41 @@ function imageAssetsVersionSupported(version: string): boolean {
  * Upper bound on the accepted binary, EXCLUSIVE.
  *
  * The floor is hard because a binary below it lacks flags this engine emits.
- * The ceiling is deliberately only a major-version gate, and stays one now
- * that the floor equals the tested tag. A major bump is the one signal
- * upstream gives that the contract may have broken; everything below it is
- * carried by the flag handshake, which checks what the binary actually
- * accepts rather than what it calls itself. A tighter numeric ceiling would
- * catch nothing the handshake misses, and would refuse a patch release on a
- * version string alone.
+ * The ceiling is deliberately only a major-version gate too. A major bump is
+ * the one signal upstream gives that the contract may have broken; everything
+ * below it is carried by the flag handshake, which checks what the binary
+ * actually accepts rather than what it calls itself. A tighter numeric ceiling
+ * would catch nothing the handshake misses, and would refuse a patch release on
+ * a version string alone.
  *
- * Raised from [1, 0, 0] for hwp-cli 1.0.0, which carries 0.20.2's surface
- * plus dependency security fixes: the flag handshake and the real-binary
- * suites pass against it, so the next contract signal is 2.0.0.
+ * Raised from [1, 0, 0] for hwp-cli 1.0.0, which carries 0.20.2's surface plus
+ * dependency security fixes: the flag handshake and the real-binary suites pass
+ * against it.
  *
- * Unchanged by the rename to agent-hwp / `ahwp` (#121). agent-hwp#510 scopes
- * 2.0.0 to removing the `hwp` compatibility name, the legacy `hwp-` assets and
- * the Homebrew rename shim, but it does not state that 2.0.0 carries no other
- * breaking change - its own decision table keeps "a 2.0 contract bump" as a
- * revisit trigger for the contract names it left alone. Admitting 2.x on the
- * strength of the rename plan alone would retire the one automated signal that
- * the contract moved, and the flag handshake cannot see a flag that was
- * replaced rather than dropped. The bump therefore waits for 2.0.0's own
- * changelog; this engine keeps refusing it, loudly, until then.
+ * Raised to [3, 0, 0] for agent-hwp 2.0.0 (#121). agent-hwp#510's Phase 4
+ * scopes that release to removing the `hwp` compatibility name, the legacy
+ * `hwp-` release assets and the Homebrew formula's rename shim, and its
+ * decision table lists every other contract name as unchanged. Waiting for
+ * 2.0.0's own changelog to confirm that would be circular: #510 ships 2.0.0
+ * only after #121 closes, so that note cannot arrive before the release it
+ * describes. The 2.x window is open on two conditions.
+ * Any further breaking change in 2.x arrives here as a downstream issue before
+ * it ships, so the rename plan is never read as a standing licence for one.
+ * And the runtime check stays where it was: the flag handshake below plus the
+ * real-binary suites, both of which fail loudly against a binary whose surface
+ * moved.
  */
-const MAX_VERSION_EXCLUSIVE: readonly [number, number, number] = [2, 0, 0];
+const MAX_VERSION_EXCLUSIVE: readonly [number, number, number] = [3, 0, 0];
 
 /**
  * The command this engine runs when nothing configures one, and the 1.x name
  * it falls back to when that command is absent from `PATH` (#121).
  *
- * The fallback is temporary: 1.x ships `hwp` as a compatibility name, 2.0.0
- * removes it, and the ceiling above keeps this engine on 1.x until that
- * release's changelog is read. Nothing else in the resolution chain moves.
+ * The fallback is temporary: 1.x ships `hwp` as a compatibility name and 2.0.0
+ * removes it (agent-hwp#510). The ceiling above admits 2.x, so on a host with
+ * only 2.x this name never matches and the two-name error below says what is
+ * missing; delete LEGACY_COMMAND once the floor is past 1.x. Nothing else in
+ * the resolution chain moves.
  */
 const DEFAULT_COMMAND = "ahwp";
 const LEGACY_COMMAND = "hwp";
@@ -1175,8 +1179,11 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
           throw fallbackError;
         }
       }
-      // Recorded only after a probe returned, so a failed check leaves no name
-      // behind for a later spawn. The explicit chain bypasses this entirely.
+      // Recorded once a probe came back, before the version and flag checks
+      // below rather than after them: those checks report a failure by name,
+      // and a later spawn naming the same binary is the honest one. A binary
+      // absent from PATH never reaches this line. The explicit chain bypasses
+      // it entirely.
       if (explicit === undefined) resolvedDefault = bin;
 
       if (result.code !== 0) {
@@ -1369,9 +1376,12 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       // returned invalid JSON" with an upgrade as its next step.
       //
       // Resolved through the version memo, which is where a default name is
-      // chosen: this is the one spawn site that runs before any other check,
-      // so a bare `resolveBin()` here would spawn `ahwp` on a host that only
-      // has the 1.x compatibility name.
+      // chosen: a bare `resolveBin()` returns `ahwp` until that memo records
+      // the choice, so on a host with only the 1.x compatibility name it would
+      // spawn a command that is not there. Every template method awaits
+      // `requireVersion` first, so the memo has already settled here; going
+      // through `binPath()` keeps that ordering a property of this site rather
+      // than of its callers.
       const bin = await binPath();
       const result = await runCliOk(bin, args, timeoutMs, opts.locale, call?.signal).catch(error => {
         try { return rethrowProtected(error); }

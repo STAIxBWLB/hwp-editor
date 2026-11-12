@@ -113,9 +113,17 @@ if(chosen===null){
   const tail="; install agent-hwp so `ahwp` is on PATH, or set HWP_EDITOR_BIN to its executable, then run pnpm playground again.\n";
   // The default search has two names; when neither is there, the refusal names
   // both rather than the one that happened to be probed last.
-  const message=candidates.length>1 && failed.absent
-    ? `The playground cannot run ahwp or hwp: neither is on PATH (${failed.cause})${tail}`
-    : `The playground cannot run ${candidates.length>1 ? failed.name : "hwp"} at ${failed.place} (${failed.cause})${tail}`;
+  //
+  // Every other refusal names the candidate that failed - the configured value
+  // when one is set - and, unless that value is already the resolved path,
+  // where the search looked for it.
+  let message;
+  if(candidates.length>1 && failed.absent){
+    message=`The playground cannot run ahwp or hwp: neither is on PATH (${failed.cause})${tail}`;
+  }else{
+    const at=failed.place===failed.name ? "" : ` at ${failed.place}`;
+    message=`The playground cannot run ${failed.name}${at} (${failed.cause})${tail}`;
+  }
   process.stderr.write(message);
   process.exit(1);
 }

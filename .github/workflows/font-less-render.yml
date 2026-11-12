@@ -19,10 +19,10 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  # Same pin as e2e.yml; move them together. The legacy `hwp-<tag>-<target>`
-  # asset, and the `hwp` binary inside it, are still published through 1.x
-  # beside the `ahwp` names, so this download and the `./hwp` calls below stay
-  # as they are.
+  # Same pin as e2e.yml; move them together. The download is the `ahwp-` asset
+  # and only its `ahwp` member is installed, so the `./ahwp` calls below
+  # exercise the default resolution #121 introduces; the legacy `hwp-` asset
+  # and the `hwp` name inside it are neither fetched nor called.
   HWP_CLI_TAG: v1.6.1
 
 jobs:

@@ -28,24 +28,42 @@ import { describe } from "vitest";
 export const BIN = resolveTestBin();
 
 /**
- * The default half of the chain: `ahwp` when it runs, else `hwp`. The probe
- * is the same one `HAS_BIN` uses, so a found-but-broken `ahwp` is reported as
- * `ahwp` here and fails the suites visibly rather than being retried under
- * the compatibility name the engine would not have chosen.
+ * The default half of the chain: `ahwp` when it runs, and `hwp` only when
+ * spawning `ahwp` failed with ENOENT — the single cause the engine's own
+ * fallback covers. A found-but-broken `ahwp` stays `ahwp` here, so the suites
+ * fail against it visibly rather than being retried under the compatibility
+ * name the engine would not have chosen.
+ *
+ * Exported for the resolution cases in `cli-engine.test.ts`: this file mirrors
+ * a chain it cannot call, so the mirror is pinned by its own assertions.
  */
-function resolveTestBin(): string {
+export function resolveTestBin(): string {
   const configured = process.env.HWP_EDITOR_BIN?.trim() || process.env.HWP_CLI?.trim();
-  if (configured !== undefined) return configured;
-  return runnable("ahwp") ? "ahwp" : "hwp";
+  // Truthiness, not `!== undefined`: an empty HWP_EDITOR_BIN with no HWP_CLI
+  // comes out of the `||` chain as "", which is not a binary to probe.
+  if (configured) return configured;
+  const primary = probe("ahwp");
+  // Found but broken (anything other than ENOENT) stays `ahwp`: see above.
+  if (primary.runs || !primary.absent) return "ahwp";
+  return "hwp";
+}
+
+/**
+ * The probe `HAS_BIN` uses, keeping which way it failed: `absent` is the spawn
+ * itself failing with ENOENT, the only way a name means "not installed" rather
+ * than "installed and broken".
+ */
+function probe(bin: string): { runs: boolean; absent: boolean } {
+  try {
+    execFileSync(bin, ["--version"], { stdio: "ignore" });
+    return { runs: true, absent: false };
+  } catch (error) {
+    return { runs: false, absent: (error as NodeJS.ErrnoException).code === "ENOENT" };
+  }
 }
 
 function runnable(bin: string): boolean {
-  try {
-    execFileSync(bin, ["--version"], { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
+  return probe(bin).runs;
 }
 
 export const HAS_BIN = BIN.includes(sep) ? existsSync(BIN) : runnable(BIN);
