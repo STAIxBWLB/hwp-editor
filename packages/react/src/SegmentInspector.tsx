@@ -221,11 +221,22 @@ export function SegmentInspector(): JSX.Element {
    * run's own parent count, ordered by their path among the run, so a move
    * or a delete of the run acts on the whole insertion.
    */
-  const runParent = paragraphRun?.[0]?.indices?.slice(0, -1);
+  const insertionCurrent = insertedHidden != null &&
+    insertedHidden.envelope === envelope && insertedHidden.selections === state.selections;
+  /**
+   * The run a move or delete acts on: the contiguous multi-selection, or the
+   * one paragraph an insertion left selected when the rest of it published no
+   * segment (a run of one, t74-4).
+   */
+  const insertionRun = runContiguous
+    ? paragraphRun!
+    : paragraphRun === null && insertionCurrent && singleParagraph !== undefined && siblingAt >= 0
+      ? [singleParagraph]
+      : null;
+  const runParent = insertionRun?.[0]?.indices?.slice(0, -1);
   const hiddenInRun = (() => {
-    if (!runContiguous || insertedHidden == null || runParent === undefined) return [];
-    if (insertedHidden.envelope !== envelope || insertedHidden.selections !== state.selections) return [];
-    const section = paragraphRun![0]!.section;
+    if (insertionRun === null || !insertionCurrent || runParent === undefined) return [];
+    const section = insertionRun[0]!.section;
     return insertedHidden.ids.flatMap((id) => {
       const [idSection, ...indices] = segmentIdPath(id);
       if (idSection !== section || indices.length !== runParent.length + 1) return [];
@@ -235,7 +246,7 @@ export function SegmentInspector(): JSX.Element {
   })();
   /** The run's own first and last paragraph, an unpublished one included, as an address. */
   const runEdge = (edge: "first" | "last"): ParagraphAddress | undefined => {
-    const published = edge === "first" ? paragraphRun?.[0] : paragraphRun?.[paragraphRun.length - 1];
+    const published = edge === "first" ? insertionRun?.[0] : insertionRun?.[insertionRun.length - 1];
     if (published === undefined) return undefined;
     const publishedIndex = published.indices?.[published.indices.length - 1];
     const beyond = hiddenInRun.filter((hidden) => publishedIndex === undefined ||
@@ -456,6 +467,22 @@ export function SegmentInspector(): JSX.Element {
    * the whole run, which keeps the run intact and one apply one undo.
    */
   const moveParagraph = (direction: -1 | 1): void => {
+    if (paragraphRun === null && hiddenInRun.length > 0) {
+      // One published paragraph of an insertion whose other paragraphs are
+      // unpublished: the neighbour passes the whole insertion (#521).
+      const neighbour = siblings[direction === -1 ? siblingAt - 1 : siblingAt + 1];
+      const anchor = runEdge(direction === -1 ? "last" : "first");
+      if (neighbour === undefined || anchor === undefined) return;
+      store.dispatch({
+        type: "queueOp",
+        op: {
+          kind: "move-para",
+          address: paragraphAddress(neighbour),
+          to: { address: anchor, position: direction === -1 ? "after" : "before" },
+        },
+      });
+      return;
+    }
     if (paragraphRun === null) {
       const neighbour = siblings[direction === -1 ? siblingAt - 1 : siblingAt + 1];
       if (address === undefined || neighbour === undefined) return;
@@ -493,7 +520,18 @@ export function SegmentInspector(): JSX.Element {
    */
   const deleteParagraphs = (): void => {
     if (paragraphRun === null) {
-      if (address !== undefined) store.dispatch({ type: "queueOp", op: { kind: "delete-para", address } });
+      if (address === undefined) return;
+      if (hiddenInRun.length === 0) {
+        store.dispatch({ type: "queueOp", op: { kind: "delete-para", address } });
+        return;
+      }
+      store.dispatch({
+        type: "queueOps",
+        ops: [
+          { kind: "delete-para" as const, address },
+          ...hiddenInRun.map(hidden => ({ kind: "delete-para" as const, address: { id: hidden.id } })),
+        ],
+      });
       return;
     }
     if (!runContiguous) return;

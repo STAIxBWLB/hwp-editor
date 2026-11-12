@@ -1355,33 +1355,39 @@ describe("ComponentsPanel (TEST-03)", () => {
     expect(engine.calls.edit[1]!.ops[0]).toMatchObject({ kind: "insert-blocks", address: { id: ids[2] }, position: "after" });
   });
 
-  describe("an insertion whose last paragraph is empty, the 붙임 shape (#521)", () => {
-    // agent-hwp 1.6.2 names the empty paragraph (.0.4) in `changed`, but the
-    // re-read envelope publishes only .0.2 and .0.3. A paragraph after the
-    // insertion (.0.5) is the move-down neighbour.
-    const ids = ["bbbbbbbbbbbbbbbb.0.2", "cccccccccccccccc.0.3", "dddddddddddddddd.0.4"];
-    async function inserted(): Promise<{ engine: ReturnType<typeof composedEngine>; after: CatEnvelope }> {
+  describe("an insertion whose unpublished paragraphs travel with it (#521)", () => {
+    // agent-hwp 1.6.2 names an inserted empty paragraph in `changed`, but the
+    // re-read envelope publishes no segment for it. `layout` says which of the
+    // inserted paths (2, 3, 4) are published; .0.5 follows the insertion.
+    const id = (para: number): string => `${"bcd"[para - 2]!.repeat(16)}.0.${para}`;
+    const NEXT = "eeeeeeeeeeeeeeee.0.5";
+    async function inserted(published: number[]): Promise<{ engine: ReturnType<typeof composedEngine>; after: () => CatEnvelope }> {
       const base = addressableEnvelope();
       const report: EditReport = {
         ...insertReport,
-        ops: [{ ...insertReport.ops[0]!, pieces_touched: 3, changed: ids.map((id) => ({ before: null, after: id })) }],
+        ops: [{ ...insertReport.ops[0]!, pieces_touched: 3, changed: [2, 3, 4].map((para) => ({ before: null, after: id(para) })) }],
       };
-      let markdown = base.markdown;
-      const segments = [...base.segments];
-      ([["붙임 제목", ids[0]!, 2], ["붙임 항목", ids[1]!, 3], ["다음 문단", "eeeeeeeeeeeeeeee.0.5", 5]] as const)
-        .forEach(([text, id, para]) => {
+      // A fresh object per read, as a real re-read is, so a revert's re-read
+      // is a new envelope.
+      const after = (): CatEnvelope => {
+        let markdown = base.markdown;
+        const segments = [...base.segments];
+        for (const para of [...published, 5]) {
+          const text = para === 5 ? "다음 문단" : `붙임 ${para}`;
           const start = markdown.length;
           markdown += `${text}\n\n`;
-          segments.push({ id, indices: [para], start, end: start + text.length, kind: "para", section: 0, para });
-        });
-      const after: CatEnvelope = { markdown, segments };
+          segments.push({ id: para === 5 ? NEXT : id(para), indices: [para], start, end: start + text.length, kind: "para", section: 0, para });
+        }
+        return { markdown, segments };
+      };
       const engine = composedEngine(base);
       let reads = 0;
-      engine.read = async () => (reads++ === 0 ? base : after);
+      engine.read = async () => (reads++ === 0 ? base : after());
       const baseEdit = engine.edit.bind(engine);
+      let edits = 0;
       engine.edit = async (document, ops, options) => ({
         ...(await baseEdit(document, ops, options)),
-        ...(options?.report === true ? { report } : {}),
+        ...(options?.report === true && edits++ === 0 ? { report } : {}),
       });
       await selectPara(engine, 1, base);
       fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
@@ -1394,43 +1400,86 @@ describe("ComponentsPanel (TEST-03)", () => {
       return { engine, after };
     }
 
-    it("deletes the empty paragraph with the run", async () => {
-      const { engine } = await inserted();
+    it("deletes the empty paragraph with the run (empty last, the 붙임 shape)", async () => {
+      const { engine } = await inserted([2, 3]);
       clickBtn("segment.deletePara");
       expect(await applyOps(engine, 3)).toEqual([
-        { kind: "delete-para", address: { id: ids[0] } },
-        { kind: "delete-para", address: { id: ids[1] } },
-        { kind: "delete-para", address: { id: ids[2] } },
+        { kind: "delete-para", address: { id: id(2) } },
+        { kind: "delete-para", address: { id: id(3) } },
+        { kind: "delete-para", address: { id: id(4) } },
       ]);
     });
 
     it("moves the neighbour above past the empty paragraph on move up", async () => {
-      const { engine } = await inserted();
+      const { engine } = await inserted([2, 3]);
       clickBtn("segment.moveUp");
       expect(await applyOps(engine, 1)).toEqual([{
-        kind: "move-para",
-        address: { id: "aaaaaaaaaaaaaaaa.0.1" },
-        to: { address: { id: ids[2] }, position: "after" },
+        kind: "move-para", address: { id: "aaaaaaaaaaaaaaaa.0.1" }, to: { address: { id: id(4) }, position: "after" },
       }]);
     });
 
     it("moves the neighbour below before the run's first paragraph on move down", async () => {
-      const { engine } = await inserted();
+      const { engine } = await inserted([2, 3]);
       clickBtn("segment.moveDown");
       expect(await applyOps(engine, 1)).toEqual([{
-        kind: "move-para",
-        address: { id: "eeeeeeeeeeeeeeee.0.5" },
-        to: { address: { id: ids[0] }, position: "before" },
+        kind: "move-para", address: { id: NEXT }, to: { address: { id: id(2) }, position: "before" },
+      }]);
+    });
+
+    it("anchors move down before the empty paragraph when it comes first (t74-5)", async () => {
+      const { engine } = await inserted([3, 4]);
+      clickBtn("segment.moveDown");
+      expect(await applyOps(engine, 1)).toEqual([{
+        kind: "move-para", address: { id: NEXT }, to: { address: { id: id(2) }, position: "before" },
+      }]);
+    });
+
+    it("treats one published paragraph with empty siblings as a run of one (t74-4)", async () => {
+      const { engine } = await inserted([2]);
+      clickBtn("segment.deletePara");
+      expect(await applyOps(engine, 3)).toEqual([
+        { kind: "delete-para", address: { id: id(2) } },
+        { kind: "delete-para", address: { id: id(3) } },
+        { kind: "delete-para", address: { id: id(4) } },
+      ]);
+    });
+
+    it("moves one published paragraph with its empty siblings (t74-4)", async () => {
+      const { engine } = await inserted([2]);
+      clickBtn("segment.moveUp");
+      expect(await applyOps(engine, 1)).toEqual([{
+        kind: "move-para", address: { id: "aaaaaaaaaaaaaaaa.0.1" }, to: { address: { id: id(4) }, position: "after" },
       }]);
     });
 
     it("forgets the empty paragraph once the selection changes", async () => {
-      const { engine, after } = await inserted();
-      // A plain click on the run's second paragraph is a new single selection.
+      const { engine, after } = await inserted([2, 3]);
       const page = screen.getByRole("button", { name: en["page.label"]({ page: 1 }) });
-      fireEvent.click(page, { clientY: clientYForPara(after, 3) });
+      fireEvent.click(page, { clientY: clientYForPara(after(), 3) });
       clickBtn("segment.deletePara");
-      expect(await applyOps(engine, 1)).toEqual([{ kind: "delete-para", address: { id: ids[1] } }]);
+      expect(await applyOps(engine, 1)).toEqual([{ kind: "delete-para", address: { id: id(3) } }]);
+    });
+
+    it.each([
+      ["a queued move-up anchored at the empty paragraph", "segment.moveUp" as const],
+      ["a queued delete of the empty paragraph", "segment.deletePara" as const],
+    ])("drops %s when Revert re-reads the document (t74-3)", async (_label, button) => {
+      const { engine } = await inserted([2, 3]);
+      clickBtn(button);
+      await screen.findByText(en["toolbar.pendingEdits"]({ count: button === "segment.moveUp" ? 1 : 3 }));
+      fireEvent.click(screen.getByRole("button", { name: en["toolbar.revert"] }));
+      await screen.findByText(en["components.insertedOpsDropped"]({ count: 1 }));
+      // Only the ops naming a kept id are gone: a delete of a published
+      // paragraph stays, and Apply never sends the empty paragraph's id.
+      const left = button === "segment.moveUp" ? 0 : 2;
+      await screen.findByText(en["toolbar.pendingEdits"]({ count: left }));
+      if (left > 0) {
+        fireEvent.click(screen.getByRole("button", { name: en["toolbar.applyWithCount"]({ count: left }) }));
+        await waitFor(() => expect(engine.calls.edit).toHaveLength(1));
+        expect(JSON.stringify(engine.calls.edit[0]!.ops)).not.toContain(id(4));
+      } else {
+        expect(engine.calls.edit).toHaveLength(0);
+      }
     });
   });
 

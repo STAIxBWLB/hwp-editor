@@ -538,12 +538,32 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       });
       setInsertedHidden(hidden.length === 0 ? null : { envelope, selections: store.getState().selections, ids: hidden });
     }, [envelope, pendingInserted, store]);
-    // The kept ids describe one envelope and one selection: either moving on
-    // retires them, the same one-attempt expiry insertedTriedFor applies.
+    // The kept ids describe one envelope: a panel uses them only while the
+    // selection made from it is also current (it compares both), and the next
+    // envelope retires them, the same one-attempt expiry insertedTriedFor
+    // applies. Retiring them also drops every queued op that addresses one of
+    // them: an empty paragraph's id hashes its shape, style and path and no
+    // text, so after a revert or refresh a different blank line at that path
+    // can carry the same id, and the op would land on it with no refusal.
+    // A selection-only change keeps the ops: the envelope is the same, so they
+    // still name the paragraph the user meant.
     useEffect(() => {
-      if (insertedHidden === null) return;
-      if (insertedHidden.envelope !== envelope || insertedHidden.selections !== state.selections) setInsertedHidden(null);
-    }, [envelope, insertedHidden, state.selections]);
+      if (insertedHidden === null || insertedHidden.envelope === envelope) return;
+      const ids = new Set(insertedHidden.ids);
+      setInsertedHidden(null);
+      const names = (address: unknown): boolean =>
+        typeof address === "object" && address !== null && ids.has((address as { id?: unknown }).id as string);
+      const ops = store.getState().pendingOps;
+      let dropped = 0;
+      for (let index = ops.length - 1; index >= 0; index -= 1) {
+        const op = ops[index] as { address?: unknown; to?: { address?: unknown } };
+        if (names(op.address) || names(op.to?.address)) {
+          store.dispatch({ type: "dequeueOp", index });
+          dropped += 1;
+        }
+      }
+      if (dropped > 0) noteNotice(t("components.insertedOpsDropped", { count: dropped }));
+    }, [envelope, insertedHidden, noteNotice, store, t]);
 
     // Load the document whenever the engine/file pair changes.
     useEffect(() => {
