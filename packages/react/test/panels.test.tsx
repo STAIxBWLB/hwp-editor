@@ -1481,6 +1481,70 @@ describe("ComponentsPanel (TEST-03)", () => {
         expect(engine.calls.edit).toHaveLength(0);
       }
     });
+
+    // The same insertion run twice in a row: the second replaces the document
+    // again, so two insertions' worth of kept ids pass through the drop effect.
+    async function insertedTwice(): Promise<{ engine: ReturnType<typeof composedEngine> }> {
+      const base = addressableEnvelope();
+      const report: EditReport = {
+        ...insertReport,
+        ops: [{ ...insertReport.ops[0]!, pieces_touched: 3, changed: [2, 3, 4].map((para) => ({ before: null, after: id(para) })) }],
+      };
+      // A fresh object per read, as a real re-read is: the second insertion's
+      // envelope differs from the first's although the bytes are the same.
+      const after = (): CatEnvelope => {
+        let markdown = base.markdown;
+        const segments = [...base.segments];
+        for (const para of [2, 3, 5]) {
+          const text = para === 5 ? "다음 문단" : `붙임 ${para}`;
+          const start = markdown.length;
+          markdown += `${text}\n\n`;
+          segments.push({ id: para === 5 ? NEXT : id(para), indices: [para], start, end: start + text.length, kind: "para", section: 0, para });
+        }
+        return { markdown, segments };
+      };
+      const engine = composedEngine(base);
+      let reads = 0;
+      engine.read = async () => (reads++ === 0 ? base : after());
+      const baseEdit = engine.edit.bind(engine);
+      let reports = 0;
+      engine.edit = async (document, ops, options) => ({
+        ...(await baseEdit(document, ops, options)),
+        ...(options?.report === true && reports++ < 2 ? { report } : {}),
+      });
+      await selectPara(engine, 1, base);
+      fireEvent.click(screen.getByRole("tab", { name: en["tabs.components"] }));
+      for (let count = 1; count <= 2; count += 1) {
+        // The palette is off while an edit is queued, so each insert waits for
+        // the previous one to settle.
+        const button = await screen.findByRole("button", { name: en["components.insert"]({ name: componentName }) });
+        await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
+        fireEvent.click(button);
+        await waitFor(() => expect(engine.calls.edit).toHaveLength(count));
+      }
+      engine.calls.edit.length = 0;
+      fireEvent.click(screen.getByRole("tab", { name: en["tabs.para"] }));
+      return { engine };
+    }
+
+    // Two insertions in a row. Each one replaces the document, so the second
+    // runs while the drop effect above still holds the first one's value.
+    //
+    // This is a control, not a red proof: in this harness the replace and the
+    // `setPendingInserted` that follows it commit in two separate renders
+    // (the envelope first, the ids next), so the drop effect sees the retired
+    // value on a commit where the insertion effect has nothing to set, and the
+    // second insertion's ids survive either way. It fails only if a change ever
+    // lands both updates in one render, which is the interleaving t74-6 names.
+    it("keeps the second insertion's empty paragraph when two insertions run in a row (t74-6, control)", async () => {
+      const { engine } = await insertedTwice();
+      clickBtn("segment.deletePara");
+      expect(await applyOps(engine, 3)).toEqual([
+        { kind: "delete-para", address: { id: id(2) } },
+        { kind: "delete-para", address: { id: id(3) } },
+        { kind: "delete-para", address: { id: id(4) } },
+      ]);
+    });
   });
 
   it("refuses to select from a truncated report and says why", async () => {

@@ -543,14 +543,20 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
     // envelope retires them, the same one-attempt expiry insertedTriedFor
     // applies. Retiring them also drops every queued op that addresses one of
     // them: an empty paragraph's id hashes its shape, style and path and no
-    // text, so after a revert or refresh a different blank line at that path
-    // can carry the same id, and the op would land on it with no refusal.
+    // text, so after a revert a different blank line at that path can carry the
+    // same id, and the op would land on it with no refusal. A refresh re-reads
+    // the same bytes and cannot collide, and the ops are dropped there too
+    // rather than carving out an exception for it.
     // A selection-only change keeps the ops: the envelope is the same, so they
     // still name the paragraph the user meant.
     useEffect(() => {
       if (insertedHidden === null || insertedHidden.envelope === envelope) return;
       const ids = new Set(insertedHidden.ids);
-      setInsertedHidden(null);
+      // Updater form, because a second insertion sets its own value earlier in
+      // this same render while this effect's closure still holds the retired
+      // one: a plain null would overwrite the live value and lose that
+      // insertion's kept ids, leaving its empty paragraph behind again.
+      setInsertedHidden((current) => (current === insertedHidden ? null : current));
       const names = (address: unknown): boolean =>
         typeof address === "object" && address !== null && ids.has((address as { id?: unknown }).id as string);
       const ops = store.getState().pendingOps;
