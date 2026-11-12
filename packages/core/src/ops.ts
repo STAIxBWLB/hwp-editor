@@ -429,11 +429,22 @@ function splitSealSize(value: string): { path: string; size: number } | null {
 }
 
 /**
- * The number `f32::from_str` reads from text `isRustFloat` accepted (#108).
+ * The f64 reading of a size text `isRustFloat` accepted, which is the engine's
+ * value wherever the two parses agree (#108, #110).
+ *
+ * They agree on every text inside the f32 range; outside it the f64 reading is
+ * wider, so `stamp@1e39` is infinity to the engine and 1e39 here, and
+ * `stamp@1e-50` is 0 to the engine and 1e-50 here. Neither changes what this
+ * side decides: the path/size split only asks whether the text is a number,
+ * and `opsToArgv` writes the number back as text that hwp-cli's own f32 parse
+ * turns into the engine's value. Narrowing this to f32 would refuse sizes the
+ * engine accepts and round others differently, so no f32 overflow is mapped
+ * here.
  *
  * The infinite spellings are mapped by hand because `Number("inf")` is NaN,
- * which is a different value the engine never produces: `inf`, `infinity` and an
- * overflow such as `1e400` all parse as infinity there. `nan` needs no mapping.
+ * which is a different value the engine never produces: `inf` and `infinity`,
+ * either case and either sign, are sizes there. `nan` needs no mapping.
+ *
  * A non-finite size has no plain-decimal form, so the edit-ops-v1 channel's
  * `withUnit` refuses it; this side carries it because the argv engine does.
  */
