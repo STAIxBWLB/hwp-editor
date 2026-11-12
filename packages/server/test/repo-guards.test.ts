@@ -1202,10 +1202,13 @@ describe("CI-2: bounded workflows and an explicit gating aggregate", () => {
     expect(aggregateStatus({})).toBe(1);
   });
 
+  /** The head a run is queued for, and the API's answer unless a case moves it. */
+  const RUN_HEAD = "7".repeat(40);
+
   /**
    * The classifier's own shell, run against a stub `gh`.
    *
-   * #126's rule is one path set plus four fail-closed exits, and none of it is
+   * #126's rule is one path set plus seven fail-closed exits, and none of it is
    * visible from the aggregate: this executes the step's script instead of
    * trusting it. The stub answers with whatever file list a case names, and
    * `MAX_FILES` can be lowered so the cap is reachable in three paths rather
@@ -1217,7 +1220,21 @@ describe("CI-2: bounded workflows and an explicit gating aggregate", () => {
    */
   function classify(
     paths: string[],
-    options: { stubExit?: number; maxFiles?: string } = {},
+    options: {
+      stubExit?: number;
+      maxFiles?: string;
+      /**
+       * What the endpoint prints when the jq asks for `filename` alone.
+       * Defaults to `paths`, so only a rename case has to name it - and naming
+       * it is what makes that case fail when the previous path leaves the jq.
+       */
+      newPaths?: string[];
+      /** The head this run was queued for; the API echoes it unless a case moves it. */
+      headSha?: string;
+      apiHeadSha?: string;
+      filesExit?: number;
+      headExit?: number;
+    } = {},
   ): { docsOnly: string; status: number | null } {
     const body = ci.jobs.get("changes")!.join("\n");
     const script = body.split("        run: |\n")[1]!.replace(/^ {10}/gm, "");
@@ -1225,7 +1242,23 @@ describe("CI-2: bounded workflows and an explicit gating aggregate", () => {
     const gh = join(dir, "gh");
     writeFileSync(
       gh,
-      "#!/bin/sh\n" + "printf '%s\\n' \"$STUB_FILES\"\n" + 'exit "${STUB_EXIT:-0}"\n',
+      "#!/bin/sh\n" +
+        // Two endpoints, two answers: the run's head, and the file list. The
+        // list carries both paths of a rename only when the jq asks for
+        // `previous_filename`, because that is what the real endpoint answers -
+        // a stub that always printed both would let the rename case pass with
+        // the previous path reverted out of the jq.
+        'case "$*" in\n' +
+        "  *files*)\n" +
+        '    case "$*" in\n' +
+        "      *previous_filename*) printf '%s\\n' \"$STUB_FILES\" ;;\n" +
+        "      *) printf '%s\\n' \"$STUB_FILES_NEW\" ;;\n" +
+        "    esac\n" +
+        '    exit "${STUB_FILES_EXIT:-$STUB_EXIT}"\n' +
+        "    ;;\n" +
+        "esac\n" +
+        "printf '%s\\n' \"$STUB_HEAD_SHA\"\n" +
+        'exit "${STUB_HEAD_EXIT:-$STUB_EXIT}"\n',
     );
     chmodSync(gh, 0o700);
     const output = join(dir, "output.txt");
@@ -1240,7 +1273,12 @@ describe("CI-2: bounded workflows and an explicit gating aggregate", () => {
         REPO: "STAIxBWLB/hwp-editor",
         NUMBER: "126",
         STUB_FILES: paths.join("\n"),
+        STUB_FILES_NEW: (options.newPaths ?? paths).join("\n"),
+        STUB_HEAD_SHA: options.apiHeadSha ?? options.headSha ?? RUN_HEAD,
         STUB_EXIT: String(options.stubExit ?? 0),
+        STUB_FILES_EXIT: options.filesExit === undefined ? "" : String(options.filesExit),
+        STUB_HEAD_EXIT: options.headExit === undefined ? "" : String(options.headExit),
+        HEAD_SHA: options.headSha ?? RUN_HEAD,
         MAX_FILES: options.maxFiles ?? "3000",
         GITHUB_OUTPUT: output,
       },
@@ -1272,8 +1310,50 @@ describe("CI-2: bounded workflows and an explicit gating aggregate", () => {
     }
   });
 
-  it("runs every gating job when the list cannot be read, is empty, or may be truncated", () => {
+  it("counts a renamed file by both of its paths, not only the new one", () => {
+    // `git mv scripts/smoke-consumer.mjs docs/x.mjs` moves code the `package`
+    // job runs into prose. gh reports a rename as one entry whose `filename` is
+    // the new path and whose `previous_filename` is the old one, and the
+    // classifier asks for both - so this is a full run. `newPaths` is what the
+    // same endpoint answers when the jq asks for `filename` alone, so this case
+    // also fails if `previous_filename` leaves the expression.
+    expect(
+      classify(["docs/x.mjs", "scripts/smoke-consumer.mjs"], {
+        newPaths: ["docs/x.mjs"],
+      }),
+    ).toEqual({ docsOnly: "false", status: 0 });
+  });
+
+  it("runs every gating job when the only change is the root Markdown a test reads", () => {
+    // REL-04 in release-guards.test.ts reads RELEASING.md under `pnpm -r test`,
+    // which only build-test runs, so this file is code here (#126).
+    expect(classify(["RELEASING.md"])).toEqual({ docsOnly: "false", status: 0 });
+    expect(classify(["docs/a.md", "RELEASING.md"])).toEqual({ docsOnly: "false", status: 0 });
+    // The neighbouring root Markdown stays prose: only that one file is read.
+    expect(classify(["CHANGELOG.md"])).toEqual({ docsOnly: "true", status: 0 });
+  });
+
+  it("answers only for the head this run was queued for", () => {
+    // The file list is read at query time, so a push between the queue and this
+    // job would make it describe a tree nobody reviewed.
+    expect(classify(["docs/a.md"], { apiHeadSha: "0".repeat(40) })).toEqual({
+      docsOnly: "false",
+      status: 0,
+    });
+    // The same list under the run's own head is the fast path, so the case
+    // above fails on the mismatch and not on the extra read.
+    expect(classify(["docs/a.md"], { headSha: "0".repeat(40) })).toEqual({
+      docsOnly: "true",
+      status: 0,
+    });
+  });
+
+  it("runs every gating job when a read fails, the list is empty, or it may be truncated", () => {
+    // Both reads fail closed, and each one gets its own case: `stubExit` kills
+    // every call, `headExit` and `filesExit` only their own.
     expect(classify(["docs/a.md"], { stubExit: 1 })).toEqual({ docsOnly: "false", status: 0 });
+    expect(classify(["docs/a.md"], { headExit: 1 })).toEqual({ docsOnly: "false", status: 0 });
+    expect(classify(["docs/a.md"], { filesExit: 1 })).toEqual({ docsOnly: "false", status: 0 });
     expect(classify([])).toEqual({ docsOnly: "false", status: 0 });
     // At the cap the list may be cut short, so the answer is not provable.
     expect(classify(["docs/a.md", "docs/b.md", "docs/c.md"], { maxFiles: "3" })).toEqual({
@@ -1282,17 +1362,23 @@ describe("CI-2: bounded workflows and an explicit gating aggregate", () => {
     });
   });
 
-  it("ships the 3000-file cap, the step env it reads, and a classifier that never fails the job", () => {
+  it("ships the 3000-file cap, the step env and request flags it reads, and never fails the job", () => {
     // Every case above exits 0: an uncomputable answer costs runner-minutes,
     // never a red required check. This is the shipped cap the runtime cases
-    // lower on purpose, and the four variables the script reads - `set -u`
+    // lower on purpose, and the five variables the script reads - `set -u`
     // turns a deleted one into a loud step failure, which is worse than a
     // full run and is why they are pinned here.
     const body = ci.jobs.get("changes")!.join("\n");
     expect(body).toContain('          MAX_FILES: "3000"');
-    for (const name of ["GH_TOKEN", "REPO", "NUMBER"]) {
+    for (const name of ["GH_TOKEN", "REPO", "NUMBER", "HEAD_SHA"]) {
       expect(body, name).toContain("          " + name + ": ${{");
     }
+    // `--paginate` is the one flag no case can catch: the stub answers a full
+    // list either way, so without it a pull request of 101 changed files would
+    // be classified from its first page. Pinned by its own line, and the jq
+    // expression beside it, whose dual-path form the rename case also models.
+    expect(body).toContain("gh api --paginate");
+    expect(body).toContain("--jq '.[] | .filename, (.previous_filename // empty)'");
   });
 
   it("never hides job failures behind job-level continue-on-error", () => {

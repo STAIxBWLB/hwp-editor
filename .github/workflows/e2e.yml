@@ -5,10 +5,13 @@ name: e2e (non-required)
 # hold this repository's secrets. It references none.
 #
 # #126: this workflow runs no job for a docs-only pull request. `paths-ignore`
-# skips the run only when EVERY changed path matches, which is the same rule
-# ci.yml's `changes` job computes for the gating jobs; it is available here
+# skips the run only when EVERY changed path matches; it is available here
 # because this workflow is advisory and nothing depends on its result. `*.md`
-# does not cross a slash, so packages/*/README.md still runs it.
+# does not cross a slash, so packages/*/README.md still runs it. This copy is
+# wider than ci.yml's `changes` job by exactly the two cases that job fails
+# closed on - a move into docs/ and a RELEASING.md-only change - and both are
+# safe here because this job reads neither: REL-04, which reads the file, runs
+# in ci.yml's build-test.
 on:
   pull_request:
     paths-ignore:

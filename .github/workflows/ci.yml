@@ -20,17 +20,37 @@ jobs:
   # no checkout and no history fetch is needed.
   #
   # The rule, in one line: docs_only is true only when every changed path is
-  # under `docs/` or is a `*.md` file at the repository root. `*.md` cannot
-  # cross a slash, so `packages/*/README.md` - which ships inside the tarballs
-  # `package` checks - is NOT docs-only, and neither is anything under
+  # under `docs/` or is a `*.md` file at the repository root, no path arrived by
+  # a rename from outside that set, and RELEASING.md is not among them. `*.md`
+  # cannot cross a slash, so `packages/*/README.md` - which ships inside the
+  # tarballs `package` checks - is NOT docs-only, and neither is anything under
   # `.github/`, `packages/`, `apps/` or `scripts/`.
   #
-  # Four ways it fails closed, because a fast path that guesses is worse than
-  # no fast path: any path outside that set is false, a list this job could not
-  # read is false, a list that is empty is false, and a list at the API's
-  # 3000-file cap is false because it may be truncated. `false` is written to
-  # the output FIRST and overwritten only by a list that passes, so every error
-  # path costs runner-minutes rather than skipping a check.
+  # Those last two exclusions are review findings on #126, and each of them
+  # would have skipped the job that proves the change:
+  #
+  # - A rename counts by BOTH of its paths. `gh` reports a move as
+  #   `{filename: docs/x.mjs, previous_filename: scripts/smoke-consumer.mjs}`,
+  #   so a jq that takes `filename` alone calls `git mv
+  #   scripts/smoke-consumer.mjs docs/x.mjs` docs-only while the code that
+  #   moved is what the `package` script it came from still runs.
+  # - `RELEASING.md` is not prose. packages/server/test/release-guards.test.ts
+  #   reads it (REL-04) under `pnpm -r test`, which build-test runs, so a pull
+  #   request touching only that file has to run every gating job.
+  #
+  # The file list is read from the API when this job runs, not from the commit
+  # the run was queued for, so the head is read too and must still be this
+  # run's `pull_request.head.sha`: a push in between would otherwise hand the
+  # fast path a list describing a tree nobody reviewed.
+  #
+  # Seven ways it fails closed, because a fast path that guesses is worse than
+  # no fast path: a path outside the set, a path that only arrived by a rename
+  # from outside it, a root Markdown file the tests read, a head this job could
+  # not read, a head that is no longer the one the run was queued for, a list
+  # that could not be read or came back empty, and a list at the API's
+  # 3000-file cap where it may be truncated. `false` is written to the output
+  # FIRST and overwritten only by a list that passes, so every error path costs
+  # runner-minutes rather than skipping a check.
   #
   # The job itself never fails. A red `changes` would fail ci-ok through the
   # gating rule below, which would turn an API hiccup into a blocked pull
@@ -54,11 +74,28 @@ jobs:
           # GitHub's own cap on this endpoint. At it, the list may be
           # truncated, so the answer is not provable and the run is full.
           MAX_FILES: "3000"
+          # The commit this run was queued for. The file list below is read at
+          # query time, so it answers for whatever the pull request stands at
+          # then; the two are compared before the list is believed.
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -u
           echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          api_head=$(gh api -H "Accept: application/vnd.github+json" \
+            "repos/$REPO/pulls/$NUMBER" --jq .head.sha) || {
+            echo "could not read this pull request's head commit; running every gating job"
+            exit 0
+          }
+          if [ "$api_head" != "$HEAD_SHA" ]; then
+            echo "this pull request now stands at $api_head, not at this run's $HEAD_SHA;" \
+              "running every gating job"
+            exit 0
+          fi
+          # `filename` and `previous_filename`: a rename is one entry naming both
+          # paths, and the old one is where the code came from (#126).
           files=$(gh api --paginate -H "Accept: application/vnd.github+json" \
-            "repos/$REPO/pulls/$NUMBER/files?per_page=100" --jq '.[].filename') || {
+            "repos/$REPO/pulls/$NUMBER/files?per_page=100" \
+            --jq '.[] | .filename, (.previous_filename // empty)') || {
             echo "could not read this pull request's changed files; running every gating job"
             exit 0
           }
@@ -74,6 +111,14 @@ jobs:
           outside=$(printf '%s\n' "$files" | grep -Ev '^(docs/|[^/]+\.md$)' || true)
           if [ -n "$outside" ]; then
             echo "not docs-only: $(printf '%s\n' "$outside" | head -5 | tr '\n' ' ')"
+            exit 0
+          fi
+          # The one root Markdown file that is read back by a test, so it is
+          # code for this purpose (#126): REL-04 in release-guards.test.ts.
+          read_by_tests=$(printf '%s\n' "$files" | grep -Ex 'RELEASING\.md' || true)
+          if [ -n "$read_by_tests" ]; then
+            echo "not docs-only: RELEASING.md is read by" \
+              "packages/server/test/release-guards.test.ts (REL-04)"
             exit 0
           fi
           echo "docs_only=true" >> "$GITHUB_OUTPUT"

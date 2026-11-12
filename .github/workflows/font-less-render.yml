@@ -10,9 +10,11 @@ name: font-less render (non-required)
 # be reached by a needs: edge, so it cannot gate a publishing job. pull_request
 # only, no secrets: it runs a binary and a font downloaded from the network.
 #
-# #126: no run for a docs-only pull request, by the same rule ci.yml's `changes`
-# job computes; `paths-ignore` skips only when every changed path matches, and
-# `*.md` does not cross a slash, so packages/*/README.md still runs this.
+# #126: no run for a docs-only pull request. `paths-ignore` skips only when
+# every changed path matches, and `*.md` does not cross a slash, so
+# packages/*/README.md still runs this. As in e2e.yml this copy is wider than
+# ci.yml's `changes` job by a move into docs/ and a RELEASING.md-only change,
+# and safe for the same reason: this job reads neither.
 on:
   pull_request:
     paths-ignore:
