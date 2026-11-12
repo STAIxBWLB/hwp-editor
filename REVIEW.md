@@ -26,9 +26,10 @@ Run these passes and tag every finding with its pass:
   list `argvSeparatorFields`, and require structural separators in joined fields to be refused with a
   cause and next step before CLI serialization; tail values preserved by hwp-cli's `split_once`
   parsing remain allowed. The guard list is a `switch` that is exhaustive by typecheck, so a new op
-  kind has to say what its value joins on: a `default` would let it join on a structural separator
-  unchecked, and the engine would then split the value somewhere else. A value the argv form decides
-  by shape rather than by a separator is refused the same way (`delete-table`'s numeric anchor).
+  kind has to say what its value joins on: a `default` that returns no fields would let it join on a
+  structural separator unchecked, and the engine would then split the value somewhere else. A value
+  the argv form decides by shape rather than by a separator is refused the same way (`delete-table`'s
+  numeric anchor).
 - **Failure wrappers keep the engine cause.** When rewriting engine `failed` errors,
   retain the original cause or name only the specific command known to have failed
   (`packages/server/src/cli-engine.ts`, `rethrowUploadedImageFailure`); a mixed edit

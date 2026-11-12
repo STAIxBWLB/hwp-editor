@@ -400,11 +400,23 @@ function sealPathHasSizeSuffix(path: string): boolean {
  * U+0009..U+000D, U+0020, U+0085, U+00A0, U+1680, U+2000..U+200A, U+2028,
  * U+2029, U+202F, U+205F, U+3000.
  */
-const RUST_WHITESPACE =
-  /^[\t\n\u000b\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|[\t\n\u000b\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$/g;
+const RUST_WHITESPACE = new Set<number>([
+  0x0009, 0x000a, 0x000b, 0x000c, 0x000d, 0x0020, 0x0085, 0x00a0, 0x1680,
+  0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008,
+  0x2009, 0x200a, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000,
+]);
 
 function rustTrim(value: string): string {
-  return value.replace(RUST_WHITESPACE, "");
+  // Each end is scanned once. A regex alternation over the same set instead
+  // backtracks across a long interior whitespace run, which a hostile or
+  // generated anchor can carry (#103 review t47-a1). Every code point in the
+  // set is in the BMP, so `charCodeAt` reads one scalar per step and a
+  // surrogate half at either end is never stripped.
+  let start = 0;
+  let end = value.length;
+  while (start < end && RUST_WHITESPACE.has(value.charCodeAt(start))) start += 1;
+  while (end > start && RUST_WHITESPACE.has(value.charCodeAt(end - 1))) end -= 1;
+  return value.slice(start, end);
 }
 
 function isRustFloat(value: string): boolean {

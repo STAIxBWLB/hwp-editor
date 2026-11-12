@@ -370,6 +370,21 @@ describe("the argv delete-table value means what it says (#58 item 13e)", () => 
       .toEqual([{ kind: "delete-table", target: "\uFEFF3" }]);
   });
 
+  it("trims a long interior whitespace run in linear time", () => {
+    // The trim must not backtrack. The regex alternation this replaced took
+    // 0.7 s at 40k interior spaces and about 4 s at 100k, so an anchor a
+    // generator or a hostile document supplies could stall the edit path; a
+    // scan from each end takes microseconds at this size, so the bound leaves
+    // orders of magnitude of room and only a regression toward backtracking
+    // fails it (#103 review t47-a1).
+    const target = `  anchor${" ".repeat(100_000)}tail  `;
+    const started = performance.now();
+    const argv = opsToArgv([{ kind: "delete-table", target }]);
+    const elapsed = performance.now() - started;
+    expect(argv).toEqual(["--delete-table", target]);
+    expect(elapsed).toBeLessThan(1_000);
+  });
+
   it("refuses a number the engine would read as an anchor name", () => {
     for (const target of [-1, 3.5, Number.NaN]) {
       const failure = refusal(target);
