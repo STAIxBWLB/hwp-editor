@@ -3,7 +3,6 @@ import type { JSX, KeyboardEvent, MouseEvent } from "react";
 import type { CatEnvelope, EditOp, PageImage, Segment } from "@hwp-editor/core";
 import { base64, segmentAtRef, segmentText, selectionAction } from "@hwp-editor/core";
 import { segmentOnPage, bandsOnPage } from "./geometry.js";
-import { sanitizeSvg } from "./sanitize.js";
 import { plainSegmentText } from "./text.js";
 import { useHwpEditorContext } from "./context.js";
 
@@ -142,16 +141,11 @@ function PageView(props: {
   // through the context rather than threading a label prop down.
   const { t } = useHwpEditorContext();
   const label = t("page.label", { page: page.page });
-  const svgHtml = useMemo(
-    () =>
-      page.format === "svg"
-        ? sanitizeSvg(new TextDecoder().decode(page.data))
-        : null,
-    [page],
-  );
+  // Every format is drawn through <img>, SVG included: an SVG document used
+  // as an image runs no script and loads no external resource, so the page's
+  // bytes never become markup in the editor's DOM.
   const imgSrc = useMemo(() => {
-    if (page.format === "svg") return null;
-    const mime = page.format === "jpeg" ? "image/jpeg" : `image/${page.format}`;
+    const mime = page.format === "jpeg" ? "image/jpeg" : page.format === "svg" ? "image/svg+xml" : `image/${page.format}`;
     return `data:${mime};base64,${base64.encode(page.data)}`;
   }, [page]);
 
@@ -170,21 +164,13 @@ function PageView(props: {
         }
       }}
     >
-      {svgHtml !== null ? (
-        <div
-          className="hwped-page-svg"
-          // Sanitized by sanitizeSvg: script/foreignObject/event handlers removed.
-          dangerouslySetInnerHTML={{ __html: svgHtml }}
-        />
-      ) : (
-        <img
-          className="hwped-page-img"
-          src={imgSrc ?? ""}
-          alt={label}
-          width={page.width}
-          height={page.height}
-        />
-      )}
+      <img
+        className="hwped-page-img"
+        src={imgSrc}
+        alt={label}
+        width={page.width}
+        height={page.height}
+      />
       {bands.map((band) => (
         <div
           key={band.key}
