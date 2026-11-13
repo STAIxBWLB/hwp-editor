@@ -40,9 +40,8 @@ node scripts/smoke-consumer.mjs
 ```
 
 `EXPECTED_VERSION` is optional and skipped when absent, so passing it here runs the same
-tag-versus-manifests comparison the workflow will run. The `verify` job re-runs both scripts
-against the tagged commit anyway; running them now turns a round trip through Actions into a
-few seconds of local time.
+tag-versus-manifests comparison the workflow will run. The `verify` job repeats that
+comparison on the tag; the consumer tarball smoke test is proved by CI.
 
 ### 2. Tag and push
 
@@ -69,11 +68,35 @@ version number, and is recovered by re-running it.
 
 ### 3. Watch the `verify` job
 
-It re-runs `pnpm -r build`, `pnpm -r typecheck` and `pnpm -r test` on the tagged commit in a
-single cell (Node 22 with the workspace's own React 19), then runs
-`scripts/check-publishable.mjs` with `EXPECTED_VERSION` set to the tag name, then
-`scripts/smoke-consumer.mjs`. A tag whose version disagrees with any of the three manifests
-fails here, before anything is uploaded.
+It reads existing CI evidence using the job's read-only GitHub token and accepts either:
+
+- A successful `workflow_dispatch` CI run on the exact tag commit.
+- A merged PR into `main` whose `merge_commit_sha` is the tag commit, whose head tree equals
+  the tag tree, and whose head has a successful `pull_request` CI run.
+
+Both proofs require successful `ci-ok`, `package` and all four `build-test` matrix checks
+(Node 22/24, React 18/19) in the same check suite. A docs-only success with skipped jobs
+does not qualify. The verifier checks the run's reported repository, workflow path
+(`.github/workflows/ci.yml`), event and head SHA, and each required check's reported
+`github-actions` app, SHA and success. A squash merge normally uses the second proof.
+
+Missing, pending or failed proof stops the release. An HTTP error, timeout or malformed API
+response also stops it: re-run `verify`, and if the API remains unreadable, check the job's
+`GITHUB_TOKEN` read permissions (`contents`, `actions`, `checks`, `pull-requests`).
+
+If neither proof is available, run CI explicitly on the existing tag:
+
+```sh
+gh workflow run ci.yml --ref "v$VERSION"
+```
+
+Wait for its `ci-ok` to succeed, then re-run the failed release jobs. Dispatches always
+run the full CI graph; they do not use the docs-only skip. Do not move or recreate the tag.
+
+The job then runs `scripts/check-publishable.mjs` with `EXPECTED_VERSION` set to the tag
+name. A version that disagrees with any manifest fails before anything is uploaded.
+It does not repeat the full build, typecheck, test suite or consumer smoke test. Packaging
+builds still run through `prepack` where the manifest check and publishing require artifacts.
 
 ### 4. Approve the deployment
 

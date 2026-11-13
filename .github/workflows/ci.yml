@@ -1,8 +1,10 @@
 name: ci
 
-# pull_request only, never the _target variant: a fork's branch must never run
-# with this repository's secrets in scope. Phase 5 needs no credential at all.
-on: [pull_request]
+# PRs and explicit recovery dispatches only, never pull_request_target or push.
+# A dispatch on a release tag supplies exact-SHA CI when no merged-PR tree proof exists.
+on:
+  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -69,6 +71,7 @@ jobs:
         id: classify
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
           REPO: ${{ github.repository }}
           NUMBER: ${{ github.event.pull_request.number }}
           # GitHub's own cap on this endpoint. At it, the list may be
@@ -81,6 +84,10 @@ jobs:
         run: |
           set -u
           echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          if [ "${EVENT_NAME:-}" = "workflow_dispatch" ]; then
+            echo "manual CI dispatch: running every gating job"
+            exit 0
+          fi
           api_head=$(gh api -H "Accept: application/vnd.github+json" \
             "repos/$REPO/pulls/$NUMBER" --jq .head.sha) || {
             echo "could not read this pull request's head commit; running every gating job"

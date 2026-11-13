@@ -1,12 +1,10 @@
 name: release
 
-# 1. TRIGGER. Tag-triggered, unlike ci.yml and e2e.yml, which are pull_request
-# only. A tag arrives having passed nothing, so the verify job below re-runs the
-# whole verification for this exact commit before anything irreversible happens
-# (D-05, D-06). `on: release: published` was rejected because pushing a tag
-# without also creating a Release is then a silent no-op, and workflow_dispatch
-# with a typed version was rejected because it loosens the tie between what git
-# records and what the registry receives.
+# 1. TRIGGER. The verify job requires successful CI for the tagged commit,
+# or a merged PR into main whose merge commit is the tag SHA, whose head tree
+# matches the tag tree, and whose head passed this repository's CI workflow.
+# scripts/release-ci.mjs checks both proofs through the read-only GitHub API.
+# When neither exists, run ci.yml manually on the tag, then re-run failed release jobs.
 #
 # The filter is a glob, not a semver matcher, so `v*.*.*` also matches a
 # prerelease tag such as v1.0.0-rc.1. That is deliberate: the stop for a
@@ -93,8 +91,8 @@ name: release
 # conflicting provenance point 6 exists to prevent.
 #
 # 8. THIS WORKFLOW PROVISIONS NO hwp BINARY, and must never gain one. Nothing on
-# the release path needs it: the real-binary suites in packages/server self-skip
-# through describeBin, and neither release script touches it. Adding a download
+# the release path needs it: verification reads existing CI evidence, and
+# neither release script touches it. Adding a download
 # here would create exactly the network dependency on another repository's
 # release schedule that ci.yml's D-04 comment exists to avoid.
 #
@@ -198,6 +196,11 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       # pnpm before setup-node: setup-node's pnpm cache shells out to
@@ -207,17 +210,12 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - name: Require successful CI for the tag or its merged PR tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release-ci.mjs
 
-      # D-06's single cell: Node 22 with the workspace's own React 19, not
-      # ci.yml's four-cell matrix. The merge already bought the matrix result
-      # for this commit; what a tag has never bought is any result at all.
-      #
-      # Three separate steps, as in ci.yml, so a step that runs nothing stays
-      # visible in the log instead of absorbed into one green line.
-      - run: pnpm -r build
-      - run: pnpm -r typecheck
-      - run: pnpm -r test
+      - run: pnpm install --frozen-lockfile
 
       # D-08. EXPECTED_VERSION is attached to THIS STEP, not to the job. The
       # script skips the comparison silently when the variable is absent or
@@ -230,9 +228,6 @@ jobs:
         env:
           EXPECTED_VERSION: ${{ github.ref_name }}
         run: node scripts/check-publishable.mjs
-
-      - name: Consumer tarball smoke test
-        run: node scripts/smoke-consumer.mjs
 
   publish:
     needs: verify
