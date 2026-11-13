@@ -249,11 +249,11 @@ test("#71: Ctrl excludes one paragraph's matches from a run-level selection, the
   await page.getByRole("button",{name:en["segment.formatSubmit"],exact:true}).click();
   const applied = page.waitForResponse(readResponse);
   await page.getByRole("button",{name:en["toolbar.applyWithCount"]({count:kept.length}),exact:true}).click();
+  const after = await (await applied).json() as CatEnvelope;
   expect(bodies).toHaveLength(1);
   const ops = editOps(bodies[0]!);
   expect(new Set(ops.map(op=>"address" in op ? op.address.id : undefined))).toEqual(new Set(kept.map(run=>run.id)));
   expect(ops.every(op=>op.kind==="set-format" && op.props.bold==="on")).toBe(true);
-  const after = await (await applied).json() as CatEnvelope;
   // Only the remaining runs changed: paragraph 3 keeps its run unbolded.
   const runsIn = (para:number)=>after.segments.filter(segment=>segment.kind==="run" && segment.para===para);
   expect(runsIn(third.para).every(run=>!run.directChar?.bold)).toBe(true);

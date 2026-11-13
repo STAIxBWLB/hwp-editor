@@ -333,11 +333,49 @@ describe("selection helpers", () => {
       expect(state.selection).toBeNull();
     });
 
-    it("drops a text range's run level and acts on paragraphs (rule 10)", () => {
+    it.each(["toggle", "extend"] as const)("starts a fresh paragraph selection of the clicked unit when a range is set (rule 10, %s)", (mode) => {
       const ranged = { ...similar(), range: { paragraph: { section: 0, para: 2, id: "P2" }, start: 14, end: 15 } };
-      const action = selectionAction(runs, ranged, seg("P2"), "toggle");
-      expect(action?.type).toBe("selectMany");
-      expect((action as { selections: { id?: string }[] }).selections.every((ref) => PARAS.has(ref.id!))).toBe(true);
+      expect(selectionAction(runs, ranged, seg("P2"), mode)).toEqual({
+        type: "selectMany",
+        selections: [{ section: 0, para: 2, id: "P2" }],
+        primary: { section: 0, para: 2, id: "P2" },
+        anchor: { section: 0, para: 2, id: "P2" },
+      });
+      // A cell gives exactly its own paragraphs, anchored at the cell.
+      expect(selectionAction(runs, ranged, seg("CELL"), mode)).toEqual({
+        type: "selectMany",
+        selections: [{ section: 0, para: 1, id: "CP" }],
+        primary: { section: 0, para: 1, id: "CP" },
+        anchor: { section: 0, para: 1, id: "CELL" },
+      });
+    });
+
+    it("keeps the anchor through a toggle that removes its run, so Shift still extends from it (rule 7)", () => {
+      const start = similar();
+      expect(start.selectionAnchor!.id).toBe("r01");
+      const toggled = apply(start, "P0", "toggle");
+      expect(ids(toggled)).toEqual(["r11", "cr", "r20"]);
+      expect(toggled.selectionAnchor!.id).toBe("r01");
+      // Shift to P2 measures from r01: everything from r01 through P2's run.
+      const extended = apply(toggled, "P2", "extend");
+      expect(ids(extended)).toEqual(["r01", "r10", "r11", "cr", "r20"]);
+      expect(extended.selectionAnchor!.id).toBe("r01");
+    });
+
+    it("refuses a unit whose runs cannot name themselves as unaddressable, not noRuns (t82-5)", () => {
+      // Q2 publishes a run, but the run is nested and carries no id, so its ref
+      // would name its host: it is not a run a selection can hold.
+      const unnamed: CatEnvelope = { markdown: "xyxy", segments: [
+        { id: "Q1", indices: [1], start: 0, end: 2, kind: "para", section: 0, para: 1, directChar: plain },
+        { id: "q0", indices: [1, 0], start: 0, end: 2, kind: "run", section: 0, para: 1, directChar: bold },
+        { id: "Q2", indices: [2], start: 2, end: 4, kind: "para", section: 0, para: 2, directChar: plain },
+        { indices: [2, 0], start: 2, end: 4, kind: "run", section: 0, para: 2, directChar: bold },
+      ] };
+      const state = reducer(initialState, { type: "selectMany", selections: [{ section: 0, para: 1, id: "q0" }], primary: { section: 0, para: 1, id: "q0" }, anchor: { section: 0, para: 1, id: "q0" } });
+      const q2 = unnamed.segments.find((segment) => segment.id === "Q2")!;
+      for (const mode of ["toggle", "extend"] as const) {
+        expect(selectionAction(unnamed, state, q2, mode)).toEqual({ type: "refuseSelection", refusal: "unaddressable" });
+      }
     });
   });
 

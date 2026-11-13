@@ -456,7 +456,10 @@ export function SegmentInspector(): JSX.Element {
       type: "selectMany",
       selections: refs,
       primary,
-      ...(state.selectionAnchor === null || state.selectionAnchor === undefined
+      // A matching-character-format selection is a new run selection, so its
+      // anchor is its own primary (#71 rule 7), never a run left over from an
+      // earlier one. The paragraph level keeps an existing anchor as before.
+      ...(level === "char" || state.selectionAnchor === null || state.selectionAnchor === undefined
         ? { anchor: primary }
         : { anchor: state.selectionAnchor }),
     });
