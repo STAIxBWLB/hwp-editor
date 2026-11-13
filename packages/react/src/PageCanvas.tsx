@@ -7,7 +7,7 @@ import { plainSegmentText } from "./text.js";
 import { useHwpEditorContext } from "./context.js";
 
 /**
- * Multi-page scroll of rendered pages. SVG pages render inline (sanitized);
+ * Multi-page scroll of rendered pages. Every page renders as an image;
  * raster formats fall back to <img>. Clicks resolve to the nearest segment
  * (using layout rows, with a flow-model fallback for older hosts), and selected/pending
  * segments are highlighted with overlay bands.
@@ -30,7 +30,13 @@ export function PageCanvas(): JSX.Element {
     }
   }
 
-  if (pages.length === 0) {
+  // The pages come from the store and the envelope from React state, and a
+  // load sets both: the store's dispatch can render before the envelope's
+  // update commits (React 18 flushes a useSyncExternalStore change first).
+  // A page shown in that window is a button whose click selectAt drops,
+  // because there is no envelope to resolve it against. So the pages are not
+  // shown, or announced as clickable, until the envelope they map onto is.
+  if (pages.length === 0 || envelope === null) {
     return (
       <div className="hwped-canvas" role="main" aria-label={t("canvas.aria")}>
         <div className="hwped-empty">{t("canvas.emptyPages")}</div>
