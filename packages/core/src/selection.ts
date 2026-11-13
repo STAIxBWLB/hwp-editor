@@ -553,7 +553,9 @@ function runSelectionAction(
     : list.find((run) => segmentKey(run) === primaryKey) ?? list[0]!;
   // Rule 7: toggles keep the anchor as it was, even when its run was removed,
   // so a later extend still measures from the run that started the selection.
-  const anchor = mode === "toggle" && state.selectionAnchor != null
+  // Rule 1: only a run anchor is kept; any other falls back as extend does,
+  // so a host that dispatched a mixed selection is not mixed further.
+  const anchor = mode === "toggle" && anchorSegment?.kind === "run" && state.selectionAnchor != null
     ? state.selectionAnchor
     : segmentRef(anchorRun ?? primary);
   return { type: "selectMany", selections: list.map(segmentRef), primary: segmentRef(primary), anchor };

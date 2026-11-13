@@ -362,6 +362,20 @@ describe("selection helpers", () => {
       expect(extended.selectionAnchor!.id).toBe("r01");
     });
 
+    it("does not keep a non-run anchor through a toggle (t82-10)", () => {
+      // A host can dispatch a run selection anchored on a paragraph; the toggle
+      // falls back to a run anchor rather than keeping the mixed one.
+      const mixed = reducer(initialState, {
+        type: "selectMany",
+        selections: [{ section: 0, para: 1, id: "r11" }, { section: 0, para: 2, id: "r20" }],
+        primary: { section: 0, para: 1, id: "r11" },
+        anchor: { section: 0, para: 1, id: "P1" },
+      });
+      const toggled = apply(mixed, "P0", "toggle");
+      expect(RUNS.has(toggled.selectionAnchor!.id!)).toBe(true);
+      expect([...ids(toggled), toggled.selection!.id!, toggled.selectionAnchor!.id!].every((id) => RUNS.has(id))).toBe(true);
+    });
+
     it("refuses a unit whose runs cannot name themselves as unaddressable, not noRuns (t82-5)", () => {
       // Q2 publishes a run, but the run is nested and carries no id, so its ref
       // would name its host: it is not a run a selection can hold.
