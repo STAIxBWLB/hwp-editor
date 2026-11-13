@@ -21,3 +21,4 @@ apps/playground/CLAUDE.md
 .agenthub/routing.local.toml
 .agenthub/checkpoint*.md
 .agenthub/*.bak-*
+.jcode/mcp.json
