@@ -16,7 +16,7 @@ apps/playground/next-env.d.ts
 apps/playground/AGENTS.md
 apps/playground/CLAUDE.md
 # agent-hub machine-local files (`ahub init` list, plus session checkpoints and backups).
-# .agenthub/config.json is the one tracked, shared file.
+# .agenthub/config.json, routing.toml and sdlc.toml are the tracked, shared files.
 .agenthub/state/
 .agenthub/config.local.json
 .agenthub/routing.local.toml
