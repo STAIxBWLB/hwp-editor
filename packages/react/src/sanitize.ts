@@ -1,9 +1,13 @@
 /**
- * Minimal SVG sanitizer for inline rendering of `hwp render --format svg`
- * output. The CLI output is trusted, but hosts embedding arbitrary documents
- * get script/foreignObject/event-handler removal for free.
+ * Minimal SVG cleanup that removes script, foreignObject and event-handler
+ * attributes. Returns "" when the payload does not parse as XML.
  *
- * Returns "" when the payload does not parse as XML.
+ * @deprecated Not a security boundary: a blocklist cannot make SVG safe to
+ * insert into HTML, and its output must not be inserted into the DOM as
+ * markup (innerHTML, dangerouslySetInnerHTML). Render an SVG page as an image
+ * instead, e.g. `<img src="data:image/svg+xml;base64,...">`, which is what the
+ * editor's page view does. Kept exported for API compatibility only; it is
+ * unused by this package and will be removed in 2.0.
  */
 export function sanitizeSvg(svgText: string): string {
   const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");

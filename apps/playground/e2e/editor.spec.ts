@@ -43,7 +43,9 @@ test("fixture → select segment → replace → apply → re-render + valid", a
     exact: true,
   });
   await expect(badge).toHaveText(en["validation.valid"]);
-  const svgBefore = await page.locator(".hwped-page-svg").first().innerHTML();
+  // The page is an <img> whose src carries the rendered SVG, so a re-render
+  // shows up as a different src.
+  const pageSrcBefore = await page.locator(".hwped-page-img").first().getAttribute("src");
 
   // Click near the top of the page: selects the heading paragraph.
   const box = await pageView.boundingBox();
@@ -80,12 +82,12 @@ test("fixture → select segment → replace → apply → re-render + valid", a
     { timeout: 30_000 },
   );
 
-  // Re-rendered: the page SVG changed, validation is still clean, no alerts.
+  // Re-rendered: the page image changed, validation is still clean, no alerts.
   await expect
-    .poll(async () => page.locator(".hwped-page-svg").first().innerHTML(), {
+    .poll(async () => page.locator(".hwped-page-img").first().getAttribute("src"), {
       timeout: 30_000,
     })
-    .not.toBe(svgBefore);
+    .not.toBe(pageSrcBefore);
   await expect(badge).toHaveText(en["validation.valid"]);
   // No error alerts inside the editor (Next's route-announcer is also an alert).
   await expect(page.locator(".hwped").getByRole("alert")).toHaveCount(0);
