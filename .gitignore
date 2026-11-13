@@ -10,9 +10,9 @@ dist/
 # `.next/` type paths, so a tracked copy dirtied the tree after every run.
 apps/playground/next-env.d.ts
 
-# Written by `next dev` (next/dist/server/lib/generate-agent-files.js) as generated
-# copies; they stay untracked. The root AGENTS.md is the tracked agent instruction file
-# (its agent-hub block is managed by `ahub init`); .claude/ above stays local.
+# Written by `next dev` (next/dist/server/lib/generate-agent-files.js): its own Next.js
+# agent-rules files; they stay untracked. The root AGENTS.md is the tracked agent
+# instruction file (its agent-hub blocks are managed by `ahub init`); .claude/ above stays local.
 apps/playground/AGENTS.md
 apps/playground/CLAUDE.md
 # agent-hub machine-local files (`ahub init` list, plus session checkpoints and backups).
