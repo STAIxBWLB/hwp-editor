@@ -119,42 +119,23 @@ name: release
 # publish it governs. Committed, it is read by shellcheck and driven branch by
 # branch against a stub npm by packages/server/test/release-helpers.test.ts.
 #
-# 12. ONE STORED CREDENTIAL, AND ONLY AFTER EVERY PUBLISH (#38, #45 item 5).
+# 12. NO STORED CREDENTIAL, THE DIST-TAG MOVE INCLUDED (#38, #45 item 5).
 # Publishing authenticates through the ephemeral OIDC token minted per run and
-# nothing else. Moving `next` to a new stable version (RELEASING.md step 7) has
-# two paths, and move_next_tag tries them in this order:
+# nothing else, and so does moving `next` to a new stable version (RELEASING.md
+# step 7). npm 11.21.0+ signs `npm dist-tag` with the same token a publish uses
+# (npm docs, "Managing dist-tags with trusted publishing"), provided the
+# package's trusted-publisher configuration has `Allow npm dist-tag` enabled.
+# That permission is off by default and is NOT implied by the publish
+# permission; it is on for all three packages since 2026-11-13, and the v1.4.0
+# run logged `[ok] ... (OIDC)` for each. The npm token that carried this step
+# before (#38) is gone, and REL-02's guard again allows no `secrets.` reference
+# in any workflow.
 #
-#   OIDC first, with no credential configured anywhere. npm 11.21.0+ signs
-#   `npm dist-tag` with the same ephemeral token a publish uses (npm docs,
-#   "Managing dist-tags with trusted publishing", read 2026-11-11), provided the
-#   package's trusted-publisher configuration has `Allow npm dist-tag` enabled.
-#   That permission is off by default and is NOT implied by the publish
-#   permission, so npm refuses with E403 until a maintainer turns it on for all
-#   three packages.
-#
-#   NPM_DIST_TAG_TOKEN second, only on that refusal: an npm granular token
-#   limited to the three packages, kept as an environment secret of npm-publish,
-#   so it exists for a run only after the approval. It is referenced in exactly
-#   one step, the last one in the publish job, and handed to npm through a
-#   throwaway userconfig by move_next_tag - never NODE_AUTH_TOKEN or the
-#   runner's .npmrc: a credential configured there is what npm would use
-#   wherever the exchange is not available (an older CLI, or a job without
-#   `id-token: write`), and 11.21.x prefers the exchanged token where it is, so
-#   either way the secret stays out of reach of the publishes. REL-02's guard
-#   allows this one reference in this one place and nothing else.
-#
-#   That fallback runs with the OIDC inputs removed from its environment (`env
-#   -u` on the two request variables, NPM_ID_TOKEN, and the token secret
-#   itself). The userconfig alone would not decide it: `npm dist-tag add` runs
-#   the exchange once per add, before the tag fetch and before the PUT,
-#   whenever those inputs are set, and the token it installs outranks
-#   --userconfig, so the write would be refused exactly as the first attempt
-#   was and `next` would silently not move behind continue-on-error.
-#
-#   The success line names the path that moved the tag: `(OIDC)`, `(token)`, or
-#   `already at` when npm wrote nothing because `next` already named the
-#   version. Only the first is evidence that the per-package permission works,
-#   and it is what RELEASING.md step 7 keys the token's deletion on.
+#   The step runs after the last publish and is continue-on-error, so a refusal
+#   cannot fail the job and skip release-notes. move_next_tag tries each package
+#   on its own, prints npm's output and a warning for any it could not move,
+#   and returns npm's status. Its success line is `(OIDC)` for a write, or
+#   `already at` when npm wrote nothing because `next` already named the version.
 
 on:
   push:
@@ -295,14 +276,10 @@ jobs:
       # Header point 12. Last on purpose, and continue-on-error: the packages are
       # published by now, and failing this job would skip release-notes. A
       # failure shows as an annotated step; RELEASING.md step 7 finishes by hand.
-      # move_next_tag tries the job's OIDC token first - id-token: write is on
-      # the job for the publish - and only reaches the secret below when npm
-      # refuses that, which is the state while `Allow npm dist-tag` is off for
-      # these packages.
+      # move_next_tag authenticates with the job's OIDC token (id-token: write is
+      # on the job for the publish) and needs no other credential.
       - name: Move the next dist-tag (stable releases)
         continue-on-error: true
-        env:
-          NPM_DIST_TAG_TOKEN: ${{ secrets.NPM_DIST_TAG_TOKEN }}
         run: |
           . ./scripts/release-helpers.sh
           move_next_tag "$VERSION"

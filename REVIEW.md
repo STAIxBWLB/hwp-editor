@@ -77,7 +77,7 @@ Run these passes and tag every finding with its pass:
   control without strings in both tables is a finding.
 - **No stored credential on the release path.** REL-02 (`packages/server/test/repo-guards.test.ts`,
   `describe("REL-02: the release path carries no stored credential")`, via `storedCredentialViolations`
-  and `registryInputViolations`) rejects any `secrets.` reference except the one documented dist-tag step.
+  and `registryInputViolations`) rejects any `secrets.` reference in any workflow.
 - **e2e never gates a publishing job.** PKG-10 (`packages/server/test/repo-guards.test.ts`,
   `describe("PKG-10: the e2e job never gates a publishing job")`, via `e2eGatingViolations`) keeps
   the e2e job in its own workflow.
