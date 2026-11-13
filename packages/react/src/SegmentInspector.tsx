@@ -112,6 +112,7 @@ export function SegmentInspector(): JSX.Element {
       : reason === "cell" ? t("segment.clickRefusedCell")
       : reason === "table" ? t("segment.clickRefusedTable")
       : reason === "container" ? t("segment.clickRefusedContainer")
+      : reason === "noRuns" ? t("segment.clickRefusedNoRuns")
       : t("segment.clickRefusedUnaddressable");
   const refusalReason = refusalText(targets?.refusal);
   const targetLabel = segment === undefined ? "" : segment.kind === "cell"
@@ -588,9 +589,9 @@ export function SegmentInspector(): JSX.Element {
             ? t("segment.selectedRunCount", { count: explicitSegments.length })
             : t("segment.selectedCount", { count: selected.length })
         }</p>
-        {// A run-level selection formats runs, and a modifier click from it
-         // starts a paragraph selection over instead of joining the runs.
-        hasRunSelection && <p className="hwped-hint" role="status">{t("segment.runSelectionTerminal")}</p>}
+        {// A run-level selection formats runs, and a modifier click keeps it at
+         // run level: Ctrl toggles a unit's runs, Shift extends by run (#71).
+        hasRunSelection && <p className="hwped-hint" role="status">{t("segment.runSelectionGestures")}</p>}
         {// A modifier click that had no paragraph to add left the selection
          // alone, and reports the click here whatever the selection's own
          // reason is: the reader's action is what was refused, and a click

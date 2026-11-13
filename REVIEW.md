@@ -55,8 +55,9 @@ Run these passes and tag every finding with its pass:
 - **Check that each selection action maps to exactly the selected content.** A canvas or
   paragraph-list click goes through `selectionAction` and `resolveSelection`
   (`packages/core/src/selection.ts`): a multi-selection holds paragraphs, a cell enters as all of
-  its own paragraphs, a run-level selection is formattable but a modifier click there starts a new
-  paragraph selection, and a table, image, field or bookmark adds nothing and reports its reason
+  its own paragraphs, a run-level selection stays at run level (Ctrl toggles the runs of the unit
+  it hits, Shift extends in run order, and a selection never mixes runs and paragraphs; #71), and
+  a table, image, field, bookmark or a paragraph with no runs adds nothing and reports its reason
   instead. A resolver that walks up to the parent paragraph hands the host's text or table to a
   delete, and a cell narrowed to its first paragraph edits half a cell silently. The other path is a
   set the editor derives itself rather than a click on a unit: that one dispatches a single
