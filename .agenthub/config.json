@@ -38,5 +38,5 @@
   "recovery": { "auto_resume_after_crash": false },
   "capabilities": {},
   "limits": { "sender_per_min": 12, "pair_per_min": 6, "important_per_hour": 6, "repeat_window_s": 120 },
-  "release": { "version": "none" }
+  "release": { "version": "none", "docs": "none" }
 }
