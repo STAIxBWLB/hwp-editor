@@ -14,3 +14,10 @@ apps/playground/next-env.d.ts
 # This repo keeps agent instruction files untracked (see .claude/ above).
 apps/playground/AGENTS.md
 apps/playground/CLAUDE.md
+# agent-hub machine-local files (`ahub init` list, plus session checkpoints and backups).
+# .agenthub/config.json is the one tracked, shared file.
+.agenthub/state/
+.agenthub/config.local.json
+.agenthub/routing.local.toml
+.agenthub/checkpoint*.md
+.agenthub/*.bak-*
