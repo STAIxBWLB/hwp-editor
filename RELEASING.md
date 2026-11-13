@@ -29,12 +29,14 @@ VERSION=1.0.0
 
 ### 1. Preflight, on the default branch
 
-Check out the commit to be released, confirm the working tree matches it, and confirm all
-three package manifests read `$VERSION`:
+Check out the commit to be released, confirm the working tree matches it, and confirm the
+root manifest and all three package manifests read `$VERSION`. The root manifest is private
+and publishes nothing, but `ahub sdlc authorize-release` reads its committed `version`, so it
+stays in lockstep with the three packages:
 
 ```sh
 git status --short                      # empty
-node -p "['core','react','server'].map(p => require('./packages/'+p+'/package.json').version)"
+node -p "['.','packages/core','packages/react','packages/server'].map(p => require('./'+p+'/package.json').version)"
 EXPECTED_VERSION="v$VERSION" node scripts/check-publishable.mjs
 node scripts/smoke-consumer.mjs
 ```

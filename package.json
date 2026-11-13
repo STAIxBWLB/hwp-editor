@@ -1,7 +1,7 @@
 {
   "name": "hwp-editor",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.3.0",
   "description": "Embeddable GUI editor for Korean HWP/HWPX documents, delegating all document work to the hwp-cli binary.",
   "type": "module",
   "engines": {
