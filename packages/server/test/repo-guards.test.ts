@@ -1821,7 +1821,7 @@ describe("Release CI proof and manual recovery (#45)", () => {
     const body = ci.jobs.get("changes")!.join("\n");
     const script = body.split("        run: |\n")[1]!.replace(/^ {10}/gm, "");
     const output = join(mkdtempSync(join(tmpdir(), "hwped-dispatch-")), "output");
-    const result = spawnSync("/bin/bash", ["-e", "-c", script], {
+    const result = spawnSync("/bin/bash", ["--noprofile", "--norc", "-e", "-c", script], {
       env: { EVENT_NAME: "workflow_dispatch", GITHUB_OUTPUT: output, PATH: "/nonexistent" },
       encoding: "utf8",
     });

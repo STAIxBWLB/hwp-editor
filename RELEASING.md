@@ -70,14 +70,19 @@ version number, and is recovered by re-running it.
 
 It reads existing CI evidence using the job's read-only GitHub token and accepts either:
 
-- A successful `ci-ok` on the exact tag commit.
+- A successful `workflow_dispatch` CI run on the exact tag commit.
 - A merged PR into `main` whose `merge_commit_sha` is the tag commit, whose head tree equals
-  the tag tree, and whose head has a successful `ci-ok` from this repository's CI workflow
-  (the `github-actions` app).
+  the tag tree, and whose head has a successful `pull_request` CI run.
 
-Both proofs bind `ci-ok` to `.github/workflows/ci.yml`; another workflow or app cannot
-supply it. Missing, pending, failed, malformed or unreadable evidence stops the release.
-A squash merge normally uses the second proof, since PR CI runs on the PR head.
+Both proofs require successful `ci-ok`, `package` and all four `build-test` matrix checks
+(Node 22/24, React 18/19) in the same check suite. A docs-only success with skipped jobs
+does not qualify. The verifier checks the run's reported repository, workflow path
+(`.github/workflows/ci.yml`), event and head SHA, and each required check's reported
+`github-actions` app, SHA and success. A squash merge normally uses the second proof.
+
+Missing, pending or failed proof stops the release. An HTTP error, timeout or malformed API
+response also stops it: re-run `verify`, and if the API remains unreadable, check the job's
+`GITHUB_TOKEN` read permissions (`contents`, `actions`, `checks`, `pull-requests`).
 
 If neither proof is available, run CI explicitly on the existing tag:
 

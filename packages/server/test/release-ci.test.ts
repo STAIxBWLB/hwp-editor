@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const script = new URL("../../../scripts/release-ci.mjs", import.meta.url);
-const { verifyReleaseCi } = await import(script.href);
+const { verifyReleaseCi, releaseCiFailure } = await import(script.href);
 const TAG = "a".repeat(40);
 const HEAD = "b".repeat(40);
 const OTHER = "c".repeat(40);
@@ -11,14 +11,17 @@ const TREE = "d".repeat(40);
 const REPO = "owner/repo";
 
 type Row = Record<string, unknown>;
-const run = (sha: string): Row => ({
+const run = (sha: string, event = "workflow_dispatch"): Row => ({
+  event,
   head_sha: sha, path: ".github/workflows/ci.yml", status: "completed",
   conclusion: "success", repository: { full_name: REPO }, check_suite_id: 22,
 });
-const check = (sha: string): Row => ({
-  name: "ci-ok", head_sha: sha, app: { slug: "github-actions" },
+const check = (sha: string, name = "ci-ok"): Row => ({
+  name, head_sha: sha, app: { slug: "github-actions" },
   status: "completed", conclusion: "success",
 });
+const CHECKS = ["ci-ok", "package", "build-test (22, 18)", "build-test (22, 19)", "build-test (24, 18)", "build-test (24, 19)"];
+const fullChecks = (sha: string): Row[] => CHECKS.map(name => check(sha, name));
 const pull = (): Row => ({
   number: 7, merged_at: "2026-11-13T00:11:07Z", merge_commit_sha: TAG,
   head: { sha: HEAD }, base: { ref: "main", repo: { full_name: REPO } },
@@ -53,14 +56,14 @@ function fixture() {
 describe("release CI evidence (#45)", () => {
   it("accepts exact-SHA ci-ok from the CI workflow without reading a PR", async () => {
     const f = fixture();
-    f.runs[TAG] = [run(TAG)]; f.checks["22"] = [check(TAG)];
+    f.runs[TAG] = [run(TAG)]; f.checks["22"] = fullChecks(TAG);
     expect(await f.verify()).toMatchObject({ proof: "exact_sha", sha: TAG });
     expect(f.calls.some(route => route.includes("/pulls"))).toBe(false);
   });
 
   it("accepts a merged main PR with the tag merge SHA, identical trees and successful head CI", async () => {
     const f = fixture();
-    f.pulls.push(pull()); f.runs[HEAD] = [run(HEAD)]; f.checks["22"] = [check(HEAD)];
+    f.pulls.push(pull()); f.runs[HEAD] = [run(HEAD, "pull_request")]; f.checks["22"] = fullChecks(HEAD);
     expect(await f.verify()).toEqual({ proof: "merged_pr_tree", sha: TAG, head: HEAD, tree: TREE, number: 7 });
   });
 
@@ -71,7 +74,7 @@ describe("release CI evidence (#45)", () => {
     { check_suite_id: null },
   ])("rejects wrong, incomplete or unsuccessful CI-workflow evidence: %j", async (change) => {
     const f = fixture();
-    f.runs[TAG] = [{ ...run(TAG), ...change }]; f.checks["22"] = [check(TAG)];
+    f.runs[TAG] = [{ ...run(TAG), ...change }]; f.checks["22"] = fullChecks(TAG);
     await expect(f.verify()).rejects.toThrow("No successful CI-workflow ci-ok on exact tag SHA");
   });
 
@@ -81,7 +84,7 @@ describe("release CI evidence (#45)", () => {
     { conclusion: "skipped" },
   ])("rejects a non-proof ci-ok check: %j", async (change) => {
     const f = fixture();
-    f.runs[TAG] = [run(TAG)]; f.checks["22"] = [{ ...check(TAG), ...change }];
+    f.runs[TAG] = [run(TAG)]; f.checks["22"] = [{ ...check(TAG), ...change }, ...fullChecks(TAG).slice(1)];
     await expect(f.verify()).rejects.toThrow("no merged-PR tree proof");
   });
 
@@ -91,32 +94,32 @@ describe("release CI evidence (#45)", () => {
     { base: { ref: "main", repo: { full_name: "other/repo" } } },
   ])("rejects a PR that is not the tag's merged main PR: %j", async (change) => {
     const f = fixture();
-    f.pulls.push({ ...pull(), ...change }); f.runs[HEAD] = [run(HEAD)]; f.checks["22"] = [check(HEAD)];
+    f.pulls.push({ ...pull(), ...change }); f.runs[HEAD] = [run(HEAD, "pull_request")]; f.checks["22"] = fullChecks(HEAD);
     await expect(f.verify()).rejects.toThrow("no merged PR into main has this merge_commit_sha");
   });
 
   it("rejects a merged PR with another tree even if its CI passed", async () => {
     const f = fixture();
     f.pulls.push(pull()); f.trees[HEAD] = OTHER;
-    f.runs[HEAD] = [run(HEAD)]; f.checks["22"] = [check(HEAD)];
+    f.runs[HEAD] = [run(HEAD, "pull_request")]; f.checks["22"] = fullChecks(HEAD);
     await expect(f.verify()).rejects.toThrow("head tree differs from the tag tree");
   });
 
   it("rejects same-tree PRs without successful head CI", async () => {
     const f = fixture(); f.pulls.push(pull());
-    await expect(f.verify()).rejects.toThrow("same tree but no successful CI-workflow ci-ok");
+    await expect(f.verify()).rejects.toThrow("same tree but no successful full pull_request CI-workflow ci-ok");
   });
 
   it("does not accept successful CI on another SHA", async () => {
     const f = fixture();
-    f.runs[OTHER] = [run(OTHER)]; f.checks["22"] = [check(OTHER)];
+    f.runs[OTHER] = [run(OTHER)]; f.checks["22"] = fullChecks(OTHER);
     await expect(f.verify()).rejects.toThrow("No successful");
   });
 
   it("reads later pages of both runs and checks", async () => {
     const f = fixture();
     f.runs[TAG] = [...Array.from({ length: 100 }, () => run(OTHER)), run(TAG)];
-    f.checks["22"] = [...Array.from({ length: 100 }, () => check(OTHER)), check(TAG)];
+    f.checks["22"] = [...Array.from({ length: 100 }, () => check(OTHER)), ...fullChecks(TAG)];
     expect(await f.verify()).toMatchObject({ proof: "exact_sha" });
     expect(f.calls.filter(route => route.includes("page=2"))).toHaveLength(2);
   });
@@ -134,7 +137,7 @@ describe("release CI evidence (#45)", () => {
     await expect(f.verify()).rejects.toThrow("Malformed commit/tree evidence");
   });
 
-  it("prints the tag, SHA and actionable recovery command on failure, without a token", () => {
+  it("prints the tag, SHA and token-permissions recovery step when a token is missing", () => {
     const result = spawnSync(process.execPath, [fileURLToPath(script)], {
       env: { ...process.env, GH_TOKEN: "", GITHUB_REPOSITORY: REPO, GITHUB_SHA: TAG, GITHUB_REF_NAME: "v1.4.0" },
       encoding: "utf8",
@@ -142,7 +145,60 @@ describe("release CI evidence (#45)", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(`v1.4.0 (${TAG})`);
     expect(result.stderr).toContain("exact-SHA or merged-PR tree proof");
-    expect(result.stderr).toContain("gh workflow run ci.yml --ref v1.4.0");
-    expect(result.stderr).toContain("re-run the failed release jobs");
+    expect(result.stderr).toContain("Re-run verify");
+    expect(result.stderr).toContain("GITHUB_TOKEN permissions");
+    expect(result.stderr).not.toContain("gh workflow run");
   });
+  it("rejects docs-only CI with successful ci-ok but skipped build and package jobs", async () => {
+    const f = fixture();
+    f.pulls.push(pull()); f.runs[HEAD] = [run(HEAD, "pull_request")];
+    f.checks["22"] = [check(HEAD), { ...check(HEAD, "package"), conclusion: "skipped" },
+      { ...check(HEAD, "build-test"), conclusion: "skipped" }];
+    await expect(f.verify()).rejects.toThrow("no successful full pull_request");
+  });
+
+  it.each(CHECKS)("requires %s to succeed in the same suite", async (name) => {
+    const f = fixture(); f.runs[TAG] = [run(TAG)];
+    f.checks["22"] = fullChecks(TAG).map(row => row.name === name ? { ...row, conclusion: "skipped" } : row);
+    await expect(f.verify()).rejects.toThrow("No successful");
+    f.checks["22"] = fullChecks(TAG).filter(row => row.name !== name);
+    await expect(f.verify()).rejects.toThrow("No successful");
+  });
+
+  it("never combines successful jobs from different check suites", async () => {
+    const f = fixture();
+    f.runs[TAG] = [run(TAG), { ...run(TAG), check_suite_id: 23 }];
+    f.checks["22"] = [check(TAG)]; f.checks["23"] = fullChecks(TAG).slice(1);
+    await expect(f.verify()).rejects.toThrow("No successful");
+  });
+
+  it("rejects a PR-event run as exact-SHA proof even with every check green", async () => {
+    const f = fixture();
+    f.runs[TAG] = [run(TAG, "pull_request")]; f.checks["22"] = fullChecks(TAG);
+    await expect(f.verify()).rejects.toThrow("No successful");
+  });
+
+  it("rejects a dispatch run on the merged PR head as tree proof", async () => {
+    const f = fixture();
+    f.pulls.push(pull()); f.runs[HEAD] = [run(HEAD, "workflow_dispatch")]; f.checks["22"] = fullChecks(HEAD);
+    await expect(f.verify()).rejects.toThrow("no successful full pull_request");
+  });
+
+  it("quotes the tag in the dispatch recovery command when there is no proof", async () => {
+    const error = await fixture().verify().catch((cause: unknown) => cause);
+    const message = releaseCiFailure(error, "v1.4.0", TAG);
+    expect(message).toContain(`v1.4.0 (${TAG})`);
+    expect(message).toContain("gh workflow run ci.yml --ref 'v1.4.0'");
+    expect(message).toContain("re-run the failed release jobs");
+    expect(message).not.toContain("GITHUB_TOKEN permissions");
+  });
+
+  it.each(["HTTP 403", "TimeoutError", "Malformed API list"])("offers API recovery for %s", (reason) => {
+    const message = releaseCiFailure(new Error(reason), "v1.4.0", TAG);
+    expect(message).toContain(reason);
+    expect(message).toContain("Re-run verify");
+    expect(message).toContain("GITHUB_TOKEN permissions");
+    expect(message).not.toContain("gh workflow run");
+  });
+
 });
