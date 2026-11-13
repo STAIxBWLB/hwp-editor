@@ -782,3 +782,60 @@ describe("Tauri no-Error-line marker (#140)", () => {
     }
   });
 });
+
+describe("maru's [work dir <json>] field (#142 item 2, maru#605)", () => {
+  const reject = (detail: string): TauriInvoke => <T>(cmd: string): Promise<T> =>
+    cmd === "hwped_capabilities"
+      ? Promise.resolve({ version: "0.20.0", editable: true, formats: ["hwp", "hwpx"], editOps: "v1" } as T)
+      : Promise.reject(detail);
+  const EDIT: EditOp[] = [{ kind: "replace", find: "a", replace: "b" }];
+  const INSERT: EditOp[] = [{
+    kind: "insert-blocks", address: { at: { section: 0, paragraph: 0 } }, position: "after",
+    blocks: [{ type: "paragraph", runs: [{ type: "text", text: "x" }] }],
+  }];
+  const fail = (detail: string, ops: EditOp[] = EDIT): Promise<HwpEngineError> =>
+    createTauriEngine(reject(detail)).edit(doc, ops).then(() => { throw new Error("edit succeeded"); }, (e: HwpEngineError) => e);
+  const STEP = "Fix or remove the pending edit it names, then apply again.";
+
+  it("redacts the work dir, spaces and (x86) included, to <work dir>", async () => {
+    const dir = "C:\\Program Files (x86)\\Maru\\stage";
+    const err = await fail(
+      `hwp_failed: hwp edit failed (exit 1) [work dir ${JSON.stringify(dir)}]: Error: failed to read ${dir}\\x: Access is denied.`,
+    );
+    expect(err.message).toBe(`hwped_edit failed: hwp edit failed (exit 1): failed to read <work dir>\\x: Access is denied. ${STEP}`);
+    expect(err.message).not.toContain("Program Files");
+    expect(err.message).not.toContain("[work dir");
+  });
+
+  it("redacts a work dir with a space and no extension (the item 2 input)", async () => {
+    const dir = "/Users/홍 길동/Library/stage";
+    const err = await fail(`hwp_failed: hwp edit failed (exit 1) [work dir ${JSON.stringify(dir)}]: Error: no such dir ${dir}`);
+    expect(err.message).toBe(`hwped_edit failed: hwp edit failed (exit 1): no such dir <work dir>. ${STEP}`);
+    expect(err.message).not.toContain("길동");
+  });
+
+  it("passes the work dir to the insertion line and the noCause check", async () => {
+    const dir = "/tmp/a b/stage";
+    const err = await fail(
+      `hwp_failed: hwp edit failed (exit 3) [work dir ${JSON.stringify(dir)}]: Error: insert_blocks failed to parse ${dir}/in.hwpx at byte 1`,
+      INSERT,
+    );
+    expect(err.message).toBe("hwped_edit failed: hwp edit failed (exit 3): insert_blocks refused: failed to parse <work dir>/in.hwpx at byte 1");
+    expect(err.noCause).toBeUndefined();
+  });
+
+  it.each([
+    ["not JSON", "[work dir C:\\x y]"],
+    ["an unterminated string", '[work dir "C:\\x]'],
+    ["a JSON number", "[work dir 42]"],
+  ])("ignores a malformed field (%s): no work dir, and the bracket stays out of the head", async (_label, field) => {
+    const err = await fail(`hwp_failed: hwp edit failed (exit 1) ${field}: Error: 앵커를 찾을 수 없습니다: 회의록`);
+    expect(err.message).toBe(`hwped_edit failed: hwp edit failed (exit 1): 앵커를 찾을 수 없습니다: 회의록. ${STEP}`);
+    expect(err.message).not.toContain("[work dir");
+  });
+
+  it("still parses maru's old format, with no field", async () => {
+    const err = await fail("hwp_failed: hwp edit failed (exit 1): Error: 앵커를 찾을 수 없습니다: 회의록");
+    expect(err.message).toBe(`hwped_edit failed: hwp edit failed (exit 1): 앵커를 찾을 수 없습니다: 회의록. ${STEP}`);
+  });
+});

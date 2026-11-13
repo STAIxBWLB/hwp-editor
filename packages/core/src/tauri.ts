@@ -201,9 +201,28 @@ function toEngineError(cmd: string, error: unknown, insertion = false): HwpEngin
 /**
  * maru's edit failure: `hwp_failed: hwp edit failed (exit N): <raw stderr>`
  * (dev/maru/src-tauri/src/hwped.rs run_hwp_ok). The head names the exit; the
- * rest is hwp-cli's stderr verbatim.
+ * rest is hwp-cli's stderr verbatim. A maru that carries #605 adds
+ * ` [work dir <json>]` after the exit: a JSON string is captured for decoding,
+ * and any other bracket body is still consumed (with no work dir) so it never
+ * reaches the head and the stderr still gets the redacted display line.
  */
-const MARU_EDIT_FAILURE = /^hwp_failed: (hwp edit failed \(exit -?\d+\)): ([\s\S]*)$/u;
+const MARU_EDIT_FAILURE = /^hwp_failed: (hwp edit failed \(exit -?\d+\))(?: \[work dir (?:("(?:[^"\\]|\\.)*")|[^\n]*?)\])?: ([\s\S]*)$/u;
+
+/**
+ * maru's stage dir from the optional ` [work dir <json>]` field (#142 item 2,
+ * STAIxBWLB/maru#605): the JSON string decoded, or undefined when the field is
+ * absent, does not decode, or decodes to anything but a non-empty string. The
+ * dir is only ever a redaction key; it never reaches the message.
+ */
+function maruWorkDir(raw: string | undefined): string | undefined {
+  if (raw === undefined) return undefined;
+  try {
+    const value: unknown = JSON.parse(raw);
+    return typeof value === "string" && value !== "" ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * An edit failure as the HTTP transport words the same stderr (#88), so the
@@ -229,21 +248,22 @@ function editFailure(
   const failure = MARU_EDIT_FAILURE.exec(detail);
   if (failure === null) return null;
   const head = failure[1]!;
-  const stderr = failure[2]!;
+  const workDir = maruWorkDir(failure[2]);
+  const stderr = failure[3]!;
   const kind = classifyEditRefusal(stderr);
   if (kind !== undefined) return { message: `${head}: ${editRefusalMarker(kind)}`, fields: { refusal: kind } };
   if (stderr.trim() === "") return { message: `${head}: ${STOPPED_WITHOUT_DIAGNOSTIC}`, fields: { stopped: true } };
-  const noCause = engineErrorReason(stderr) === undefined ? { noCause: true as const } : {};
+  const noCause = engineErrorReason(stderr, workDir) === undefined ? { noCause: true as const } : {};
   if (insertion) {
     const cls = classifyInsertionRefusal(stderr);
     return {
-      message: `${head}: ${insertionRefusalLine(stderr)}`,
+      message: `${head}: ${insertionRefusalLine(stderr, workDir)}`,
       fields: cls === undefined ? noCause : { insertion: cls },
     };
   }
   // The engine's own first Error: line, paths removed, then the step: the
   // same display line HTTP prints. Nothing classifies from it.
-  return { message: `${head}: ${unclassifiedEditLine(stderr)}`, fields: noCause };
+  return { message: `${head}: ${unclassifiedEditLine(stderr, workDir)}`, fields: noCause };
 }
 
 /**
