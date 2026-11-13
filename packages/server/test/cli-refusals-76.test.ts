@@ -6,12 +6,21 @@
  */
 import { afterEach, describe, expect, it } from "vitest";
 
+import { createHttpEngine, HwpEngineError } from "@hwp-editor/core";
+import { createHwpEditorHandler } from "../src/routes.js";
+import { hwpxBytes } from "./helpers.js";
 import type { EditOp } from "@hwp-editor/core";
 
 import { createCliEngine, HwpCliError } from "../src/cli-engine.js";
 import { createFakeBin, disposeFakeBins } from "./fake-bin.js";
 
 afterEach(disposeFakeBins);
+
+// agent-hwp v1.6.2: crates/hwp-convert/src/address.rs:120;
+// crates/hwp-cli/src/commands/edit.rs:2269-2284, :3086-3094.
+const UNRESOLVABLE_ADDRESS =
+  "Error: 주소를 해석할 수 없는 편집 연산이 있습니다:\n" +
+  "op[0] id b800fb2a253cdfb9.0.0.7.0.0 — 주소가 가리키는 위치를 문서에서 찾을 수 없습니다";
 
 const RANGE_TAG =
   "Error: 미해석 PARA_RANGE_TAG 구간 표시가 있어 WCHAR 위치가 바뀌거나 표시를 잃는 문단 재작성을 지원하지 않습니다. " +
@@ -132,5 +141,24 @@ describe("hwp-cli 1.5-1.6 refusal classification (#76)", () => {
       "Error: 적용되지 않은 편집 요청이 있습니다: replace address=0.1 from=\"a\" to=\"b\" (--allow-partial로 일치한 요청만 적용 가능)",
     ]);
     expect(error.message).toBe("ahwp edit failed (exit 3): edit refused: unmatched_replace");
+  });
+});
+
+describe("resolver refusal across HTTP (#85)", () => {
+  it.each([{ chars: undefined }, { chars: [0, 1] as [number, number] }])("carries NoSuchPath for whole-run or chars addresses ($chars)", async ({ chars }) => {
+    const { bin } = createFakeBin({ version: "1.6.2", mode: "fail", info: "{}", editStderrLines: UNRESOLVABLE_ADDRESS.split("\n") });
+    const handler = createHwpEditorHandler({ engine: createCliEngine({ bin }), sessions: false });
+    const engine = createHttpEngine("http://localhost/api/hwp-editor", {
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = new Request(input, init);
+        // A real HTTP transport supplies this header; the route requires it.
+        request.headers.set("content-length", String((await request.clone().arrayBuffer()).byteLength));
+        return handler(request);
+      }) as typeof fetch,
+    });
+    const op: EditOp = { kind: "set-format", address: { id: "b800fb2a253cdfb9.0.0.7.0.0", ...(chars ? { chars } : {}) }, props: { bold: "true" } };
+    const error = await engine.edit({ name: "a.hwpx", data: hwpxBytes() }, [op]).catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(HwpEngineError);
+    expect(error).toMatchObject({ code: "failed", refusal: "unresolvable_address" });
   });
 });

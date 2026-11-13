@@ -12,7 +12,7 @@ import type { DocumentHandle, EditOp, HwpErrorCode } from "../src/index.js";
 import { HwpEngineError, isHwpEngineError } from "../src/index.js";
 import { createTauriEngine, type TauriInvoke } from "../src/tauri.js";
 import { DISTRIBUTION_NEXT_STEP, NO_ENGINE_CAUSE, PROTECTED_NEXT_STEP, STOPPED_WITHOUT_DIAGNOSTIC } from "../src/index.js";
-import { DRIFT, MIXED_CONFLICT, RANGE_TAG, RUN_CONFLICT, UNMATCHED } from "./fixtures/refusal-stderr.js";
+import { UNRESOLVABLE_ADDRESS, DRIFT, MIXED_CONFLICT, RANGE_TAG, RUN_CONFLICT, UNMATCHED } from "./fixtures/refusal-stderr.js";
 
 interface Call {
   cmd: string;
@@ -614,6 +614,7 @@ describe("Tauri edit refusal classification (#80)", () => {
     [RUN_CONFLICT, "run_range_conflict"],
     [DRIFT, "run_range_conflict"],
     [RANGE_TAG, "range_tag"],
+    [UNRESOLVABLE_ADDRESS, "unresolvable_address"],
   ] as const)("marks maru's hwp_failed edit with the HTTP marker (%#)", async (stderr, kind) => {
     const raw = `hwp_failed: hwp edit failed (exit 3): /tmp/stage-1/in.hwp\n${stderr}`;
     const engine = createTauriEngine(reject(raw));

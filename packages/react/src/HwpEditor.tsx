@@ -215,6 +215,7 @@ const REFUSAL_MESSAGE = {
   unmatched_replace: "error.unmatchedReplace",
   run_range_conflict: "error.runRangeConflict",
   range_tag: "error.rangeTagRefused",
+  unresolvable_address: "error.unresolvableAddress",
 } as const satisfies Record<EngineRefusalKind, string>;
 
 /**

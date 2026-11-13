@@ -21,9 +21,9 @@
  * the user's values stay in the error's stderr/detail for an operator.
  */
 
-export type EditRefusalKind = "unmatched_replace" | "run_range_conflict" | "range_tag";
+export type EditRefusalKind = "unmatched_replace" | "run_range_conflict" | "range_tag" | "unresolvable_address";
 
-const KINDS: ReadonlySet<string> = new Set<EditRefusalKind>(["unmatched_replace", "run_range_conflict", "range_tag"]);
+const KINDS: ReadonlySet<string> = new Set<EditRefusalKind>(["unmatched_replace", "run_range_conflict", "range_tag", "unresolvable_address"]);
 
 /** Narrow an untrusted value (a wire field, a host error) to a refusal kind. */
 export function isEditRefusalKind(value: unknown): value is EditRefusalKind {
@@ -54,11 +54,27 @@ const DRIFT_LINE = new RegExp(
 /** `RANGE_TAG_SHIFT_REFUSAL` (hwp-convert/src/edit.rs:179), a fixed sentence. */
 const RANGE_TAG_LINE = new RegExp(`^Error: 미해석 PARA_RANGE_TAG 구간 표시가 있어 WCHAR 위치가 바뀌거나`, "u");
 
+/**
+ * agent-hwp v1.6.2, crates/hwp-cli/src/commands/edit.rs:2269-2284,
+ * :3086-3094, and crates/hwp-convert/src/address.rs:120, :226-261.
+ * NoSuchPath also covers missing paths, so do not infer a nested target.
+ * Each entry contains only an op index, an id/at address and the fixed cause.
+ */
+const ADDRESS_HEAD = /^Error: 주소를 해석할 수 없는 편집 연산이 있습니다:$/u;
+const ADDRESS_PATH_LINE = /^op\[\d+\] (?:id [0-9a-f]{16}\.\d+(?:\.\d+)+|at \d+(?:\.\d+)+) — 주소가 가리키는 위치를 문서에서 찾을 수 없습니다$/u;
+
 /** stderr from its first `Error:` line on, as lines; empty when there is none. */
 function errorLines(stderr: string): string[] {
   const lines = stderr.split(/\r?\n/u);
   const at = lines.findIndex(line => line.startsWith("Error: "));
   return at < 0 ? [] : lines.slice(at);
+}
+
+/** Match every error-list entry, stopping before anyhow's optional backtrace. */
+function errorListMatches(lines: string[], pattern: RegExp): boolean {
+  const blank = lines.findIndex((line, at) => at > 0 && line.trim() === "");
+  const entries = lines.slice(1, blank < 0 ? undefined : blank).filter(line => line.trim() !== "");
+  return entries.length > 0 && entries.every(line => pattern.test(line));
 }
 
 /**
@@ -117,6 +133,7 @@ function unappliedItems(line: string): string[] | undefined {
  *   the run-range next step would clear only part of it. Or the content-drift
  *   line.
  * - `range_tag`: the range-tag sentence on the Error: line.
+ * - `unresolvable_address`: a resolver list containing only NoSuchPath entries.
  */
 export function classifyEditRefusal(stderr: string): EditRefusalKind | undefined {
   const lines = errorLines(stderr);
@@ -129,14 +146,10 @@ export function classifyEditRefusal(stderr: string): EditRefusalKind | undefined
       : undefined;
   }
   if (CONFLICT_HEAD.test(first)) {
-    // The list ends at the first blank line: anyhow may append a backtrace
-    // below it (RUST_BACKTRACE, which maru passes through), and that is not a
-    // conflict entry.
-    const blank = lines.findIndex((line, at) => at > 0 && line.trim() === "");
-    const entries = lines.slice(1, blank < 0 ? undefined : blank).filter(line => line.trim() !== "");
-    return entries.length > 0 && entries.every(line => LENGTH_CHANGE_LINE.test(line))
-      ? "run_range_conflict"
-      : undefined;
+    return errorListMatches(lines, LENGTH_CHANGE_LINE) ? "run_range_conflict" : undefined;
+  }
+  if (ADDRESS_HEAD.test(first)) {
+    return errorListMatches(lines, ADDRESS_PATH_LINE) ? "unresolvable_address" : undefined;
   }
   if (RANGE_TAG_LINE.test(first)) return "range_tag";
   if (DRIFT_LINE.test(first)) return "run_range_conflict";
