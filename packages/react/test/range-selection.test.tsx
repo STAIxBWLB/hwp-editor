@@ -935,6 +935,7 @@ describe.each([["en", en], ["ko", ko]] as const)("Classified engine refusals on 
   it.each([
     ["run_range_conflict", "error.runRangeConflict"],
     ["range_tag", "error.rangeTagRefused"],
+    ["unresolvable_address", "error.unresolvableAddress"],
   ] as const)("shows %s as its own sentence, not the engine's line", async (marker, key) => {
     const engine = createMockEngine({ envelope: sentenceEnvelope("hello", [[0, 5]]) });
     engine.edit = async () => {

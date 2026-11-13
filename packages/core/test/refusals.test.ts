@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { classifyEditRefusal, editRefusalMarker } from "../src/index.js";
-import { DRIFT, ECHOED_UNAPPLIED, MIXED_CONFLICT, RANGE_TAG, RUN_CONFLICT, UNMATCHED } from "./fixtures/refusal-stderr.js";
+import { UNRESOLVABLE_ADDRESS, DRIFT, ECHOED_UNAPPLIED, MIXED_CONFLICT, RANGE_TAG, RUN_CONFLICT, UNMATCHED } from "./fixtures/refusal-stderr.js";
 
 describe("classifyEditRefusal (#80)", () => {
   it.each([
     [UNMATCHED, "unmatched_replace"],
     [RANGE_TAG, "range_tag"],
+    [UNRESOLVABLE_ADDRESS, "unresolvable_address"],
     [RUN_CONFLICT, "run_range_conflict"],
     [DRIFT, "run_range_conflict"],
   ] as const)("classifies each refusal on its own line", (stderr, kind) => {
@@ -51,4 +52,19 @@ describe("classifyEditRefusal (#80)", () => {
     const traced = `${RUN_CONFLICT}\n\nStack backtrace:\n   0: anyhow::error::<impl anyhow::Error>::msg\n   1: hwp::main`;
     expect(classifyEditRefusal(traced)).toBe("run_range_conflict");
   });
+  it("does not classify echoed resolver text, mixed causes, or malformed entries (#85)", () => {
+    const cause = "주소가 가리키는 위치를 문서에서 찾을 수 없습니다";
+    for (const stderr of [
+      `Error: 앵커를 찾을 수 없습니다: ${cause}`,
+      `Error: 앵커를 찾을 수 없습니다: x\n${UNRESOLVABLE_ADDRESS}`,
+      `progress ${cause}\nError: unrelated`,
+      UNRESOLVABLE_ADDRESS.replace(" — ", " — user text "),
+      UNRESOLVABLE_ADDRESS.replace("b800fb2a253cdfb9", "user-value"),
+      UNRESOLVABLE_ADDRESS + "\nop[1] at 0.1 — 주소가 가리키는 run이 문단에 없습니다",
+      "Error: 주소를 해석할 수 없는 편집 연산이 있습니다:",
+    ]) expect(classifyEditRefusal(stderr)).toBeUndefined();
+    expect(classifyEditRefusal(`${UNRESOLVABLE_ADDRESS}\n\nStack backtrace:\n   0: frame`))
+      .toBe("unresolvable_address");
+  });
+
 });

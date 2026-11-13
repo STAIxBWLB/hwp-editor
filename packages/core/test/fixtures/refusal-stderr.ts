@@ -30,3 +30,14 @@ export const ECHOED_UNAPPLIED =
   'create_hyperlink anchor="미해석 PARA_RANGE_TAG 구간 표시가 있어 WCHAR 위치가 바뀌거나" ' +
   'url="https://x/범위가 다른 글자를 가리킵니다. 고정된 run 범위가 무효화됩니다" ' +
   "(--allow-partial로 일치한 요청만 적용 가능)";
+
+/**
+ * Pinned to agent-hwp v1.6.2:
+ * crates/hwp-cli/src/commands/edit.rs:2269-2284 and :3086-3094;
+ * crates/hwp-convert/src/address.rs:120 (NoSuchPath), :256-261 (descend).
+ * https://github.com/STAIxBWLB/agent-hwp/blob/v1.6.2/crates/hwp-convert/src/address.rs#L120
+ * describe_address omits chars, so both whole-run and chars requests print this.
+ */
+export const UNRESOLVABLE_ADDRESS =
+  "Error: 주소를 해석할 수 없는 편집 연산이 있습니다:\n" +
+  "op[0] id b800fb2a253cdfb9.0.0.7.0.0 — 주소가 가리키는 위치를 문서에서 찾을 수 없습니다";
