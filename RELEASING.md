@@ -162,7 +162,7 @@ tag:
   anonymously, found `next` already naming this version, and wrote nothing. Not a credential
   path: the ordinary shape of a re-run, or of a `next` you moved by hand.
 - `::warning::npm dist-tag add for @hwp-editor/<pkg>@$VERSION exited 0 without its +next: line`
-  - npm exited 0 and printed neither line, so the step cannot say whether the tag moved. Treat
+  This means npm exited 0 and printed neither line, so the step cannot say whether the tag moved. Treat
   the tag as unmoved: run `npm dist-tag ls @hwp-editor/<pkg>` yourself, and if `next` is behind
   `latest` finish with the manual commands at the end of this step. A warning line is never the
   `(OIDC)` evidence described below, however green the job reads.

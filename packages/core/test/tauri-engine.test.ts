@@ -814,6 +814,16 @@ describe("maru's [work dir <json>] field (#142 item 2, maru#605)", () => {
     expect(err.message).not.toContain("길동");
   });
 
+  it("preserves stderr when a work dir contains the wrapper separator (t80-1)", async () => {
+    const dir = String.raw`C:\x]: y\stage`;
+    const raw = `hwp_failed: hwp edit failed (exit 1) [work dir ${JSON.stringify(dir)}]: Error: failed to read ${dir}\\x: Access is denied.`;
+    const err = await fail(raw);
+    expect(err.message).toBe(`hwped_edit failed: hwp edit failed (exit 1): failed to read <work dir>\\x: Access is denied. ${STEP}`);
+    expect(err.message).not.toContain(dir);
+    expect(err.message).not.toContain("[work dir");
+    expect(err.cause).toBe(raw);
+  });
+
   it("passes the work dir to the insertion line and the noCause check", async () => {
     const dir = "/tmp/a b/stage";
     const err = await fail(

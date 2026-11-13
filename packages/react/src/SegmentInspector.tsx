@@ -28,6 +28,15 @@ const SHAPE_KEYS: { value: ParaShapeKey; key: MessageKey }[] = [
   { value: "bottom", key: "segment.shape.bottom" },
 ];
 
+const CLICK_REFUSAL_MESSAGE = {
+  cell: "segment.clickRefusedCell",
+  table: "segment.clickRefusedTable",
+  container: "segment.clickRefusedContainer",
+  unaddressable: "segment.clickRefusedUnaddressable",
+  unaddressableRuns: "segment.clickRefusedUnaddressableRuns",
+  noRuns: "segment.clickRefusedNoRuns",
+} as const satisfies Record<SelectionRefusal, MessageKey>;
+
 /**
  * Inspector for a selected paragraph segment: current text plus op builders
  * (replace, insert before/after, delete, alignment, minimal char-format).
@@ -108,12 +117,7 @@ export function SegmentInspector(): JSX.Element {
    * separate sentences, and the click's is never suppressed (#58 item 19b).
    */
   const clickRefusedText = (reason: SelectionRefusal | null | undefined): string | null =>
-    reason === null || reason === undefined ? null
-      : reason === "cell" ? t("segment.clickRefusedCell")
-      : reason === "table" ? t("segment.clickRefusedTable")
-      : reason === "container" ? t("segment.clickRefusedContainer")
-      : reason === "noRuns" ? t("segment.clickRefusedNoRuns")
-      : t("segment.clickRefusedUnaddressable");
+    reason === null || reason === undefined ? null : t(CLICK_REFUSAL_MESSAGE[reason]);
   const refusalReason = refusalText(targets?.refusal);
   const targetLabel = segment === undefined ? "" : segment.kind === "cell"
     ? t("segment.selectedCell", { path: segmentPath(segment), count: paragraphTargets.length })

@@ -1086,3 +1086,25 @@ describe.each([["en", en], ["ko", ko]] as const)("Transport failures end to end 
     if (locale === "ko") expect(text).not.toContain("the engine failed without naming a cause");
   });
 });
+
+describe.each([["en", en], ["ko", ko]] as const)("Unnamed-run click status (t82-11, %s)", (locale, messages) => {
+  it.each([{ ctrlKey: true }, { shiftKey: true }])("names the missing run addresses after %j", async (modifier) => {
+    const envelope: CatEnvelope = { markdown: "ab\n\ncd", segments: [
+      { id: "P0", indices: [0], start: 0, end: 2, kind: "para", section: 0, para: 0, directChar: runChar() },
+      { id: "r0", indices: [0, 0], start: 0, end: 2, kind: "run", section: 0, para: 0, directChar: runChar() },
+      { id: "P1", indices: [1], start: 4, end: 6, kind: "para", section: 0, para: 1 },
+      { indices: [1, 0], start: 4, end: 6, kind: "run", section: 0, para: 1 },
+    ] };
+    const engine = createMockEngine({ envelope });
+    render(<HwpEditor engine={engine} file={file} locale={locale} />);
+    fireEvent.click((await screen.findAllByRole("option"))[0]!);
+    fireEvent.click(screen.getByRole("button", { name: messages["segment.similarChar"] }));
+    expect(await screen.findByText(messages["segment.selectedRunCount"]({ count: 1 }))).toBeTruthy();
+    fireEvent.click(screen.getAllByRole("option")[1]!, modifier);
+    expect((await screen.findByText(messages["segment.clickRefusedUnaddressableRuns"])).getAttribute("role")).toBe("status");
+    expect(screen.queryByText(messages["segment.clickRefusedUnaddressable"])).toBeNull();
+    expect(screen.queryByText(messages["segment.clickRefusedNoRuns"])).toBeNull();
+    expect(screen.getByText(messages["segment.selectedRunCount"]({ count: 1 }))).toBeTruthy();
+    expect(engine.calls.edit).toHaveLength(0);
+  });
+});

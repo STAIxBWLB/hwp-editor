@@ -376,7 +376,7 @@ describe("selection helpers", () => {
       expect([...ids(toggled), toggled.selection!.id!, toggled.selectionAnchor!.id!].every((id) => RUNS.has(id))).toBe(true);
     });
 
-    it("refuses a unit whose runs cannot name themselves as unaddressable, not noRuns (t82-5)", () => {
+    it("distinguishes unnamed runs from an unaddressable paragraph (t82-5, t82-11)", () => {
       // Q2 publishes a run, but the run is nested and carries no id, so its ref
       // would name its host: it is not a run a selection can hold.
       const unnamed: CatEnvelope = { markdown: "xyxy", segments: [
@@ -388,7 +388,7 @@ describe("selection helpers", () => {
       const state = reducer(initialState, { type: "selectMany", selections: [{ section: 0, para: 1, id: "q0" }], primary: { section: 0, para: 1, id: "q0" }, anchor: { section: 0, para: 1, id: "q0" } });
       const q2 = unnamed.segments.find((segment) => segment.id === "Q2")!;
       for (const mode of ["toggle", "extend"] as const) {
-        expect(selectionAction(unnamed, state, q2, mode)).toEqual({ type: "refuseSelection", refusal: "unaddressable" });
+        expect(selectionAction(unnamed, state, q2, mode)).toEqual({ type: "refuseSelection", refusal: "unaddressableRuns" });
       }
     });
   });
