@@ -250,60 +250,29 @@ mnt_label() {
 # version the publish just put on `latest`, so `@next` never hands out an older
 # candidate. A prerelease already published under `next`, so it is skipped.
 #
-# Two credential paths, OIDC first (#45 item 5). npm's trusted-publishing docs
-# ("Managing dist-tags with trusted publishing", read 2026-11-11) say npm CLI
-# 11.21.0+ authenticates `npm dist-tag` with the provider's OIDC identity, so
-# the first attempt passes NO credential at all: no --userconfig, no
-# NODE_AUTH_TOKEN, the runner's own .npmrc, which release.yml deliberately
-# leaves without a registry line (header point 3). That attempt is therefore
-# also the only one that can use the ephemeral token a trusted publish mints.
+# The job's OIDC identity is the only credential (#45 item 5). npm 11.21.0+
+# signs `npm dist-tag` with the provider's OIDC token when the package's
+# trusted-publisher configuration has `Allow npm dist-tag` enabled (npm docs,
+# "Managing dist-tags with trusted publishing"). That switch is on for all three
+# packages since 2026-11-13, and the v1.4.0 release logged the (OIDC) path for
+# each. No credential is configured anywhere: no --userconfig, no
+# NODE_AUTH_TOKEN, and the runner's own .npmrc carries no registry line
+# (release.yml header point 3).
 #
-# It is not expected to succeed on its own: OIDC dist-tag needs the package's
-# trusted-publisher configuration to carry `Allow npm dist-tag`, which the docs
-# state is disabled by default and is independent of the publish permission
-# ("Permission to publish or stage a package does not grant this access
-# automatically"). Until a maintainer enables it for all three packages, npm
-# refuses with E403 - so the refusal is logged and the stored token does the
-# work.
+# Each package is tried on its own, so one refusal does not leave the others on
+# an older `next`. A refusal prints npm's output, because the switch turned off
+# (a maintainer's package setting) and a registry failure need different
+# repairs, and the helper returns npm's own status from the first failure.
+# release.yml keeps the step continue-on-error: the packages are already
+# published, and the manual commands in RELEASING.md step 7 finish the job.
 #
-# NPM_DIST_TAG_TOKEN is that stored token: an npm granular token limited to the
-# three packages, kept as an environment secret of npm-publish. It goes into a
-# throwaway userconfig (mktemp, mode 600, removed on exit), never
-# NODE_AUTH_TOKEN or the runner's .npmrc. A credential configured there is what
-# npm would use wherever the exchange is not available - an older CLI, or a job
-# without `id-token: write` - and 11.21.x prefers the exchanged token where it
-# is, so either way the secret must not be in scope of a publish (release.yml
-# header point 3). That is also why release.yml calls this only after the last
-# publish.
-#
-# The fallback runs with the OIDC inputs REMOVED from its environment, and the
-# userconfig is not enough on its own. `npm dist-tag add` runs the #oidc
-# exchange once per add, before the tag fetch and before the PUT (npm's
-# lib/commands/dist-tag.js), and with the job's `id-token: write` the exchange
-# succeeds - setOidcToken writes the result at the `cli` config layer
-# (lib/utils/oidc.js), which outranks --userconfig. The PUT would then carry the
-# identity the same per-package switch just denied, fail with the same E403, and
-# leave `next` where it was while release.yml's continue-on-error kept the job
-# green. With no OIDC input in the environment there is no exchange and the
-# userconfig is what npm authenticates with. The first two names are the
-# workflow's own inputs; NPM_ID_TOKEN is npm's alternative spelling of the same
-# token.
-#
-# The success line names the path that moved the tag, and only npm's own
-# `+next: <pkg>@<version>` line (lib/commands/dist-tag.js, printed after the
-# authenticated PUT) proves a write; exit status alone does not. An add that
-# wrote nothing is NOT one of them. `npm dist-tag add` fetches the tags anonymously
-# first and, when `next` already names this version, prints "is already set" and
-# exits 0 without an authenticated write - which is the ordinary shape of a
-# re-run, and of a release whose `next` a maintainer already moved by hand
-# (RELEASING.md step 7). Reporting that as `(OIDC)` would make the documented
-# signal wrong: step 7 and #45's decision delete NPM_DIST_TAG_TOKEN once a
-# stable release logs the OIDC path, and deleting it over three no-op lines
-# would leave every later stable release behind `next` with only a warning.
-#
-# No token and no OIDC permission is a warning and a skip, not a failure: the
-# packages are already published, and the manual commands in RELEASING.md step 7
-# finish the job.
+# Only npm's own `+next: <pkg>@<version>` line (lib/commands/dist-tag.js,
+# printed after the authenticated PUT) proves a write; exit status alone does
+# not. `npm dist-tag add` fetches the tags anonymously first and, when `next`
+# already names this version, prints "is already set" and exits 0 without an
+# authenticated write - the ordinary shape of a re-run, or of a `next` a
+# maintainer already moved by hand. mnt_label reports that as a no-op rather
+# than crediting it to OIDC.
 move_next_tag() {
   mnt_version="$1"
   if is_prerelease "$mnt_version"; then
@@ -311,65 +280,23 @@ move_next_tag() {
     return 0
   fi
   mnt_log="$(mktemp)"
-  trap 'rm -f "$mnt_log" ${mnt_cfg:+"$mnt_cfg"}' EXIT
-  mnt_oidc=1
+  trap 'rm -f "$mnt_log"' EXIT
+  mnt_status=0
   for mnt_pkg in core react server; do
-    # NPM_DIST_TAG_TOKEN is stripped here too: it is not an input to this
-    # attempt, and an attempt that needs no credential should not have one in
-    # reach. The log is overwritten per package, so what it holds after a call
-    # is that call's own output.
-    if env -u NPM_DIST_TAG_TOKEN \
-      npm dist-tag add "@hwp-editor/$mnt_pkg@$mnt_version" next >"$mnt_log" 2>&1; then
+    # The log is overwritten per package, so what it holds after a call is that
+    # call's own output. The status is read in the else arm: inside a `then`
+    # arm `$?` would be the condition's 0, and the call stays in the `if` so a
+    # refusal does not abort the shell under `set -e`.
+    if npm dist-tag add "@hwp-editor/$mnt_pkg@$mnt_version" next >"$mnt_log" 2>&1; then
       mnt_label "$mnt_pkg" "$mnt_version" "OIDC" "$mnt_log"
     else
-      mnt_oidc=0
-      break
-    fi
-  done
-  if [ "$mnt_oidc" = 1 ]; then
-    return 0
-  fi
-  # Show the refusal, because the two causes need different repairs: `Allow npm
-  # dist-tag` off (a maintainer's package setting) versus a registry or network
-  # failure, which the token path can still carry.
-  echo "[info] OIDC did not move the dist-tag; falling back to NPM_DIST_TAG_TOKEN"
-  echo "::group::npm dist-tag output (OIDC attempt)"
-  cat "$mnt_log"
-  echo "::endgroup::"
-  if [ -z "${NPM_DIST_TAG_TOKEN:-}" ]; then
-    echo "::warning::OIDC was refused and NPM_DIST_TAG_TOKEN is not set; move next by hand (RELEASING.md step 7)"
-    return 0
-  fi
-  # All three, including any the OIDC attempt already moved: `dist-tag add` is
-  # idempotent, and a partial pass must not leave one package on an older next.
-  mnt_cfg="$(mktemp)"
-  chmod 600 "$mnt_cfg"
-  printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_DIST_TAG_TOKEN" > "$mnt_cfg"
-  for mnt_pkg in core react server; do
-    # The token reads from the userconfig alone, so the secret is stripped here
-    # as well as on the OIDC attempt: no call in this helper needs it in the
-    # environment.
-    # Captured like the OIDC attempt, so the label keys on npm's `+next:` line:
-    # after a partial OIDC pass the package OIDC already moved is a no-op here,
-    # and calling it `(token)` would credit the token with a write it never made.
-    #
-    # npm's own status is what leaves this helper, not a fixed 1: E401 and E403
-    # (this token's scope and 2FA bypass) read differently to an operator from
-    # E500 or a registry timeout, and release.yml keeps the step
-    # continue-on-error, so the code in the job log is the only thing that
-    # distinguishes "fix the token" from "retry the job". Reading it from the
-    # else arm is required - inside a `then` arm `$?` is the `!`'s own 0 - and
-    # the call stays in the `if`, so a failure does not abort the shell before
-    # the EXIT trap removes the userconfig that holds the secret.
-    if env -u ACTIONS_ID_TOKEN_REQUEST_URL -u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
-      -u NPM_ID_TOKEN -u NPM_DIST_TAG_TOKEN \
-      npm --userconfig "$mnt_cfg" dist-tag add "@hwp-editor/$mnt_pkg@$mnt_version" next >"$mnt_log" 2>&1; then
-      mnt_label "$mnt_pkg" "$mnt_version" "token" "$mnt_log"
-    else
       mnt_st=$?
+      if [ "$mnt_status" = 0 ]; then mnt_status=$mnt_st; fi
+      echo "::group::npm dist-tag output (@hwp-editor/$mnt_pkg)"
       cat "$mnt_log"
-      return "$mnt_st"
+      echo "::endgroup::"
+      echo "::warning::npm did not move next for @hwp-editor/$mnt_pkg@$mnt_version (exit $mnt_st); check Allow npm dist-tag on its trusted publisher, then move next by hand (RELEASING.md step 7)"
     fi
   done
-  rm -f "$mnt_cfg"
+  return "$mnt_status"
 }
