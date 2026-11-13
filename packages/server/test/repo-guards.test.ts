@@ -1792,3 +1792,42 @@ describe("CI-3: every remote action runs only at a pinned commit (#45 item 6, #1
     expect(() => unpinnedActionViolations(dir)).toThrow(/the guard did not run/);
   });
 });
+
+describe("Release CI proof and manual recovery (#45)", () => {
+  const workflows = readWorkflows(WORKFLOWS_DIR);
+  const ci = workflows.find(workflow => workflow.name === "ci.yml")!;
+  const verify = workflows.find(workflow => workflow.name === "release.yml")!.jobs.get("verify")!.join("\n");
+
+  it("uses the read-only proof script before the tag/manifest gate without repeating the CI suite", () => {
+    expect(verify).toContain("run: node scripts/release-ci.mjs");
+    expect(verify).toContain("GH_TOKEN: ${{ github.token }}");
+    for (const scope of ["contents", "actions", "checks", "pull-requests"]) {
+      expect(verify).toContain(`      ${scope}: read`);
+    }
+    expect(verify).not.toMatch(/: write/);
+    expect(verify).not.toMatch(/pnpm -r (build|typecheck|test)|smoke-consumer/);
+    expect(verify.indexOf("node scripts/release-ci.mjs")).toBeLessThan(verify.indexOf(CHECK_PUBLISHABLE));
+  });
+
+  it("adds manual CI dispatch without a push or target trigger", () => {
+    const triggers = ci.lines.join("\n").split("permissions:")[0]!;
+    expect(triggers).toMatch(/^  pull_request:$/m);
+    expect(triggers).toMatch(/^  workflow_dispatch:$/m);
+    expect(triggers).not.toMatch(/^  (push|pull_request_target):/m);
+    expect(ci.jobs.get("changes")!.join("\n")).toContain("EVENT_NAME: ${{ github.event_name }}");
+  });
+
+  it("forces dispatches to full CI without consulting PR endpoints", () => {
+    const body = ci.jobs.get("changes")!.join("\n");
+    const script = body.split("        run: |\n")[1]!.replace(/^ {10}/gm, "");
+    const output = join(mkdtempSync(join(tmpdir(), "hwped-dispatch-")), "output");
+    const result = spawnSync("/bin/bash", ["-e", "-c", script], {
+      env: { EVENT_NAME: "workflow_dispatch", GITHUB_OUTPUT: output, PATH: "/nonexistent" },
+      encoding: "utf8",
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("manual CI dispatch: running every gating job");
+    expect(result.stderr).toBe("");
+    expect(readFileSync(output, "utf8")).toBe("docs_only=false\n");
+  });
+});
