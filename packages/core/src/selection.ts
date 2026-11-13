@@ -23,8 +23,9 @@ function uniqueSegments(segments: Segment[]): Segment[] {
  * Why a click or a selection has no paragraph target. `noRuns` is a modifier
  * click at run level on a unit (a paragraph or a cell) that publishes no run
  * (#71): an empty or point paragraph has nothing to add to a run selection.
+ * `unaddressableRuns` means the paragraph is addressable, but its runs are not.
  */
-export type SelectionRefusal = "table" | "cell" | "container" | "unaddressable" | "noRuns";
+export type SelectionRefusal = "table" | "cell" | "container" | "unaddressable" | "unaddressableRuns" | "noRuns";
 
 export interface SelectionTargets {
   /** Paragraphs the selection covers, in envelope order; empty when it covers none. */
@@ -494,7 +495,7 @@ function runSelectionAction(
     // Rule 6: runs that exist but cannot be addressed are a different obstacle
     // from a unit that has none.
     const unaddressable = paragraphs.some((paragraph) => index.unnamed.has(segmentKey(paragraph)));
-    return { type: "refuseSelection", refusal: unaddressable ? "unaddressable" : "noRuns" };
+    return { type: "refuseSelection", refusal: unaddressable ? "unaddressableRuns" : "noRuns" };
   }
   const rank = (run: Segment): [number, number] => index.order.get(segmentKey(run)) ?? [Number.MAX_SAFE_INTEGER, runOrdinal(run)];
   const byOrder = (a: Segment, b: Segment): number => {
