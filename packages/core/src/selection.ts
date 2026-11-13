@@ -19,8 +19,12 @@ function uniqueSegments(segments: Segment[]): Segment[] {
   });
 }
 
-/** Why a selection has no single paragraph target of its own. */
-export type SelectionRefusal = "table" | "cell" | "container" | "unaddressable";
+/**
+ * Why a click or a selection has no paragraph target. `noRuns` is a modifier
+ * click at run level on a unit (a paragraph or a cell) that publishes no run
+ * (#71): an empty or point paragraph has nothing to add to a run selection.
+ */
+export type SelectionRefusal = "table" | "cell" | "container" | "unaddressable" | "noRuns";
 
 export interface SelectionTargets {
   /** Paragraphs the selection covers, in envelope order; empty when it covers none. */
@@ -403,6 +407,160 @@ function addressKey(address: EditAddress): string {
   return address.chars === undefined ? base : `${base}@${address.chars[0]}-${address.chars[1]}`;
 }
 
+/** A run's own ordinal within its holder paragraph: its last index, or its offset. */
+function runOrdinal(run: Segment): number {
+  return run.indices?.[run.indices.length - 1] ?? run.start;
+}
+
+/**
+ * Every self-naming run grouped under the paragraph that holds it, built in
+ * one pass over the envelope (#71 rule 2). A run counts only when it names
+ * itself and its holder does too; `unnamed` records holders that publish runs
+ * but cannot name themselves, so a click there refuses as unaddressable.
+ */
+interface RunIndex {
+  /** Holder paragraph key -> its runs, by ordinal. */
+  byHolder: Map<string, Segment[]>;
+  /** Run key -> [holder's position in paragraph order, run ordinal]. */
+  order: Map<string, [number, number]>;
+  /** Holder keys whose runs exist but whose holder cannot name itself. */
+  unnamed: Set<string>;
+  /** Every counted run in run order. */
+  pieces: Segment[];
+}
+
+function indexRuns(envelope: CatEnvelope): RunIndex {
+  const paragraphs = uniqueSegments(envelope.segments.filter((s) => s.kind === "para")).sort(compareSegments);
+  const position = new Map(paragraphs.map((paragraph, index) => [segmentKey(paragraph), index]));
+  // A run's holder is the paragraph one level up; a legacy run without
+  // indices is held by the top-level paragraph covering its offsets.
+  const pathKey = (section: number, indices: number[]): string => `${section}:${indices.join("/")}`;
+  const byPath = new Map<string, Segment>();
+  for (const paragraph of paragraphs) {
+    if (paragraph.indices !== undefined) byPath.set(pathKey(paragraph.section, paragraph.indices), paragraph);
+  }
+  const byHolder = new Map<string, Segment[]>();
+  const unnamed = new Set<string>();
+  for (const run of envelope.segments) {
+    if (run.kind !== "run") continue;
+    const holder = run.indices === undefined
+      ? paragraphs.find((p) => p.indices === undefined && p.section === run.section && p.para === run.para &&
+        p.start <= run.start && p.end >= run.end)
+      : byPath.get(pathKey(run.section, run.indices.slice(0, -1)));
+    if (holder === undefined) continue;
+    const key = segmentKey(holder);
+    if (!hasOwnRef(holder) || !hasOwnRef(run)) { unnamed.add(key); continue; }
+    const list = byHolder.get(key);
+    if (list === undefined) byHolder.set(key, [run]); else list.push(run);
+  }
+  const order = new Map<string, [number, number]>();
+  const pieces: Segment[] = [];
+  for (const paragraph of paragraphs) {
+    const key = segmentKey(paragraph);
+    const runs = byHolder.get(key);
+    if (runs === undefined) continue;
+    runs.sort((a, b) => runOrdinal(a) - runOrdinal(b));
+    const at = position.get(key)!;
+    for (const run of uniqueSegments(runs)) {
+      order.set(segmentKey(run), [at, runOrdinal(run)]);
+      pieces.push(run);
+    }
+  }
+  return { byHolder, order, unnamed, pieces };
+}
+
+/**
+ * The run-level action for a modifier click (#71 rules 1-8). `stored` holds the
+ * selection's runs only; anything else was dropped by the caller (rule 1).
+ *
+ * Run order (rule 5) is the holder paragraph by `compareSegments`, then the
+ * run's own ordinal, precomputed once per call in `indexRuns`: a run is never
+ * compared with a control path, so a table index equal to a run ordinal
+ * orders nothing.
+ */
+function runSelectionAction(
+  envelope: CatEnvelope,
+  state: EditorState,
+  stored: Segment[],
+  target: Segment,
+  mode: "toggle" | "extend",
+): EditorAction {
+  const { paragraphs, refusal } = resolveSelection(envelope, target);
+  if (paragraphs.length === 0) return { type: "refuseSelection", refusal: refusal ?? "unaddressable" };
+  const index = indexRuns(envelope);
+  // Rule 2: a paragraph contributes its immediate runs, a cell those of each of its paragraphs.
+  const unit = uniqueSegments(paragraphs.flatMap((paragraph) => index.byHolder.get(segmentKey(paragraph)) ?? []));
+  if (unit.length === 0) {
+    // Rule 6: runs that exist but cannot be addressed are a different obstacle
+    // from a unit that has none.
+    const unaddressable = paragraphs.some((paragraph) => index.unnamed.has(segmentKey(paragraph)));
+    return { type: "refuseSelection", refusal: unaddressable ? "unaddressable" : "noRuns" };
+  }
+  const rank = (run: Segment): [number, number] => index.order.get(segmentKey(run)) ?? [Number.MAX_SAFE_INTEGER, runOrdinal(run)];
+  const byOrder = (a: Segment, b: Segment): number => {
+    const [ah, ar] = rank(a);
+    const [bh, br] = rank(b);
+    return ah !== bh ? ah - bh : ar - br;
+  };
+  const storedRuns = uniqueSegments(stored);
+  const unitKeys = new Set(unit.map(segmentKey));
+  const storedByKey = new Map(storedRuns.map((run) => [run.id ?? segmentKey(run), run]));
+  const lookup = (ref: SegmentRef): Segment | undefined =>
+    (ref.id !== undefined ? storedByKey.get(ref.id) : undefined) ?? segmentForRef(envelope, ref);
+  const primaryKey = state.selection === null ? undefined
+    : (() => {
+      const primary = lookup(state.selection);
+      return primary?.kind === "run" ? segmentKey(primary) : undefined;
+    })();
+  const anchorSegment = state.selectionAnchor === null || state.selectionAnchor === undefined
+    ? undefined : lookup(state.selectionAnchor);
+  // Rule 7: the anchor is the run that started the selection. A stored primary
+  // stands in only when the state carries no run anchor at all.
+  const anchorRun = anchorSegment?.kind === "run"
+    ? anchorSegment
+    : storedRuns.find((run) => segmentKey(run) === primaryKey) ?? storedRuns[0];
+  let selected: Segment[];
+  if (mode === "toggle") {
+    // Rule 3: any of the unit's runs selected takes all of them off; none adds all.
+    selected = storedRuns.some((run) => unitKeys.has(segmentKey(run)))
+      ? storedRuns.filter((run) => !unitKeys.has(segmentKey(run)))
+      : [...storedRuns, ...unit];
+  } else {
+    // Rules 4, 5 and 8: every piece in run order from the anchor to the hit
+    // unit; pieces sharing an id are one key, so one in range brings the id.
+    const keys = index.pieces.map(segmentKey);
+    const span = (wanted: Set<string>): [number, number] => {
+      let first = -1;
+      let last = -1;
+      keys.forEach((key, at) => {
+        if (!wanted.has(key)) return;
+        if (first < 0) first = at;
+        last = at;
+      });
+      return [first, last];
+    };
+    const [hitFirst, hitLast] = span(unitKeys);
+    const [anchorFirst, anchorLast] = anchorRun === undefined ? [-1, -1] : span(new Set([segmentKey(anchorRun)]));
+    const from = anchorFirst < 0 ? hitFirst : Math.min(anchorFirst, hitFirst);
+    const to = Math.max(anchorLast, hitLast);
+    selected = from < 0 ? unit : index.pieces.slice(from, to + 1);
+  }
+  const list = uniqueSegments(selected).sort(byOrder);
+  // Rule 7: a toggle that empties the selection clears it.
+  if (list.length === 0) return { type: "select", selection: null };
+  const primary = mode === "extend"
+    ? unit[0]!
+    : list.find((run) => segmentKey(run) === primaryKey) ?? list[0]!;
+  // Rule 7: toggles keep the anchor as it was, even when its run was removed,
+  // so a later extend still measures from the run that started the selection.
+  // Rule 1: only a run anchor is kept; any other falls back as extend does,
+  // so a host that dispatched a mixed selection is not mixed further.
+  const anchor = mode === "toggle" && anchorSegment?.kind === "run" && state.selectionAnchor != null
+    ? state.selectionAnchor
+    : segmentRef(anchorRun ?? primary);
+  return { type: "selectMany", selections: list.map(segmentRef), primary: segmentRef(primary), anchor };
+}
+
 /**
  * The action one click on `target` performs.
  *
@@ -412,11 +570,14 @@ function addressKey(address: EditAddress): string {
  * reports its reason and leaves the selection where it was: the primary never
  * becomes a ref that resolves to no paragraph.
  *
- * A run-level selection, which matching character format produces, is the one
- * terminal state: run paths and control paths are not comparable, so extending
- * the run list by run pulled in whatever control shared the index range. A
- * modifier click there starts a fresh paragraph-level selection of the clicked
- * unit and never merges with the run list.
+ * A run-level selection, which matching character format produces, stays at
+ * run level (#71, rules 1-10): a modifier click contributes the runs of the
+ * unit it hit (a paragraph's immediate runs, a cell's paragraphs' runs), Ctrl
+ * toggles them as one unit and Shift extends in run order (`indexRuns`). A
+ * selection is never mixed: refs that are not runs are dropped from it. Run
+ * order compares holder paragraphs, then a run's own index, and never a run
+ * path with a control path, which is what reached past the range before. A
+ * text range in force sends the click down the paragraph path instead.
  */
 export function selectionAction(
   envelope: CatEnvelope,
@@ -432,24 +593,35 @@ export function selectionAction(
       : { type: "refuseSelection", refusal: "unaddressable" };
   }
   const refs = state.selections?.length ? state.selections : state.selection ? [state.selection] : [];
+  // One id index per call: a run-level selection can hold thousands of refs,
+  // and a linear lookup per ref made each modifier click quadratic.
+  const byId = new Map<string, Segment>();
+  for (const segment of envelope.segments) {
+    if (segment.id !== undefined && !byId.has(segment.id)) byId.set(segment.id, segment);
+  }
   const segments = refs.flatMap((ref) => {
-    const segment = segmentForRef(envelope, ref);
+    const segment = ref.id !== undefined ? byId.get(ref.id) : segmentForRef(envelope, ref);
     return segment === undefined ? [] : [segment];
   });
-  // The selection is paragraph-only, so a stored ref that covers no paragraph
-  // (a table, an image, a field, a bookmark) contributes nothing: it is not
-  // carried into the multi-selection and cannot become its primary.
-  const stored = uniqueSegments(segments.flatMap((segment) => resolveSelection(envelope, segment).paragraphs));
   // A modifier click contributes the paragraphs of the unit it hit, and a cell
   // contributes every paragraph of its own, because those are what an op edits.
   const { paragraphs: units, refusal } = resolveSelection(envelope, target);
   if (units.length === 0) return { type: "refuseSelection", refusal: refusal ?? "unaddressable" };
   const fresh = uniqueSegments(units).sort(compareSegments);
-  // A run-level selection never extends by run: the click starts over at
-  // paragraph level, replacing the run list instead of joining it.
+  // A run-level selection stays at run level (#71). With a text range in
+  // force the click starts over at paragraph level instead (rule 10): the
+  // clicked unit's own paragraphs, anchored at the click, never merged with
+  // the holders of the run list it replaces.
   if (segments.some((segment) => segment.kind === "run")) {
-    return { type: "selectMany", selections: fresh.map(segmentRef), primary: segmentRef(fresh[0]!), anchor: segmentRef(target) };
+    if (state.range !== null && state.range !== undefined) {
+      return { type: "selectMany", selections: fresh.map(segmentRef), primary: segmentRef(fresh[0]!), anchor: segmentRef(target) };
+    }
+    return runSelectionAction(envelope, state, segments.filter((segment) => segment.kind === "run"), target, mode);
   }
+  // The selection is paragraph-only, so a stored ref that covers no paragraph
+  // (a table, an image, a field, a bookmark) contributes nothing: it is not
+  // carried into the multi-selection and cannot become its primary.
+  const stored = uniqueSegments(segments.flatMap((segment) => resolveSelection(envelope, segment).paragraphs));
   const anchorRef = state.selectionAnchor ?? (state.selection ? state.selection : segmentRef(target));
   const anchorSegment = segmentForRef(envelope, anchorRef);
   // An anchor with no paragraph of its own has nothing to measure a range from,

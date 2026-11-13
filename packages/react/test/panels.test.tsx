@@ -411,10 +411,10 @@ describe("SegmentInspector op emission (TEST-03)", () => {
     expect(engine.calls.edit).toHaveLength(0);
   });
 
-  it("starts a paragraph selection over when a run-level selection is toggled or extended", async () => {
+  it("keeps a run-level selection at run level on Ctrl and Shift (#71)", async () => {
     const plain = { bold: false, italic: false, size_pt: 10, color: "#000000", faces: Array(7).fill("A"), face_ids: Array(7).fill(0) };
     const bold = { ...plain, bold: true };
-    const envelope: CatEnvelope = { markdown: "xy\n\nxy\n\nz", segments: [
+    const envelope: CatEnvelope = { markdown: "xy\n\nxy\n\nz\n\n", segments: [
       { id: "P0", indices: [0], start: 0, end: 2, kind: "para", section: 0, para: 0, directChar: bold },
       { id: "r00", indices: [0, 0], start: 0, end: 1, kind: "run", section: 0, para: 0, directChar: plain },
       { id: "r01", indices: [0, 1], start: 1, end: 2, kind: "run", section: 0, para: 0, directChar: bold },
@@ -423,6 +423,7 @@ describe("SegmentInspector op emission (TEST-03)", () => {
       { id: "r11", indices: [1, 1], start: 5, end: 6, kind: "run", section: 0, para: 1, directChar: bold },
       { id: "P2", indices: [2], start: 8, end: 9, kind: "para", section: 0, para: 2, directChar: plain },
       { id: "r20", indices: [2, 0], start: 8, end: 9, kind: "run", section: 0, para: 2, directChar: plain },
+      { id: "P3", indices: [3], start: 11, end: 11, kind: "para", section: 0, para: 3 },
     ] };
     const openSimilar = async (): Promise<Engine> => {
       cleanup();
@@ -433,34 +434,31 @@ describe("SegmentInspector op emission (TEST-03)", () => {
       return engine;
     };
 
-    // Two runs are selected, and the panel names both the obstacle and what a
-    // modifier click will do next.
+    // Two runs are selected, and the panel names the run-level gestures.
     const toggling = await openSimilar();
     expect(screen.getByText(en["segment.selectedRunCount"]({ count: 2 }))).toBeTruthy();
     expect(screen.getByText(en["segment.runTextEditHint"])).toBeTruthy();
-    expect(screen.getByText(en["segment.runSelectionTerminal"])).toBeTruthy();
-    // Ctrl-clicking a paragraph starts over at paragraph level: r01 and r11 are
-    // gone, and P2's own run is what the format op addresses.
-    fireEvent.click(screen.getAllByRole("option")[2]!, { ctrlKey: true });
-    expect(await screen.findByText(en["segment.selectedCount"]({ count: 1 }))).toBeTruthy();
-    expect(screen.queryByText(en["segment.selectedRunCount"]({ count: 3 }))).toBeNull();
+    expect(screen.getByText(en["segment.runSelectionGestures"])).toBeTruthy();
+    // Ctrl on P1 excludes its matching run: only r01 stays, and bold is
+    // queued for it alone.
+    fireEvent.click(screen.getAllByRole("option")[1]!, { ctrlKey: true });
+    expect(await screen.findByText(en["segment.selectedRunCount"]({ count: 1 }))).toBeTruthy();
     fireEvent.click(screen.getByLabelText(en["segment.bold"]));
     clickBtn("segment.formatSubmit");
     expect(await applyOps(toggling, 1)).toEqual([
-      { kind: "set-format", address: { id: "r20" }, props: { bold: "on" } },
+      { kind: "set-format", address: { id: "r01" }, props: { bold: "on" } },
     ]);
 
-    // Shift does the same, so the run list is never ordered against a run it
-    // did not contain: P1 and its own two runs, nothing from P0 or P2.
+    // Shift from r01 to P2 covers every run between them in run order.
     const extending = await openSimilar();
-    fireEvent.click(screen.getAllByRole("option")[1]!, { shiftKey: true });
-    expect(await screen.findByText(en["segment.selectedCount"]({ count: 1 }))).toBeTruthy();
-    fireEvent.click(screen.getByLabelText(en["segment.bold"]));
-    clickBtn("segment.formatSubmit");
-    expect(await applyOps(extending, 2)).toEqual([
-      { kind: "set-format", address: { id: "r10" }, props: { bold: "on" } },
-      { kind: "set-format", address: { id: "r11" }, props: { bold: "on" } },
-    ]);
+    fireEvent.click(screen.getAllByRole("option")[2]!, { shiftKey: true });
+    expect(await screen.findByText(en["segment.selectedRunCount"]({ count: 4 }))).toBeTruthy();
+
+    // Ctrl on an empty paragraph adds nothing and says so.
+    fireEvent.click(screen.getAllByRole("option")[3]!, { ctrlKey: true });
+    expect(await screen.findByText(en["segment.clickRefusedNoRuns"])).toBeTruthy();
+    expect(screen.getByText(en["segment.selectedRunCount"]({ count: 4 }))).toBeTruthy();
+    expect(extending.calls.edit).toHaveLength(0);
   });
 
   it("keeps a paragraph selection when a modifier click lands on a table", async () => {

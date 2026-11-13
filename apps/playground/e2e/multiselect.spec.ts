@@ -221,3 +221,43 @@ test("AC2 fallback: an envelope without source_chars formats the whole run", asy
   expect(bodies).toHaveLength(1);
   expect(editOps(bodies[0]!)).toEqual([{kind:"set-format",address:{id:firstRun.id},props:{bold:"on"}}]);
 });
+
+/**
+ * #71: from a "matching character format" selection, Ctrl on one paragraph
+ * removes its matching runs, and bold lands only on the runs that remain.
+ */
+test("#71: Ctrl excludes one paragraph's matches from a run-level selection, then bold applies to the rest", async ({page}) => {
+  const before = await loadSelectionFixture(page);
+  const bodies = await recordEdits(page);
+  const list = page.getByRole("listbox",{name:en["segment.paragraphChoices"]});
+  // The second paragraph's only run shares the first run's plain format, as
+  // do the first paragraph's first run and the last three paragraphs' runs.
+  await list.getByRole("option").nth(1).click();
+  await page.getByRole("button",{name:en["segment.similarChar"],exact:true}).click();
+  const paragraphs = before.segments.filter(segment=>segment.kind==="para");
+  const plainRuns = before.segments.filter(segment=>segment.kind==="run" && !segment.directChar?.bold && !segment.directChar?.italic);
+  await expect(page.getByText(en["segment.selectedRunCount"]({count:plainRuns.length}),{exact:true})).toBeVisible();
+  await expect(page.getByText(en["segment.runSelectionGestures"],{exact:true})).toBeVisible();
+  // Exclude the third paragraph's matches.
+  const third = paragraphs[2]!;
+  await list.getByRole("option").nth(2).click({modifiers:["ControlOrMeta"]});
+  const excluded = plainRuns.filter(run=>run.para===third.para);
+  expect(excluded.length).toBeGreaterThan(0);
+  const kept = plainRuns.filter(run=>run.para!==third.para);
+  await expect(page.getByText(en["segment.selectedRunCount"]({count:kept.length}),{exact:true})).toBeVisible();
+  await page.getByLabel(en["segment.bold"],{exact:true}).check();
+  await page.getByRole("button",{name:en["segment.formatSubmit"],exact:true}).click();
+  const applied = page.waitForResponse(readResponse);
+  await page.getByRole("button",{name:en["toolbar.applyWithCount"]({count:kept.length}),exact:true}).click();
+  const after = await (await applied).json() as CatEnvelope;
+  expect(bodies).toHaveLength(1);
+  const ops = editOps(bodies[0]!);
+  expect(new Set(ops.map(op=>"address" in op ? op.address.id : undefined))).toEqual(new Set(kept.map(run=>run.id)));
+  expect(ops.every(op=>op.kind==="set-format" && op.props.bold==="on")).toBe(true);
+  // Only the remaining runs changed: paragraph 3 keeps its run unbolded.
+  const runsIn = (para:number)=>after.segments.filter(segment=>segment.kind==="run" && segment.para===para);
+  expect(runsIn(third.para).every(run=>!run.directChar?.bold)).toBe(true);
+  for (const para of new Set(kept.map(run=>run.para))) {
+    expect(runsIn(para).some(run=>run.directChar?.bold)).toBe(true);
+  }
+});

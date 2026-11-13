@@ -203,49 +203,194 @@ describe("selection helpers", () => {
     expect(off.selections?.map((ref) => ref.id)).toEqual(["p2"]);
   });
 
-  it("starts a fresh paragraph selection from a run-level one, replacing rather than merging", () => {
+  describe("run-level multi-select (#71)", () => {
     const plain = { bold: false, italic: false, size_pt: 10, color: "#000000", faces: Array(7).fill("A"), face_ids: Array(7).fill(0) };
     const bold = { ...plain, bold: true };
-    const runs: CatEnvelope = { markdown: "xy\n\nxy\n\nz", segments: [
+    // P0: two runs. P1 hosts a table at control index 1, the same number as its
+    // second run's ordinal, with one cell paragraph and its run. P2: one run.
+    // P3: empty (no runs). P4: an image, a field and a bookmark.
+    const runs: CatEnvelope = { markdown: "x".repeat(40), segments: [
       { id: "P0", indices: [0], start: 0, end: 2, kind: "para", section: 0, para: 0, directChar: plain },
       { id: "r00", indices: [0, 0], start: 0, end: 1, kind: "run", section: 0, para: 0, directChar: plain },
       { id: "r01", indices: [0, 1], start: 1, end: 2, kind: "run", section: 0, para: 0, directChar: bold },
-      { id: "P1", indices: [1], start: 4, end: 6, kind: "para", section: 0, para: 1, directChar: plain },
+      { id: "P1", indices: [1], start: 4, end: 12, kind: "para", section: 0, para: 1, directChar: plain },
       { id: "r10", indices: [1, 0], start: 4, end: 5, kind: "run", section: 0, para: 1, directChar: plain },
-      { id: "r11", indices: [1, 1], start: 5, end: 6, kind: "run", section: 0, para: 1, directChar: bold },
-      { id: "P2", indices: [2], start: 8, end: 9, kind: "para", section: 0, para: 2, directChar: plain },
-      { id: "r20", indices: [2, 0], start: 8, end: 9, kind: "run", section: 0, para: 2, directChar: plain },
+      { id: "TBL", indices: [1, 1], start: 5, end: 9, kind: "table", section: 0, para: 1 },
+      { id: "CELL", indices: [1, 1, 0], start: 5, end: 9, kind: "cell", section: 0, para: 1 },
+      { id: "CP", indices: [1, 1, 0, 0], start: 5, end: 9, kind: "para", section: 0, para: 1, directChar: plain },
+      { id: "cr", indices: [1, 1, 0, 0, 0], start: 5, end: 9, kind: "run", section: 0, para: 1, directChar: bold },
+      { id: "r11", indices: [1, 1], start: 10, end: 12, kind: "run", section: 0, para: 1, directChar: bold },
+      { id: "P2", indices: [2], start: 14, end: 16, kind: "para", section: 0, para: 2, directChar: plain },
+      { id: "r20", indices: [2, 0], start: 14, end: 16, kind: "run", section: 0, para: 2, directChar: bold },
+      { id: "P3", indices: [3], start: 18, end: 18, kind: "para", section: 0, para: 3 },
+      { id: "P4", indices: [4], start: 20, end: 30, kind: "para", section: 0, para: 4, directChar: plain },
+      { id: "IMG", indices: [4, 0], start: 20, end: 22, kind: "image", section: 0, para: 4 },
+      { id: "FLD", indices: [4, 1], start: 22, end: 24, kind: "field", section: 0, para: 4 },
+      { id: "BMK", indices: [4, 2], start: 24, end: 26, kind: "bookmark", section: 0, para: 4 },
+      { id: "r40", indices: [4, 3], start: 26, end: 30, kind: "run", section: 0, para: 4, directChar: plain },
     ] };
-    const segmentFor = (id: string): Segment => runs.segments.find((s) => s.id === id)!;
-    const p2 = segmentFor("P2");
-    // Matching character format runs from the selected run's own bold shape and
-    // selects the bold runs, never their paragraphs.
-    const similar = selectSimilar(runs, segmentFor("r01"), "char");
-    expect(similar.map((ref) => ref.id)).toEqual(["r01", "r11"]);
-    const afterSimilar = reducer(initialState, { type: "selectMany", selections: similar, primary: similar[0]!, anchor: similar[0]! });
-    // A run-level selection is terminal. Run paths and control paths do not
-    // order together, so a modifier click replaces the run list with the
-    // clicked unit's own paragraphs: the bold runs are dropped rather than
-    // mixed with P2's run, which is what pulled a table cell's run into one
-    // range before.
-    const toggled = selectionAction(runs, afterSimilar, p2, "toggle");
-    expect(toggled).toEqual({
-      type: "selectMany",
-      selections: [{ section: 0, para: 2, id: "P2" }],
-      primary: { section: 0, para: 2, id: "P2" },
-      anchor: { section: 0, para: 2, id: "P2" },
+    const seg = (id: string): Segment => runs.segments.find((s) => s.id === id)!;
+    // Run order by rule 5: holder paragraph by path (P1 before its cell's
+    // paragraph CP), then the run's ordinal. The store keeps the primary first,
+    // so the list is read back in run order.
+    const ORDER = ["r00", "r01", "r10", "r11", "cr", "r20", "r40"];
+    const ids = (state: ReturnType<typeof reducer>): string[] =>
+      (state.selections ?? []).map((ref) => ref.id!).sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b));
+    const RUNS = new Set(runs.segments.filter((s) => s.kind === "run").map((s) => s.id));
+    const PARAS = new Set(runs.segments.filter((s) => s.kind === "para").map((s) => s.id));
+    // Matching character format from r01 (bold): r01, cr, r11, r20.
+    const similar = (): ReturnType<typeof reducer> => {
+      const refs = selectSimilar(runs, seg("r01"), "char");
+      return reducer(initialState, { type: "selectMany", selections: refs, primary: refs[0]!, anchor: refs[0]! });
+    };
+    const apply = (state: ReturnType<typeof reducer>, id: string, mode: "toggle" | "extend") =>
+      reducer(state, selectionAction(runs, state, seg(id), mode)!);
+
+    it("starts from matching character format, in run order with cell runs at their holder", () => {
+      expect(ids(similar())).toEqual(["r01", "r11", "cr", "r20"]);
     });
-    expect(selectionAction(runs, afterSimilar, segmentFor("P1"), "extend")).toEqual({
-      type: "selectMany",
-      selections: [{ section: 0, para: 1, id: "P1" }],
-      primary: { section: 0, para: 1, id: "P1" },
-      anchor: { section: 0, para: 1, id: "P1" },
+
+    it("Ctrl on a paragraph holding selected runs removes exactly those; on one holding none adds its runs", () => {
+      const removed = apply(similar(), "P1", "toggle");
+      // P1's immediate runs are r10 and r11; only r11 was selected and goes. The
+      // cell's run belongs to the cell paragraph, not to P1.
+      expect(ids(removed)).toEqual(["r01", "cr", "r20"]);
+      expect(RUNS.has(removed.selection!.id!)).toBe(true);
+      const added = apply(removed, "P0", "toggle");
+      expect(ids(added)).toEqual(["cr", "r20"]);
+      const readded = apply(added, "P0", "toggle");
+      expect(ids(readded)).toEqual(["r00", "r01", "cr", "r20"]);
+      expect(RUNS.has(readded.selection!.id!)).toBe(true);
     });
-    // The state the click leaves holds that one paragraph, so the format op
-    // addresses its runs and nothing from the run list it replaced.
-    const restarted = reducer(afterSimilar, toggled!);
-    expect(selectedParagraphs(runs, restarted).map((paragraph) => paragraph.id)).toEqual(["P2"]);
-    expect(formatAddresses(runs, selectedParagraphs(runs, restarted))).toEqual([{ id: "r20" }]);
+
+    it("Ctrl on a cell toggles the runs of the cell's paragraphs", () => {
+      expect(ids(apply(similar(), "CELL", "toggle"))).toEqual(["r01", "r11", "r20"]);
+    });
+
+    it("Shift extends in run order across a paragraph hosting a table, with no control ref", () => {
+      const start = reducer(initialState, { type: "selectMany", selections: [{ section: 0, para: 0, id: "r01" }], primary: { section: 0, para: 0, id: "r01" }, anchor: { section: 0, para: 0, id: "r01" } });
+      const extended = apply(start, "P2", "extend");
+      expect(ids(extended)).toEqual(["r01", "r10", "r11", "cr", "r20"]);
+      expect(ids(extended).every((id) => RUNS.has(id))).toBe(true);
+      expect(ids(extended)).not.toContain("TBL");
+      expect(ids(extended)).not.toContain("CELL");
+    });
+
+    it("never lets a control whose index equals a run ordinal into a toggle or an extend (regression)", () => {
+      // TBL is P1's control 1 and r11 is P1's run 1, and the cell run sits at
+      // TBL's index chain. Extending from r10 to P1 itself covers P1's own runs
+      // only: the cell's paragraph orders after P1, so neither TBL nor its run
+      // nor anything past P1 enters.
+      const start = reducer(initialState, { type: "selectMany", selections: [{ section: 0, para: 1, id: "r10" }], primary: { section: 0, para: 1, id: "r10" }, anchor: { section: 0, para: 1, id: "r10" } });
+      const extended = apply(start, "P1", "extend");
+      expect(ids(extended)).toEqual(["r10", "r11"]);
+      const toggled = apply(similar(), "P1", "toggle");
+      expect(ids(toggled)).not.toContain("TBL");
+      expect(ids(toggled)).not.toContain("r10");
+    });
+
+    it.each([
+      ["a table", "TBL", "table"],
+      ["an image", "IMG", "container"],
+      ["a field", "FLD", "container"],
+      ["a bookmark", "BMK", "container"],
+      ["an empty paragraph", "P3", "noRuns"],
+    ])("refuses Ctrl and Shift on %s and leaves the selection unchanged", (_label, id, refusal) => {
+      const before = similar();
+      for (const mode of ["toggle", "extend"] as const) {
+        const action = selectionAction(runs, before, seg(id), mode);
+        expect(action).toEqual({ type: "refuseSelection", refusal });
+        const after = reducer(before, action!);
+        expect(ids(after)).toEqual(ids(before));
+        expect(after.selection).toEqual(before.selection);
+      }
+    });
+
+    it("never mixes levels over every modifier-click sequence", () => {
+      const units = ["P0", "P1", "P2", "P3", "P4", "CELL", "TBL", "IMG", "FLD", "BMK", "CP"];
+      const modes = ["toggle", "extend"] as const;
+      for (const first of units) for (const m1 of modes) for (const second of units) for (const m2 of modes) {
+        let state = similar();
+        for (const [id, mode] of [[first, m1], [second, m2]] as const) {
+          const action = selectionAction(runs, state, seg(id), mode);
+          if (action !== null) state = reducer(state, action);
+          const stored = [...ids(state), ...(state.selection?.id ? [state.selection.id] : []), ...(state.selectionAnchor?.id ? [state.selectionAnchor.id] : [])];
+          const allRuns = stored.every((x) => RUNS.has(x));
+          const allParas = stored.every((x) => PARAS.has(x));
+          expect(allRuns || allParas).toBe(true);
+        }
+      }
+    });
+
+    it("moves the primary to the first remaining run when a toggle removes it, and clears on the last", () => {
+      const start = similar();
+      expect(start.selection!.id).toBe("r01");
+      const moved = apply(start, "P0", "toggle");
+      expect(moved.selection!.id).toBe("r11");
+      let state = moved;
+      for (const unit of ["CELL", "P1", "P2"]) state = apply(state, unit, "toggle");
+      expect(state.selections ?? []).toEqual([]);
+      expect(state.selection).toBeNull();
+    });
+
+    it.each(["toggle", "extend"] as const)("starts a fresh paragraph selection of the clicked unit when a range is set (rule 10, %s)", (mode) => {
+      const ranged = { ...similar(), range: { paragraph: { section: 0, para: 2, id: "P2" }, start: 14, end: 15 } };
+      expect(selectionAction(runs, ranged, seg("P2"), mode)).toEqual({
+        type: "selectMany",
+        selections: [{ section: 0, para: 2, id: "P2" }],
+        primary: { section: 0, para: 2, id: "P2" },
+        anchor: { section: 0, para: 2, id: "P2" },
+      });
+      // A cell gives exactly its own paragraphs, anchored at the cell.
+      expect(selectionAction(runs, ranged, seg("CELL"), mode)).toEqual({
+        type: "selectMany",
+        selections: [{ section: 0, para: 1, id: "CP" }],
+        primary: { section: 0, para: 1, id: "CP" },
+        anchor: { section: 0, para: 1, id: "CELL" },
+      });
+    });
+
+    it("keeps the anchor through a toggle that removes its run, so Shift still extends from it (rule 7)", () => {
+      const start = similar();
+      expect(start.selectionAnchor!.id).toBe("r01");
+      const toggled = apply(start, "P0", "toggle");
+      expect(ids(toggled)).toEqual(["r11", "cr", "r20"]);
+      expect(toggled.selectionAnchor!.id).toBe("r01");
+      // Shift to P2 measures from r01: everything from r01 through P2's run.
+      const extended = apply(toggled, "P2", "extend");
+      expect(ids(extended)).toEqual(["r01", "r10", "r11", "cr", "r20"]);
+      expect(extended.selectionAnchor!.id).toBe("r01");
+    });
+
+    it("does not keep a non-run anchor through a toggle (t82-10)", () => {
+      // A host can dispatch a run selection anchored on a paragraph; the toggle
+      // falls back to a run anchor rather than keeping the mixed one.
+      const mixed = reducer(initialState, {
+        type: "selectMany",
+        selections: [{ section: 0, para: 1, id: "r11" }, { section: 0, para: 2, id: "r20" }],
+        primary: { section: 0, para: 1, id: "r11" },
+        anchor: { section: 0, para: 1, id: "P1" },
+      });
+      const toggled = apply(mixed, "P0", "toggle");
+      expect(RUNS.has(toggled.selectionAnchor!.id!)).toBe(true);
+      expect([...ids(toggled), toggled.selection!.id!, toggled.selectionAnchor!.id!].every((id) => RUNS.has(id))).toBe(true);
+    });
+
+    it("refuses a unit whose runs cannot name themselves as unaddressable, not noRuns (t82-5)", () => {
+      // Q2 publishes a run, but the run is nested and carries no id, so its ref
+      // would name its host: it is not a run a selection can hold.
+      const unnamed: CatEnvelope = { markdown: "xyxy", segments: [
+        { id: "Q1", indices: [1], start: 0, end: 2, kind: "para", section: 0, para: 1, directChar: plain },
+        { id: "q0", indices: [1, 0], start: 0, end: 2, kind: "run", section: 0, para: 1, directChar: bold },
+        { id: "Q2", indices: [2], start: 2, end: 4, kind: "para", section: 0, para: 2, directChar: plain },
+        { indices: [2, 0], start: 2, end: 4, kind: "run", section: 0, para: 2, directChar: bold },
+      ] };
+      const state = reducer(initialState, { type: "selectMany", selections: [{ section: 0, para: 1, id: "q0" }], primary: { section: 0, para: 1, id: "q0" }, anchor: { section: 0, para: 1, id: "q0" } });
+      const q2 = unnamed.segments.find((segment) => segment.id === "Q2")!;
+      for (const mode of ["toggle", "extend"] as const) {
+        expect(selectionAction(unnamed, state, q2, mode)).toEqual({ type: "refuseSelection", refusal: "unaddressable" });
+      }
+    });
   });
 
   it("orders paragraphs by path, not envelope position, so a point paragraph sorts in place", () => {

@@ -336,7 +336,7 @@ export const en = {
     p.count === 1
       ? "Alignment and spacing apply to the 1 paragraph containing a selected run."
       : `Alignment and spacing apply to all ${p.count} paragraphs containing a selected run.`,
-  "segment.runSelectionTerminal": "Starts a new paragraph selection",
+  "segment.runSelectionGestures": "Ctrl adds or removes a paragraph's runs; Shift extends by run.",
   "segment.noParagraphSelection": "This selection carries no paragraph the engine can address, so paragraph edits are off. Pick a paragraph from the list above.",
   "segment.cellSelectionRefused": "This selection is a table cell. Alignment and spacing apply to every paragraph in the cell, but replace, insert and delete address exactly one paragraph, and the engine refuses to delete a cell's last one. Pick a paragraph from the list above.",
   "segment.tableSelectionRefused": "This selection is a table, not a paragraph. The paragraph that holds the table also holds its own text, so editing or deleting it would take the table with it. Pick a paragraph from the list above.",
@@ -352,6 +352,7 @@ export const en = {
   "segment.clickRefusedTable": "The click added nothing: a table has no paragraph of its own, so there is none to add. Click a paragraph or a cell.",
   "segment.clickRefusedContainer": "The click added nothing: an image, a field or a bookmark has no text of its own, so there is no paragraph to add. Click a paragraph or a cell.",
   "segment.clickRefusedUnaddressable": "That unit does not name a paragraph the engine can address, so the click selected nothing. Click a paragraph or a cell.",
+  "segment.clickRefusedNoRuns": "The clicked paragraph or cell has no runs to add. Click a paragraph or cell that has text.",
   "segment.selectSimilar": "Select content with matching direct formatting",
   "segment.similarChar": "Matching character format",
   "segment.similarPara": "Matching paragraph format",
@@ -890,7 +891,7 @@ export const ko: MessageTable = {
   "segment.rangeTextEditHint": "글자 범위 선택은 서식만 바꿀 수 있고 텍스트는 바꿀 수 없습니다. 텍스트를 편집하려면 문단 전체를 사용하세요.",
   "segment.runTextEditHint": "run 선택은 서식만 바꿀 수 있어 텍스트 입력란을 쓸 수 없습니다. 텍스트를 편집하려면 문단을 선택하세요.",
   "segment.runSelectionParagraphs": (p) => `문단 정렬과 간격은 선택한 run이 있는 문단 ${p.count}개 전체에 적용됩니다.`,
-  "segment.runSelectionTerminal": "새 문단 선택이 시작됩니다",
+  "segment.runSelectionGestures": "Ctrl로 문단의 run을 더하거나 빼고, Shift로 run 단위로 넓힙니다.",
   "segment.noParagraphSelection": "이 선택에는 엔진이 주소로 지정할 수 있는 문단이 없어 문단 편집을 사용할 수 없습니다. 위 목록에서 문단을 선택하세요.",
   "segment.cellSelectionRefused": "이 선택은 표의 셀입니다. 정렬과 문단 모양은 셀 안의 모든 문단에 적용되지만, 교체, 삽입, 삭제는 문단 하나만 대상으로 하며, 엔진은 셀의 마지막 문단 삭제도 거부합니다. 위 목록에서 문단을 선택하세요.",
   "segment.tableSelectionRefused": "이 선택은 문단이 아니라 표입니다. 표를 담고 있는 문단은 자기 텍스트도 함께 담고 있어, 그 문단을 편집하거나 삭제하면 표가 사라집니다. 위 목록에서 문단을 선택하세요.",
@@ -899,6 +900,7 @@ export const ko: MessageTable = {
   "segment.clickRefusedTable": "클릭으로 추가된 문단이 없습니다. 표는 자체 문단이 없어 추가할 대상이 없습니다. 문단이나 셀을 클릭하세요.",
   "segment.clickRefusedContainer": "클릭으로 추가된 문단이 없습니다. 그림, 필드 또는 책갈피는 자체 텍스트가 없어 추가할 문단이 없습니다. 문단이나 셀을 클릭하세요.",
   "segment.clickRefusedUnaddressable": "그 요소는 엔진이 주소로 지정할 수 있는 문단을 가리키지 않으므로 클릭으로 선택된 것이 없습니다. 문단이나 셀을 클릭하세요.",
+  "segment.clickRefusedNoRuns": "클릭한 문단이나 셀에 추가할 run이 없습니다. 텍스트가 있는 문단이나 셀을 클릭하세요.",
   "segment.selectSimilar": "직접 서식이 같은 내용 선택",
   "segment.similarChar": "같은 글자 서식",
   "segment.similarPara": "같은 문단 서식",
