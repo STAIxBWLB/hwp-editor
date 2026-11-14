@@ -1,3 +1,5 @@
+import { createFormCommands } from "./form-engine.js";
+import { formBindingSupported, type FormDiscovery, type FormBindingPlan, type FormApplyOptions, type FormApplyResult } from "@hwp-editor/core";
 import { createTemplateCommands } from "./template-engine.js";
 import { classifyEditRefusal, classifyInsertionRefusal, editRefusalMarker, engineErrorReason, FILE_LINE_HEAD, insertionRefusalLine, STOPPED_WITHOUT_DIAGNOSTIC, unclassifiedEditLine, type EditRefusalKind, type InsertionRefusal, TEMPLATE_METHODS, templateVersionSupported, parseEditReport, refusalCodesSupported, reportRefusalFields, sanitizeEditReport, presetBatchOptions, readPresetBatch, type EditReport, type TemplateInputs, type FillResult, type LintReport, type LintProfile, type EmbeddedTemplate, type TemplateSpecV1, type TemplateDataV1 } from "@hwp-editor/core";
 /**
@@ -341,6 +343,8 @@ export interface CliCallOptions {
 }
 
 export interface CliEngine extends HwpEngine {
+  discoverForms(document: DocumentHandle, call?: CliCallOptions): Promise<FormDiscovery>;
+  applyFormBindings(document: DocumentHandle, plan: FormBindingPlan, values: Record<string, string>, options?: FormApplyOptions, call?: CliCallOptions): Promise<FormApplyResult>;
   slots(document: DocumentHandle, call?: CliCallOptions): Promise<TemplateInputs>;
   fill(document: DocumentHandle, values: Record<string, string>, call?: CliCallOptions): Promise<FillResult>;
   template(spec: TemplateSpecV1, data: TemplateDataV1, name: string, call?: CliCallOptions): Promise<ComposeResult>;
@@ -1518,8 +1522,30 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       return result.stdout;
     },
   });
+  const formCommands = createFormCommands({
+    version: ensureVersion, work: withWorkDir, stage,
+    async run(args, call) {
+      try { return (await runCliOk(await binPath(), args, timeoutMs, opts.locale, call?.signal)).stdout; }
+      catch (error) {
+        // Native binding failures use bounded, content-free cause diagnostics.
+        // Keep only known classes, never source text or staged paths.
+        if (error instanceof HwpCliError && error.reason === "failed") {
+          const diagnostic = `${error.message} ${error.stderr ?? ""}`;
+          const cause = /stale|source.*(?:hash|identity)|source_sha256/i.test(diagnostic) ? "stale_source"
+            : /overlap|ownership|multiple.*owner/i.test(diagnostic) ? "overlapping_targets"
+            : /max_chars|budget|reflow|length/i.test(diagnostic) ? "character_budget"
+            : /constraint|equal|sum|numeric/i.test(diagnostic) ? "numeric_constraint"
+            : /unsupported|not bindable|rich_target|native_field/i.test(diagnostic) ? "unsupported_target"
+            : "engine_refused";
+          throw new HwpCliError("failed", `Form binding refused (${cause}); rediscover targets, review the plan and values, then preview again.`);
+        }
+        throw error;
+      }
+    },
+  });
   const engine: CliEngine = {
     ...templateCommands,
+    ...formCommands,
     async read(document, call) {
       return (await describe(document, call)).envelope;
     },
@@ -1920,6 +1946,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       return {
         version,
         editable: true,
+        ...(formBindingSupported(version) ? { formBindings: "v1" as const } : {}),
         editOps: "v1",
         // Its own gate, not `templateMethods`': the two command families share
         // the 1.4.0 floor today, but a host can carry one and not the other.

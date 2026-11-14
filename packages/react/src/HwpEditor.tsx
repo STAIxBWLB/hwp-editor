@@ -1,3 +1,5 @@
+import { formBindingSupported, type FormDiscovery } from "@hwp-editor/core";
+import { FormPanel } from "./FormPanel.js";
 import {
   forwardRef,
   useCallback,
@@ -128,7 +130,7 @@ export interface HwpEditorHandle {
   openCompose(): void;
 }
 
-type SideTab = "para" | "styles" | "table" | "fields" | "templates" | "components" | "lint" | "document" | "images";
+type SideTab = "forms" | "para" | "styles" | "table" | "fields" | "templates" | "components" | "lint" | "document" | "images";
 
 /**
  * Every paragraph the current selection covers, in document order.
@@ -357,6 +359,17 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
      * list, and one press is exactly one read.
      */
     const [stylesReload, setStylesReload] = useState(0);
+    const [formLoad, setFormLoad] = useState<{ document: DocumentHandle; discovery: FormDiscovery } | null>(null);
+    const formDiscovery = state.document !== null && formLoad?.document === state.document && capabilities?.formBindings === "v1" && formBindingSupported(capabilities.version) ? formLoad.discovery : null;
+    useEffect(() => {
+      let cancelled = false;
+      const document = state.document;
+      if (document === null || capabilities?.formBindings !== "v1" || !formBindingSupported(capabilities.version) || !engine.discoverForms || !engine.applyFormBindings) { setFormLoad(null); return; }
+      void engine.discoverForms(document).then(discovery => { if (!cancelled) setFormLoad({ document, discovery }); }).catch(error => {
+        if (!cancelled) { setFormLoad(null); onError?.(error); }
+      });
+      return () => { cancelled = true; };
+    }, [engine, state.document, capabilities, stylesReload, onError]);
     const styles = state.document !== null && stylesLoad !== null && stylesLoad.document === state.document
       ? stylesLoad.table
       : null;
@@ -1599,12 +1612,13 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
                     ["table", t("tabs.table")],
                     ["fields", t("tabs.fields")],
                     ["templates", t("tabs.templates")],
+                    ["forms", t("tabs.forms")],
                     ["components", t("tabs.components")],
                     ["lint", t("tabs.lint")],
                     ["document", t("tabs.document")],
                     ["images", t("tabs.images")],
                   ] as [SideTab, string][]
-                ).map(([value, label]) => (
+                ).filter(([value]) => value !== "forms" || (formDiscovery !== null && formDiscovery.occurrences.length > 0)).map(([value, label]) => (
                   <button
                     key={value}
                     type="button"
@@ -1625,6 +1639,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
               {tab === "table" && <TableGrid />}
               {tab === "fields" && <FieldsPanel />}
               {tab === "templates" && <TemplatePanel />}
+              {tab === "forms" && formDiscovery !== null && <FormPanel discovery={formDiscovery} />}
               {tab === "components" && (
                 <ComponentsPanel
                   components={catalogue}

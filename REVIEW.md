@@ -125,3 +125,20 @@ PR.
 ---
 
 Findings need an evidence-based disposition. Merges follow the owner's instruction or delegation.
+
+## Form binding transport parity (#177)
+
+- Keep `discoverForms` / `applyFormBindings`, `formBindings: "v1"`, HTTP routes and
+  Tauri command arguments aligned. A host without the explicit capability or an
+  engine below 2.0.0 must not expose the Form panel.
+- Check version-1 discovery/plan/receipt/preview validators, exact value keys,
+  Unicode budgets, explicit reflow, duplicate ownership, same-format refusal and
+  host-owned artifact paths. `apply_form_bindings` stays exclusive and atomic.
+- Check that dry run returns no native bytes and cannot change the editor, apply
+  uses the reviewed plan, and source/input changes retire the preview. Existing
+  fill/slots behavior stays unchanged.
+- `packages/server/test/form-binding.test.ts` exercises the released 2.0.0 binary
+  and the approved small Hancom-authored grade-D fixture. Playground seed includes
+  `form-binding-demo.hwpx`. Grade-C corpus checks are local only; never add source
+  names, bytes, hashes or text to reports or commits. Semantic checks do not
+  supply render/font/native-open acceptance.

@@ -149,3 +149,14 @@ export interface ErrorResponse {
     noCause?: true;
   };
 }
+
+/** POST /form-bindings: multipart file, JSON plan/values, dryRun, optional name.
+ * Discovery is POST /form-discovery with file, returning FormDiscovery version 1.
+ * Receipt/preview paths are owned by the host and never accepted on the wire. */
+export interface FormBindingsResponse {
+  receipt: import("./forms.js").FormReceipt;
+  preview: import("./forms.js").FormPreview;
+  /** Present only for a published apply. */
+  name?: string;
+  dataBase64?: string;
+}

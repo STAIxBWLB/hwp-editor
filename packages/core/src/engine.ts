@@ -1,3 +1,4 @@
+import type { FormDiscovery, FormBindingPlan, FormApplyOptions, FormApplyResult } from "./forms.js";
 import type { TemplateDataV1, TemplateSpecV1 } from "./spec.js";
 import type { EmbeddedTemplate, FillResult, LintProfile, LintReport, TemplateInputs, TemplateMethod } from "./templates.js";
 import type { EditOp } from "./ops.js";
@@ -87,6 +88,8 @@ export interface EditResult extends DocumentHandle {
 }
 
 export interface Capabilities {
+  /** Source-bound form binding, requires explicit host support and ahwp 2.0.0+. */
+  formBindings?: "v1";
   /** Optional command advertisement; an empty list means this host lacks the commands. */
   templateMethods?: TemplateMethod[];
   /** JSON edit-ops-v1 supported by both this client and its host. Absent on argv-only hosts. */
@@ -127,6 +130,8 @@ export interface ComposeResult {
  * logic lives behind this interface; the editor never parses HWP itself.
  */
 export interface HwpEngine {
+  discoverForms?(document: DocumentHandle): Promise<FormDiscovery>;
+  applyFormBindings?(document: DocumentHandle, plan: FormBindingPlan, values: Record<string, string>, options?: FormApplyOptions): Promise<FormApplyResult>;
   /** Template commands require hwp-cli >= 1.4.0; optional for older hosts. */
   slots?(document: DocumentHandle): Promise<TemplateInputs>;
   fill?(document: DocumentHandle, values: Record<string, string>): Promise<FillResult>;

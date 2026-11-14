@@ -1,3 +1,4 @@
+import { formBindingSupported, parseFormDiscovery, parseFormBindingPlan, parseFormReceipt, parseFormPreview, validateFormValues } from "@hwp-editor/core";
 import { TEMPLATE_METHODS, templateVersionSupported, parseStyleTableResponse, STYLE_TABLE_PRESETS, parseTemplateInputs, parseFillReport, parseLintReport, parseEmbeddedTemplates, parseTemplateReport, stylesVersionSupported, type EditRefusalKind, type InsertionRefusal, type TemplateMethod, type LintProfile, type TemplateSpecV1, type TemplateDataV1 } from "@hwp-editor/core";
 /**
  * Framework-agnostic HTTP handler implementing the wire contract of
@@ -64,7 +65,7 @@ import { createCliEngine, HwpCliError, type CliEngine } from "./cli-engine.js";
 import { createSessionStore, SessionNotFoundError, type SessionStore } from "./session.js";
 
 /** Supported actions; the runtime guard and `HwpAction` share this list. */
-const ACTION_LIST = ["read", "render", "edit", "compose", "validate", "capabilities", "styles", "slots", "fill", "lint", "template", "templates", "create"] as const;
+const ACTION_LIST = ["form-discovery", "form-bindings", "read", "render", "edit", "compose", "validate", "capabilities", "styles", "slots", "fill", "lint", "template", "templates", "create"] as const;
 
 /** One supported action name the handler dispatches on. */
 export type HwpAction = (typeof ACTION_LIST)[number];
@@ -566,7 +567,33 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
     // the method. A host claiming `styles` without the method would leave the
     // Styles tab enabled and every click refused.
     if (!stylesVersionSupported(caps.version) || typeof engine.styles !== "function") delete body.styles;
+    if (caps.formBindings !== "v1" || !formBindingSupported(caps.version) || !engine.discoverForms || !engine.applyFormBindings) delete body.formBindings;
     return json(body);
+  }
+
+  async function handleFormAction(req: Request, action: string, scope: string): Promise<Response> {
+    const caps = await engine.capabilities();
+    if (caps.formBindings !== "v1" || !formBindingSupported(caps.version) || !engine.discoverForms || !engine.applyFormBindings) throw new HwpCliError("unavailable", "Form binding is unavailable; upgrade the engine and host adapter to agent-hwp 2.0.0 and rediscover targets.");
+    const { document, form } = await formDocument(req);
+    const call = { signal: req.signal, scope };
+    if (action === "form-discovery") return json(validated(cli !== null ? await cli.discoverForms(document, call) : await engine.discoverForms(document), parseFormDiscovery));
+    let plan, values;
+    try {
+      plan = parseFormBindingPlan(JSON.parse(formString(form, "plan") ?? ""));
+      values = validateFormValues(plan, JSON.parse(formString(form, "values") ?? ""));
+    } catch { throw new HwpCliError("bad_request", "Invalid form plan or values; review target budgets and binding keys, then preview again."); }
+    // Only these fields are accepted. The server, never the caller, owns artifact paths.
+    form.forEach((_value, key) => { if (!["file", "plan", "values", "dryRun", "name"].includes(key)) throw new HwpCliError("bad_request", "Unexpected form binding field; send file, plan, values, dryRun and optional name only."); });
+    const dry = form.get("dryRun");
+    if (dry !== null && dry !== "true" && dry !== "false") throw new HwpCliError("bad_request", "Invalid dryRun flag; send true or false.");
+    const name = formString(form, "name") ?? document.name;
+    const format = (value: string) => /[.](hwpx|hwp)$/i.exec(value)?.[1]?.toLowerCase();
+    if (!format(document.name) || format(name) !== format(document.name)) throw new HwpCliError("bad_request", "Form binding requires same-format output; choose the source format and retry.");
+    const options = { dryRun: dry === "true", name };
+    const result = cli !== null ? await cli.applyFormBindings(document, plan, values, options, call) : await engine.applyFormBindings(document, plan, values, options);
+    const receipt = validated(result.receipt, parseFormReceipt), preview = validated(result.preview, parseFormPreview);
+    if (receipt.published !== !options.dryRun || (options.dryRun ? result.document !== undefined : result.document === undefined)) throw new HwpCliError("failed", "Form publication result disagrees with requested mode; rediscover targets and retry.");
+    return json({ receipt, preview, ...(result.document === undefined ? {} : { name: result.document.name, dataBase64: toBase64(result.document.data) }) });
   }
 
   async function requireStyles(): Promise<void> {
@@ -676,6 +703,8 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
         return error(413, "bad_request", `request exceeds the ${maxRequestBytes} byte limit; use a smaller document or fewer image uploads`);
       }
       switch (action) {
+        case "form-discovery": case "form-bindings":
+          return await handleFormAction(req, action, scope);
         case "slots": case "fill": case "lint": case "template": case "create":
           return await handleTemplateAction(req, action, scope);
         case "read":

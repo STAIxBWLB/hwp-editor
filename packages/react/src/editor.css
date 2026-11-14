@@ -724,3 +724,5 @@
 .hwped-band-approximate {
   border-style: dashed;
 }
+
+.hwped-root .hwped-form-identity { display: block; overflow-wrap: anywhere; }
