@@ -59,11 +59,11 @@ export interface EditReport {
   ops: EditOpOutcome[];
   applied_count: number;
   failed_count: number;
-  /** Present on refused runs in schema 1.1; absent on older engines. */
+  /** Present on refused runs since schema 1.1; absent on older engines. */
   refusal?: EditReportRefusal;
 }
 
-/** Stable refusal ids emitted by edit-report-v1 1.1 (ahwp 1.6.3+). */
+/** Known edit-report-v1 1.x refusal ids; 1.2/1.3 support awaits native release validation. */
 export const EDIT_REFUSAL_CODES = [
   "range_tag_shift", "keep_together_unsupported", "section_owner_insert", "section_owner_move",
   "add_table.anchor_not_found", "insert_blocks.unknown_style", "insert_blocks.invalid_definition",
