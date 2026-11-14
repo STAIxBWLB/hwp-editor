@@ -45,6 +45,13 @@ Run these passes and tag every finding with its pass:
   refusal, including `unclassified`, must not fall through to that exception or conflicting fields.
   Preserve the open-time protection backstop in `errors.ts`: the report code list has no
   protection-specific code, so an `unclassified` report does not override a protection refusal.
+  For `apply_form_bindings` on released ahwp 2.0.0, do not require a separate `--report`;
+  use the mandatory receipt and optional preview in `packages/server/src/form-engine.ts`.
+  Keep native failures without a structured refusal as `engine_refused` with rediscover,
+  review-plan/values and preview-again steps; never infer a cause from diagnostic prose.
+  Keep typed discovery/plan/value preflight refusals separate, including growth without
+  reflow and its two remedies: allow reflow, or stay within the original length.
+  For the release limitation's background, see `docs/integration-maru.md` (Source-bound forms).
 
 - **hwp-cli is the only document engine.** The server drives the released `ahwp` binary (`hwp` is
   its 1.x compatibility name) and gates its version (`packages/server/src/cli-engine.ts:72` minimum,
