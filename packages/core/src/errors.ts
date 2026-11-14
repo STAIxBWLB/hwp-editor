@@ -190,7 +190,7 @@ const PROTECTION_REASONS = {
 export function documentProtectionFailure(protection: DocumentProtection): { code: "failed" | "protected"; message: string } {
   if (protection === "password") return {
     code: "failed",
-    message: "A password is required or the password is incorrect; supply the correct password through ahwp --password-stdin and retry.",
+    message: "A password is required or the password is incorrect; supply the correct password through ahwp edit --password-stdin and retry.",
   };
   return { code: "protected", message: `${PROTECTION_REASONS[protection]}; ${PROTECTED_NEXT_STEP}` };
 }

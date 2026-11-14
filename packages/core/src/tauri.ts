@@ -181,7 +181,7 @@ function toEngineError(cmd: string, error: unknown, insertion = false, context?:
           fallback = report.refusal === undefined;
           if ((code === "failed" || code === "protected") && !fallback) {
             const mapped = reportRefusalFields(report);
-            if (mapped.code !== undefined || protectedReason === null) fields = mapped;
+            if (mapped.code !== undefined || (code === "failed" && protectedReason === null)) fields = mapped;
             if (mapped.code !== undefined) protectedReason = null;
           }
           const safeError = { ...rec, report };

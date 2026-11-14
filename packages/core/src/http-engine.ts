@@ -137,7 +137,8 @@ async function parseError(res: Response, callerName?: string): Promise<HwpEngine
         const report = sanitizeEditReport(parseEditReport(body.error.report), callerName ?? "document");
         fallback = report.refusal === undefined;
         if ((body.error.code === "failed" || body.error.code === "protected") && !fallback) {
-          fields = reportRefusalFields(report);
+          const mapped = reportRefusalFields(report);
+          if (body.error.code === "failed" || mapped.code !== undefined) fields = mapped;
           if (fields.message !== undefined) message = fields.message;
         }
         const safeError = { ...body.error, report };
