@@ -2,7 +2,7 @@ import { isPlainDecimal } from "./unit-input.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import type { JSX } from "react";
-import type { ParagraphAddress, ParagraphAlignment, ParaShapeKey, SelectionRefusal, Segment } from "@hwp-editor/core";
+import type { ParagraphAddress, ParagraphAlignment, ParaShapeKey, RunControl, SelectionRefusal, Segment } from "@hwp-editor/core";
 import { compareSegments, documentFormat, formatTargets as collectFormatTargets, hasDirectFormatting, hasOwnRef, isSectionDefinitionParagraph, paragraphAddress, paragraphRuns, resolveSelection, segmentAtRef, segmentIdPath, segmentPath, segmentRef, segmentText, selectSimilar, selectedParagraphs, selectionAction, stylesVersionSupported } from "@hwp-editor/core";
 import { paragraphSourceText, plainSegmentText } from "./text.js";
 import { useHwpEditorContext } from "./context.js";
@@ -42,6 +42,14 @@ const CLICK_REFUSAL_MESSAGE = {
  * (replace, insert before/after, delete, alignment, minimal char-format).
  * All controls queue EditOps; nothing touches the engine until Apply.
  */
+/** Why a placeholder cannot span each schema 1.2 run control kind. */
+const PLACEHOLDER_CONTROL_MESSAGE = {
+  tab: "segment.placeholderControlTab",
+  hyphen: "segment.placeholderControlHyphen",
+  nb_space: "segment.placeholderControlNbSpace",
+  fw_space: "segment.placeholderControlFwSpace",
+} as const satisfies Record<RunControl["kind"], MessageKey>;
+
 export function SegmentInspector(): JSX.Element {
   const { state, store, envelope, editable, capabilities, styles, stylesStatus, t, insertedHidden } = useHwpEditorContext();
   const { selection } = state;
@@ -414,14 +422,25 @@ export function SegmentInspector(): JSX.Element {
   // value into a paragraph, a `set-cell` replaces a cell's — so the control
   // waits for an empty queue rather than for one class of op.
   const queuedEdits = state.pendingOps.length > 0;
-  const placeholderRefused = plainParagraph === undefined || !wholeRuns || !rangeContiguous ||
+  // (6) A schema 1.2 run control inside the selection (#119 item 3). The
+  // engine stores a tab, hyphen, non-breaking or fixed-width space as a
+  // control, not as the character the Markdown shows, so a find that spans one
+  // cannot match. Only the engine's marker decides this: an envelope without
+  // controls (v1, engines before 2.0) keeps the rules above, with no guess
+  // from the text.
+  const coveredControl = state.range == null ? undefined : rangeRuns
+    .flatMap(run => run.controls ?? [])
+    .find(control => control.at >= state.range!.start && control.at < state.range!.end);
+  const placeholderRefused = coveredControl !== undefined || plainParagraph === undefined || !wholeRuns || !rangeContiguous ||
     findText === "" || !uniqueAtSelection || queuedEdits;
 
   const placeholderNameTrimmed = placeholderName.trim();
   const placeholderNameEmpty = placeholderNameTrimmed === "";
   const placeholderNameValid = !placeholderNameEmpty &&
     !/[{}]/.test(placeholderNameTrimmed) && !/[\u0000-\u001f\u007f-\u009f]/.test(placeholderNameTrimmed);
-  const placeholderReason = placeholderRefused ? t("segment.placeholderRefused") : "";
+  const placeholderReason = coveredControl !== undefined
+    ? t(PLACEHOLDER_CONTROL_MESSAGE[coveredControl.kind])
+    : placeholderRefused ? t("segment.placeholderRefused") : "";
   const placeholderNameReason = placeholderNameEmpty
     ? t("segment.placeholderNameEmpty")
     : placeholderNameValid ? "" : t("segment.placeholderNameInvalid");
