@@ -152,6 +152,9 @@ export { parsePageLayout, parseRenderLayouts, RENDER_LAYOUT_NEXT_STEP } from "./
 export { TEMPLATE_MIN_VERSION, TEMPLATE_METHODS, templateVersionSupported, parseTemplateInputs, parseTemplateReport, parseFillReport, parseLintReport, parseEmbeddedTemplates, parseTemplateMethods, reportObject, reportString, reportSchemaVersion, reportCount, reportArray } from "./templates.js";
 export type { TemplateReport, EmbeddedTemplate, FillReport, FillResult, LintFinding, LintProfile, LintReport, TemplateInput, TemplateInputs, TemplateMethod } from "./templates.js";
 export {
+  COMPONENT_LISTS_MIN_VERSION,
+  componentListMap,
+  componentListsSupported,
   componentStyleMap,
   documentSpecFromComponents,
   isComponentError,
@@ -193,7 +196,7 @@ export {
   sanitizeEditReport,
 } from "./edit-report.js";
 export type { EditIdPair, EditOpOutcome, EditReport, EditReportRefusal, EditRefusalCode, EditRefusalIssue, PreservationRefusalEvent } from "./edit-report.js";
-export type { Blocks } from "./generated/document-spec-v2.js";
+export type { Blocks, List } from "./generated/document-spec-v2.js";
 export { classifyEditRefusal, editRefusalMarker, isEditRefusalKind, reportRefusalFields } from "./refusals.js";
 export type { EditRefusalKind } from "./refusals.js";
 export {

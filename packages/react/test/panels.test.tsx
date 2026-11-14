@@ -978,6 +978,21 @@ describe("ComponentsPanel (TEST-03)", () => {
   const componentName = "결재란";
   const insertedId = "bbbbbbbbbbbbbbbb.0.1";
 
+  /**
+   * A component that carries its own ordered list (#176). Its definitions are
+   * the ones both native writers keep: `{n}.` at a start of 1.
+   */
+  const numberedComponent: Component = {
+    name: "번호 목록",
+    description: "Carries its own ordered list",
+    params: {},
+    lists: { 항목: { kind: "ordered", levels: [{ marker: "{n}.", start: 1 }] } },
+    blocks: [
+      { type: "paragraph", list: { name: "항목", level: 0 }, runs: [{ type: "text", text: "하나" }] },
+      { type: "paragraph", list: { name: "항목", level: 0 }, runs: [{ type: "text", text: "둘" }] },
+    ],
+  };
+
   /** A v2 envelope: every segment carries the id an address needs. */
   function addressableEnvelope(): CatEnvelope {
     const blocks = ["# **1. 회의록**", "2026년 8월 정기 회의"];
@@ -1703,6 +1718,43 @@ describe("ComponentsPanel (TEST-03)", () => {
     expect(
       (screen.getByRole("button", { name: en["components.insert"]({ name: "수식" }) }) as HTMLButtonElement).disabled,
     ).toBe(false);
+  });
+
+  it("refuses a component's own list on an engine older than 1.5.0 (#176)", async () => {
+    // The engine writes a component-local list as its own numbering record
+    // only from agent-hwp 1.5.0 (#472); below that the row is off with a
+    // sentence naming the version and both next steps, and nothing is sent.
+    const engine = composedEngine();
+    engine.capabilities = async () => ({
+      version: "1.4.2",
+      editable: true,
+      editOps: "v1",
+      formats: ["hwp", "hwpx"],
+    });
+    await renderPalette(engine, [numberedComponent]);
+
+    const insert = screen.getByRole("button", {
+      name: en["components.insert"]({ name: numberedComponent.name }),
+    }) as HTMLButtonElement;
+    expect(insert.disabled).toBe(true);
+    expect(screen.getByText(en["components.listEngine"]({ version: "1.5.0" }))).toBeTruthy();
+    expect(engine.calls.edit).toHaveLength(0);
+  });
+
+  it("sends a component's own lists beside the blocks on 1.5.0", async () => {
+    const engine = composedEngine();
+    await renderPalette(engine, [numberedComponent]);
+    fireEvent.click(
+      screen.getByRole("button", { name: en["components.insert"]({ name: numberedComponent.name }) }),
+    );
+
+    await waitFor(() => expect(engine.calls.edit).toHaveLength(1));
+    // The definitions travel with the op, which is what makes the engine
+    // compile them beside the target's numbering rather than into it.
+    expect(engine.calls.edit[0]!.ops[0]).toMatchObject({
+      kind: "insert-blocks",
+      lists: { 항목: { kind: "ordered", levels: [{ marker: "{n}.", start: 1 }] } },
+    });
   });
 
   it("disables the palette while an edit is queued, with the reason", async () => {

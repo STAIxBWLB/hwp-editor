@@ -8,7 +8,7 @@
 import { describe, expect, it } from "vitest";
 import { argvToOps, opsToArgv, opsToJson, type EditOp } from "../src/ops.js";
 import { HwpEngineError } from "../src/errors.js";
-import type { Blocks } from "../src/generated/document-spec-v2.js";
+import type { Blocks, List } from "../src/generated/document-spec-v2.js";
 
 describe("opsToArgv", () => {
   it("serializes one --flag value pair per op, in order", () => {
@@ -841,6 +841,30 @@ describe("addressed edit-ops-v1", () => {
       { op: "insert_blocks", address, position: "before", blocks,
         styles: { "요약표 머리": { based_on: "바탕글", bold: true } },
         missing_style: "refuse" },
+    ]);
+  });
+  /**
+   * A component's own list definitions are the `lists` half of the same arm
+   * (#176): the engine compiles each into its own numbering record, so this
+   * map is what makes an inserted list start its own numbering. The key is
+   * left out when there is nothing to send, exactly as `styles` is.
+   */
+  it("serializes the component's own lists beside insert-blocks", () => {
+    const blocks: Blocks = [{
+      type: "paragraph",
+      list: { name: "항목", level: 0 },
+      runs: [{ type: "text", text: "요약" }],
+    }];
+    const lists: Record<string, List> = {
+      항목: { kind: "ordered", levels: [{ marker: "{n}.", start: 1 }] },
+    };
+    expect(JSON.parse(opsToJson([{ kind: "insert-blocks", address, position: "after", blocks, lists }]))).toEqual([
+      { op: "insert_blocks", address, position: "after", blocks, lists },
+    ]);
+    // The key is absent when the component defines no list, the same way
+    // `styles` is: a caller that omits the map sends nothing.
+    expect(JSON.parse(opsToJson([{ kind: "insert-blocks", address, position: "after", blocks }]))).toEqual([
+      { op: "insert_blocks", address, position: "after", blocks },
     ]);
   });
 });

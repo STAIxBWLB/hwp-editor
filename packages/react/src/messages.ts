@@ -244,6 +244,10 @@ export const en = {
     "Fix the component's file so every field matches the component contract, then load it again.",
   "components.step.load":
     "Check the component file's path or URL and its JSON, then load it again.",
+  "components.listEngine": (p: { version: string }): string =>
+    `This component carries its own list, and agent-hwp ${p.version} or newer is needed to write it; ` +
+    "older engines cannot write a component-local list. Update agent-hwp, or write the list markers " +
+    "into the text runs instead.",
 
   // Error line — the prefix names which operation failed. The `{message}`
   // tail stays engine-authored and is never translated.
@@ -833,6 +837,10 @@ export const ko: MessageTable = {
     "프로파일 스타일을 based_on으로 두고 자기 이름으로 스타일을 정의하거나 참조를 고친 뒤 다시 삽입하세요.",
   "components.step.invalid": "구성 요소 파일의 모든 필드가 구성 요소 규약에 맞도록 고친 뒤 다시 불러오세요.",
   "components.step.load": "구성 요소 파일의 경로나 URL과 JSON을 확인한 뒤 다시 불러오세요.",
+  "components.listEngine": (p: { version: string }): string =>
+    `이 구성 요소는 자체 목록을 가지고 있고, 이를 쓰려면 agent-hwp ${p.version} 이상이 필요합니다. ` +
+    "이전 엔진은 구성 요소 자체의 목록을 쓸 수 없습니다. agent-hwp를 업데이트하거나 목록 표식을 " +
+    "텍스트 실행에 직접 적은 뒤 다시 삽입하세요.",
 
   "error.prefix.load": "문서 열기 실패",
   "error.prefix.refresh": "열린 문서를 다시 읽지 못해 아무것도 바뀌지 않았습니다. 같은 작업을 다시 시도하세요",

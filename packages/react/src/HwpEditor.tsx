@@ -24,7 +24,7 @@ import type {
   ValidationReport,
 } from "@hwp-editor/core";
 import type { AddressedEditOp } from "@hwp-editor/core";
-import { compareSegments, componentStyleMap, createStore, insertedParagraphIds, isSectionDefinitionParagraph, resolveSelection, segmentAtRef, segmentRef, substituteParams, validateCatEnvelope, validateImageAssets, HwpEngineError, MAX_IMAGE_ASSETS, MAX_IMAGE_ASSETS_TOTAL_BYTES, STARTER_COMPONENTS } from "@hwp-editor/core";
+import { compareSegments, componentListMap, componentStyleMap, createStore, insertedParagraphIds, isSectionDefinitionParagraph, resolveSelection, segmentAtRef, segmentRef, substituteParams, validateCatEnvelope, validateImageAssets, HwpEngineError, MAX_IMAGE_ASSETS, MAX_IMAGE_ASSETS_TOTAL_BYTES, STARTER_COMPONENTS } from "@hwp-editor/core";
 import type { EditorError, EditorState, EditorStore } from "@hwp-editor/core";
 import { HwpEditorContext } from "./context.js";
 import type { HwpEditorContextValue, InsertedHidden, StylesStatus } from "./context.js";
@@ -41,7 +41,7 @@ import { ComposePanel } from "./ComposePanel.js";
 import { ComponentsPanel } from "./ComponentsPanel.js";
 import { componentsSupportReason } from "./ComponentsPanel.js";
 import type { InsertPosition } from "./ComponentsPanel.js";
-import { classifiedRefusalMessage, componentFailure, insertionFailure, insertionPreflight } from "./components-support.js";
+import { classifiedRefusalMessage, componentFailure, insertionFailure, insertionPreflight, listEngineRefusal } from "./components-support.js";
 import { pendingKindKey, pendingTargetLabel } from "./pending-ops.js";
 import { ErrorLine } from "./ErrorLine.js";
 import { engineFailedWithoutCause, engineStoppedWithoutDiagnostic, toEditorError } from "./errors.js";
@@ -950,6 +950,11 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
      * naming a style neither it nor the target defines, and a target document
      * need not carry 바탕글 or 개요 2 for a component to land in it.
      *
+     * A component's own list definitions travel beside the blocks the same way
+     * (#176). The engine compiles each into its own numbering record, so an
+     * inserted list always starts at the definition's `start` and never
+     * continues a list in the target; the target's own lists keep theirs.
+     *
      * What the insertion created is read from `edit-report-v1` alone and
      * becomes the selection; no row list survives it, because those ids
      * describe the document as it was written and go stale on the next edit.
@@ -985,10 +990,12 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
         if (position === "before" && covered[0] !== undefined && isSectionDefinitionParagraph(covered[0])) return;
         let blocks: Component["blocks"];
         let styles: NonNullable<Extract<AddressedEditOp, { kind: "insert-blocks" }>["styles"]>;
+        let lists: NonNullable<Extract<AddressedEditOp, { kind: "insert-blocks" }>["lists"]>;
         try {
           const filled = substituteParams(component, values, component.name);
           blocks = filled.blocks;
           styles = componentStyleMap([filled]);
+          lists = componentListMap([filled]);
         } catch (error) {
           // A refused param, style reference or redefinition is a sentence for
           // the user, in their locale, naming the component and the field.
@@ -1006,6 +1013,15 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           noteRefusal(preflight);
           return;
         }
+        // A component that carries its own list needs an engine that can write
+        // one (#176): below 1.5.0 the engine would either drop the numbering or
+        // refuse the op in its own words, and the palette disables the row with
+        // this sentence rather than letting that be the answer.
+        const listGate = listEngineRefusal(lists, capabilities?.version ?? null, t);
+        if (listGate !== "") {
+          noteRefusal(listGate);
+          return;
+        }
         void (async () => {
           let report: EditReport | undefined;
           let applied = false;
@@ -1020,6 +1036,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
                     position,
                     blocks,
                     ...(Object.keys(styles).length === 0 ? {} : { styles }),
+                    ...(Object.keys(lists).length === 0 ? {} : { lists }),
                   }],
                   { report: true },
                 );
@@ -1076,7 +1093,7 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           setPendingInserted(ids);
         })();
       },
-      [emitError, engine, envelope, noteRefusal, replaceDocument, store, t],
+      [capabilities, emitError, engine, envelope, noteRefusal, replaceDocument, store, t],
     );
 
     const selectedTargets =
@@ -1121,8 +1138,9 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
      */
     const componentRefusal = useCallback(
       (component: Component): string =>
-        insertionPreflight(component.blocks, state.document?.name ?? "", t),
-      [state.document, t],
+        insertionPreflight(component.blocks, state.document?.name ?? "", t) ||
+        listEngineRefusal(component.lists, capabilities?.version ?? null, t),
+      [capabilities?.version, state.document, t],
     );
 
     const revert = useCallback((): Promise<void> => {
