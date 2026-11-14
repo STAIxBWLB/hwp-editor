@@ -366,10 +366,10 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
       const document = state.document;
       if (document === null || capabilities?.formBindings !== "v1" || !formBindingSupported(capabilities.version) || !engine.discoverForms || !engine.applyFormBindings) { setFormLoad(null); return; }
       void engine.discoverForms(document).then(discovery => { if (!cancelled) setFormLoad({ document, discovery }); }).catch(error => {
-        if (!cancelled) { setFormLoad(null); onError?.(error); }
+        if (!cancelled) { setFormLoad(null); setNotice(t("forms.discoveryFailed")); onError?.(error); }
       });
       return () => { cancelled = true; };
-    }, [engine, state.document, capabilities, stylesReload, onError]);
+    }, [engine, state.document, capabilities, stylesReload, onError, t]);
     const styles = state.document !== null && stylesLoad !== null && stylesLoad.document === state.document
       ? stylesLoad.table
       : null;

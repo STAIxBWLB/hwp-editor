@@ -65,3 +65,11 @@ it("hides forms when host capability is absent or discovery is empty", async () 
   await waitFor(() => expect(empty.discoverForms).toHaveBeenCalled());
   expect(screen.queryByRole("tab", { name: "Form" })).toBeNull();
 });
+
+it("reports discovery failure with a visible next step", async () => {
+  const engine = engineFor();
+  engine.discoverForms.mockRejectedValueOnce(new Error("engine refused"));
+  render(<HwpEditor engine={engine} file={original} />);
+  expect(await screen.findByText(en["forms.discoveryFailed"])).toBeTruthy();
+  expect(screen.queryByRole("tab", { name: "Form" })).toBeNull();
+});
