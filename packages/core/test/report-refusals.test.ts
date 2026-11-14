@@ -23,8 +23,8 @@ const expected: Record<string, object> = {
 };
 
 describe("real edit-report-v1 1.1 refusals (#119 item 1)", () => {
-  it("covers every stable engine code with a released 2.0.0 capture", () => {
-    expect([...new Set(manifest.cases.map(c => c.code))].sort()).toEqual([...EDIT_REFUSAL_CODES].sort());
+  it("covers every schema1.1 code with a released 2.0.0 capture", () => {
+    expect([...new Set(manifest.cases.map(c => c.code))].sort()).toEqual(EDIT_REFUSAL_CODES.filter(code => code !== "document_protected" && code !== "verify_mismatch").sort());
   });
   it.each(manifest.cases)("parses and maps $name ($code)", ({ name, report: file, code }) => {
     const raw = read(file);
@@ -88,7 +88,7 @@ describe("real edit-report-v1 1.1 refusals (#119 item 1)", () => {
 });
 
 describe("malformed refusal fields fail closed", () => {
-  it.each([null, [], {}, { code: "bogus", values: {}, message: "x" }, { code: "range_tag_shift", values: null, message: "x" }, { code: "range_tag_shift", values: {}, message: 1 }])("rejects malformed refusal %j", refusal => {
+  it.each([null, [], {}, { code: 12, values: {}, message: "x" }, { code: "range_tag_shift", values: null, message: "x" }, { code: "range_tag_shift", values: {}, message: 1 }])("rejects malformed refusal %j", refusal => {
     expect(() => parseEditReport({ ...report("range-tag-shift"), refusal })).toThrow("Invalid edit report");
   });
   it.each([

@@ -59,19 +59,25 @@ export interface EditReport {
   ops: EditOpOutcome[];
   applied_count: number;
   failed_count: number;
-  /** Present on refused runs in schema 1.1; absent on older engines. */
+  /** Present on refused runs since schema 1.1; absent on older engines. */
   refusal?: EditReportRefusal;
 }
 
-/** Stable refusal ids emitted by edit-report-v1 1.1 (ahwp 1.6.3+). */
+/** Known edit-report-v1 1.x refusal ids; 1.2/1.3 support awaits native release validation. */
 export const EDIT_REFUSAL_CODES = [
   "range_tag_shift", "keep_together_unsupported", "section_owner_insert", "section_owner_move",
   "add_table.anchor_not_found", "insert_blocks.unknown_style", "insert_blocks.invalid_definition",
   "insert_blocks.style_not_paragraph", "insert_blocks.duplicate_style", "insert_blocks.style_cycle",
   "insert_blocks.style_id_overflow", "layout_overflow", "insert_blocks.invalid_spec",
-  "preservation_loss", "unapplied_requests", "no_applicable_edits", "unclassified",
+  "preservation_loss", "unapplied_requests", "no_applicable_edits", "document_protected", "verify_mismatch", "unclassified",
 ] as const;
 export type EditRefusalCode = typeof EDIT_REFUSAL_CODES[number];
+export type DocumentProtection = "password" | "certificate_encryption" | "certificate_drm" | "drm" | "signature";
+export const VERIFY_INVARIANTS = [
+  "sections", "paragraphs", "tables", "pictures", "generic_controls", "fields", "bookmarks",
+  "hyperlinks", "bin_streams", "char_shapes", "para_shapes", "styles", "text_chars",
+] as const;
+export type VerifyInvariant = typeof VERIFY_INVARIANTS[number];
 
 export interface EditRefusalIssue {
   code: string;
@@ -90,6 +96,8 @@ type StyleCode = "insert_blocks.style_not_paragraph" | "insert_blocks.duplicate_
 type EmptyCode = "range_tag_shift" | "section_owner_insert" | "section_owner_move" | "unapplied_requests" | "no_applicable_edits" | "unclassified";
 export type EditReportRefusal = (
   | { code: EmptyCode; values: Record<string, never> }
+  | { code: "document_protected"; values: { protection: DocumentProtection } }
+  | { code: "verify_mismatch"; values: { counts: Array<{ name: VerifyInvariant; expected: number; actual: number }> } }
   | { code: "keep_together_unsupported"; values: { op_index: number; requested: string[] } }
   | { code: "add_table.anchor_not_found"; values: { anchor: string } }
   | { code: "insert_blocks.unknown_style"; values: { style: string; missing_style: "create" | "refuse" } }
@@ -139,12 +147,35 @@ function issueValues(values: Record<string, unknown>): IssueValues {
 function parseReportRefusal(raw: unknown): EditReportRefusal {
   const value = object(raw, "refusal");
   const code = value.code;
+  if (typeof code !== "string" || code.trim() === "") invalid("refusal.code");
   const values = object(value.values, "refusal.values");
   const message = text(value.message, "refusal.message");
   switch (code) {
     case "range_tag_shift": case "section_owner_insert": case "section_owner_move":
     case "unapplied_requests": case "no_applicable_edits": case "unclassified":
       return { code, values: {}, message };
+    case "document_protected": {
+      const protection = values.protection;
+      if (typeof protection !== "string" || !["password", "certificate_encryption", "certificate_drm", "drm", "signature"].includes(protection)) {
+        invalid("refusal.values.protection");
+      }
+      return { code, values: { protection: protection as DocumentProtection }, message };
+    }
+    case "verify_mismatch": {
+      const counts = array(values.counts, "refusal.values.counts").map(rawCount => {
+        const item = object(rawCount, "refusal.values.counts[]");
+        const name = item.name;
+        if (typeof name !== "string" || !VERIFY_INVARIANTS.includes(name as VerifyInvariant)) {
+          invalid("refusal.values.counts[].name");
+        }
+        return {
+          name: name as VerifyInvariant,
+          expected: count(item.expected, "refusal.values.counts[].expected"),
+          actual: count(item.actual, "refusal.values.counts[].actual"),
+        };
+      });
+      return { code, values: { counts }, message };
+    }
     case "keep_together_unsupported": {
       const requested = array(values.requested, "refusal.values.requested").map(v => nonempty(v, "refusal.values.requested[]"));
       if (requested.length === 0) invalid("refusal.values.requested");
@@ -177,7 +208,7 @@ function parseReportRefusal(raw: unknown): EditReportRefusal {
       if (events.length === 0) invalid("refusal.values.events");
       return { code, values: { events }, message };
     }
-    default: return invalid("refusal.code");
+    default: return { code: "unclassified", values: {}, message };
   }
 }
 

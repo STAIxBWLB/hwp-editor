@@ -1,3 +1,4 @@
+import { documentProtectionFailure } from "./errors.js";
 /**
  * One classifier for the edit refusals the editor shows as their own
  * sentence, shared by every transport (#80): the HTTP server applies it to the
@@ -180,7 +181,15 @@ export function classifyEditRefusal(stderr: string): EditRefusalKind | undefined
 
 
 /** Machine-code mapping shared by all transports; never reads diagnostic prose. */
-export function reportRefusalFields(report: EditReport): { refusal?: EditRefusalKind; insertion?: InsertionRefusal } {
+export function reportRefusalFields(report: EditReport): { refusal?: EditRefusalKind; insertion?: InsertionRefusal; code?: "failed" | "protected"; message?: string } {
+  const fields = mappedReportRefusalFields(report);
+  // Before schema1.2, protection had no typed code. Keep the old backstop
+  // there; a newer structured refusal is authoritative, even if unknown.
+  return report.refusal !== undefined && Number(report.schema_version.split(".")[1]) >= 2
+    ? { code: "failed", ...fields } : fields;
+}
+
+function mappedReportRefusalFields(report: EditReport): ReturnType<typeof reportRefusalFields> {
   const refusal = report.refusal;
   if (refusal === undefined) return {};
   switch (refusal.code) {
@@ -213,6 +222,12 @@ export function reportRefusalFields(report: EditReport): { refusal?: EditRefusal
         ? "unmatched_replace" : "unapplied_requests" };
     }
     case "no_applicable_edits": return { refusal: "no_applicable_edits" };
+    case "document_protected": return documentProtectionFailure(refusal.values.protection);
+    case "verify_mismatch": {
+      const names = [...new Set(refusal.values.counts.map(item => item.name))];
+      const reason = names.length === 0 ? "canonical digest differs" : `count invariants differ (${names.join(", ")})`;
+      return { code: "failed", refusal: "output_validation", message: `Output verification failed: ${reason}; no document was published. Reopen the original document, review the edits and retry.` };
+    }
     case "unclassified": return { refusal: "unclassified_refusal" };
   }
 }
