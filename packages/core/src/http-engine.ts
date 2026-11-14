@@ -1,5 +1,5 @@
 import { parsePageLayout } from "./layout.js";
-import { parseEditReport, legacyRefusalSupported, sanitizeEditReport } from "./edit-report.js";
+import { parseEditReport, sanitizeEditReport } from "./edit-report.js";
 import type { EditReport } from "./edit-report.js";
 import { imageAssetMediaType, validateImageAssets } from "./assets.js";
 /**
@@ -127,19 +127,24 @@ async function parseError(res: Response, callerName?: string): Promise<HwpEngine
     let fields: { refusal?: EditRefusalKind; insertion?: InsertionRefusal } = {};
     let cause: unknown = body;
     let message = body.error.message;
+    let fallback = true;
     if (body.error.report !== undefined) {
+      fallback = false;
       try {
         const report = sanitizeEditReport(parseEditReport(body.error.report), callerName ?? "document");
-        if (body.error.code === "failed") fields = reportRefusalFields(report);
+        fallback = report.refusal === undefined;
+        if (body.error.code === "failed" && !fallback) fields = reportRefusalFields(report);
         const safeError = { ...body.error, report };
-        delete safeError.refusal;
-        delete safeError.insertion;
-        delete safeError.stopped;
-        delete safeError.noCause;
+        if (!fallback) {
+          delete safeError.refusal;
+          delete safeError.insertion;
+          delete safeError.stopped;
+          delete safeError.noCause;
+        }
         cause = { ...body, error: safeError };
       } catch {
-        // A present malformed report never falls through to contradictory
-        // legacy fields, regardless of the version a host advertises.
+        // A present malformed report is rejected, never used as permission
+        // to select a contradictory legacy classification.
         message = "Invalid refused edit report; upgrade the host adapter and retry the edit.";
         const safeError = { ...body.error };
         delete safeError.report;
@@ -149,7 +154,10 @@ async function parseError(res: Response, callerName?: string): Promise<HwpEngine
         delete safeError.noCause;
         cause = { ...body, error: safeError };
       }
-    } else if (body.error.code === "failed" && legacyRefusalSupported(body.error.engineVersion)) {
+    }
+    // Old hosts can omit reports even with a modern binary. Their existing
+    // structured semantic fields remain the compatibility path (#119).
+    if (fallback && body.error.code === "failed") {
       fields = {
         ...(isEditRefusalKind(body.error.refusal) ? { refusal: body.error.refusal } : {}),
         ...(isInsertionRefusal(body.error.insertion) ? { insertion: body.error.insertion } : {}),
@@ -169,9 +177,9 @@ async function parseError(res: Response, callerName?: string): Promise<HwpEngine
         // A marker read for what it says, not for what it is: only `true`
         // counts, so a server that sends `false` or a string sends nothing
         // (#91). The sentence in the message stays as the fallback.
-        ...(body.error.report === undefined && body.error.stopped === true ? { stopped: true as const } : {}),
+        ...(fallback && body.error.stopped === true ? { stopped: true as const } : {}),
         // The no-Error-line marker (#140), read the same way.
-        ...(body.error.report === undefined && body.error.noCause === true ? { noCause: true as const } : {}),
+        ...(fallback && body.error.noCause === true ? { noCause: true as const } : {}),
       },
     );
   } catch {

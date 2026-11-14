@@ -432,7 +432,7 @@ describe("structured refusal on the HTTP transport (#82)", () => {
   const doc = { name: "a.hwpx", data: new Uint8Array([1]) };
 
   it("carries the server's error.refusal onto the error", async () => {
-    const err = await failing({ error: { code: "failed", message: "ahwp edit failed (exit 3): edit refused: range_tag", refusal: "range_tag", engineVersion: "1.6.2" } })
+    const err = await failing({ error: { code: "failed", message: "ahwp edit failed (exit 3): edit refused: range_tag", refusal: "range_tag" } })
       .edit(doc, []).catch((e: unknown) => e) as HwpEngineError;
     expect(err.refusal).toBe("range_tag");
   });
@@ -549,11 +549,19 @@ describe("refused edit reports across HTTP (#119)", () => {
     expect((error.cause as { error: { report: { output: string } } }).error.report.output).toBe(doc.name);
   });
 
-  it.each([undefined, "2.0.0", "1.6.3", "not-a-version"])("does not accept legacy fields for missing/modern version %s", async engineVersion => {
+  it.each([undefined, "2.0.0", "1.6.3", "not-a-version"])("keeps no-report legacy fields independently of engine version %s", async engineVersion => {
     const error = await failure({ code: "failed", message: "edit refused: range_tag", engineVersion, refusal: "range_tag",
       insertion: { kind: "layout_overflow", blockMm: 400, insertionMm: 170 } });
-    expect(error.refusal).toBeUndefined();
-    expect(error.insertion).toBeUndefined();
+    expect(error.refusal).toBe("range_tag");
+    expect(error.insertion).toEqual({ kind: "layout_overflow", blockMm: 400, insertionMm: 170 });
+  });
+
+  it("uses legacy fields when a valid report has no refusal", async () => {
+    const raw = report() as { refusal?: unknown };
+    delete raw.refusal;
+    const error = await failure({ code: "failed", message: "x", report: raw, refusal: "range_tag" });
+    expect(error.refusal).toBe("range_tag");
+    expect((error.cause as { error: { report: { output: string } } }).error.report.output).toBe(doc.name);
   });
 
   it("does not fall back after a malformed report, even for an explicit legacy host", async () => {

@@ -43,7 +43,7 @@ import type { DocumentSpecV2 } from "./generated/document-spec-v2.js";
 import type { TemplateDataV1, TemplateSpecV1 } from "./spec.js";
 import type { LintProfile } from "./templates.js";
 import { parseEmbeddedTemplates, parseFillReport, parseLintReport, parseTemplateInputs, parseTemplateMethods, parseTemplateReport, reportObject, reportString } from "./templates.js";
-import { parseEditReport, sanitizeEditReport, refusalCodesSupported, legacyRefusalSupported } from "./edit-report.js";
+import { parseEditReport, sanitizeEditReport, refusalCodesSupported } from "./edit-report.js";
 import type { EditReport } from "./edit-report.js";
 import type {
   ComposeResponse,
@@ -147,12 +147,12 @@ function prefixToCode(detail: string): HwpErrorCode {
  * No `status` is set: there is no HTTP status on this bridge, and
  * synthesizing one would invent information.
  */
-interface EditFailureContext { version: string; name: string }
+interface EditFailureContext { name: string }
 
 function toEngineError(cmd: string, error: unknown, insertion = false, context?: EditFailureContext): HwpEngineError {
   // Old hosts reject with a string. A host that carries refused edit reports
   // rejects with the additive ErrorResponse-shaped object instead (#119).
-  // Both forms remain supported; only explicit old versions permit text classification.
+  // A missing report preserves fixed-head/tail fallback for either host form.
   if (typeof error === "object" && error !== null && !(error instanceof Error)) {
     const rec = error as {
       code?: unknown;
@@ -168,18 +168,23 @@ function toEngineError(cmd: string, error: unknown, insertion = false, context?:
       const detail = typeof rec.message === "string" ? rec.message : String(error);
       const code = toHwpErrorCode(rec.code);
       const protectedReason = protectedReasonFor(cmd, code, detail);
-      let fields: { refusal?: EditRefusalKind; insertion?: InsertionRefusal } = {};
+      let fields: { refusal?: EditRefusalKind; insertion?: InsertionRefusal; stopped?: true; noCause?: true } = {};
       let cause: unknown = error;
       let message = withoutPaths(detail);
+      let fallback = true;
       if (rec.report !== undefined) {
+        fallback = false;
         try {
           const report = sanitizeEditReport(parseEditReport(rec.report), context?.name ?? "document");
-          if (code === "failed" && protectedReason === null) fields = reportRefusalFields(report);
+          fallback = report.refusal === undefined;
+          if (code === "failed" && protectedReason === null && !fallback) fields = reportRefusalFields(report);
           const safeError = { ...rec, report };
-          delete safeError.refusal;
-          delete safeError.insertion;
-          delete safeError.stopped;
-          delete safeError.noCause;
+          if (!fallback) {
+            delete safeError.refusal;
+            delete safeError.insertion;
+            delete safeError.stopped;
+            delete safeError.noCause;
+          }
           cause = safeError;
           if (fields.refusal !== undefined) message = editRefusalMarker(fields.refusal);
           else if (fields.insertion !== undefined) message = `insert_blocks refused: ${fields.insertion.kind}`;
@@ -193,19 +198,22 @@ function toEngineError(cmd: string, error: unknown, insertion = false, context?:
           delete safeError.noCause;
           cause = safeError;
         }
-      } else if (code === "failed" && protectedReason === null &&
-          legacyRefusalSupported(context?.version ?? rec.engineVersion) &&
-          (rec.engineVersion === undefined || legacyRefusalSupported(rec.engineVersion))) {
+      }
+      if (fallback && code === "failed" && protectedReason === null) {
         fields = {
           ...(isEditRefusalKind(rec.refusal) ? { refusal: rec.refusal } : {}),
           ...(isInsertionRefusal(rec.insertion) ? { insertion: rec.insertion } : {}),
         };
+        if (fields.refusal === undefined && fields.insertion === undefined) {
+          const legacy = editFailure(cmd, code, detail, insertion);
+          if (legacy !== null) { fields = legacy.fields; message = legacy.message; }
+        }
       }
       if (protectedReason !== null) return new HwpEngineError("protected", `${cmd} failed: ${protectedReason}`, { cause });
       return new HwpEngineError(code, `${cmd} failed: ${message}`, {
         cause, ...fields,
-        ...(rec.report === undefined && rec.stopped === true ? { stopped: true as const } : {}),
-        ...(rec.report === undefined && rec.noCause === true ? { noCause: true as const } : {}),
+        ...(fallback && rec.stopped === true ? { stopped: true as const } : {}),
+        ...(fallback && rec.noCause === true ? { noCause: true as const } : {}),
       });
     }
   }
@@ -217,7 +225,7 @@ function toEngineError(cmd: string, error: unknown, insertion = false, context?:
       cause: error,
     });
   }
-  const edit = editFailure(cmd, code, detail, insertion, legacyRefusalSupported(context?.version));
+  const edit = editFailure(cmd, code, detail, insertion);
   if (edit !== null) {
     return new HwpEngineError(code, `${cmd} failed: ${edit.message}`, { cause: error, ...edit.fields });
   }
@@ -271,7 +279,6 @@ function editFailure(
   code: HwpErrorCode,
   detail: string,
   insertion: boolean,
-  legacy: boolean,
 ): { message: string; fields: { refusal?: EditRefusalKind; insertion?: InsertionRefusal; stopped?: true; noCause?: true } } | null {
   if (code !== "failed" || cmd !== "hwped_edit") return null;
   const failure = MARU_EDIT_FAILURE.exec(detail);
@@ -279,11 +286,11 @@ function editFailure(
   const head = failure[1]!;
   const workDir = maruWorkDir(failure[2]);
   const stderr = failure[3]!;
-  const kind = legacy ? classifyEditRefusal(stderr) : undefined;
+  const kind = classifyEditRefusal(stderr);
   if (kind !== undefined) return { message: `${head}: ${editRefusalMarker(kind)}`, fields: { refusal: kind } };
   if (stderr.trim() === "") return { message: `${head}: ${STOPPED_WITHOUT_DIAGNOSTIC}`, fields: { stopped: true } };
   const noCause = engineErrorReason(stderr, workDir) === undefined ? { noCause: true as const } : {};
-  if (insertion && legacy) {
+  if (insertion) {
     const cls = classifyInsertionRefusal(stderr);
     return {
       message: `${head}: ${insertionRefusalLine(stderr, workDir)}`,
@@ -477,7 +484,7 @@ export function createTauriEngine(
           : {}),
         ...(wantsReport || refusalCodesSupported(caps.version) ? { report: true } : {}),
         ...scope(),
-      }, ops.some(op => op.kind === "insert-blocks"), { version: caps.version, name: document.name });
+      }, ops.some(op => op.kind === "insert-blocks"), { name: document.name });
       let report: EditReport | undefined;
       if (wantsReport && res.report !== undefined) {
         try {

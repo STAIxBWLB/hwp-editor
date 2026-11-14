@@ -79,7 +79,7 @@ cause, and give the two remedies below. For another cause they direct the user
 to run the same edit with the engine's `--verify` report to see which check
 failed. Apply and immediate insertion use that same localized message.
 
-That interim class is now limited to legacy engines. Section 1 of #119 adds
+That interim class remains for hosts without a structured refusal. Section 1 of #119 adds
 failed-report code consumption for modern transports and a font-specific
 classification; see [Edit refusal reports](edit-refusal-reports.md). The codes
 already shipped in 1.6.3, as the measured 2.0.0 report above confirms.

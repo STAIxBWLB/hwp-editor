@@ -916,41 +916,67 @@ function rethrowUnmatchedEditRefusal(error: unknown, workDir?: string): never {
   throw error;
 }
 
-/** Read and redact the report before the per-call stage directory disappears. */
-async function readEditReport(file: string, name: string, workDir: string): Promise<EditReport | undefined> {
+type RefusedReportRead =
+  | { state: "unavailable" }
+  | { state: "malformed" }
+  | { state: "valid"; report: EditReport };
+
+/** Distinguish unavailable host metadata from present-but-invalid report data. */
+async function readEditReport(file: string, name: string, workDir: string): Promise<RefusedReportRead> {
+  let text: string;
   try {
-    if ((await stat(file)).size > HWP_MAX_BUFFER) return undefined;
-    return sanitizeEditReport(parseEditReport(JSON.parse(await readFile(file, "utf8"))), name, workDir);
+    if ((await stat(file)).size > HWP_MAX_BUFFER) return { state: "malformed" };
+    text = await readFile(file, "utf8");
   } catch {
-    return undefined;
+    // A host can omit or fail to expose the report even with a modern engine.
+    return { state: "unavailable" };
+  }
+  try {
+    return { state: "valid", report: sanitizeEditReport(parseEditReport(JSON.parse(text)), name, workDir) };
+  } catch {
+    return { state: "malformed" };
   }
 }
 
-/** Modern edit failures never fall back to a stderr semantic classifier. */
-async function rethrowReportedEditFailure(error: unknown, file: string, name: string, version: string, workDir: string): Promise<never> {
+/** A valid refusal report is authoritative; absent metadata keeps host fallback. */
+async function rethrowReportedEditFailure(error: unknown, file: string, name: string, version: string, workDir: string, ops: EditOp[], uploads: boolean): Promise<never> {
   // Document-open protection has no specific edit-report code yet. It stays
   // ahead of edit refusal mapping, including reports whose code is unclassified.
   try { return rethrowProtected(error); }
   catch (failure) {
     if (!(failure instanceof HwpCliError) || failure.reason !== "failed") throw failure;
-    const report = await readEditReport(file, name, workDir);
-    const fields: { refusal?: EditRefusalKind; insertion?: InsertionRefusal } = report === undefined ? {} : reportRefusalFields(report);
+    const reading = await readEditReport(file, name, workDir);
+    if (reading.state === "unavailable" || (reading.state === "valid" && reading.report.refusal === undefined)) {
+      return rethrowLegacyEditFailure(failure, version, workDir, ops, uploads,
+        reading.state === "valid" ? reading.report : undefined);
+    }
+    if (reading.state === "malformed") {
+      throw new HwpCliError("failed", `${failure.message}: Invalid refused edit report; upgrade the host adapter and retry the edit.`,
+        failure.stderr, failure.detail, undefined, undefined, undefined, undefined, undefined, version);
+    }
+    const report = reading.report;
+    const fields = reportRefusalFields(report);
     const line = fields.refusal !== undefined ? editRefusalMarker(fields.refusal)
       : fields.insertion !== undefined ? `insert_blocks refused: ${fields.insertion.kind}`
-      : failure.stopped === true ? STOPPED_WITHOUT_DIAGNOSTIC : unclassifiedEditLine(failure.stderr ?? "", workDir);
+      : unclassifiedEditLine(failure.stderr ?? "", workDir);
     throw new HwpCliError("failed", `${failure.message}: ${line}`, failure.stderr, failure.detail,
-      fields.refusal, fields.insertion, report?.refusal === undefined ? failure.stopped : undefined,
-      report?.refusal === undefined ? failure.noCause ?? noCauseMarker(failure.stderr ?? "", workDir) : undefined, report, version);
+      fields.refusal, fields.insertion, undefined, undefined, report, version);
   }
 }
 
-/** Carry the explicit old engine version with legacy semantic fields. */
-function rethrowLegacyEditFailure(error: unknown, version: string): never {
-  if (error instanceof HwpCliError) {
-    throw new HwpCliError(error.reason, error.message, error.stderr, error.detail,
-      error.refusal, error.insertion, error.stopped, error.noCause, undefined, version);
-  }
-  throw error;
+/** Preserve the established fallback when the host supplies no refusal code. */
+async function rethrowLegacyEditFailure(error: unknown, version: string, workDir: string, ops: EditOp[], uploads: boolean, report?: EditReport): Promise<never> {
+  return Promise.reject(error).catch(uploads
+    ? failure => rethrowUploadedImageFailure(failure, ops.every(op => op.kind === "insert-image"), ops.some(op => op.kind === "insert-blocks"), workDir)
+    : rethrowProtected).catch(failure => rethrowInsertBlocksRefusal(failure, ops.some(op => op.kind === "insert-blocks"), workDir))
+    .catch(failure => rethrowUnmatchedEditRefusal(failure, workDir))
+    .catch((failure: unknown) => {
+      if (failure instanceof HwpCliError) {
+        throw new HwpCliError(failure.reason, failure.message, failure.stderr, failure.detail,
+          failure.refusal, failure.insertion, failure.stopped, failure.noCause, report, version);
+      }
+      throw failure;
+    });
 }
 
 /** runCliOk's edit exit line with nothing after it. */
@@ -1787,13 +1813,9 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         if (wantsReport || wantsRefusalReport) args.push("--report", reportPath);
         const invocation = runCliOk(bin, args, timeoutMs, opts.locale, call?.signal);
         if (wantsRefusalReport) {
-          await invocation.catch(error => rethrowReportedEditFailure(error, reportPath, document.name, editVersion, dir));
+          await invocation.catch(error => rethrowReportedEditFailure(error, reportPath, document.name, editVersion, dir, ops, uploads !== undefined));
         } else {
-          await invocation.catch(options.assets?.length
-            ? error => rethrowUploadedImageFailure(error, ops.every(op => op.kind === "insert-image"), ops.some(op => op.kind === "insert-blocks"), dir)
-            : rethrowProtected).catch(error => rethrowInsertBlocksRefusal(error, ops.some(op => op.kind === "insert-blocks"), dir))
-            .catch(error => rethrowUnmatchedEditRefusal(error, dir))
-            .catch(error => rethrowLegacyEditFailure(error, editVersion));
+          await invocation.catch(error => rethrowLegacyEditFailure(error, editVersion, dir, ops, uploads !== undefined));
         }
         const data = new Uint8Array(await readFile(output));
         if (!wantsReport) return { name: document.name, data };

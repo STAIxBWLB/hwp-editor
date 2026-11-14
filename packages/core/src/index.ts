@@ -185,7 +185,6 @@ export {
   EDIT_REPORT_MIN_VERSION,
   EDIT_REFUSAL_CODES,
   refusalCodesSupported,
-  legacyRefusalSupported,
   editReportSupported,
   insertedParagraphIds,
   segmentIdPath,

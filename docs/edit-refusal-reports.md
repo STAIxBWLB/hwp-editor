@@ -45,17 +45,21 @@ are removed before the report is exposed as an error cause. Typed user anchors,
 style names and structured issue-path segments retain their exact values; they
 are identifiers rather than diagnostic filesystem paths.
 
-A report overrides conflicting legacy semantic fields. An absent or malformed
-modern report leaves a generic diagnostic; it never enables a stderr fallback.
-Only a known engine version below 1.6.3 authorizes the legacy fixed-head/tail
-classifiers and their old layout-overflow issue-list reader. A host without a
-version/report can still fail normally, but supplies no verified semantic kind.
+A valid structured `report.refusal` overrides conflicting legacy semantic
+fields, including when its code is `unclassified`. A present malformed report
+fails closed. If there is no structured refusal, existing host/server fields
+or the existing fixed-head/tail stderr classifiers decide, then generic
+diagnostics apply. This fallback is independent of engine version: asking for
+a report on >=1.6.3 does not prove that the host forwarded one. The old
+layout-overflow issue-list reader remains only on this no-report compatibility
+path; structured numeric values take precedence whenever supplied.
 
-Current Maru source does not yet return edit reports from failed IPC calls.
-The client supports structured report-bearing hosts and handles current hosts
-without report-based classification. This is adapter-contract coverage, not
-proof that the installed native host forwards reports; that requires separate
-host integration. No Maru or agent-hwp source changes are included here.
+The Maru source inspected for this task does not yet return failed edit reports.
+The client supports additive `report: true` requests and structured error reports,
+and preserves current string-only refusal classification. Live Tauri refusal-code
+forwarding remains unverified; the installed native runtime was not probed.
+Host integration is a separate handoff after this PR. No Maru or agent-hwp
+source changes are included here.
 
 ## Protection measurements
 
@@ -81,5 +85,5 @@ all report and stderr bytes matched, and every report passed the release schema.
 
 The REVIEW.md classifier focus changed on 2026-11-14 because the modern
 machine-code contract eliminates the need to infer classes and widths from
-user-valued diagnostic strings. The old reader remains only behind the explicit
-legacy version gate, and protection remains separate because its code is absent.
+user-valued diagnostic strings. The old reader remains only on the no-report
+compatibility path, and protection remains separate because its code is absent.

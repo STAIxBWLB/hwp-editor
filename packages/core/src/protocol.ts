@@ -132,7 +132,7 @@ export interface ErrorResponse {
     refusal?: string;
     /** Validated failed edit-report-v1, with caller-visible output names. */
     report?: EditReport;
-    /** Explicit engine version; absence is not evidence of legacy support. */
+    /** Explicit engine version used by the host, when available. */
     engineVersion?: string;
     /** The `insert_blocks` refusal class (`InsertionRefusal`), when there is one (#88). */
     insertion?: unknown;

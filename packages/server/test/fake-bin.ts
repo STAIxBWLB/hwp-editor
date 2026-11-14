@@ -127,6 +127,8 @@ export interface FakeBinOptions {
   editReport?: string;
   /** Report written before an intentionally refused edit exits nonzero. */
   editRefusalReport?: string;
+  /** Create a report directory to emulate host metadata that cannot be read. */
+  editRefusalReportUnreadable?: boolean;
 }
 
 const dirs: string[] = [];
@@ -227,13 +229,14 @@ export function createFakeBin(opts: FakeBinOptions = {}): { bin: string; log: ()
    * the report lands where the engine will look for it.
    */
   const reportText = opts.editRefusalReport ?? opts.editReport;
-  const reportEdit = reportText === undefined ? null : [
+  const refusedReport = opts.editRefusalReport !== undefined || opts.editRefusalReportUnreadable === true;
+  const reportEdit = reportText === undefined && !refusedReport ? null : [
     'prev=""; out=""; rep="";',
     'for a in "$@"; do case "$prev" in -o) out="$a" ;; --report) rep="$a" ;; esac; prev="$a"; done;',
-    ...(opts.editRefusalReport === undefined ? ['cp "$2" "$out";'] : []),
-    `printf '%s' ${shellLiteral(reportText)} > "$rep";`,
-    ...(opts.editRefusalReport === undefined ? [] : (opts.editStderrLines ?? ["Error: test refusal"]).map(line => `printf '%s\\n' ${shellLiteral(line)} >&2;`)),
-    opts.editRefusalReport === undefined ? "exit 0" : "exit 3",
+    ...(!refusedReport ? ['cp "$2" "$out";'] : []),
+    opts.editRefusalReportUnreadable ? 'mkdir "$rep";' : `printf '%s' ${shellLiteral(reportText ?? "")} > "$rep";`,
+    ...(!refusedReport ? [] : (opts.editStderrLines ?? ["Error: test refusal"]).map(line => `printf '%s\\n' ${shellLiteral(line)} >&2;`)),
+    !refusedReport ? "exit 0" : "exit 3",
   ];
   writeFileSync(
     bin,

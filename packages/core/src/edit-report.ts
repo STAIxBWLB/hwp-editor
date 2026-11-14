@@ -100,12 +100,9 @@ export type EditReportRefusal = (
   | { code: "preservation_loss"; values: { events: PreservationRefusalEvent[] } }
 ) & { message: string };
 
-/** An absent or malformed version never authorizes text-based inference. */
-export function legacyRefusalSupported(version: unknown): boolean {
-  return typeof version === "string" && /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.test(version) && !refusalCodesSupported(version);
-}
 /** Refusal reports were added in ahwp 1.6.3; the editor's floor stays unchanged. */
-export function refusalCodesSupported(version: string): boolean {
+export function refusalCodesSupported(version: unknown): boolean {
+  if (typeof version !== "string") return false;
   const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(version);
   if (match === null) return false;
   const [major, minor, patch] = match.slice(1).map(Number) as [number, number, number];

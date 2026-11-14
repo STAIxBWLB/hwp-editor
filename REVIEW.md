@@ -34,14 +34,15 @@ Run these passes and tag every finding with its pass:
   retain the original cause or name only the specific command known to have failed
   (`packages/server/src/cli-engine.ts`, `rethrowUploadedImageFailure`); a mixed edit
   batch must not receive an image-only remedy just because it contains uploads.
-- **Modern edit refusals use report codes.** For engines >= 1.6.3, validate
-  `edit-report-v1` 1.x and classify from `refusal.code` and typed `values` in
-  `packages/core/src/edit-report.ts` and `refusals.ts`. Never select a kind or a width from
-  `message`, issue prose, user-valued path segments, stderr or a Caused-by list. A missing or
-  malformed modern report must not re-enable stderr classification or conflicting legacy fields.
-  Use the fixed-head/tail stderr classifiers in `refusals.ts` and `insertion-refusals.ts` only
-  for an explicitly known engine below 1.6.3. Their existing `layout_overflow` issue-list reader
-  is a legacy-only exception; add no text reader and never use that exception on a modern engine.
+- **Structured edit refusals take precedence.** Validate `edit-report-v1` 1.x and classify a
+  present `refusal` from its `code` and typed `values` in `packages/core/src/edit-report.ts`
+  and `refusals.ts`. Never select a class or width from that report's message, issue prose,
+  user-valued path segments or a Caused-by list. A present malformed report fails closed.
+  When no structured refusal is available, preserve the host/server's existing semantic fields
+  or fixed-head/tail stderr classification, regardless of engine version, then fall back to
+  generic diagnostics. The existing `layout_overflow` issue-list reader in `insertion-refusals.ts`
+  remains a no-report compatibility exception; add no other text reader. A valid structured
+  refusal, including `unclassified`, must not fall through to that exception or conflicting fields.
   Preserve the open-time protection backstop in `errors.ts`: the report code list has no
   protection-specific code, so an `unclassified` report does not override a protection refusal.
 

@@ -17,9 +17,10 @@
  * drift refusal in a context chain (runtime.rs:324-331), so neither needs a
  * `Caused by:` line.
  *
- * The stderr functions below are compatibility fallbacks for engines proven
- * below 1.6.3. Modern failures use reportRefusalFields, including when stderr
- * carries the same prose; missing reports never authorize text inference.
+ * The stderr functions below remain compatibility fallbacks when a host or
+ * engine provides no structured refusal, regardless of engine version. A
+ * valid report.refusal uses reportRefusalFields instead, including unclassified;
+ * malformed present reports never re-enable these classifiers.
  *
  * Classification exposes fixed kinds and typed values, not diagnostic prose.
  * The engine's staged paths and
@@ -78,7 +79,7 @@ const ADDRESS_PATH_LINE = /^op\[\d+\] (?:id [0-9a-f]{16}\.\d+(?:\.\d+)+|at \d+(?
  * The target path is opaque user data between this fixed head and tail.
  * The Caused-by/event list is never read: font metadata is only one possible
  * cause. Modern transports consume agent-hwp#531 codes through
- * reportRefusalFields (#119 item 1); this wrapper is legacy-only.
+ * reportRefusalFields (#119 item 1); this wrapper remains for no-report hosts.
  */
 const OUTPUT_VALIDATION_LINE = /^Error: 출력 검증 실패 \(대상: .*\)$/u;
 

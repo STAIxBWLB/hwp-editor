@@ -171,11 +171,13 @@ function error(
     // boundary: validate/redact again instead of trusting a typed annotation.
     try { safeReport = sanitizeEditReport(report, withoutPaths(report.output)); }
     catch { safeReport = undefined; }
-    const fields: { refusal?: EditRefusalKind; insertion?: InsertionRefusal } = safeReport === undefined || code !== "failed" ? {} : reportRefusalFields(safeReport);
-    refusal = fields.refusal;
-    insertion = fields.insertion;
-    stopped = undefined;
-    noCause = undefined;
+    if (safeReport === undefined || safeReport.refusal !== undefined) {
+      const fields: { refusal?: EditRefusalKind; insertion?: InsertionRefusal } = safeReport === undefined || code !== "failed" ? {} : reportRefusalFields(safeReport);
+      refusal = fields.refusal;
+      insertion = fields.insertion;
+      stopped = undefined;
+      noCause = undefined;
+    }
   }
   const body: ErrorResponse = {
     error: {

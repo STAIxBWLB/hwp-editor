@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { EDIT_REFUSAL_CODES, legacyRefusalSupported, parseEditReport, refusalCodesSupported, reportRefusalFields, sanitizeEditReport } from "../src/index.js";
+import { EDIT_REFUSAL_CODES, parseEditReport, refusalCodesSupported, reportRefusalFields, sanitizeEditReport } from "../src/index.js";
 
 const read = (name: string): any => JSON.parse(readFileSync(new URL(`./fixtures/refusal-reports-v1.1/${name}`, import.meta.url), "utf8"));
 const manifest = read("manifest.json") as { cases: { name: string; report: string; code: string }[] };
@@ -118,14 +118,14 @@ describe("malformed refusal fields fail closed", () => {
   });
 });
 
-describe("version gate for stderr compatibility", () => {
-  it.each(["0.20.0", "1.4.0", "1.6.2"])("permits only explicit old engine %s", version => {
-    expect(legacyRefusalSupported(version)).toBe(true); expect(refusalCodesSupported(version)).toBe(false);
+describe("version gate for automatically requesting refusal reports", () => {
+  it.each(["0.20.0", "1.4.0", "1.6.2"])("does not require the newer report on %s", version => {
+    expect(refusalCodesSupported(version)).toBe(false);
   });
-  it.each(["1.6.3", "1.6.4", "2.0.0"])("uses structured codes on %s", version => {
-    expect(legacyRefusalSupported(version)).toBe(false); expect(refusalCodesSupported(version)).toBe(true);
+  it.each(["1.6.3", "1.6.4", "2.0.0"])("requests structured codes on %s", version => {
+    expect(refusalCodesSupported(version)).toBe(true);
   });
-  it.each([undefined, null, "", "2", "unknown", 1])("does not assume an unknown version %j is old", version => {
-    expect(legacyRefusalSupported(version)).toBe(false);
+  it.each([undefined, null, "", "2", "unknown", 1])("does not request from an unknown version %j", version => {
+    expect(refusalCodesSupported(version)).toBe(false);
   });
 });

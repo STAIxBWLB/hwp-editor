@@ -61,16 +61,44 @@ describe("code-based refused report transport (#119)", () => {
     expect(error.refusal).toBeUndefined();
   });
 
-  it.each([undefined, '{"contract":"wrong"}'])("never uses modern stderr classifiers with missing/malformed report %s", async report => {
-    const { bin } = createFakeBin({ version: "2.0.0", mode: "fail", info: "{}",
-      ...(report === undefined ? {} : { editRefusalReport: report }),
+  it.each([false, true])("keeps modern-server range-tag fallback when the report is absent/unreadable=%s", async unreadable => {
+    const { bin } = createFakeBin({ version: "2.0.0", mode: "fail", info: "{}", editRefusalReportUnreadable: unreadable,
+      editStderrLines: fixture("range-tag-shift.stderr.txt").trimEnd().split("\n") });
+    const error = await caught(createCliEngine({ bin }).edit(document, replace));
+    expect(error.refusal).toBe("range_tag");
+    expect(error.report).toBeUndefined();
+    expect(error.engineVersion).toBe("2.0.0");
+  });
+
+  it.each(['{"contract":"wrong"}', '{', ''])("rejects a present malformed report instead of classifying stderr %s", async report => {
+    const { bin } = createFakeBin({ version: "2.0.0", mode: "fail", info: "{}", editRefusalReport: report,
       editStderrLines: ["Error: 출력 검증 실패 (대상: /private/stage/out.hwp)", "layout_overflow at $.x: width 9999 mm"] });
     const error = await caught(createCliEngine({ bin }).edit(document, insert));
     expect(error.refusal).toBeUndefined();
     expect(error.insertion).toBeUndefined();
     expect(error.report).toBeUndefined();
-    expect(error.engineVersion).toBe("2.0.0");
+    expect(error.message).toContain("Invalid refused edit report");
     expect(error.message).not.toContain("/private/stage");
+  });
+
+  it("keeps fallback when a valid report carries no refusal", async () => {
+    const report = JSON.parse(fixture("unapplied-replace.json"));
+    delete report.refusal;
+    const { bin } = createFakeBin({ version: "2.0.0", mode: "fail", info: "{}", editRefusalReport: JSON.stringify(report),
+      editStderrLines: fixture("range-tag-shift.stderr.txt").trimEnd().split("\n") });
+    const error = await http(createCliEngine({ bin })).edit(document, replace).catch((cause: unknown) => cause) as HwpEngineError;
+    expect(error.refusal).toBe("range_tag");
+    expect((error.cause as { error: { report: { output: string } } }).error.report.output).toBe(document.name);
+  });
+
+  it("keeps mixed-upload fallback remedies when a modern host cannot supply a report", async () => {
+    const { bin } = createFakeBin({ version: "2.0.0", mode: "fail", info: "{}", editStderrLines: ["Error: 이미지를 삽입할 수 없습니다"] });
+    const ops: EditOp[] = [...replace, { kind: "insert-image", anchor: "x", path: "client.png" }];
+    const error = await caught(createCliEngine({ bin }).edit(document, ops, {
+      assets: [{ name: "client.png", data: new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]) }],
+    }));
+    expect(error.message).toContain("Fix or remove the pending edit");
+    expect(error.message).not.toContain("Re-export valid PNG/JPEG");
   });
 
   it.each([

@@ -878,12 +878,27 @@ describe("refused edit reports across Tauri (#119)", () => {
     expect((error.cause as { report: { output: string } }).report.output).toBe(doc.name);
   });
 
-  it("keeps an old host's modern string failure generic instead of classifying its stderr", async () => {
-    const { engine } = engineRejecting(`hwp_failed: hwp edit failed (exit 3): ${FONT_TYPE_INFO}`);
+  it.each([[UNMATCHED, "unmatched_replace"], [FONT_TYPE_INFO, "output_validation"]])("keeps a modern engine's string-only host fallback (%s)", async (stderr, kind) => {
+    const { engine } = engineRejecting(`hwp_failed: hwp edit failed (exit 3): ${stderr}`);
     const error = await engine.edit(doc, []).catch((error: unknown) => error) as HwpEngineError;
-    expect(error.refusal).toBeUndefined();
+    expect(error.refusal).toBe(kind);
     expect(error.insertion).toBeUndefined();
-    expect(error.message).not.toContain("edit refused: output_validation");
+    expect(error.message).toContain(`edit refused: ${kind}`);
+  });
+
+  it("uses raw edit diagnostics when a structured host error supplies neither report nor semantic fields", async () => {
+    const { engine } = engineRejecting({ code: "failed", message: `hwp_failed: hwp edit failed (exit 3): ${UNMATCHED}` });
+    const error = await engine.edit(doc, []).catch((error: unknown) => error) as HwpEngineError;
+    expect(error.refusal).toBe("unmatched_replace");
+  });
+
+  it("uses old semantic fields when a valid report has no refusal", async () => {
+    const raw = report() as { refusal?: unknown };
+    delete raw.refusal;
+    const { engine } = engineRejecting({ code: "failed", message: "x", report: raw, refusal: "range_tag" });
+    const error = await engine.edit(doc, []).catch((error: unknown) => error) as HwpEngineError;
+    expect(error.refusal).toBe("range_tag");
+    expect((error.cause as { report: { output: string } }).report.output).toBe(doc.name);
   });
 
   it("ignores malformed structured reports without falling back to legacy fields", async () => {
@@ -902,16 +917,10 @@ describe("refused edit reports across Tauri (#119)", () => {
     expect(error.refusal).toBe(kind);
   });
 
-  it("does not let old version metadata override this edit's modern capabilities", async () => {
-    const { engine } = engineRejecting({ code: "failed", message: "x", engineVersion: "1.6.2", refusal: "output_validation" });
+  it.each([["2.0.0", "1.6.2"], ["1.6.2", "2.0.0"]])("keeps no-report fallback with capability %s/error version %s", async (version, engineVersion) => {
+    const { engine } = engineRejecting({ code: "failed", message: "x", engineVersion, refusal: "range_tag" }, version);
     const error = await engine.edit(doc, []).catch((error: unknown) => error) as HwpEngineError;
-    expect(error.refusal).toBeUndefined();
-  });
-
-  it("suppresses legacy fields when an old capability probe conflicts with a modern error version", async () => {
-    const { engine } = engineRejecting({ code: "failed", message: "x", engineVersion: "2.0.0", refusal: "range_tag" }, "1.6.2");
-    const error = await engine.edit(doc, []).catch((error: unknown) => error) as HwpEngineError;
-    expect(error.refusal).toBeUndefined();
+    expect(error.refusal).toBe("range_tag");
   });
 
   it("sanitizes report diagnostics and removes conflicting raw fields", async () => {

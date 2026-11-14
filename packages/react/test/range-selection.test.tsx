@@ -1016,7 +1016,7 @@ describe.each([["en", en], ["ko", ko]] as const)("Transport failures end to end 
       : Promise.reject(rejection));
 
   it("HTTP: the server's error.refusal shows the range-tag sentence", async () => {
-    const failure = await failureOf(http({ code: "failed", message: "ahwp edit failed (exit 3): edit refused: range_tag", refusal: "range_tag", engineVersion: "1.6.2" }));
+    const failure = await failureOf(http({ code: "failed", message: "ahwp edit failed (exit 3): edit refused: range_tag", refusal: "range_tag" }));
     expect(await shown(failure)).toContain(messages["error.rangeTagRefused"]);
   });
 
