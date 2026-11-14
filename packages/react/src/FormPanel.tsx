@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { parseFormBindingPlan, validateFormValues, type FormDiscovery, type FormBindingPlan, type FormPreview, type DocumentHandle } from "@hwp-editor/core";
+import { formGrowthWithoutReflow, parseFormBindingPlan, validateFormValues, type FormDiscovery, type FormBindingPlan, type FormPreview, type DocumentHandle } from "@hwp-editor/core";
 import { useHwpEditorContext } from "./context.js";
 
 interface Choice { selected: boolean; value: string; max: number; reflow: boolean }
@@ -26,7 +26,8 @@ export function FormPanel({ discovery }: { discovery: FormDiscovery }) {
   const blocked = !editable || busy || state.status === "applying" || state.pendingOps.length > 0;
   const showError = (cause: unknown) => {
     const message = cause instanceof Error ? cause.message : "";
-    const reason = /values\[|character_budget/.test(message) ? t("forms.invalidValue")
+    const growth = /growth_without_reflow; limit=(\d+)/.exec(message);
+    const reason = /\(engine_refused\)/.test(message) ? t("forms.engineRefused") : growth !== null ? t("forms.growthWithoutReflow", { limit: Number(growth[1]) }) : /values\[|character_budget/.test(message) ? t("forms.invalidValue")
       : /stale_source/.test(message) ? t("forms.stale")
       : /overlapping_targets/.test(message) ? t("forms.overlap")
       : /numeric_constraint|constraints\[/.test(message) ? t("forms.constraint")
@@ -42,6 +43,10 @@ export function FormPanel({ discovery }: { discovery: FormDiscovery }) {
     try {
       const selected = discovery.occurrences.filter(target => choice(target).selected && target.bindable);
       if (selected.length === 0) throw new Error(t("forms.selectTarget"));
+      for (const target of selected) {
+        const item = choice(target);
+        if (formGrowthWithoutReflow(target.old_text, item.value, item.reflow)) throw new Error(t("forms.growthWithoutReflow", { limit: target.old_text.length }));
+      }
       const plan = parseFormBindingPlan({ version: 1, source_sha256: discovery.source_sha256, structural_sha256: discovery.structural_sha256,
         bindings: selected.map(target => ({ key: target.id, targets: [{ occurrence_id: target.id, copies: [0], max_chars: choice(target).max, allow_reflow: choice(target).reflow }] })), repeats: [], constraints: [] });
       const values = validateFormValues(plan, Object.fromEntries(selected.map(target => [target.id, choice(target).value])));

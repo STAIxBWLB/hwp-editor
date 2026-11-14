@@ -1525,22 +1525,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
   const formCommands = createFormCommands({
     version: ensureVersion, work: withWorkDir, stage,
     async run(args, call) {
-      try { return (await runCliOk(await binPath(), args, timeoutMs, opts.locale, call?.signal)).stdout; }
-      catch (error) {
-        // Native binding failures use bounded, content-free cause diagnostics.
-        // Keep only known classes, never source text or staged paths.
-        if (error instanceof HwpCliError && error.reason === "failed") {
-          const diagnostic = `${error.message} ${error.stderr ?? ""}`;
-          const cause = /stale|source.*(?:hash|identity)|source_sha256/i.test(diagnostic) ? "stale_source"
-            : /overlap|ownership|multiple.*owner/i.test(diagnostic) ? "overlapping_targets"
-            : /max_chars|budget|reflow|length/i.test(diagnostic) ? "character_budget"
-            : /constraint|equal|sum|numeric/i.test(diagnostic) ? "numeric_constraint"
-            : /unsupported|not bindable|rich_target|native_field/i.test(diagnostic) ? "unsupported_target"
-            : "engine_refused";
-          throw new HwpCliError("failed", `Form binding refused (${cause}); rediscover targets, review the plan and values, then preview again.`);
-        }
-        throw error;
-      }
+      return (await runCliOk(await binPath(), args, timeoutMs, opts.locale, call?.signal)).stdout;
     },
   });
   const engine: CliEngine = {

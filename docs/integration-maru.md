@@ -196,3 +196,12 @@ transition. Input or source changes invalidate the preview. Pending edits must b
 applied or discarded first. Unsupported inventory targets retain their cause and
 next action. A receipt proves semantic binding only; fonts, fit, clipping and
 native-open acceptance remain separate.
+
+With released ahwp 2.0.0, `apply_form_bindings` rejects a separate `--report`
+and emits no refused edit report. Use its mandatory receipt and optional preview;
+unavailable native refusal codes remain `engine_refused`, without reading prose.
+Before edit, the server checks a fresh source-matching discovery against plan values
+for `growth_without_reflow`. The panel also checks this before making an apply call.
+No-growth permission uses the original UTF-16 length, whereas `max_chars` counts
+Unicode scalars. A growth refusal names both remedies: allow reflow, or keep the
+value within the original length. This preflight does not invent a native report.

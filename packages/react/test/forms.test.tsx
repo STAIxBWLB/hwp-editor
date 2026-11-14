@@ -23,6 +23,22 @@ function engineFor(capable = true, targets = discovery) {
   });
 }
 describe.each([["en", en], ["ko", ko]] as const)("Form panel %s", (locale, t) => {
+  it.each(["", "AB"])("explains both reflow remedies before any engine call for original %s", async oldText => {
+    const targets = { ...discovery, occurrences: discovery.occurrences.map(item => ({ ...item, old_text: oldText, end: oldText.length })) };
+    const engine = engineFor(true, targets);
+    render(<HwpEditor engine={engine} file={original} locale={locale} />);
+    fireEvent.click(await screen.findByRole("tab", { name: t["tabs.forms"] }));
+    fireEvent.click(screen.getByLabelText(t["forms.select"]));
+    fireEvent.change(screen.getByLabelText(t["forms.value"]), { target: { value: "ABCDE" } });
+    fireEvent.change(screen.getByLabelText(t["forms.maxChars"]), { target: { value: "5" } });
+    fireEvent.click(screen.getByRole("button", { name: t["forms.preview"] }));
+    expect((await screen.findByRole("alert")).textContent).toContain(t["forms.growthWithoutReflow"]({ limit: oldText.length }));
+    expect(engine.applyFormBindings).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByLabelText(t["forms.reflow"]));
+    fireEvent.click(screen.getByRole("button", { name: t["forms.preview"] }));
+    await screen.findByRole("button", { name: t["forms.apply"] });
+    expect(engine.applyFormBindings).toHaveBeenCalledWith(original, expect.objectContaining({ bindings: [{ key: id, targets: [{ occurrence_id: id, copies: [0], max_chars: 5, allow_reflow: true }] }] }), { [id]: "ABCDE" }, { dryRun: true });
+  });
   it("requires explicit selection and budgets, dry-runs then applies the exact reviewed plan", async () => {
     const engine = engineFor(), onChange = vi.fn();
     render(<HwpEditor engine={engine} file={original} locale={locale} onChange={onChange} />);

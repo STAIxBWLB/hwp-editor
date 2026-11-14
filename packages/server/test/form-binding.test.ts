@@ -39,6 +39,16 @@ describe.skipIf(!released)("form binding on released ahwp 2.0.0", () => {
     const malicious = multipartRequest("http://local/form-bindings", { file: document, plan: JSON.stringify(plan), values: JSON.stringify({ reviewed: "x" }), receipt: "/private/escape.json" });
     expect((await handler(malicious)).status).toBe(400);
   });
+  it("refuses growth without reflow separately from a sufficient character budget", async () => {
+    const engine = createCliEngine({ bin: BIN }), document = await fixture();
+    const discovery = await engine.discoverForms(document);
+    const target = discovery.occurrences.find(item => item.bindable && item.old_text.length === 2)!;
+    expect(target).toBeDefined();
+    const plan: FormBindingPlan = { version: 1, source_sha256: discovery.source_sha256, structural_sha256: discovery.structural_sha256, bindings: [{ key: "value", targets: [{ occurrence_id: target.id, max_chars: 5, allow_reflow: false }] }] };
+    await expect(engine.applyFormBindings(document, plan, { value: "ABCDE" }, { dryRun: true })).rejects.toThrow(/growth_without_reflow; limit=2.*allow reflow.*within 2 characters/);
+    plan.bindings[0]!.targets[0]!.allow_reflow = true;
+    expect((await engine.applyFormBindings(document, plan, { value: "ABCDE" }, { dryRun: true })).receipt.published).toBe(false);
+  });
   it("supports same-format HWP dry run and apply", async () => {
     const engine = createCliEngine({ bin: BIN });
     const source = (await engine.compose({ version: "2.0", document: { version: "1.0", sections: [{ blocks: [{ type: "paragraph", runs: [{ type: "text", text: "Name: {{name}}" }] }] }] } }, "form.hwp")).document;

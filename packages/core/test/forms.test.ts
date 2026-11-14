@@ -1,11 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { formBindingSupported, parseFormBindingPlan, parseFormDiscovery, parseFormPreview, parseFormReceipt, validateFormValues } from "../src/forms.js";
+import { formGrowthWithoutReflow, formBindingSupported, parseFormBindingPlan, parseFormDiscovery, parseFormPreview, parseFormReceipt, validateFormValues } from "../src/forms.js";
 
 const h = "a".repeat(64), id = `occ-${h}`;
 const plan = (extra: Record<string, unknown> = {}) => ({ version: 1, source_sha256: h, structural_sha256: h, bindings: [{ key: "amount", targets: [{ occurrence_id: id, max_chars: 20, allow_reflow: false }] }], ...extra });
 const discovery = () => ({version:1,source_sha256:h,structural_sha256:h,occurrences:[{id,kind:"placeholder",label:"Amount",paragraph_id:"p1",section:0,indices:[],model_route:"body",table_id:null,table_index:null,row:null,col:null,start:0,end:6,old_text:"Amount",prior_sha256:h,bindable:true,cause:null,next_step:null,label_occurrences:1,label_ambiguous:false}]});
 
 describe("form contracts", () => {
+  it("compares no-reflow growth in native UTF-16 units, separately from the scalar budget", () => {
+    expect(formGrowthWithoutReflow("", "ABCDE", false)).toBe(true);
+    expect(formGrowthWithoutReflow("AB", "ABCDE", false)).toBe(true);
+    expect(formGrowthWithoutReflow("AB", "😀", false)).toBe(false);
+    expect(formGrowthWithoutReflow("A", "😀", false)).toBe(true);
+    expect(formGrowthWithoutReflow("", "ABCDE", true)).toBe(false);
+  });
   it("supports engine releases from 2.0.0", () => { expect(formBindingSupported("2.0.0")).toBe(true); expect(formBindingSupported("2.0.1")).toBe(true); expect(formBindingSupported("3.0.0")).toBe(true); expect(formBindingSupported("2.0.0-rc.1")).toBe(false); expect(formBindingSupported("1.9.9")).toBe(false); expect(formBindingSupported("not-a-version")).toBe(false); });
   it("parses closed discovery and plan shapes", () => { expect(parseFormDiscovery(discovery()).occurrences).toHaveLength(1); expect(parseFormBindingPlan(plan()).bindings[0]?.targets[0]?.copies ?? [0]).toEqual([0]); });
   it("rejects malformed versions, duplicate IDs, and duplicate target ownership", () => {

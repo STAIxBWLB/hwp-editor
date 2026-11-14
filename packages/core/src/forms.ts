@@ -307,3 +307,9 @@ function parseBoundedArtifact(raw: unknown, kind: "receipt" | "preview"): FormRe
 }
 export function parseFormReceipt(raw: unknown): FormReceipt { return parseBoundedArtifact(raw, "receipt") as FormReceipt; }
 export function parseFormPreview(raw: unknown): FormPreview { return parseBoundedArtifact(raw, "preview") as FormPreview; }
+
+/** Native no-growth permission counts WCHAR/UTF-16 units, unlike max_chars
+ * which counts Unicode scalars. Only caller-reviewed source text decides this. */
+export function formGrowthWithoutReflow(oldText: string, value: string, allowReflow: boolean): boolean {
+    return !allowReflow && value.length > oldText.length;
+}

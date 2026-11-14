@@ -33,6 +33,8 @@
 import { MAX_IMAGE_ASSET_MIB, NO_ENGINE_CAUSE, STOPPED_WITHOUT_DIAGNOSTIC } from "@hwp-editor/core";
 
 export const en = {
+  "forms.engineRefused": "The engine refused the form command without a supported structured cause code.",
+  "forms.growthWithoutReflow": (p: { limit: number }): string => `The value grows beyond the original length without reflow permission. Allow reflow, or keep the value within ${p.limit} characters (UTF-16 units), then preview again.`,
   "forms.invalidValue": "A value exceeds its Unicode character budget or contains unsupported control characters.",
   "forms.invalidPlan": "The binding plan contains invalid fields or bounds.",
   "forms.overlap": "Selected targets overlap or have multiple owners; select one nonoverlapping claim per target.",
@@ -687,6 +689,8 @@ export type Locale = "en" | "ko";
  * a single `…`) — they are correct and the existing suite pins them.
  */
 export const ko: MessageTable = {
+  "forms.engineRefused": "엔진이 양식 입력 명령을 거부했으며 지원되는 구조화 원인 코드를 제공하지 않았습니다.",
+  "forms.growthWithoutReflow": (p: { limit: number }): string => `reflow 허용 없이 입력값이 원본보다 길어졌습니다. reflow를 허용하거나 ${p.limit}자(UTF-16 기준) 이내로 입력한 뒤 미리보기를 다시 실행하세요.`,
   "forms.invalidValue": "입력값이 유니코드 글자 수 제한을 넘거나 지원하지 않는 제어 문자를 포함합니다.",
   "forms.invalidPlan": "입력 계획의 항목이나 범위가 올바르지 않습니다.",
   "forms.overlap": "선택한 대상이 겹치거나 소유자가 중복됩니다. 겹치지 않는 대상을 하나씩 선택하세요.",
