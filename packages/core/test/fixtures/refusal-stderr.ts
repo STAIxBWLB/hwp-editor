@@ -2,6 +2,8 @@
  * hwp-cli v1.6.1 stderr for the classified edit refusals, shared by the core,
  * Tauri and server tests so every transport is checked against the same lines.
  */
+import { readFileSync } from "node:fs";
+
 export const UNMATCHED =
   "Error: 적용되지 않은 편집 요청이 있습니다: " +
   'replace address=0.1 from="없는 텍스트" to="{{owner}}" ' +
@@ -52,11 +54,4 @@ export const UNRESOLVABLE_ADDRESS =
  * Only the first Error: line is a classifier input; the cause list below
  * demonstrates why the font code must not choose a more specific class.
  */
-export const FONT_TYPE_INFO = `메타데이터 설정: "title=x"
-Error: 출력 검증 실패 (대상: font-refused.hwp)
-
-Caused by:
-    edit: 보존 불가 데이터 1건을 제거하거나 변경할 수 없어 출력을 게시하지 않습니다
-      - font_type_info_unrepresentable: 1 item(s)
-    해결: 글꼴 분류 정보의 HWP5 변환 매핑이 확인되지 않았습니다. 원본 정보를 보존하려면 .hwpx 형식을 유지하세요. 손실을 수용하려면 ahwp convert를 --strict 없이 실행하거나 MCP hwp_convert에 strict: false를 지정해 .hwpx 입력을 먼저 .hwp로 변환한 뒤, 변환된 파일로 ahwp edit 또는 MCP hwp_edit를 다시 실행하세요.
-`;
+export const FONT_TYPE_INFO = readFileSync(new URL("./font-type-info-stderr.txt", import.meta.url), "utf8");

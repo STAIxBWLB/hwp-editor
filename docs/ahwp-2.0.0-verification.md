@@ -40,7 +40,8 @@ of font parity.
 | `react/test/fixtures/plan-template/literal-v2.json` | Only `schema_version` changes from 1.1 to 1.2; document IR, Markdown and all segments match. Captured with `--format json`, as before. |
 | `react/test/fixtures/plan-template/{cat-v1,literal-v1,all-layout,literal-layout}.json` | Unchanged. All four fresh captures match the stored JSON values exactly. |
 | `core/test/fixtures/cat-segments-runs.json` | Unchanged on purpose: retains schema 1.1 compatibility coverage. Recomposition on 2.0.0 gives identical Markdown and segments, with schema 1.2. |
-| `core/test/fixtures/refusal-stderr.ts` | Adds the real font typeInfo output-validation refusal; the capture comment records its generation. |
+| `core/test/fixtures/font-type-info-stderr.txt` | New raw 2.0.0 font refusal capture, shared by core and server tests. |
+| `core/test/fixtures/refusal-stderr.ts` | Loads the raw font refusal capture; the comment records its generation. |
 | `core/test/fixtures/edit-report-font-type-info-refusal.json` | New exact 1.1 refusal report captured on the failed edit, proving that the structured preservation code and font event are already emitted. |
 
 Paths in the table are under `packages/`.

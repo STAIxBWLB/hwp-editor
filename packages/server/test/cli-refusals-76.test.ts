@@ -13,7 +13,9 @@ import type { EditOp } from "@hwp-editor/core";
 
 import { createCliEngine, HwpCliError } from "../src/cli-engine.js";
 import { createFakeBin, disposeFakeBins } from "./fake-bin.js";
-import { FONT_TYPE_INFO } from "../../core/test/fixtures/refusal-stderr.js";
+import { readFileSync } from "node:fs";
+
+const FONT_TYPE_INFO = readFileSync(new URL("../../core/test/fixtures/font-type-info-stderr.txt", import.meta.url), "utf8");
 
 afterEach(disposeFakeBins);
 
@@ -182,6 +184,7 @@ describe("output validation across HTTP (#171)", () => {
     const error = await engine.edit({ name: "a.hwpx", data: hwpxBytes() }, ops).catch((cause: unknown) => cause);
     expect(error).toBeInstanceOf(HwpEngineError);
     expect(error).toMatchObject({ code: "failed", refusal: "output_validation" });
+    if (!(error instanceof HwpEngineError)) throw new Error("Expected a typed engine refusal");
     expect(error.message).toContain("edit refused: output_validation");
     expect(error.message).not.toContain("font-refused.hwp");
     expect(error.message).not.toContain("insert_blocks refused");
