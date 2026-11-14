@@ -706,7 +706,9 @@ const PROTECTED_ATTRIBUTES: Readonly<Record<string, string>> = {
  *
  * This is the engine's own table count, taken from the walk `hwp edit`
  * addresses, and never a count of the envelope's `table` segments: the two are
- * compared precisely because they can differ.
+ * compared precisely because they can differ. When they agree, the indices
+ * agree too: a table inside a text box sits at the same position in both orders
+ * (`test/textbox-table-order.test.ts`, #119 item 2).
  */
 export function bodyTableCount(info: unknown): number | undefined {
   if (typeof info !== "object" || info === null) return undefined;
