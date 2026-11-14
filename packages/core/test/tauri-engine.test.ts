@@ -224,6 +224,7 @@ describe("createTauriEngine commands", () => {
     // The caller asked for neither; the batch needs both.
     expect(args?.["allowPartial"]).toBe(true);
     expect(args?.["report"]).toBe(true);
+    expect(args).not.toHaveProperty("structuredRefusal");
     // The preset's own miss is not a failed edit: the document is published
     // and the report says which op was skipped.
     expect(result.data).toEqual(new Uint8Array([7]));
@@ -903,8 +904,9 @@ describe("refused edit reports across Tauri (#119)", () => {
   });
 
   it.each([[UNMATCHED, "unmatched_replace"], [FONT_TYPE_INFO, "output_validation"]])("keeps a modern engine's string-only host fallback (%s)", async (stderr, kind) => {
-    const { engine } = engineRejecting(`hwp_failed: hwp edit failed (exit 3): ${stderr}`);
+    const { engine, calls } = engineRejecting(`hwp_failed: hwp edit failed (exit 3): ${stderr}`);
     const error = await engine.edit(doc, []).catch((error: unknown) => error) as HwpEngineError;
+    expect(calls.find(call => call.cmd === "hwped_edit")?.args?.structuredRefusal).toBe(true);
     expect(error.refusal).toBe(kind);
     expect(error.insertion).toBeUndefined();
     expect(error.message).toContain(`edit refused: ${kind}`);

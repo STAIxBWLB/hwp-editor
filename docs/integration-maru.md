@@ -33,7 +33,7 @@ Payloads mirror `packages/core/src/protocol.ts`, with two Tauri deltas:
 |---|---|---|
 | `hwped_read` | `{ document, workspaceRoot? }` | `CatEnvelope` |
 | `hwped_render` | `{ document, options?, workspaceRoot? }` | `RenderResponse` |
-| `hwped_edit` | `{ document, ops? / opsArgv?, verify?, allowPartial?, report?, workspaceRoot? }` | `EditResponse` |
+| `hwped_edit` | `{ document, ops? / opsArgv?, verify?, allowPartial?, report?, structuredRefusal?, workspaceRoot? }` | `EditResponse` |
 | `hwped_compose` | `{ spec, name }` | `ComposeResponse` |
 | `hwped_validate` | `{ document, workspaceRoot? }` | `ValidationReport` |
 | `hwped_capabilities` | `{}` | `Capabilities` |
@@ -63,6 +63,16 @@ Payloads mirror `packages/core/src/protocol.ts`, with two Tauri deltas:
   field absent when the host answers without one or with an unreadable one. A
   host that ignores the flag therefore disables the palette's inserted-ids
   path instead of having ids guessed for it.
+
+- `structuredRefusal: true` says the client can handle an object rejection with
+  `report`; it does not request a report. The client sends it when
+  `refusalCodesSupported(caps.version)` holds (agent-hwp >= 1.6.3), separately
+  from `report`. An older engine does not receive it, even if a preset batch
+  or caller asks for a successful report. A supporting host returns the
+  sanitized `{ code, message, report, engineVersion }` object for refused edits
+  only with this opt-in. The client classifies the validated report by refusal
+  code. Without the opt-in the host keeps its prefixed string error; hosts
+  without object support may also return strings, preserving string classification.
 
 - Rust errors are prefixed strings: `cli_missing:`, `hwp_timeout:`,
   `hwp_failed:`, `hwp_parse_failed:`, `hwped_bad_request:`. The engine wraps
