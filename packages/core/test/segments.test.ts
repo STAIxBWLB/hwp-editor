@@ -46,6 +46,41 @@ const fixture = (name: string) =>
   readFileSync(join(import.meta.dirname, "fixtures", name), "utf8");
 
 describe("parseCatEnvelope", () => {
+  it("retains real ahwp 2.0.0 schema 1.2 controls through wire and host validation", () => {
+    const env = parseCatEnvelope(fixture("cat-segments-controls.json"));
+    expect(JSON.parse(fixture("cat-segments-controls.json")).schema_version).toBe("1.2");
+    const run = env.segments.find(s => s.controls !== undefined)!;
+    expect(run.controls).toEqual([{ kind: "tab", at: 1, source: 1 }]);
+    expect(segmentText(env, run)).toBe("앞 가나다뒤");
+    expect(validateCatEnvelope(env)).toBe(env);
+    expect(validateProjectedMetadata(env).segments.find(s => s.controls)?.controls).toEqual(run.controls);
+    expect(env.segments.filter(s => s.controls === undefined)).toHaveLength(3);
+  });
+
+  it.each([
+    null, [], [null], [{ kind: "unknown", at: 1, source: 1 }],
+    [{ kind: "tab", at: -1, source: 1 }], [{ kind: "tab", at: 1.5, source: 1 }],
+    [{ kind: "tab", at: 6, source: 1 }], [{ kind: "tab", at: 1, source: -1 }],
+    [{ kind: "tab", at: 1, source: 14 }], [{ kind: "tab", at: 1, source: 1.5 }],
+  ].map(controls => ({ controls })))("rejects malformed controls $controls in wire and projected envelopes", ({ controls }) => {
+    const wire = JSON.parse(fixture("cat-segments-controls.json"));
+    wire.segments[1].controls = controls;
+    expect(() => parseCatEnvelope(JSON.stringify(wire))).toThrow(/control/);
+    const env = parseCatEnvelope(fixture("cat-segments-controls.json"));
+    Object.assign(env.segments[1]!, { controls });
+    expect(() => validateCatEnvelope(env)).toThrow(/control/);
+    expect(() => validateProjectedMetadata(env)).toThrow(/control/);
+  });
+
+  it("rejects controls on a paragraph in both entry paths", () => {
+    const wire = JSON.parse(fixture("cat-segments-controls.json"));
+    wire.segments[0].controls = wire.segments[1].controls;
+    expect(() => parseCatEnvelope(JSON.stringify(wire))).toThrow(/controls/);
+    const env = parseCatEnvelope(fixture("cat-segments-controls.json"));
+    env.segments[0]!.controls = env.segments[1]!.controls!;
+    expect(() => validateCatEnvelope(env)).toThrow(/controls/);
+  });
+
   it.each(["1.1", "1.12"])("accepts additive envelope schema %s", schema_version => {
     const wire = JSON.parse(fixture("cat-segments-basic.json"));
     wire.schema_version = schema_version;
@@ -788,3 +823,25 @@ describe("validateCatEnvelope selection fields", () => {
   });
 });
 
+describe("ranges re-measured on released ahwp 2.0.0 (#171)", () => {
+  it.each(["hwp", "hwpx"] as const)("keeps source offsets and the trimmed visible run owner in %s", format => {
+    const env = parseCatEnvelope(fixture(`cat-segments-ranges-2.0-${format}.json`));
+    const run = (paragraph: number) => env.segments.find(s => s.kind === "run" && s.para === paragraph)!;
+    const first = run(1);
+    expect(segmentText(env, first)).toBe("동일문 안내");
+    expect(first.sourceChars).toEqual({ start: 0, end: format === "hwp" ? 7 : 6 });
+    expect(runCoverage(env, first, first.start, first.start + 3, format))
+      .toEqual({ kind: "window", range: [0, 3] });
+    const leading = run(2);
+    expect(runCoverage(env, leading, leading.start, leading.start + 3, format))
+      .toEqual({ kind: "whole" });
+    // #557: 1.6.2 also published the trimmed bold space under this same
+    // Markdown span. 2.0.0 leaves only the run owning the visible x.
+    const corrected = env.segments.filter(s => s.kind === "run" && s.para === 7);
+    expect(corrected).toHaveLength(1);
+    expect(corrected[0]!.indices).toEqual([7, 2]);
+    expect(segmentText(env, corrected[0]!)).toBe("x");
+    expect(corrected[0]!.sourceChars).toEqual({ start: 2, end: format === "hwp" ? 4 : 3 });
+    expect(corrected[0]!.directChar?.bold).toBe(false);
+  });
+});

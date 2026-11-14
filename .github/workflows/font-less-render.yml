@@ -1,7 +1,7 @@
 name: font-less render (non-required)
 
 # docs/integration-ax.md section 2b, checked against a real binary. A serverless
-# runtime has no system fonts; hwp render then draws pages with rules but no
+# runtime has no system fonts; ahwp render then draws pages with rules but no
 # text while every call still succeeds. This proves the recipe's claim both
 # ways in a container with no fonts: without HWP_FONT_DIR the page loses its
 # text, and with it the text comes back.
@@ -30,11 +30,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  # Same pin as e2e.yml; move them together. The download is the `ahwp-` asset
-  # and only its `ahwp` member is installed, so the `./ahwp` calls below
-  # exercise the default resolution #121 introduces; the legacy `hwp-` asset
-  # and the `hwp` name inside it are neither fetched nor called.
-  HWP_CLI_TAG: v1.6.2
+  # Same released 2.0.0 binary as e2e.yml; move these pins together. Only
+  # `ahwp-` assets and the `ahwp` command exist in this release (#171).
+  HWP_CLI_TAG: v2.0.0
 
 jobs:
   font-less-render:
@@ -53,9 +51,7 @@ jobs:
           sums="ahwp-$HWP_CLI_TAG-x86_64-unknown-linux-gnu.sha256"
           curl --retry 3 --retry-all-errors -fsSL -O "$base/$asset" -O "$base/$sums"
           sha256sum -c "$sums"
-          # Only the `ahwp` member: the 1.x archive also carries a `hwp`
-          # compatibility name, and this job is meant to prove neither that
-          # name nor the legacy `hwp-` asset is needed (#121).
+          # Install the released 2.0.0 `ahwp` member, the engine's default.
           tar xzf "$asset" ahwp
           echo "$PWD" >> "$GITHUB_PATH"
           mkdir cjk-fonts

@@ -41,3 +41,22 @@ export const ECHOED_UNAPPLIED =
 export const UNRESOLVABLE_ADDRESS =
   "Error: 주소를 해석할 수 없는 편집 연산이 있습니다:\n" +
   "op[0] id b800fb2a253cdfb9.0.0.7.0.0 — 주소가 가리키는 위치를 문서에서 찾을 수 없습니다";
+
+/**
+ * Captured from the released ahwp v2.0.0 aarch64-apple-darwin binary, without
+ * --verify: `ahwp edit font-type-info.hwpx -o font-refused.hwp --set-meta title=x`.
+ * Input: `ahwp new -o font-base.hwpx`, then add one child to the first
+ * HANGUL font in Contents/header.xml:
+ * `<hh:typeInfo familyType="FCAT_GOTHIC" weight="6" proportion="4" contrast="0"
+ * strokeVariation="1" armStyle="1" letterform="1" midline="1" xHeight="1"/>`.
+ * Only the first Error: line is a classifier input; the cause list below
+ * demonstrates why the font code must not choose a more specific class.
+ */
+export const FONT_TYPE_INFO = `메타데이터 설정: "title=x"
+Error: 출력 검증 실패 (대상: font-refused.hwp)
+
+Caused by:
+    edit: 보존 불가 데이터 1건을 제거하거나 변경할 수 없어 출력을 게시하지 않습니다
+      - font_type_info_unrepresentable: 1 item(s)
+    해결: 글꼴 분류 정보의 HWP5 변환 매핑이 확인되지 않았습니다. 원본 정보를 보존하려면 .hwpx 형식을 유지하세요. 손실을 수용하려면 ahwp convert를 --strict 없이 실행하거나 MCP hwp_convert에 strict: false를 지정해 .hwpx 입력을 먼저 .hwp로 변환한 뒤, 변환된 파일로 ahwp edit 또는 MCP hwp_edit를 다시 실행하세요.
+`;

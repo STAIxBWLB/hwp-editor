@@ -81,6 +81,7 @@ export type {
   DocumentFormat,
   RunCoverage,
   Segment,
+  RunControl,
   SegmentKind,
   SegmentRef,
   ShapeAttrs,

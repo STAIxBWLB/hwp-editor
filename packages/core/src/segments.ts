@@ -22,6 +22,9 @@
  * match on purpose (REVIEW.md): pinning an exact minor would refuse this
  * envelope.
  *
+ * Re-verified on released ahwp 2.0.0: schema 1.2 adds optional run controls,
+ * retained in both coordinate spaces without changing selection policy (#171).
+ *
  * The wire envelope carries `{id, kind, path: {section, indices},
  * char_range: {start, end}, style, direct}` per segment, with ranges that
  * NEST (a run inside its para, a cell inside its table). What this module
@@ -36,6 +39,15 @@
  * `char_range`, `Segment.start`, and `Segment.end` use Unicode scalar offsets.
  * `segmentText` converts those boundaries to JS UTF-16 offsets only when slicing.
  */
+
+/** A schema 1.2 run control, in Markdown scalar and paragraph UTF-16 coordinates. */
+export interface RunControl {
+  kind: "tab" | "hyphen" | "nb_space" | "fw_space";
+  /** Unicode scalar offset into the envelope Markdown. */
+  at: number;
+  /** Absolute UTF-16 offset in the source paragraph. */
+  source: number;
+}
 
 /** The seven segment kinds the v2 envelope defines. */
 export type SegmentKind =
@@ -100,6 +112,8 @@ export interface Segment {
    * host, which is the feature gate: no version check is needed.
    */
   sourceChars?: { start: number; end: number };
+  /** Optional schema 1.2 controls; retained for hosts, without changing selection policy. */
+  controls?: RunControl[];
 }
 
 /**
@@ -222,6 +236,10 @@ function projectSegment(raw: unknown): Segment {
   const style = projectShapeLevel((raw as Record<string, unknown>).style, "segment.style");
   const directShape = projectShapeLevel(direct, "segment.direct");
   const sourceChars = projectSourceChars((raw as Record<string, unknown>).source_chars, kind as SegmentKind);
+  const controls = projectRunControls((raw as Record<string, unknown>).controls, {
+    kind: kind as SegmentKind, start: range.start, end: range.end,
+    ...(sourceChars === undefined ? {} : { sourceChars }),
+  });
   return {
     id,
     indices: p.indices,
@@ -235,7 +253,31 @@ function projectSegment(raw: unknown): Segment {
     ...(style === undefined ? {} : { style }),
     ...(directShape === undefined ? {} : { direct: directShape }),
     ...(sourceChars === undefined ? {} : { sourceChars }),
+    ...(controls === undefined ? {} : { controls }),
   };
+}
+
+/** Validate the optional 1.2 metadata on both wire and host-projected runs. */
+function projectRunControls(value: unknown, run: Pick<Segment, "kind" | "start" | "end" | "sourceChars">): RunControl[] | undefined {
+  if (value === undefined) return undefined;
+  if (run.kind !== "run" || !Array.isArray(value) || value.length === 0) {
+    throw new Error("segments envelope: controls must be a nonempty array on a run; upgrade the host adapter to emit valid schema 1.2 control metadata.");
+  }
+  const sourceChars = projectSourceChars(run.sourceChars, run.kind);
+  return value.map((entry: unknown) => {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      throw new Error("segments envelope: malformed run control; upgrade the host adapter to emit kind, at and source for each control.");
+    }
+    const { kind, at, source } = entry as Record<string, unknown>;
+    if (typeof kind !== "string" || !["tab", "hyphen", "nb_space", "fw_space"].includes(kind) ||
+        typeof at !== "number" || !Number.isSafeInteger(at) || at < 0 ||
+        typeof source !== "number" || !Number.isSafeInteger(source) || source < 0 ||
+        at < run.start || at >= run.end ||
+        (sourceChars !== undefined && (source < sourceChars.start || source >= sourceChars.end))) {
+      throw new Error("segments envelope: invalid run control kind or offsets outside its run; upgrade the host adapter to emit valid schema 1.2 control coordinates.");
+    }
+    return { kind: kind as RunControl["kind"], at, source };
+  });
 }
 
 /**
@@ -482,6 +524,7 @@ export function validateCatEnvelope(raw: unknown): CatEnvelope {
   // fields beyond markdown and segments (the engine's `bodyTables`, for one),
   // and dropping them would silently disable what reads them.
   const envelope = raw as CatEnvelope;
+  for (const segment of envelope.segments) projectRunControls(segment.controls, segment);
   boundaryInfo(envelope);
   return envelope;
 }
@@ -621,6 +664,7 @@ export function validateProjectedMetadata(envelope: CatEnvelope): CatEnvelope {
     if (normalized.directChar !== undefined) projectDirectChar(normalized.directChar);
     if (normalized.directPara !== undefined) projectDirectPara(normalized.directPara);
     if (normalized.sourceChars !== undefined) projectSourceChars(normalized.sourceChars, normalized.kind);
+    projectRunControls(normalized.controls, normalized);
     // A level that projects to nothing (null, or the engine's null-char/null-
     // para spelling) is removed, so a consumer reads one shape for "no level"
     // instead of two. A malformed level still throws, through the same helper.

@@ -1,3 +1,5 @@
+import { parseCatEnvelope } from "../src/segments.js";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { compareSegments, formatAddresses, formatTargets, hasOwnRef, isSectionDefinitionParagraph, paragraphAddress, resolveSelection, segmentPath, selectSimilar, selectionAction, selectedParagraphs } from "../src/selection.js";
 import type { CatEnvelope, Segment } from "../src/segments.js";
@@ -896,5 +898,27 @@ describe("selection helpers", () => {
     expect(isSectionDefinitionParagraph(inCell)).toBe(false);
     expect(isSectionDefinitionParagraph(run)).toBe(false);
     expect(isSectionDefinitionParagraph(legacy)).toBe(false);
+  });
+});
+
+describe("ahwp 2.0.0 controls (#171)", () => {
+  it("selects the real control-bearing run without dropping its metadata", () => {
+    const envelope = parseCatEnvelope(readFileSync(new URL("./fixtures/cat-segments-controls.json", import.meta.url), "utf8"));
+    const run = envelope.segments.find(s => s.controls !== undefined)!;
+    const result = resolveSelection(envelope, run);
+    expect(result.refusal).toBeNull();
+    expect(result.paragraph).toBe(envelope.segments[0]);
+    expect(selectionAction(envelope, initialState, run, "single").type).not.toBe("refuseSelection");
+    expect(run.controls).toEqual([{ kind: "tab", at: 1, source: 1 }]);
+  });
+});
+
+describe("ahwp 2.0.0 corrected run ownership (#171)", () => {
+  it.each(["hwp", "hwpx"] as const)("formats only the visible x owner after leading trim in %s", format => {
+    const envelope = parseCatEnvelope(readFileSync(new URL(`./fixtures/cat-segments-ranges-2.0-${format}.json`, import.meta.url), "utf8"));
+    const paragraph = envelope.segments.find(s => s.kind === "para" && s.para === 7)!;
+    const owner = envelope.segments.find(s => s.kind === "run" && s.para === 7)!;
+    expect(formatAddresses(envelope, [paragraph], { paragraph: { id: paragraph.id!, section: 0, para: 7 }, start: owner.start, end: owner.end }, format))
+      .toEqual([{ id: owner.id }]);
   });
 });

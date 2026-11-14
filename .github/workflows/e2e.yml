@@ -34,13 +34,10 @@ env:
   # so an upstream major bump past the ceiling would turn this job red
   # overnight for reasons that are not this repository's fault.
   #
-  # 1.6.x renames the command to `ahwp` and still publishes the legacy
-  # `hwp-<tag>-<target>` archive, with a `hwp` compatibility binary beside
-  # `ahwp` inside it. This job fetches neither: it downloads the `ahwp-` asset
-  # and installs only the `ahwp` member, so a call to the 1.x name fails here
-  # rather than surfacing when 2.0.0 removes it (#121). The tag is the newest
-  # 1.x release, which is what #121 asks this job to run against.
-  HWP_CLI_TAG: v1.6.2
+  # 2.0.0 publishes only the `ahwp-` asset and `ahwp` command. Install that
+  # release binary to prove the supported 2.x window, while hosts on 1.x keep
+  # the compatibility fallback in cli-engine.ts (#171).
+  HWP_CLI_TAG: v2.0.0
 
 jobs:
   # NON-GATING BY CONSTRUCTION.
@@ -64,13 +61,9 @@ jobs:
   # (packages/core/src/segments.ts) and the error markers
   # (packages/react/src/errors.ts) are all pinned to the 0.20.x contract and
   # enforced by cli-engine.ts's flag handshake. The pinned tag tracks the
-  # newest upstream release the contract was verified against. 1.6.2 keeps the
-  # v2 segment envelope, render-layout-v1 and edit-ops-v1 contracts; its
-  # envelope is schema 1.1, which only adds an optional `source_chars` per run
-  # that packages/core/src/segments.ts does not project; and its edit-ops change
-  # is additive, a `replace` that may carry a run address, with the edit report
-  # naming inserted empty paragraphs by their paragraph id, which
-  # insertedParagraphIds in packages/core/src/edit-report.ts already allows.
+  # newest upstream release the contract was verified against. 2.0.0 keeps
+  # render-layout-v1 and edit-ops-v1, and its schema 1.2 segment envelope adds
+  # optional run controls alongside source_chars. Core retains both fields.
   # What this job detects from here is drift BETWEEN the floor and the next
   # upstream release, the next time either the tag or the floor moves. It is
   # the only automated evidence that the pinned contract holds against a real
@@ -99,15 +92,10 @@ jobs:
       # while its single line still records the .tar.gz filename, so
       # `sha256sum -c` resolves the archive from the working directory.
       #
-      # The asset is `ahwp-<tag>-<target>` from STAIxBWLB/agent-hwp, and the
-      # 1.x legacy `hwp-` name is deliberately not used (#121): proving this
-      # repo needs neither it nor the `hwp` command name is half of what this
-      # job is for. The archive carries `ahwp` and a `hwp` compatibility name at
-      # the top level; only `ahwp` is extracted, so a stray call to the second
-      # name fails here instead of surfacing when 2.0.0 removes it. The
-      # directory goes on PATH rather than into HWP_EDITOR_BIN, because the
-      # engine's default resolution (cli-engine.ts resolveBin) is exactly what
-      # that exercises.
+      # Fetch the released `ahwp-<tag>-<target>` asset and only its `ahwp`
+      # member. 2.0.0 has no legacy `hwp-` asset or compatibility binary.
+      # Put it on PATH to exercise cli-engine.ts's default resolution rather
+      # than overriding it through HWP_EDITOR_BIN.
       - name: Install agent-hwp
         run: |
           base="https://github.com/STAIxBWLB/agent-hwp/releases/download/$HWP_CLI_TAG"
