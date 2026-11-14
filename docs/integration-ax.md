@@ -18,7 +18,7 @@ browser                          ax (Next.js)
 
 ## 1. Installing the packages
 
-All three are on npm at `1.4.1`, published with provenance from a tag-triggered
+All three are on npm at `1.4.2`, published with provenance from a tag-triggered
 workflow. Install the one you mount; core arrives on its own as a single deduped
 peer, so naming it is unnecessary and naming a different version of it is how you
 end up with two copies:
