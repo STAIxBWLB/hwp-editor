@@ -2,8 +2,10 @@ packages:
   - "packages/*"
   - "apps/*"
 
-onlyBuiltDependencies:
-  - esbuild
+allowBuilds:
+  esbuild: true
+
+minimumReleaseAge: 1440
 
 overrides:
   esbuild: "^0.28.2"

@@ -141,8 +141,10 @@ console.log("[wipe] removed packages/{core,react,server}/dist; only prepack rebu
 // Stage 2: pack
 // ===========================================================================
 const packDir = scratch("hwped-pack-");
-// pnpm 10 reads `--filter` as a recursive selector that `pack` rejects, so each
-// package is packed from its own directory instead.
+// Each package is packed from its own directory. pnpm 12.18.0 packs a
+// `--filter`ed project as well, so this form is a choice rather than a
+// workaround: each pack runs against the manifest in its own directory, and the
+// order below stays explicit instead of coming from a selector.
 const pack = (pkg) =>
   run("pnpm", ["pack", "--pack-destination", packDir], join(repoRoot, "packages", pkg));
 // Pack order is load-bearing now that stage 1 wipes dist. The react and server
