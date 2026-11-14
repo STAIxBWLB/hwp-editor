@@ -21,9 +21,9 @@
  * the user's values stay in the error's stderr/detail for an operator.
  */
 
-export type EditRefusalKind = "unmatched_replace" | "run_range_conflict" | "range_tag" | "unresolvable_address";
+export type EditRefusalKind = "unmatched_replace" | "run_range_conflict" | "range_tag" | "unresolvable_address" | "output_validation";
 
-const KINDS: ReadonlySet<string> = new Set<EditRefusalKind>(["unmatched_replace", "run_range_conflict", "range_tag", "unresolvable_address"]);
+const KINDS: ReadonlySet<string> = new Set<EditRefusalKind>(["unmatched_replace", "run_range_conflict", "range_tag", "unresolvable_address", "output_validation"]);
 
 /** Narrow an untrusted value (a wire field, a host error) to a refusal kind. */
 export function isEditRefusalKind(value: unknown): value is EditRefusalKind {
@@ -62,6 +62,15 @@ const RANGE_TAG_LINE = new RegExp(`^Error: 미해석 PARA_RANGE_TAG 구간 표�
  */
 const ADDRESS_HEAD = /^Error: 주소를 해석할 수 없는 편집 연산이 있습니다:$/u;
 const ADDRESS_PATH_LINE = /^op\[\d+\] (?:id [0-9a-f]{16}\.\d+(?:\.\d+)+|at \d+(?:\.\d+)+) — 주소가 가리키는 위치를 문서에서 찾을 수 없습니다$/u;
+
+/**
+ * ahwp 2.0.0's output verification wrapper, measured in FONT_TYPE_INFO.
+ * The target path is opaque user data between this fixed head and tail.
+ * The Caused-by/event list is never read: font metadata is only one possible
+ * cause. agent-hwp#531 shipped machine codes in 1.6.3; a font-specific class
+ * waits until the transports consume those codes (#119 item 1).
+ */
+const OUTPUT_VALIDATION_LINE = /^Error: 출력 검증 실패 \(대상: .*\)$/u;
 
 /** stderr from its first `Error:` line on, as lines; empty when there is none. */
 function errorLines(stderr: string): string[] {
@@ -134,6 +143,7 @@ function unappliedItems(line: string): string[] | undefined {
  *   line.
  * - `range_tag`: the range-tag sentence on the Error: line.
  * - `unresolvable_address`: a resolver list containing only NoSuchPath entries.
+ * - `output_validation`: the output verification wrapper, whatever its cause.
  */
 export function classifyEditRefusal(stderr: string): EditRefusalKind | undefined {
   const lines = errorLines(stderr);
@@ -151,6 +161,7 @@ export function classifyEditRefusal(stderr: string): EditRefusalKind | undefined
   if (ADDRESS_HEAD.test(first)) {
     return errorListMatches(lines, ADDRESS_PATH_LINE) ? "unresolvable_address" : undefined;
   }
+  if (OUTPUT_VALIDATION_LINE.test(first)) return "output_validation";
   if (RANGE_TAG_LINE.test(first)) return "range_tag";
   if (DRIFT_LINE.test(first)) return "run_range_conflict";
   return undefined;

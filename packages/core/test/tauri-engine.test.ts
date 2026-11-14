@@ -12,7 +12,7 @@ import type { DocumentHandle, EditOp, HwpErrorCode } from "../src/index.js";
 import { HwpEngineError, isHwpEngineError } from "../src/index.js";
 import { createTauriEngine, type TauriInvoke } from "../src/tauri.js";
 import { DISTRIBUTION_NEXT_STEP, NO_ENGINE_CAUSE, PROTECTED_NEXT_STEP, STOPPED_WITHOUT_DIAGNOSTIC } from "../src/index.js";
-import { UNRESOLVABLE_ADDRESS, DRIFT, MIXED_CONFLICT, RANGE_TAG, RUN_CONFLICT, UNMATCHED } from "./fixtures/refusal-stderr.js";
+import { FONT_TYPE_INFO, UNRESOLVABLE_ADDRESS, DRIFT, MIXED_CONFLICT, RANGE_TAG, RUN_CONFLICT, UNMATCHED } from "./fixtures/refusal-stderr.js";
 
 interface Call {
   cmd: string;
@@ -611,6 +611,7 @@ describe("Tauri edit refusal classification (#80)", () => {
 
   it.each([
     [UNMATCHED, "unmatched_replace"],
+    [FONT_TYPE_INFO, "output_validation"],
     [RUN_CONFLICT, "run_range_conflict"],
     [DRIFT, "run_range_conflict"],
     [RANGE_TAG, "range_tag"],

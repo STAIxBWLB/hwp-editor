@@ -41,6 +41,7 @@ of font parity.
 | `react/test/fixtures/plan-template/{cat-v1,literal-v1,all-layout,literal-layout}.json` | Unchanged. All four fresh captures match the stored JSON values exactly. |
 | `core/test/fixtures/cat-segments-runs.json` | Unchanged on purpose: retains schema 1.1 compatibility coverage. Recomposition on 2.0.0 gives identical Markdown and segments, with schema 1.2. |
 | `core/test/fixtures/refusal-stderr.ts` | Adds the real font typeInfo output-validation refusal; the capture comment records its generation. |
+| `core/test/fixtures/edit-report-font-type-info-refusal.json` | New exact 1.1 refusal report captured on the failed edit, proving that the structured preservation code and font event are already emitted. |
 
 Paths in the table are under `packages/`.
 
@@ -61,12 +62,26 @@ The new tests confirm formatting selects only that visible owner. Existing
 
 The release's font refusal without `--verify` begins with
 `Error: 출력 검증 실패 (대상: <output path>)`. Its font-specific event code occurs
-only below `Caused by:`. The structured edit report written on this refused run has schema 1.1 and
+only below `Caused by:`. The structured edit report written on this refused run
+has schema 1.1 and
 contract `hwp-edit-report-v1`. Its `refusal.code` is `preservation_loss`, with
 `refusal.values.events[0].code` equal to `font_type_info_unrepresentable`
 (`count: 1`, `disposition: "unrepresentable"`, `resource: "metadata"`).
-The stderr cause list is not classified. The choice of structured-report
-integration is pending the AC4 decision.
+Under the AC4 ruling, the editor classifies only the first `Error:` line's
+fixed head `Error: 출력 검증 실패 (대상: ` and fixed tail `)`. The output path
+between them stays opaque; no `Caused by` or preservation-event list is read.
+This is the broader `output_validation` class, not a font-specific diagnosis.
+
+AC4 is met under that ruling: both locales say the engine's output preservation
+check refused to write the file, name unmapped HWPX font metadata as one known
+cause, and give the two remedies below. For another cause they direct the user
+to run the same edit with the engine's `--verify` report to see which check
+failed. Apply and immediate insertion use that same localized message.
+
+This is an interim step until the editor consumes agent-hwp#531 machine codes
+for a font-specific classification (#119 item 1). Those codes already shipped
+in 1.6.3, as the measured 2.0.0 refusal report above confirms; consuming them
+through failed edit responses is follow-up transport work.
 
 The same measured font input successfully edits to `.hwpx`. Explicit
 `ahwp convert` without `--strict` reports `font_type_info_unrepresentable` as

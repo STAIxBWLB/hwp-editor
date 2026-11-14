@@ -13,6 +13,7 @@ import type { EditOp } from "@hwp-editor/core";
 
 import { createCliEngine, HwpCliError } from "../src/cli-engine.js";
 import { createFakeBin, disposeFakeBins } from "./fake-bin.js";
+import { FONT_TYPE_INFO } from "../../core/test/fixtures/refusal-stderr.js";
 
 afterEach(disposeFakeBins);
 
@@ -160,5 +161,29 @@ describe("resolver refusal across HTTP (#85)", () => {
     const error = await engine.edit({ name: "a.hwpx", data: hwpxBytes() }, [op]).catch((cause: unknown) => cause);
     expect(error).toBeInstanceOf(HwpEngineError);
     expect(error).toMatchObject({ code: "failed", refusal: "unresolvable_address" });
+  });
+});
+
+describe("output validation across HTTP (#171)", () => {
+  it.each([false, true])("carries the 2.0.0 output-validation class, including an insertion batch (%s)", async (insertion) => {
+    const { bin } = createFakeBin({ version: "2.0.0", mode: "fail", info: "{}", editStderrLines: FONT_TYPE_INFO.trimEnd().split("\n") });
+    const handler = createHwpEditorHandler({ engine: createCliEngine({ bin }), sessions: false });
+    const engine = createHttpEngine("http://localhost/api/hwp-editor", {
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = new Request(input, init);
+        request.headers.set("content-length", String((await request.clone().arrayBuffer()).byteLength));
+        return handler(request);
+      }) as typeof fetch,
+    });
+    const ops: EditOp[] = insertion
+      ? [{ kind: "insert-blocks", address: { at: { section: 0, paragraph: 0 } }, position: "after",
+        blocks: [{ type: "paragraph", runs: [{ type: "text", text: "x" }] }] }]
+      : OPS;
+    const error = await engine.edit({ name: "a.hwpx", data: hwpxBytes() }, ops).catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(HwpEngineError);
+    expect(error).toMatchObject({ code: "failed", refusal: "output_validation" });
+    expect(error.message).toContain("edit refused: output_validation");
+    expect(error.message).not.toContain("font-refused.hwp");
+    expect(error.message).not.toContain("insert_blocks refused");
   });
 });

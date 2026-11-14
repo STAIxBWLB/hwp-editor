@@ -37,7 +37,7 @@
  * structured `stopped` marker takes the slot (#91).
  */
 import type { MessageKey, TFunction } from "./messages.js";
-import { engineFailedWithoutCause, engineStoppedWithoutDiagnostic } from "./errors.js";
+import { engineFailedWithoutCause, engineRefusalKind, engineStoppedWithoutDiagnostic } from "./errors.js";
 import { isComponentError, isHwpEngineError, isInsertionRefusal, HwpEngineError } from "@hwp-editor/core";
 import type { Blocks, ComponentErrorCode, InsertionRefusal } from "@hwp-editor/core";
 
@@ -155,11 +155,13 @@ export function isLayoutOverflow(error: unknown): boolean {
 function wrapped(error: unknown, text: string, detail: string): Error {
   if (isHwpEngineError(error)) {
     const insertion = insertionOf(error);
+    const refusal = engineRefusalKind(error);
     return Object.assign(
       new HwpEngineError(error.code, text, {
         ...(error.status === undefined ? {} : { status: error.status }),
         cause: error,
         ...(insertion === undefined ? {} : { insertion }),
+        ...(refusal === undefined ? {} : { refusal }),
         // The marker survives too: a host's `onError` branches on the same
         // structured fields the transport set, so a wrapper that drops one
         // hands it a failure it cannot classify (#91).
@@ -232,6 +234,11 @@ export function insertionFailure(
 ): unknown {
   const message = error instanceof Error ? error.message : String(error);
   if (!isRefusedInsertion(error)) return error;
+  // Output validation can refuse an insertion too; its remedy concerns the
+  // output format, not the component or its insertion point (#171).
+  if (engineRefusalKind(error) === "output_validation") {
+    return wrapped(error, t("error.outputValidation"), message);
+  }
   // The class comes from the structured field only (#88).
   const insertion = insertionOf(error);
   if (insertion?.kind === "unknown_style") {

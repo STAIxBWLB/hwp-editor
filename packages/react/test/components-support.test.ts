@@ -67,6 +67,26 @@ const overflow = (message: string, insertion: InsertionRefusal = classifyInserti
   refused(message, insertion);
 
 describe("insertionFailure", () => {
+  it.each([en, ko])("keeps output-validation remedies on an immediate insertion (#171)", (t) => {
+    const error = new HwpEngineError("failed", "ahwp edit failed (exit 1): edit refused: output_validation", {
+      refusal: "output_validation", status: 422,
+    });
+    const shown = insertionFailure(error, UNMEASURED, t) as HwpEngineError & { detail?: string };
+    expect(shown.message).toBe(t("error.outputValidation"));
+    expect(shown.refusal).toBe("output_validation");
+    expect(shown.code).toBe("failed");
+    expect(shown.status).toBe(422);
+    expect(shown.cause).toBe(error);
+    expect(shown.detail).toBe(error.message);
+  });
+
+  it("does not choose output-validation remedies from an unclassified message (#171)", () => {
+    const error = new HwpEngineError("failed", "ahwp edit failed (exit 1): edit refused: output_validation");
+    const shown = insertionFailure(error, UNMEASURED, en) as HwpEngineError;
+    expect(shown.message).not.toBe(en("error.outputValidation"));
+    expect(shown.refusal).toBeUndefined();
+  });
+
   it("names both widths, and keeps the engine code, status and cause", () => {
     const error = overflow(serverSummary(true));
     const shown = insertionFailure(error, WIDE, en) as Error & { detail?: string };
