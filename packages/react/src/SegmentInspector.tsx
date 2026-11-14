@@ -4,7 +4,7 @@ import type { KeyboardEvent } from "react";
 import type { JSX } from "react";
 import type { ParagraphAddress, ParagraphAlignment, ParaShapeKey, SelectionRefusal, Segment } from "@hwp-editor/core";
 import { compareSegments, documentFormat, formatTargets as collectFormatTargets, hasDirectFormatting, hasOwnRef, isSectionDefinitionParagraph, paragraphAddress, paragraphRuns, resolveSelection, segmentAtRef, segmentIdPath, segmentPath, segmentRef, segmentText, selectSimilar, selectedParagraphs, selectionAction, stylesVersionSupported } from "@hwp-editor/core";
-import { plainSegmentText } from "./text.js";
+import { paragraphSourceText, plainSegmentText } from "./text.js";
 import { useHwpEditorContext } from "./context.js";
 import type { MessageKey } from "./messages.js";
 
@@ -124,7 +124,9 @@ export function SegmentInspector(): JSX.Element {
     : singleParagraph === undefined ? "" : t("segment.selectedPara", { path: segmentPath(singleParagraph) });
   const currentText =
     envelope !== null && paragraphTargets.length > 0
-      ? plainSegmentText(paragraphTargets.map(candidate => segmentText(envelope, candidate)).join("\n"))
+      // Source text, not the Markdown: generated list numbering is not
+      // editable text, and a find that carries it matches nothing (#168).
+      ? paragraphTargets.map(candidate => paragraphSourceText(envelope, candidate, state.pages)).join("\n").trim()
       : "";
 
   const markdownText = envelope !== null && singleParagraph !== undefined ? segmentText(envelope, singleParagraph) : "";

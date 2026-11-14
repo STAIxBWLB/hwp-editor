@@ -719,3 +719,8 @@
     box-shadow: inset 0 0 0 1px var(--hwped-fg);
   }
 }
+
+/* A band estimated from Markdown length: the host published no row geometry. */
+.hwped-band-approximate {
+  border-style: dashed;
+}
