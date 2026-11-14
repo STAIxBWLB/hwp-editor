@@ -299,11 +299,35 @@ export function parseEditReport(raw: unknown): EditReport {
   };
 }
 
-/** Remove staged paths from validated refusal diagnostics before any transport exposes them. */
+/** Redact diagnostics, preserving typed user anchors, styles and issue-path segments. */
+function sanitizedRefusal(refusal: EditReportRefusal, workDir?: string): EditReportRefusal {
+  const message = withoutPaths(refusal.message, workDir);
+  switch (refusal.code) {
+    case "insert_blocks.invalid_definition":
+      if ("detail" in refusal.values) {
+        return { ...refusal, message, values: { ...refusal.values, detail: withoutPaths(refusal.values.detail, workDir) } };
+      }
+      return { ...refusal, message, values: { ...refusal.values,
+        issues: refusal.values.issues.map(issue => ({ ...issue, message: withoutPaths(issue.message, workDir) })),
+      } };
+    case "layout_overflow": case "insert_blocks.invalid_spec":
+      return { ...refusal, message, values: { ...refusal.values,
+        issues: refusal.values.issues.map(issue => ({ ...issue, message: withoutPaths(issue.message, workDir) })),
+      } };
+    default: return { ...refusal, message };
+  }
+}
+
+/** Remove staged diagnostics before exposure; user-valued identifiers remain exact. */
 export function sanitizeEditReport(report: EditReport, name: string, workDir?: string): EditReport {
-  const safe: unknown = JSON.parse(JSON.stringify(report, (_key, value: unknown) =>
-    typeof value === "string" ? withoutPaths(value, workDir) : value));
-  return withCallerName(parseEditReport(safe), name);
+  const parsed = parseEditReport(report);
+  return withCallerName({ ...parsed,
+    ops: parsed.ops.map(op => ({ ...op,
+      reason: op.reason === null ? null : withoutPaths(op.reason, workDir),
+      ...(op.refusal === undefined ? {} : { refusal: sanitizedRefusal(op.refusal, workDir) }),
+    })),
+    ...(parsed.refusal === undefined ? {} : { refusal: sanitizedRefusal(parsed.refusal, workDir) }),
+  }, name);
 }
 
 /**

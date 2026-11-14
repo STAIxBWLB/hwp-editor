@@ -41,7 +41,9 @@ The route's optional `error.report` and `error.engineVersion` fields carry the
 failed report to the HTTP client; a structured Tauri rejection accepts the
 same additive fields. The report is validated again on receipt. Output names
 are replaced with the caller's name, and staged paths in report diagnostics
-are removed before the report is exposed as an error cause.
+are removed before the report is exposed as an error cause. Typed user anchors,
+style names and structured issue-path segments retain their exact values; they
+are identifiers rather than diagnostic filesystem paths.
 
 A report overrides conflicting legacy semantic fields. An absent or malformed
 modern report leaves a generic diagnostic; it never enables a stderr fallback.

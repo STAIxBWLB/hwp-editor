@@ -57,6 +57,15 @@ describe("real edit-report-v1 1.1 refusals (#119 item 1)", () => {
     expect(JSON.stringify(parsed)).toContain("/stage/private");
     expect(reportRefusalFields(safe)).toEqual({ insertion: { kind: "invalid_definition" } });
   });
+  it("preserves typed user identifiers even when they resemble file paths", () => {
+    const raw = report("unknown-style");
+    raw.refusal.values.style = "/private/user/chosen-style";
+    const safe = sanitizeEditReport(parseEditReport(raw), "caller.hwpx", "/private/user");
+    expect(reportRefusalFields(safe)).toEqual({ insertion: { kind: "unknown_style", style: "/private/user/chosen-style" } });
+    const anchor = report("anchor-miss");
+    anchor.refusal.values.anchor = "/private/user/chosen-anchor";
+    expect(sanitizeEditReport(parseEditReport(anchor), "caller.hwpx").refusal).toEqual(anchor.refusal);
+  });
   it("keeps absent refusal absent on old/success reports", () => {
     const raw = report("range-tag-shift");
     delete raw.refusal;
