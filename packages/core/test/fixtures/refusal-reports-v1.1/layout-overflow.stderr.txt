@@ -1,0 +1,1 @@
+Error: insert_blocks 블록/스타일/목록 정의가 유효하지 않습니다: layout_overflow at $.sections[0].blocks[0].columns: column widths total 400.00 mm; body width is 170.00 mm. DocumentSpec v1 정의를 수정한 뒤 다시 시도하세요 (삽입 위치의 폭은 170.0mm입니다)

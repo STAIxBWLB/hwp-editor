@@ -68,7 +68,7 @@ has schema 1.1 and
 contract `hwp-edit-report-v1`. Its `refusal.code` is `preservation_loss`, with
 `refusal.values.events[0].code` equal to `font_type_info_unrepresentable`
 (`count: 1`, `disposition: "unrepresentable"`, `resource: "metadata"`).
-Under the AC4 ruling, the editor classifies only the first `Error:` line's
+Under the #171 AC4 ruling, the interim editor classified only the first `Error:` line's
 fixed head `Error: 출력 검증 실패 (대상: ` and fixed tail `)`. The output path
 between them stays opaque; no `Caused by` or preservation-event list is read.
 This is the broader `output_validation` class, not a font-specific diagnosis.
@@ -79,10 +79,10 @@ cause, and give the two remedies below. For another cause they direct the user
 to run the same edit with the engine's `--verify` report to see which check
 failed. Apply and immediate insertion use that same localized message.
 
-This is an interim step until the editor consumes agent-hwp#531 machine codes
-for a font-specific classification (#119 item 1). Those codes already shipped
-in 1.6.3, as the measured 2.0.0 refusal report above confirms; consuming them
-through failed edit responses is follow-up transport work.
+That interim class remains for hosts without a structured refusal. Section 1 of #119 adds
+failed-report code consumption for modern transports and a font-specific
+classification; see [Edit refusal reports](edit-refusal-reports.md). The codes
+already shipped in 1.6.3, as the measured 2.0.0 report above confirms.
 
 The same measured font input successfully edits to `.hwpx`. Explicit
 `ahwp convert` without `--strict` reports `font_type_info_unrepresentable` as

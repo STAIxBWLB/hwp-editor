@@ -1,0 +1,12 @@
+[
+  {
+    "op": "set_format",
+    "address": {
+      "at": {
+        "section": 0,
+        "paragraph": 99
+      }
+    },
+    "bold": "on"
+  }
+]

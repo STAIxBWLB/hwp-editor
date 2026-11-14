@@ -34,8 +34,11 @@ import {
   sniffDocumentFormat,
   validateImageAssets,
   imageAssetsMismatch,
-  withCallerName,
+  sanitizeEditReport,
+  reportRefusalFields,
+  withoutPaths,
   type ImageAsset,
+  type EditReport,
 } from "@hwp-editor/core";
 
 import type {
@@ -155,11 +158,27 @@ function error(
   insertion?: InsertionRefusal,
   stopped?: true,
   noCause?: true,
+  report?: EditReport,
+  engineVersion?: string,
 ): Response {
   // The refusal kind is its own field (#82): a client must not select a
   // sentence from message text, which can carry the user's own values. The
   // stopped marker (#91) is carried the same way, and the message keeps its
   // English sentence for a client that reads text only.
+  let safeReport: EditReport | undefined;
+  if (report !== undefined) {
+    // An error supplied by another engine implementation still crosses this
+    // boundary: validate/redact again instead of trusting a typed annotation.
+    try { safeReport = sanitizeEditReport(report, withoutPaths(report.output)); }
+    catch { safeReport = undefined; }
+    if (safeReport === undefined || safeReport.refusal !== undefined) {
+      const fields: { refusal?: EditRefusalKind; insertion?: InsertionRefusal } = safeReport === undefined || code !== "failed" ? {} : reportRefusalFields(safeReport);
+      refusal = fields.refusal;
+      insertion = fields.insertion;
+      stopped = undefined;
+      noCause = undefined;
+    }
+  }
   const body: ErrorResponse = {
     error: {
       code,
@@ -169,6 +188,8 @@ function error(
       ...(stopped === undefined ? {} : { stopped }),
       // The no-Error-line marker (#140), carried like `stopped`.
       ...(noCause === undefined ? {} : { noCause }),
+      ...(safeReport === undefined ? {} : { report: safeReport }),
+      ...(engineVersion === undefined ? {} : { engineVersion }),
     },
   };
   return json(body, status);
@@ -484,7 +505,7 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
       // The report names the path the engine wrote to. Whatever produced it —
       // the CLI engine here or a host's own engine — the field is rewritten at
       // this boundary, because this is the response a caller can read.
-      ...(edited.report === undefined ? {} : { report: withCallerName(edited.report, edited.name) }),
+      ...(edited.report === undefined ? {} : { report: sanitizeEditReport(edited.report, edited.name) }),
     };
     return json(body);
   }
@@ -674,7 +695,7 @@ export function createHwpEditorHandler(opts: RoutesOptions = {}): HwpEditorHandl
       }
     } catch (err) {
       if (err instanceof HwpCliError) {
-        return error(statusFor(err), err.reason, err.message, err.refusal, err.insertion, err.stopped, err.noCause);
+        return error(statusFor(err), err.reason, err.message, err.refusal, err.insertion, err.stopped, err.noCause, err.report, err.engineVersion);
       }
       if (err instanceof SessionNotFoundError) {
         return error(404, "session_not_found", err.message);

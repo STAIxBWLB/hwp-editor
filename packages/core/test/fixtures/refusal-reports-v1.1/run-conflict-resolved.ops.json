@@ -1,0 +1,24 @@
+[
+  {
+    "op": "replace",
+    "address": {
+      "at": {
+        "section": 0,
+        "paragraph": 1
+      }
+    },
+    "from": "Body",
+    "to": "Longer body"
+  },
+  {
+    "op": "set_format",
+    "address": {
+      "id": "045cda11292b6661.0.1.0",
+      "chars": [
+        0,
+        4
+      ]
+    },
+    "bold": "on"
+  }
+]

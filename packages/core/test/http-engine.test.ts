@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { malformedLayouts } from "./fixtures/layout.js";
 import { RENDER_LAYOUT_NEXT_STEP } from "../src/layout.js";
 /**
@@ -403,7 +404,7 @@ describe("edit report transport", () => {
   it("parses a report the caller asked for", async () => {
     const engine = createHttpEngine("/api", { fetch: stubFetch(JSON.stringify({ ...edited, report }), { status: 200 }) });
     const result = await engine.edit(doc, ops, { report: true });
-    expect(result.report).toEqual(report);
+    expect(result.report).toEqual({ ...report, output: edited.name });
     expect(result.data).toEqual(new TextEncoder().encode("edited"));
   });
 
@@ -526,5 +527,76 @@ describe("no-Error-line marker on the HTTP transport (#140)", () => {
       const err = await failing({ error }).edit(target, []).catch((e: unknown) => e) as HwpEngineError;
       expect(err.noCause).toBeUndefined();
     }
+  });
+});
+
+
+describe("refused edit reports across HTTP (#119)", () => {
+  const report = (name = "preservation-font"): unknown => JSON.parse(readFileSync(new URL(`./fixtures/refusal-reports-v1.1/${name}.json`, import.meta.url), "utf8"));
+  const failure = (error: unknown) => createHttpEngine("/api", {
+    fetch: stubFetch(JSON.stringify({ error }), { status: 422 }),
+  }).edit(doc, []).catch((error: unknown) => error) as Promise<HwpEngineError>;
+
+  it("uses the report instead of conflicting legacy fields, and sanitizes its output", async () => {
+    const raw = report() as { output: string };
+    raw.output = "/private/staged/out.hwp";
+    const error = await failure({ code: "failed", message: "x", report: raw, engineVersion: "2.0.0",
+      refusal: "range_tag", insertion: { kind: "invalid_definition" }, stopped: true, noCause: true });
+    expect(error.refusal).toBe("font_type_info");
+    expect(error.insertion).toBeUndefined();
+    expect(error.stopped).toBeUndefined();
+    expect(error.noCause).toBeUndefined();
+    expect((error.cause as { error: { report: { output: string } } }).error.report.output).toBe(doc.name);
+  });
+
+  it.each([undefined, "2.0.0", "1.6.3", "not-a-version"])("keeps no-report legacy fields independently of engine version %s", async engineVersion => {
+    const error = await failure({ code: "failed", message: "edit refused: range_tag", engineVersion, refusal: "range_tag",
+      insertion: { kind: "layout_overflow", blockMm: 400, insertionMm: 170 } });
+    expect(error.refusal).toBe("range_tag");
+    expect(error.insertion).toEqual({ kind: "layout_overflow", blockMm: 400, insertionMm: 170 });
+  });
+
+  it("uses legacy fields when a valid report has no refusal", async () => {
+    const raw = report() as { refusal?: unknown };
+    delete raw.refusal;
+    const error = await failure({ code: "failed", message: "x", report: raw, refusal: "range_tag" });
+    expect(error.refusal).toBe("range_tag");
+    expect((error.cause as { error: { report: { output: string } } }).error.report.output).toBe(doc.name);
+  });
+
+  it("does not fall back after a malformed report, even for an explicit legacy host", async () => {
+    const error = await failure({ code: "failed", message: "x", engineVersion: "1.6.2", report: { contract: "wrong" }, refusal: "range_tag" });
+    expect(error.refusal).toBeUndefined();
+    expect(error.message).toContain("Invalid refused edit report");
+  });
+
+  it.each([
+    ["preservation-range-tag", "preservation_loss"],
+    ["address-unresolvable-valid", "unclassified_refusal"],
+  ])("maps the actual %s cause class without reading prose", async (name, kind) => {
+    const error = await failure({ code: "failed", message: "edit refused: output_validation", report: report(name), refusal: "output_validation" });
+    expect(error.refusal).toBe(kind);
+  });
+
+  it("does not hide an explicit protection refusal behind an unclassified report", async () => {
+    const error = await failure({ code: "protected", message: "document is protected", report: report("protected-encrypted") });
+    expect(error.code).toBe("protected");
+    expect(error.refusal).toBeUndefined();
+  });
+
+  it("sanitizes report values and removes conflicting legacy decisions from cause", async () => {
+    const raw = report("invalid-definition-compile") as { refusal: { values: { detail: string } } };
+    raw.refusal.values.detail = "bad data at /private/stage/ops.json";
+    const error = await failure({ code: "failed", message: "x", report: raw, refusal: "range_tag", insertion: { kind: "unknown_style", style: "fake" } });
+    expect(error.insertion).toEqual({ kind: "invalid_definition" });
+    expect(JSON.stringify(error.cause)).not.toContain("/private/stage");
+    const body = error.cause as { error: { refusal?: unknown; insertion?: unknown } };
+    expect(body.error.refusal).toBeUndefined();
+    expect(body.error.insertion).toBeUndefined();
+  });
+
+  it("carries measured layout widths from structured values", async () => {
+    const error = await failure({ code: "failed", message: "x", report: report("layout-overflow") });
+    expect(error.insertion).toEqual({ kind: "layout_overflow", blockMm: 400, insertionMm: 170 });
   });
 });

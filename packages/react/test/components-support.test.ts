@@ -26,7 +26,7 @@ import {
 } from "@hwp-editor/core";
 import type { Blocks, ComponentErrorCode, InsertionRefusal } from "@hwp-editor/core";
 
-import { componentFailure, insertionFailure } from "../src/components-support.js";
+import { classifiedRefusalMessage, componentFailure, insertionFailure } from "../src/components-support.js";
 import { createT } from "../src/messages.js";
 import type { MessageKey } from "../src/messages.js";
 
@@ -67,6 +67,51 @@ const overflow = (message: string, insertion: InsertionRefusal = classifyInserti
   refused(message, insertion);
 
 describe("insertionFailure", () => {
+  it.each([en, ko])("prefers typed engine widths over legacy block fallback and never reads prose", (t) => {
+    const error = new HwpEngineError("failed", "block 999 mm, insertion point 998 mm", {
+      insertion: { kind: "layout_overflow", blockMm: 240.5, insertionMm: 46.4 }, status: 422,
+    });
+    const expected = t("components.tooWide", { width: "240.5 mm", available: "46.4 mm" });
+    expect(classifiedRefusalMessage(error, t)).toBe(expected);
+    const shown = insertionFailure(error, WIDE, t) as HwpEngineError;
+    expect(shown.message).toBe(expected);
+    expect(shown.insertion).toEqual(error.insertion);
+    expect(shown.status).toBe(422);
+    expect(shown.cause).toBe(error);
+
+    const legacy = new HwpEngineError("failed", "block 999 mm", { insertion: { kind: "layout_overflow" } });
+    expect(classifiedRefusalMessage(legacy, t)).toBe(t("components.tooWideUnknown"));
+    expect(classifiedRefusalMessage(legacy, t, WIDE)).toBe(t("components.tooWideUnmeasured", { width: "120 mm" }));
+    expect(classifiedRefusalMessage(new HwpEngineError("failed", error.message), t)).toBeUndefined();
+  });
+
+  describe.each([en, ko])("structured refusal localization (#119)", (t) => {
+    it.each([
+      ["keep_together_unsupported", "error.keepTogetherUnsupported"],
+      ["section_owner", "error.sectionOwner"],
+      ["anchor_not_found", "error.anchorNotFound"],
+      ["font_type_info", "error.fontTypeInfo"],
+      ["preservation_loss", "error.preservationLoss"],
+      ["unapplied_requests", "error.unappliedRequests"],
+      ["no_applicable_edits", "error.noApplicableEdits"],
+      ["unclassified_refusal", "error.unclassifiedRefusal"],
+    ] as const)("uses %s's own cause and action on immediate insertion", (refusal, key) => {
+      const error = new HwpEngineError("failed", "untrusted prose mentions a different refusal", {
+        refusal, status: 422, insertion: { kind: "invalid_definition" }, stopped: true, noCause: true,
+      });
+      const shown = insertionFailure(error, UNMEASURED, t) as HwpEngineError & { detail?: string };
+      expect(shown.message).toBe(t(key));
+      expect(shown.refusal).toBe(refusal);
+      expect(shown.code).toBe("failed");
+      expect(shown.status).toBe(422);
+      expect(shown.insertion).toEqual({ kind: "invalid_definition" });
+      expect(shown.stopped).toBe(true);
+      expect(shown.noCause).toBe(true);
+      expect(shown.cause).toBe(error);
+      expect(shown.detail).toBe(error.message);
+    });
+  });
+
   it.each([en, ko])("keeps output-validation remedies on an immediate insertion (#171)", (t) => {
     const error = new HwpEngineError("failed", "ahwp edit failed (exit 1): edit refused: output_validation", {
       refusal: "output_validation", status: 422,

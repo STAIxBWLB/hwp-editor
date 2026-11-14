@@ -1,0 +1,62 @@
+{
+  "schema_version": "1.1",
+  "contract": "hwp-edit-report-v1",
+  "output": "layout-overflow.out.hwpx",
+  "dry_run": false,
+  "ops": [
+    {
+      "index": 0,
+      "op": "insert_blocks",
+      "status": "failed",
+      "pieces_touched": 0,
+      "changed": [],
+      "reason": "insert_blocks: refused (layout_overflow)",
+      "refusal": {
+        "code": "layout_overflow",
+        "values": {
+          "container_width_mm": 170.0,
+          "issues": [
+            {
+              "code": "layout_overflow",
+              "measured_width_mm": 400.0,
+              "message": "column widths total 400.00 mm; body width is 170.00 mm",
+              "path": [
+                "$",
+                "sections",
+                0,
+                "blocks",
+                0,
+                "columns"
+              ]
+            }
+          ]
+        },
+        "message": "삽입할 블록의 너비가 삽입 위치의 너비를 넘습니다"
+      }
+    }
+  ],
+  "applied_count": 0,
+  "failed_count": 1,
+  "refusal": {
+    "code": "layout_overflow",
+    "values": {
+      "container_width_mm": 170.0,
+      "issues": [
+        {
+          "code": "layout_overflow",
+          "measured_width_mm": 400.0,
+          "message": "column widths total 400.00 mm; body width is 170.00 mm",
+          "path": [
+            "$",
+            "sections",
+            0,
+            "blocks",
+            0,
+            "columns"
+          ]
+        }
+      ]
+    },
+    "message": "삽입할 블록의 너비가 삽입 위치의 너비를 넘습니다"
+  }
+}

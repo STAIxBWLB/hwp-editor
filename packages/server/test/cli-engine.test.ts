@@ -11,7 +11,7 @@ import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { HwpEngineError } from "@hwp-editor/core";
+import { HwpEngineError, refusalCodesSupported } from "@hwp-editor/core";
 import type { DocumentHandle, DocumentSpecV2, EditOp } from "@hwp-editor/core";
 
 import { createCliEngine, HwpCliError } from "../src/cli-engine.js";
@@ -337,7 +337,15 @@ describeBin("cli-engine (real agent-hwp binary)", () => {
       { kind: "set-format", find: "missing-format-target", props: { bold: "on" } },
     ], { assets: [{ name: "figure.png", data: image }] }).catch((error: unknown) => error);
     expect(failure).toBeInstanceOf(HwpCliError);
-    expect(failure).toMatchObject({ reason: "failed", message: expect.stringMatching(/hwp edit failed \(exit [0-9]+\): .+\. (Fix or remove the pending edit it names|Check that the document and any uploaded image can be read)/) });
+    expect(failure).toMatchObject({ reason: "failed" });
+    if (refusalCodesSupported((await cli.capabilities()).version)) {
+      expect(failure).toMatchObject({ refusal: "unapplied_requests", report: { refusal: { code: "unapplied_requests" } } });
+      expect((failure as HwpCliError).report?.ops).toEqual(expect.arrayContaining([
+        expect.objectContaining({ op: "set_format", status: "failed" }),
+      ]));
+    } else {
+      expect((failure as HwpCliError).message).toMatch(/hwp edit failed \(exit [0-9]+\): .+\. (Fix or remove the pending edit it names|Check that the document and any uploaded image can be read)/);
+    }
     expect((failure as HwpCliError).message).not.toMatch(/Image insertion failed|re-export/i);
     expect((failure as HwpCliError).stderr).toBeTruthy();
     expect((failure as HwpCliError).detail).toContain((failure as HwpCliError).stderr!.trim());

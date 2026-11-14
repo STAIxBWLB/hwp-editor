@@ -1,0 +1,20 @@
+[
+  {
+    "op": "move_para",
+    "address": {
+      "at": {
+        "section": 0,
+        "paragraph": 1
+      }
+    },
+    "to": {
+      "address": {
+        "at": {
+          "section": 0,
+          "paragraph": 0
+        }
+      },
+      "position": "before"
+    }
+  }
+]

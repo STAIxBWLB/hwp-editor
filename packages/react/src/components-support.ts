@@ -12,21 +12,21 @@
  *   width is 46.40 mm"). The width of the destination is not something the
  *   render layout publishes — a paragraph's painted box is the width of its
  *   text, 163.9 pt against a 170 mm column in the playground's own fixture —
- *   so the engine's own `layout_overflow` diagnostic and the width it prints
- *   are the source of both numbers, and a preflight from the rendered box
- *   would refuse insertions the engine accepts.
+ *   so the engine's structured refusal values supply the widths. A legacy
+ *   host can still supply the same fields from its old diagnostic fallback;
+ *   a preflight from the rendered box would refuse insertions the engine accepts.
  * - The same refusal has two other classes — a style the target document
  *   does not define, and a block, style or list definition the engine
  *   rejected — and each gets its own sentence and next step here.
  *
- * All three classes arrive as the structured `insertion` field both
- * transports set from core's `classifyInsertionRefusal` (#88). The message is
+ * All three classes arrive as the structured `insertion` field the transports
+ * set from core's validated report mapping or legacy fallback. The message is
  * never parsed for a class: on an unclassified failure it can carry what the
  * user typed.
  *
- * Every other refusal — an insertion before a section's definition paragraph,
- * an equation into `.hwp`, a compile failure — is one class: the engine's own
- * cause inside one frame that names the component and the insertion point, so
+ * Classified edit refusals, including section ownership and preservation,
+ * use the same localized sentence as Apply. A remaining unclassified failure
+ * keeps the engine's own cause inside one frame that names the component and the insertion point, so
  * no transport can leave a caller with a causeless exit code. The three
  * refusals that are certain before the document is touched are answered
  * without a round trip at all.
@@ -38,8 +38,26 @@
  */
 import type { MessageKey, TFunction } from "./messages.js";
 import { engineFailedWithoutCause, engineRefusalKind, engineStoppedWithoutDiagnostic } from "./errors.js";
+import type { EngineRefusalKind } from "./errors.js";
 import { isComponentError, isHwpEngineError, isInsertionRefusal, HwpEngineError } from "@hwp-editor/core";
 import type { Blocks, ComponentErrorCode, InsertionRefusal } from "@hwp-editor/core";
+
+/** One kind-to-message mapping for Apply and immediate insertion (#119 item 1). */
+const EDIT_REFUSAL_MESSAGE = {
+  unmatched_replace: "error.unmatchedReplace",
+  run_range_conflict: "error.runRangeConflict",
+  range_tag: "error.rangeTagRefused",
+  unresolvable_address: "error.unresolvableAddress",
+  output_validation: "error.outputValidation",
+  keep_together_unsupported: "error.keepTogetherUnsupported",
+  section_owner: "error.sectionOwner",
+  anchor_not_found: "error.anchorNotFound",
+  font_type_info: "error.fontTypeInfo",
+  preservation_loss: "error.preservationLoss",
+  unapplied_requests: "error.unappliedRequests",
+  no_applicable_edits: "error.noApplicableEdits",
+  unclassified_refusal: "error.unclassifiedRefusal",
+} as const satisfies Record<EngineRefusalKind, MessageKey>;
 
 /** A width as the localized messages print it, in whole millimetres. */
 function millimetres(value: number): string {
@@ -215,6 +233,29 @@ function isRefusedInsertion(error: unknown): boolean {
   return isHwpEngineError(error) && (error.code === "failed" || error.code === "bad_request");
 }
 
+/** Localize validated edit and insertion classes identically on both edit paths. */
+export function classifiedRefusalMessage(error: unknown, t: TFunction, blocks?: Blocks): string | undefined {
+  const refusal = engineRefusalKind(error);
+  if (refusal !== undefined) return t(EDIT_REFUSAL_MESSAGE[refusal]);
+  const insertion = insertionOf(error);
+  if (insertion?.kind === "unknown_style") {
+    return t("components.unknownStyle", { style: insertion.style });
+  }
+  if (insertion?.kind === "invalid_definition") return t("components.invalidDefinition");
+  if (insertion?.kind === "layout_overflow") {
+    // Report measurements take precedence. Blocks supply the old host's missing
+    // block width only; no number is ever read from the diagnostic prose.
+    const wanted = insertion.blockMm ?? (blocks === undefined ? undefined : widestBlockMm(blocks));
+    const available = insertion.insertionMm;
+    return wanted === undefined
+      ? t("components.tooWideUnknown")
+      : available === undefined
+        ? t("components.tooWideUnmeasured", { width: millimetres(wanted) })
+        : t("components.tooWide", { width: millimetres(wanted), available: millimetres(available) });
+  }
+  return undefined;
+}
+
 /**
  * An error to report for a failed insertion, in the user's own language.
  *
@@ -234,31 +275,8 @@ export function insertionFailure(
 ): unknown {
   const message = error instanceof Error ? error.message : String(error);
   if (!isRefusedInsertion(error)) return error;
-  // Output validation can refuse an insertion too; its remedy concerns the
-  // output format, not the component or its insertion point (#171).
-  if (engineRefusalKind(error) === "output_validation") {
-    return wrapped(error, t("error.outputValidation"), message);
-  }
-  // The class comes from the structured field only (#88).
-  const insertion = insertionOf(error);
-  if (insertion?.kind === "unknown_style") {
-    return wrapped(error, t("components.unknownStyle", { style: insertion.style }), message);
-  }
-  if (insertion?.kind === "layout_overflow") {
-    const wanted = widestBlockMm(blocks);
-    const available = insertion.insertionMm;
-    // Every sentence below names a next step the user can take; none of them
-    // leaves a blank where a width would go.
-    const text = wanted === undefined
-      ? t("components.tooWideUnknown")
-      : available === undefined
-        ? t("components.tooWideUnmeasured", { width: millimetres(wanted) })
-        : t("components.tooWide", { width: millimetres(wanted), available: millimetres(available) });
-    return wrapped(error, text, message);
-  }
-  if (insertion?.kind === "invalid_definition") {
-    return wrapped(error, t("components.invalidDefinition"), message);
-  }
+  const classified = classifiedRefusalMessage(error, t, blocks);
+  if (classified !== undefined) return wrapped(error, classified, message);
   // An insertion the engine was stopped out of gets the locale's own sentence
   // for it (#91): the transports append an English one to the message, which
   // would otherwise sit inside this frame in English.

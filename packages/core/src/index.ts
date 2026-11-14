@@ -183,15 +183,18 @@ export {
 export type { DocumentProfile, ProfileName } from "./profiles.js";
 export {
   EDIT_REPORT_MIN_VERSION,
+  EDIT_REFUSAL_CODES,
+  refusalCodesSupported,
   editReportSupported,
   insertedParagraphIds,
   segmentIdPath,
   parseEditReport,
   withCallerName,
+  sanitizeEditReport,
 } from "./edit-report.js";
-export type { EditIdPair, EditOpOutcome, EditReport } from "./edit-report.js";
+export type { EditIdPair, EditOpOutcome, EditReport, EditReportRefusal, EditRefusalCode, EditRefusalIssue, PreservationRefusalEvent } from "./edit-report.js";
 export type { Blocks } from "./generated/document-spec-v2.js";
-export { classifyEditRefusal, editRefusalMarker, isEditRefusalKind } from "./refusals.js";
+export { classifyEditRefusal, editRefusalMarker, isEditRefusalKind, reportRefusalFields } from "./refusals.js";
 export type { EditRefusalKind } from "./refusals.js";
 export {
   classifyInsertionRefusal,

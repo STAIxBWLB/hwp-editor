@@ -34,14 +34,17 @@ Run these passes and tag every finding with its pass:
   retain the original cause or name only the specific command known to have failed
   (`packages/server/src/cli-engine.ts`, `rethrowUploadedImageFailure`); a mixed edit
   batch must not receive an image-only remedy just because it contains uploads.
-- **Engine classifiers match fixed heads and tails only.** A classifier over hwp stderr
-  (`packages/core/src/refusals.ts`, `packages/core/src/insertion-refusals.ts`) matches the fixed
-  head and tail of the engine's own `Error:` line and never searches text where hwp-cli interpolates
-  a user value (anchors, style names, issue paths). Otherwise a crafted value selects a refusal
-  sentence or a measured width. The one exception until STAIxBWLB/agent-hwp#531 ships
-  machine-readable refusal codes: `insertion-refusals.ts` reads `layout_overflow` entries from the
-  insert_blocks issue list, where a style name can forge an entry; add no other reader of that list
-  or of any other text that carries a user value.
+- **Structured edit refusals take precedence.** Validate `edit-report-v1` 1.x and classify a
+  present `refusal` from its `code` and typed `values` in `packages/core/src/edit-report.ts`
+  and `refusals.ts`. Never select a class or width from that report's message, issue prose,
+  user-valued path segments or a Caused-by list. A present malformed report fails closed.
+  When no structured refusal is available, preserve the host/server's existing semantic fields
+  or fixed-head/tail stderr classification, regardless of engine version, then fall back to
+  generic diagnostics. The existing `layout_overflow` issue-list reader in `insertion-refusals.ts`
+  remains a no-report compatibility exception; add no other text reader. A valid structured
+  refusal, including `unclassified`, must not fall through to that exception or conflicting fields.
+  Preserve the open-time protection backstop in `errors.ts`: the report code list has no
+  protection-specific code, so an `unclassified` report does not override a protection refusal.
 
 - **hwp-cli is the only document engine.** The server drives the released `ahwp` binary (`hwp` is
   its 1.x compatibility name) and gates its version (`packages/server/src/cli-engine.ts:72` minimum,

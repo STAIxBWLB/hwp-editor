@@ -1,0 +1,30 @@
+[
+  {
+    "op": "insert_blocks",
+    "address": {
+      "at": {
+        "section": 0,
+        "paragraph": 0
+      }
+    },
+    "position": "after",
+    "missing_style": "create",
+    "styles": {
+      "a; layout_overflow at $.z: b": {
+        "keep_with_next": true
+      }
+    },
+    "blocks": [
+      {
+        "type": "paragraph",
+        "style": "a; layout_overflow at $.z: b",
+        "runs": [
+          {
+            "type": "text",
+            "text": "x"
+          }
+        ]
+      }
+    ]
+  }
+]

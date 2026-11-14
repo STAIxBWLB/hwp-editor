@@ -344,7 +344,7 @@ describe("createTauriEngine errors", () => {
   });
 
   it("reads refusal and insertion from a structured rejection through the validators (#88)", async () => {
-    const good = (await rejectionOf({ code: "failed", message: "x", refusal: "range_tag", insertion: { kind: "invalid_definition" } })) as HwpEngineError;
+    const good = (await rejectionOf({ code: "failed", message: "x", refusal: "range_tag", insertion: { kind: "invalid_definition" }, engineVersion: "1.6.2" })) as HwpEngineError;
     expect(good.refusal).toBe("range_tag");
     expect(good.insertion).toEqual({ kind: "invalid_definition" });
     const bad = (await rejectionOf({ code: "failed", message: "x", refusal: "bogus", insertion: { kind: "nope" } })) as HwpEngineError;
@@ -849,5 +849,97 @@ describe("maru's [work dir <json>] field (#142 item 2, maru#605)", () => {
   it("still parses maru's old format, with no field", async () => {
     const err = await fail("hwp_failed: hwp edit failed (exit 1): Error: 앵커를 찾을 수 없습니다: 회의록");
     expect(err.message).toBe(`hwped_edit failed: hwp edit failed (exit 1): 앵커를 찾을 수 없습니다: 회의록. ${STEP}`);
+  });
+});
+
+
+describe("refused edit reports across Tauri (#119)", () => {
+  const report = (name = "preservation-font"): unknown => JSON.parse(readFileSync(new URL(`./fixtures/refusal-reports-v1.1/${name}.json`, import.meta.url), "utf8"));
+  function engineRejecting(rejection: unknown, version = "2.0.0") {
+    const calls: Call[] = [];
+    const invoke: TauriInvoke = async <T,>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
+      calls.push({ cmd, args });
+      if (cmd === "hwped_capabilities") return { version, editable: true, formats: ["hwp", "hwpx"], editOps: "v1" } as T;
+      throw rejection;
+    };
+    return { engine: createTauriEngine(invoke), calls };
+  }
+
+  it("requests modern reports and maps a structured font refusal, ignoring contradictory fields", async () => {
+    const raw = report() as { output: string };
+    raw.output = "/private/staged/out.hwp";
+    const { engine, calls } = engineRejecting({ code: "failed", message: "x", report: raw, refusal: "range_tag",
+      insertion: { kind: "invalid_definition" }, stopped: true });
+    const error = await engine.edit(doc, [], { report: false }).catch((error: unknown) => error) as HwpEngineError;
+    expect(calls.find(call => call.cmd === "hwped_edit")?.args?.report).toBe(true);
+    expect(error.refusal).toBe("font_type_info");
+    expect(error.insertion).toBeUndefined();
+    expect(error.stopped).toBeUndefined();
+    expect((error.cause as { report: { output: string } }).report.output).toBe(doc.name);
+  });
+
+  it.each([[UNMATCHED, "unmatched_replace"], [FONT_TYPE_INFO, "output_validation"]])("keeps a modern engine's string-only host fallback (%s)", async (stderr, kind) => {
+    const { engine } = engineRejecting(`hwp_failed: hwp edit failed (exit 3): ${stderr}`);
+    const error = await engine.edit(doc, []).catch((error: unknown) => error) as HwpEngineError;
+    expect(error.refusal).toBe(kind);
+    expect(error.insertion).toBeUndefined();
+    expect(error.message).toContain(`edit refused: ${kind}`);
+  });
+
+  it("uses raw edit diagnostics when a structured host error supplies neither report nor semantic fields", async () => {
+    const { engine } = engineRejecting({ code: "failed", message: `hwp_failed: hwp edit failed (exit 3): ${UNMATCHED}` });
+    const error = await engine.edit(doc, []).catch((error: unknown) => error) as HwpEngineError;
+    expect(error.refusal).toBe("unmatched_replace");
+  });
+
+  it("uses old semantic fields when a valid report has no refusal", async () => {
+    const raw = report() as { refusal?: unknown };
+    delete raw.refusal;
+    const { engine } = engineRejecting({ code: "failed", message: "x", report: raw, refusal: "range_tag" });
+    const error = await engine.edit(doc, []).catch((error: unknown) => error) as HwpEngineError;
+    expect(error.refusal).toBe("range_tag");
+    expect((error.cause as { report: { output: string } }).report.output).toBe(doc.name);
+  });
+
+  it("ignores malformed structured reports without falling back to legacy fields", async () => {
+    const { engine } = engineRejecting({ code: "failed", message: "x", report: { contract: "wrong" }, refusal: "range_tag" }, "1.6.2");
+    const error = await engine.edit(doc, []).catch((error: unknown) => error) as HwpEngineError;
+    expect(error.refusal).toBeUndefined();
+    expect(error.message).toContain("Invalid refused edit report");
+  });
+
+  it.each([
+    ["preservation-range-tag", "preservation_loss"],
+    ["address-unresolvable-valid", "unclassified_refusal"],
+  ])("maps %s from its code rather than a conflicting old kind", async (name, kind) => {
+    const { engine } = engineRejecting({ code: "failed", message: "x", report: report(name), refusal: "output_validation" });
+    const error = await engine.edit(doc, []).catch((error: unknown) => error) as HwpEngineError;
+    expect(error.refusal).toBe(kind);
+  });
+
+  it.each([["2.0.0", "1.6.2"], ["1.6.2", "2.0.0"]])("keeps no-report fallback with capability %s/error version %s", async (version, engineVersion) => {
+    const { engine } = engineRejecting({ code: "failed", message: "x", engineVersion, refusal: "range_tag" }, version);
+    const error = await engine.edit(doc, []).catch((error: unknown) => error) as HwpEngineError;
+    expect(error.refusal).toBe("range_tag");
+  });
+
+  it("sanitizes report diagnostics and removes conflicting raw fields", async () => {
+    const raw = report("invalid-definition-compile") as { refusal: { values: { detail: string } } };
+    raw.refusal.values.detail = "bad data at /private/stage/ops.json";
+    const { engine } = engineRejecting({ code: "failed", message: "x", report: raw, refusal: "range_tag" });
+    const error = await engine.edit(doc, []).catch((error: unknown) => error) as HwpEngineError;
+    expect(error.insertion).toEqual({ kind: "invalid_definition" });
+    expect(JSON.stringify(error.cause)).not.toContain("/private/stage");
+    expect((error.cause as { refusal?: unknown }).refusal).toBeUndefined();
+  });
+
+  it("uses structured measured widths and preserves open-time protection", async () => {
+    const { engine } = engineRejecting({ code: "failed", message: "x", report: report("layout-overflow") });
+    const error = await engine.edit(doc, []).catch((error: unknown) => error) as HwpEngineError;
+    expect(error.insertion).toEqual({ kind: "layout_overflow", blockMm: 400, insertionMm: 170 });
+    const diagnostic = readFileSync(new URL("./fixtures/refusal-reports-v1.1/protected-cert-encrypted.stderr.txt", import.meta.url), "utf8");
+    const protectedEngine = engineRejecting({ code: "failed", message: `hwp_failed: hwp edit failed (exit 1): ${diagnostic}`, report: report("protected-cert-encrypted") }).engine;
+    const protectedError = await protectedEngine.edit(doc, []).catch((error: unknown) => error) as HwpEngineError;
+    expect(protectedError.code).toBe("protected");
   });
 });

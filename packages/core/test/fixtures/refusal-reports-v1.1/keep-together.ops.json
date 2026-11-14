@@ -1,0 +1,12 @@
+[
+  {
+    "op": "keep_together",
+    "address": {
+      "at": {
+        "section": 0,
+        "paragraph": 0
+      }
+    },
+    "keep_lines": true
+  }
+]

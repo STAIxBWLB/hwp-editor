@@ -5,6 +5,10 @@
  * as a structured field, so the editor picks its sentence from the field and
  * never from message text.
  *
+ * These stderr classifiers remain compatibility fallbacks when the host or
+ * engine provides no structured refusal. A valid report.refusal instead uses
+ * typed code/values through reportRefusalFields, never this issue list.
+ *
  * Only the engine's FIRST `Error:` line is classified, and each class is
  * matched on that line's fixed head and fixed tail (measured on ahwp 1.6.1),
  * so a value the user typed (an anchor, a style name) can sit inside a line
@@ -52,7 +56,8 @@ const INVALID_DEFINITION_LINE =
  * The issue list joins entries with `; ` and paths can carry user style
  * names (document_spec.rs:506-517), so a name holding `; layout_overflow at
  * $.sections[...]` can still forge an entry. Only machine-readable refusal
- * codes from the engine close that; it waits on STAIxBWLB/agent-hwp#531.
+ * codes from agent-hwp#531 close that when a host forwards the structured
+ * refusal. This exception remains only on the no-report compatibility path.
  */
 const OVERFLOW_ENTRY =
   /(?:^|; )layout_overflow at (\$\.sections\[[^\s:;]*): (?:column widths total (\d+(?:\.\d+)?) mm; body width is (\d+(?:\.\d+)?) mm|[^;]*? exceeds body width (\d+(?:\.\d+)?) mm)(?=; |$)/gu;

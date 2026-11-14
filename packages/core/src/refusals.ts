@@ -17,13 +17,24 @@
  * drift refusal in a context chain (runtime.rs:324-331), so neither needs a
  * `Caused by:` line.
  *
- * Only the marker leaves this module: the engine's prose, its staged paths and
+ * The stderr functions below remain compatibility fallbacks when a host or
+ * engine provides no structured refusal, regardless of engine version. A
+ * valid report.refusal uses reportRefusalFields instead, including unclassified;
+ * malformed present reports never re-enable these classifiers.
+ *
+ * Classification exposes fixed kinds and typed values, not diagnostic prose.
+ * The engine's staged paths and
  * the user's values stay in the error's stderr/detail for an operator.
  */
 
-export type EditRefusalKind = "unmatched_replace" | "run_range_conflict" | "range_tag" | "unresolvable_address" | "output_validation";
+import type { EditReport } from "./edit-report.js";
+import type { InsertionRefusal } from "./insertion-refusals.js";
 
-const KINDS: ReadonlySet<string> = new Set<EditRefusalKind>(["unmatched_replace", "run_range_conflict", "range_tag", "unresolvable_address", "output_validation"]);
+export type EditRefusalKind = "unmatched_replace" | "run_range_conflict" | "range_tag" | "unresolvable_address" | "output_validation" | "keep_together_unsupported" | "section_owner" | "anchor_not_found" | "font_type_info" | "preservation_loss" | "unapplied_requests" | "no_applicable_edits" | "unclassified_refusal";
+
+const KINDS: ReadonlySet<string> = new Set<EditRefusalKind>(["unmatched_replace", "run_range_conflict", "range_tag", "unresolvable_address", "output_validation",
+  "keep_together_unsupported", "section_owner", "anchor_not_found", "font_type_info",
+  "preservation_loss", "unapplied_requests", "no_applicable_edits", "unclassified_refusal"]);
 
 /** Narrow an untrusted value (a wire field, a host error) to a refusal kind. */
 export function isEditRefusalKind(value: unknown): value is EditRefusalKind {
@@ -67,8 +78,8 @@ const ADDRESS_PATH_LINE = /^op\[\d+\] (?:id [0-9a-f]{16}\.\d+(?:\.\d+)+|at \d+(?
  * ahwp 2.0.0's output verification wrapper, measured in FONT_TYPE_INFO.
  * The target path is opaque user data between this fixed head and tail.
  * The Caused-by/event list is never read: font metadata is only one possible
- * cause. agent-hwp#531 shipped machine codes in 1.6.3; a font-specific class
- * waits until the transports consume those codes (#119 item 1).
+ * cause. Modern transports consume agent-hwp#531 codes through
+ * reportRefusalFields (#119 item 1); this wrapper remains for no-report hosts.
  */
 const OUTPUT_VALIDATION_LINE = /^Error: 출력 검증 실패 \(대상: .*\)$/u;
 
@@ -165,4 +176,43 @@ export function classifyEditRefusal(stderr: string): EditRefusalKind | undefined
   if (RANGE_TAG_LINE.test(first)) return "range_tag";
   if (DRIFT_LINE.test(first)) return "run_range_conflict";
   return undefined;
+}
+
+
+/** Machine-code mapping shared by all transports; never reads diagnostic prose. */
+export function reportRefusalFields(report: EditReport): { refusal?: EditRefusalKind; insertion?: InsertionRefusal } {
+  const refusal = report.refusal;
+  if (refusal === undefined) return {};
+  switch (refusal.code) {
+    case "range_tag_shift": return { refusal: "range_tag" };
+    case "keep_together_unsupported": return { refusal: "keep_together_unsupported" };
+    case "section_owner_insert": case "section_owner_move": return { refusal: "section_owner" };
+    case "add_table.anchor_not_found": return { refusal: "anchor_not_found" };
+    case "insert_blocks.unknown_style":
+      return { insertion: { kind: "unknown_style", style: refusal.values.style } };
+    case "insert_blocks.invalid_definition": case "insert_blocks.style_not_paragraph":
+    case "insert_blocks.duplicate_style": case "insert_blocks.style_cycle":
+    case "insert_blocks.style_id_overflow": case "insert_blocks.invalid_spec":
+      return { insertion: { kind: "invalid_definition" } };
+    case "layout_overflow": {
+      const blockMm = refusal.values.issues.reduce<number | undefined>((widest, issue) =>
+        issue.code !== "layout_overflow" || issue.measured_width_mm === undefined ? widest :
+          Math.max(widest ?? 0, issue.measured_width_mm), undefined);
+      const insertionMm = refusal.values.container_width_mm;
+      return { insertion: { kind: "layout_overflow",
+        ...(blockMm === undefined || blockMm <= 0 ? {} : { blockMm }),
+        ...(insertionMm <= 0 ? {} : { insertionMm }),
+      } };
+    }
+    case "preservation_loss":
+      return { refusal: refusal.values.events.some(event => event.code === "font_type_info_unrepresentable")
+        ? "font_type_info" : "preservation_loss" };
+    case "unapplied_requests": {
+      const failed = report.ops.filter(op => op.status === "failed");
+      return { refusal: failed.length > 0 && failed.length === report.failed_count && failed.every(op => op.op === "replace")
+        ? "unmatched_replace" : "unapplied_requests" };
+    }
+    case "no_applicable_edits": return { refusal: "no_applicable_edits" };
+    case "unclassified": return { refusal: "unclassified_refusal" };
+  }
 }

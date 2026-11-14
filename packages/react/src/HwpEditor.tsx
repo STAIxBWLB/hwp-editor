@@ -41,11 +41,10 @@ import { ComposePanel } from "./ComposePanel.js";
 import { ComponentsPanel } from "./ComponentsPanel.js";
 import { componentsSupportReason } from "./ComponentsPanel.js";
 import type { InsertPosition } from "./ComponentsPanel.js";
-import { componentFailure, insertionFailure, insertionPreflight } from "./components-support.js";
+import { classifiedRefusalMessage, componentFailure, insertionFailure, insertionPreflight } from "./components-support.js";
 import { pendingKindKey, pendingTargetLabel } from "./pending-ops.js";
 import { ErrorLine } from "./ErrorLine.js";
-import { engineFailedWithoutCause, engineRefusalKind, engineStoppedWithoutDiagnostic, toEditorError } from "./errors.js";
-import type { EngineRefusalKind } from "./errors.js";
+import { engineFailedWithoutCause, engineStoppedWithoutDiagnostic, toEditorError } from "./errors.js";
 import { createT } from "./messages.js";
 import type { HwpEditorMessages, Locale } from "./messages.js";
 import { hostsTable } from "./tables.js";
@@ -209,15 +208,6 @@ function envelopeProblem(message: string): string {
  * and maru at hwped.rs:485-486 (the `hwp_failed:` prefix).
  */
 const RENDER_SVG = { format: "svg" } as const;
-
-/** The sentence each classified edit refusal shows: a total Record, so a new kind must name one. */
-const REFUSAL_MESSAGE = {
-  unmatched_replace: "error.unmatchedReplace",
-  run_range_conflict: "error.runRangeConflict",
-  range_tag: "error.rangeTagRefused",
-  unresolvable_address: "error.unresolvableAddress",
-  output_validation: "error.outputValidation",
-} as const satisfies Record<EngineRefusalKind, string>;
 
 /**
  * Top-level embeddable editor. Layout: toolbar (apply/revert/validation
@@ -824,14 +814,13 @@ export const HwpEditor = forwardRef<HwpEditorHandle, HwpEditorProps>(
           // edit the engine was stopped out of (#91) gets the same treatment: its
           // marker selects the sentence, because the text the transports
           // append to the message is English whatever the UI locale.
-          const refusal = engineRefusalKind(e);
-          const sentence = refusal !== undefined
-            ? t(REFUSAL_MESSAGE[refusal])
-            : engineStoppedWithoutDiagnostic(e)
+          const sentence = classifiedRefusalMessage(e, t) ?? (
+            engineStoppedWithoutDiagnostic(e)
               ? t("error.stoppedWithoutDiagnostic")
               : engineFailedWithoutCause(e)
                 ? t("error.noEngineCause")
-                : undefined;
+                : undefined
+          );
           store.dispatch({
             type: "applyFailed",
             error: sentence === undefined ? stored : { ...stored, message: sentence },

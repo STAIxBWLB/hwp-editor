@@ -1,0 +1,1 @@
+Error: 스타일 'cycleA'의 based_on 순환 참조로 삽입을 거부했습니다. styles의 상속 순환을 제거한 뒤 다시 시도하세요

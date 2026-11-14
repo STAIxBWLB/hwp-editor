@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.1",
+  "contract": "hwp-edit-report-v1",
+  "output": "style-not-paragraph-resolved.out.hwpx",
+  "dry_run": false,
+  "ops": [
+    {
+      "index": 0,
+      "op": "insert_blocks",
+      "status": "failed",
+      "pieces_touched": 0,
+      "changed": [],
+      "reason": "insert_blocks: refused (insert_blocks.style_not_paragraph)",
+      "refusal": {
+        "code": "insert_blocks.style_not_paragraph",
+        "values": {
+          "style": "개요 1"
+        },
+        "message": "insert_blocks 대상 스타일이 문단 스타일이 아닙니다"
+      }
+    }
+  ],
+  "applied_count": 0,
+  "failed_count": 1,
+  "refusal": {
+    "code": "insert_blocks.style_not_paragraph",
+    "values": {
+      "style": "개요 1"
+    },
+    "message": "insert_blocks 대상 스타일이 문단 스타일이 아닙니다"
+  }
+}

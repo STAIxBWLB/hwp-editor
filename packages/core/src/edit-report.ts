@@ -9,10 +9,11 @@
  * palette just inserted reads the ids from here; the request cannot supply
  * them, because the engine assigns ids against the document it just wrote.
  *
- * A report is content-free by contract: no paragraph text, no replacement
- * string and no user-supplied pattern, which is why this parser can log a
- * rejected report without leaking one.
+ * Schema 1.1 refusal values can include user anchors, style names and issue
+ * details. Treat report values as document data, not content-free diagnostics.
  */
+
+import { withoutPaths } from "./insertion-refusals.js";
 
 /** `insert_blocks` and `edit --report` need hwp-cli 1.4.0 (measured on 1.6.0). */
 export const EDIT_REPORT_MIN_VERSION = "1.4.0";
@@ -46,6 +47,8 @@ export interface EditOpOutcome {
   missing_style?: "create" | "refuse";
   /** A fixed, content-free label when the op failed; null when applied. */
   reason: string | null;
+  /** Per-op typed refusal, also emitted by schema 1.1. */
+  refusal?: EditReportRefusal;
 }
 
 export interface EditReport {
@@ -56,6 +59,126 @@ export interface EditReport {
   ops: EditOpOutcome[];
   applied_count: number;
   failed_count: number;
+  /** Present on refused runs in schema 1.1; absent on older engines. */
+  refusal?: EditReportRefusal;
+}
+
+/** Stable refusal ids emitted by edit-report-v1 1.1 (ahwp 1.6.3+). */
+export const EDIT_REFUSAL_CODES = [
+  "range_tag_shift", "keep_together_unsupported", "section_owner_insert", "section_owner_move",
+  "add_table.anchor_not_found", "insert_blocks.unknown_style", "insert_blocks.invalid_definition",
+  "insert_blocks.style_not_paragraph", "insert_blocks.duplicate_style", "insert_blocks.style_cycle",
+  "insert_blocks.style_id_overflow", "layout_overflow", "insert_blocks.invalid_spec",
+  "preservation_loss", "unapplied_requests", "no_applicable_edits", "unclassified",
+] as const;
+export type EditRefusalCode = typeof EDIT_REFUSAL_CODES[number];
+
+export interface EditRefusalIssue {
+  code: string;
+  path: (string | number)[];
+  message: string;
+  measured_width_mm?: number;
+}
+export interface PreservationRefusalEvent {
+  code: string;
+  resource: "container_stream" | "container_storage" | "package_entry" | "control" | "binary_asset" | "relationship" | "metadata";
+  disposition: "removed" | "changed_non_target" | "unrepresentable";
+  count: number;
+}
+type IssueValues = { issues: EditRefusalIssue[]; container_width_mm: number };
+type StyleCode = "insert_blocks.style_not_paragraph" | "insert_blocks.duplicate_style" | "insert_blocks.style_cycle";
+type EmptyCode = "range_tag_shift" | "section_owner_insert" | "section_owner_move" | "unapplied_requests" | "no_applicable_edits" | "unclassified";
+export type EditReportRefusal = (
+  | { code: EmptyCode; values: Record<string, never> }
+  | { code: "keep_together_unsupported"; values: { op_index: number; requested: string[] } }
+  | { code: "add_table.anchor_not_found"; values: { anchor: string } }
+  | { code: "insert_blocks.unknown_style"; values: { style: string; missing_style: "create" | "refuse" } }
+  | { code: StyleCode; values: { style: string } }
+  | { code: "insert_blocks.style_id_overflow"; values: { style: string; style_id: number; max_style_id: number } }
+  | { code: "insert_blocks.invalid_definition"; values: IssueValues | { style: string; detail: string } }
+  | { code: "layout_overflow" | "insert_blocks.invalid_spec"; values: IssueValues }
+  | { code: "preservation_loss"; values: { events: PreservationRefusalEvent[] } }
+) & { message: string };
+
+/** Refusal reports were added in ahwp 1.6.3; the editor's floor stays unchanged. */
+export function refusalCodesSupported(version: unknown): boolean {
+  if (typeof version !== "string") return false;
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(version);
+  if (match === null) return false;
+  const [major, minor, patch] = match.slice(1).map(Number) as [number, number, number];
+  return major > 1 || (major === 1 && (minor > 6 || (minor === 6 && patch >= 3)));
+}
+
+function nonempty(raw: unknown, field: string): string {
+  const result = text(raw, field);
+  if (result.trim() === "") invalid(field);
+  return result;
+}
+function mm(raw: unknown, field: string): number {
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) invalid(field);
+  return raw;
+}
+function issueValues(values: Record<string, unknown>): IssueValues {
+  const issues = array(values.issues, "refusal.values.issues").map(raw => {
+    const issue = object(raw, "refusal.values.issues[]");
+    const path = array(issue.path, "refusal.values.issues[].path").map(part => {
+      if (typeof part === "string") return part;
+      return count(part, "refusal.values.issues[].path[]");
+    });
+    return {
+      code: nonempty(issue.code, "refusal.values.issues[].code"), path,
+      message: text(issue.message, "refusal.values.issues[].message"),
+      ...(issue.measured_width_mm === undefined ? {} : { measured_width_mm: mm(issue.measured_width_mm, "refusal.values.issues[].measured_width_mm") }),
+    };
+  });
+  if (issues.length === 0) invalid("refusal.values.issues");
+  return { issues, container_width_mm: mm(values.container_width_mm, "refusal.values.container_width_mm") };
+}
+
+/** Validate each code's consumed values; user prose is retained, never classified. */
+function parseReportRefusal(raw: unknown): EditReportRefusal {
+  const value = object(raw, "refusal");
+  const code = value.code;
+  const values = object(value.values, "refusal.values");
+  const message = text(value.message, "refusal.message");
+  switch (code) {
+    case "range_tag_shift": case "section_owner_insert": case "section_owner_move":
+    case "unapplied_requests": case "no_applicable_edits": case "unclassified":
+      return { code, values: {}, message };
+    case "keep_together_unsupported": {
+      const requested = array(values.requested, "refusal.values.requested").map(v => nonempty(v, "refusal.values.requested[]"));
+      if (requested.length === 0) invalid("refusal.values.requested");
+      return { code, values: { op_index: count(values.op_index, "refusal.values.op_index"), requested }, message };
+    }
+    case "add_table.anchor_not_found":
+      return { code, values: { anchor: text(values.anchor, "refusal.values.anchor") }, message };
+    case "insert_blocks.unknown_style":
+      if (values.missing_style !== "create" && values.missing_style !== "refuse") invalid("refusal.values.missing_style");
+      return { code, values: { style: nonempty(values.style, "refusal.values.style"), missing_style: values.missing_style }, message };
+    case "insert_blocks.style_not_paragraph": case "insert_blocks.duplicate_style": case "insert_blocks.style_cycle":
+      return { code, values: { style: nonempty(values.style, "refusal.values.style") }, message };
+    case "insert_blocks.style_id_overflow":
+      return { code, values: { style: nonempty(values.style, "refusal.values.style"), style_id: count(values.style_id, "refusal.values.style_id"), max_style_id: count(values.max_style_id, "refusal.values.max_style_id") }, message };
+    case "insert_blocks.invalid_definition":
+      return { code, values: values.issues !== undefined ? issueValues(values) : { style: nonempty(values.style, "refusal.values.style"), detail: text(values.detail, "refusal.values.detail") }, message };
+    case "layout_overflow": case "insert_blocks.invalid_spec":
+      return { code, values: issueValues(values), message };
+    case "preservation_loss": {
+      const events = array(values.events, "refusal.values.events").map((raw): PreservationRefusalEvent => {
+        const event = object(raw, "refusal.values.events[]");
+        const resource = event.resource;
+        const disposition = event.disposition;
+        if (typeof resource !== "string" || !["container_stream", "container_storage", "package_entry", "control", "binary_asset", "relationship", "metadata"].includes(resource)) invalid("refusal.values.events[].resource");
+        if (disposition !== "removed" && disposition !== "changed_non_target" && disposition !== "unrepresentable") invalid("refusal.values.events[].disposition");
+        const total = count(event.count, "refusal.values.events[].count");
+        if (total === 0) invalid("refusal.values.events[].count");
+        return { code: nonempty(event.code, "refusal.values.events[].code"), resource: resource as PreservationRefusalEvent["resource"], disposition, count: total };
+      });
+      if (events.length === 0) invalid("refusal.values.events");
+      return { code, values: { events }, message };
+    }
+    default: return invalid("refusal.code");
+  }
 }
 
 function invalid(field: string): never {
@@ -145,6 +268,7 @@ function parseOutcome(raw: unknown): EditOpOutcome {
       ? {}
       : { missing_style: value.missing_style as "create" | "refuse" }),
     reason: value.reason as string | null,
+    ...(value.refusal === undefined ? {} : { refusal: parseReportRefusal(value.refusal) }),
   };
 }
 
@@ -168,7 +292,39 @@ export function parseEditReport(raw: unknown): EditReport {
     ops: array(value.ops, "ops").map(parseOutcome),
     applied_count: count(value.applied_count, "applied_count"),
     failed_count: count(value.failed_count, "failed_count"),
+    ...(value.refusal === undefined ? {} : { refusal: parseReportRefusal(value.refusal) }),
   };
+}
+
+/** Redact diagnostics, preserving typed user anchors, styles and issue-path segments. */
+function sanitizedRefusal(refusal: EditReportRefusal, workDir?: string): EditReportRefusal {
+  const message = withoutPaths(refusal.message, workDir);
+  switch (refusal.code) {
+    case "insert_blocks.invalid_definition":
+      if ("detail" in refusal.values) {
+        return { ...refusal, message, values: { ...refusal.values, detail: withoutPaths(refusal.values.detail, workDir) } };
+      }
+      return { ...refusal, message, values: { ...refusal.values,
+        issues: refusal.values.issues.map(issue => ({ ...issue, message: withoutPaths(issue.message, workDir) })),
+      } };
+    case "layout_overflow": case "insert_blocks.invalid_spec":
+      return { ...refusal, message, values: { ...refusal.values,
+        issues: refusal.values.issues.map(issue => ({ ...issue, message: withoutPaths(issue.message, workDir) })),
+      } };
+    default: return { ...refusal, message };
+  }
+}
+
+/** Remove staged diagnostics before exposure; user-valued identifiers remain exact. */
+export function sanitizeEditReport(report: EditReport, name: string, workDir?: string): EditReport {
+  const parsed = parseEditReport(report);
+  return withCallerName({ ...parsed,
+    ops: parsed.ops.map(op => ({ ...op,
+      reason: op.reason === null ? null : withoutPaths(op.reason, workDir),
+      ...(op.refusal === undefined ? {} : { refusal: sanitizedRefusal(op.refusal, workDir) }),
+    })),
+    ...(parsed.refusal === undefined ? {} : { refusal: sanitizedRefusal(parsed.refusal, workDir) }),
+  }, name);
 }
 
 /**

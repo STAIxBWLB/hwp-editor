@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { CatEnvelope, DirectChar, DocumentHandle } from "@hwp-editor/core";
@@ -1015,6 +1018,14 @@ describe.each([["en", en], ["ko", ko]] as const)("Transport failures end to end 
   it("HTTP: the server's error.refusal shows the range-tag sentence", async () => {
     const failure = await failureOf(http({ code: "failed", message: "ahwp edit failed (exit 3): edit refused: range_tag", refusal: "range_tag" }));
     expect(await shown(failure)).toContain(messages["error.rangeTagRefused"]);
+  });
+
+  it("HTTP: the real modern report chooses the font sentence instead of conflicting legacy fields", async () => {
+    const report = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../core/test/fixtures/refusal-reports-v1.1/preservation-font.json"), "utf8"));
+    const failure = await failureOf(http({ code: "failed", message: "untrusted prose", engineVersion: "2.0.0", report, refusal: "range_tag" }));
+    const sentence = await shown(failure);
+    expect(sentence).toContain(messages["error.fontTypeInfo"]);
+    expect(sentence).not.toContain(messages["error.rangeTagRefused"]);
   });
 
   it("HTTP: message text alone shows no refusal sentence", async () => {
