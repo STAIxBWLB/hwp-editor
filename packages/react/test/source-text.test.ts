@@ -12,9 +12,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { CatEnvelope, PageImage, Segment } from "@hwp-editor/core";
-import { opsToJson, paragraphAddress, parseCatEnvelope, parseRenderLayouts } from "@hwp-editor/core";
+import { opsToJson, paragraphAddress, parseCatEnvelope, parseRenderLayouts, segmentText } from "@hwp-editor/core";
 import { bandsOnPage, segmentOnPage } from "../src/geometry.js";
-import { paragraphSourceText } from "../src/text.js";
+import { paragraphSourceText, plainSegmentText } from "../src/text.js";
 
 const fixture = (name: string): string =>
   readFileSync(join(dirname(fileURLToPath(import.meta.url)), "fixtures", "plan-template", name), "utf8");
@@ -81,6 +81,28 @@ describe("replace uses source text (#168)", () => {
   it("AC4: a literal leading dash in source is kept", () => {
     expect(paragraphSourceText(...bulleted("- 항목", 4))).toBe("- 항목");
     expect(paragraphSourceText(literalV2, para(literalV2, 3), literalPages)).toBe("- dash * star");
+  });
+});
+
+describe("list-break projection comment (#183)", () => {
+  // Released ahwp 2.0.0, from public Markdown; see fixtures/list-break/NOTICE.md.
+  const listBreak = parseCatEnvelope(
+    readFileSync(join(dirname(fileURLToPath(import.meta.url)), "fixtures", "list-break", "cat-v2.json"), "utf8"),
+  );
+  const bullet = para(listBreak, 3);
+
+  it("the fixture really carries the comment inside the bullet paragraph", () => {
+    expect(segmentText(listBreak, bullet)).toContain("<!-- list-break -->");
+  });
+
+  it("AC1: the bullet paragraph's label and source text drop the comment (v2)", () => {
+    expect(plainSegmentText(segmentText(listBreak, bullet))).toBe("- c");
+    expect(paragraphSourceText(listBreak, bullet)).toBe("c");
+  });
+
+  it("AC2: the comment mid-line in real text is kept", () => {
+    expect(plainSegmentText("a <!-- list-break --> b")).toBe("a <!-- list-break --> b");
+    expect(plainSegmentText("<!-- other -->\nx")).toBe("<!-- other -->\nx");
   });
 });
 
