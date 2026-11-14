@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.3",
+  "contract": "hwp-edit-report-v1",
+  "output": "synthetic-output.hwpx",
+  "dry_run": false,
+  "ops": [],
+  "applied_count": 0,
+  "failed_count": 0,
+  "refusal": {
+    "code": "verify_mismatch",
+    "values": {
+      "counts": []
+    },
+    "message": "SYNTHETIC: verification mismatch."
+  }
+}
