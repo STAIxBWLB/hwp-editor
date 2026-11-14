@@ -1,3 +1,5 @@
+import { formBindingSupported, parseFormDiscovery, parseFormBindingPlan, validateFormValues } from "./forms.js";
+import { decodeFormResult, formApplyOptions } from "./form-wire.js";
 import { parsePageLayout } from "./layout.js";
 import { classifyEditRefusal, editRefusalMarker, isEditRefusalKind, reportRefusalFields } from "./refusals.js";
 import { classifyInsertionRefusal, engineErrorReason, insertionRefusalLine, isInsertionRefusal, STOPPED_WITHOUT_DIAGNOSTIC, unclassifiedEditLine, withoutPaths } from "./insertion-refusals.js";
@@ -382,18 +384,32 @@ export function createTauriEngine(
   async function capabilities(): Promise<Capabilities> {
     const raw = reportObject(await call<unknown>("hwped_capabilities", {}), "capabilities");
     const methods = raw.templateMethods === undefined ? [] : parseTemplateMethods(raw.templateMethods);
-    const { editOps, styles, ...rest } = raw as unknown as Capabilities;
+    const { formBindings, editOps, styles, ...rest } = raw as unknown as Capabilities;
     // This client has no image-byte Tauri command, even if a host claims one.
     delete rest.imageAssets;
     return {
       ...rest,
       templateMethods: methods,
+      ...(formBindings === "v1" && formBindingSupported(raw.version as string) ? { formBindings: "v1" as const } : {}),
       ...(editOps === "v1" ? { editOps: "v1" as const } : {}),
       ...(styles === "v1" ? { styles: "v1" as const } : {}),
     };
   }
 
+  async function requireForms() {
+    const caps = await capabilities();
+    if (caps.formBindings !== "v1") throw new HwpEngineError("unavailable", "Form binding requires host capability formBindings v1 and agent-hwp 2.0.0; upgrade the host and rediscover targets.");
+  }
   return {
+    async discoverForms(document) {
+      await requireForms();
+      return parseFormDiscovery(await call<unknown>("hwped_discover_forms", { document: ref(document), ...scope() }));
+    },
+    async applyFormBindings(document, rawPlan, rawValues, rawOptions = {}) {
+      await requireForms();
+      const plan = parseFormBindingPlan(rawPlan), values = validateFormValues(plan, rawValues), options = formApplyOptions(document, rawOptions);
+      return decodeFormResult(await call<unknown>("hwped_apply_form_bindings", { document: ref(document), plan, values, options, ...scope() }), options.dryRun, plan.source_sha256);
+    },
     async slots(document) {
       return parseTemplateInputs(await call<unknown>("hwped_slots", { document: ref(document), ...scope() }));
     },

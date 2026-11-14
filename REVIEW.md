@@ -45,6 +45,13 @@ Run these passes and tag every finding with its pass:
   refusal, including `unclassified`, must not fall through to that exception or conflicting fields.
   Preserve the open-time protection backstop in `errors.ts`: the report code list has no
   protection-specific code, so an `unclassified` report does not override a protection refusal.
+  For `apply_form_bindings` on released ahwp 2.0.0, do not require a separate `--report`;
+  use the mandatory receipt and optional preview in `packages/server/src/form-engine.ts`.
+  Keep native failures without a structured refusal as `engine_refused` with rediscover,
+  review-plan/values and preview-again steps; never infer a cause from diagnostic prose.
+  Keep typed discovery/plan/value preflight refusals separate, including growth without
+  reflow and its two remedies: allow reflow, or stay within the original length.
+  For the release limitation's background, see `docs/integration-maru.md` (Source-bound forms).
 
 - **hwp-cli is the only document engine.** The server drives the released `ahwp` binary (`hwp` is
   its 1.x compatibility name) and gates its version (`packages/server/src/cli-engine.ts:72` minimum,
@@ -135,3 +142,20 @@ PR.
 ---
 
 Findings need an evidence-based disposition. Merges follow the owner's instruction or delegation.
+
+## Form binding transport parity (#177)
+
+- Keep `discoverForms` / `applyFormBindings`, `formBindings: "v1"`, HTTP routes and
+  Tauri command arguments aligned. A host without the explicit capability or an
+  engine below 2.0.0 must not expose the Form panel.
+- Check version-1 discovery/plan/receipt/preview validators, exact value keys,
+  Unicode budgets, explicit reflow, duplicate ownership, same-format refusal and
+  host-owned artifact paths. `apply_form_bindings` stays exclusive and atomic.
+- Check that dry run returns no native bytes and cannot change the editor, apply
+  uses the reviewed plan, and source/input changes retire the preview. Existing
+  fill/slots behavior stays unchanged.
+- `packages/server/test/form-binding.test.ts` exercises the released 2.0.0 binary
+  and the approved small Hancom-authored grade-D fixture. Playground seed includes
+  `form-binding-demo.hwpx`. Grade-C corpus checks are local only; never add source
+  names, bytes, hashes or text to reports or commits. Semantic checks do not
+  supply render/font/native-open acceptance.

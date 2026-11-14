@@ -160,3 +160,48 @@ segment links while column-to-segment correspondence remains unverified.
 Adding the client methods does not install Rust host commands. Implement and
 verify the commands before advertising them. A direct call to a missing Tauri
 command fails with an unsupported-host error naming the host upgrade needed.
+
+## Source-bound forms (agent-hwp 2.0.0)
+
+Form binding is separate from `slots`/`fill`. A host must explicitly advertise
+`formBindings: "v1"` in `hwped_capabilities`, with engine version >=2.0.0, before
+this client sends either command. Without it the Form panel is hidden. Adding the
+host commands is a separate host task; the client never probes an unknown command.
+
+- `hwped_discover_forms({ document, workspaceRoot? })` returns validated
+  `FormDiscovery` version 1 from `ahwp slots <source> --forms --occurrences --json`.
+- `hwped_apply_form_bindings({ document, workspaceRoot?, plan, values, options })`
+  takes `FormBindingPlan` version 1, literal string values and
+  `options: { dryRun: boolean, name: string }`. Only the source format is allowed.
+  The host stages one exclusive `apply_form_bindings` op with host-owned receipt
+  and preview paths, and runs `ahwp edit ... --verify`, adding `--dry-run` in preview
+  mode. Never send caller artifact paths or mix other edits into this operation.
+- The response is `{ receipt, preview, name?, dataBase64? }`. Dry run requires
+  `receipt.published: false` and no native document bytes. Apply requires
+  `receipt.published: true` and same-format document bytes. Receipt and preview
+  source/plan/values identities must agree. No staged filesystem paths cross the
+  bridge; native warning prose is omitted by the client parser.
+
+HTTP has equivalent multipart POST `/form-discovery` (`file`) and
+`/form-bindings` (`file`, JSON `plan`, JSON `values`, `dryRun`, optional `name`).
+Existing authorization, size admission and document magic checks apply. Receipt
+and preview artifacts live in a private per-call directory removed after exit.
+Discovery and explicit preview contain document text and stay in the caller's
+local review flow; do not record them in public logs.
+
+The panel selects exact occurrences without guessing label ownership. Each target
+has its own value, Unicode scalar budget and explicit reflow permission (default
+false). It dry-runs first and applies the same reviewed plan as one undoable editor
+transition. Input or source changes invalidate the preview. Pending edits must be
+applied or discarded first. Unsupported inventory targets retain their cause and
+next action. A receipt proves semantic binding only; fonts, fit, clipping and
+native-open acceptance remain separate.
+
+With released ahwp 2.0.0, `apply_form_bindings` rejects a separate `--report`
+and emits no refused edit report. Use its mandatory receipt and optional preview;
+unavailable native refusal codes remain `engine_refused`, without reading prose.
+Before edit, the server checks a fresh source-matching discovery against plan values
+for `growth_without_reflow`. The panel also checks this before making an apply call.
+No-growth permission uses the original UTF-16 length, whereas `max_chars` counts
+Unicode scalars. A growth refusal names both remedies: allow reflow, or keep the
+value within the original length. This preflight does not invent a native report.

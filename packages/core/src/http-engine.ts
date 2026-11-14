@@ -1,3 +1,5 @@
+import { formBindingSupported, parseFormDiscovery, parseFormBindingPlan, validateFormValues } from "./forms.js";
+import { decodeFormResult, formApplyOptions } from "./form-wire.js";
 import { parsePageLayout } from "./layout.js";
 import { parseEditReport, sanitizeEditReport } from "./edit-report.js";
 import type { EditReport } from "./edit-report.js";
@@ -249,6 +251,17 @@ export function createHttpEngine(
 
 
   return {
+    async discoverForms(document) {
+      return parseFormDiscovery(await request<unknown>("/form-discovery", { method: "POST", body: fileForm(document) }));
+    },
+    async applyFormBindings(document, rawPlan, rawValues, rawOptions = {}) {
+      const plan = parseFormBindingPlan(rawPlan), values = validateFormValues(plan, rawValues);
+      const options = formApplyOptions(document, rawOptions);
+      const form = fileForm(document);
+      form.append("plan", JSON.stringify(plan)); form.append("values", JSON.stringify(values));
+      form.append("dryRun", String(options.dryRun)); form.append("name", options.name);
+      return decodeFormResult(await request<unknown>("/form-bindings", { method: "POST", body: form }), options.dryRun, plan.source_sha256);
+    },
     async slots(document) {
       const raw = await templateRequest<unknown>("/slots", { method: "POST", body: fileForm(document) });
       return parseTemplateInputs(raw);
@@ -412,10 +425,11 @@ export function createHttpEngine(
     async capabilities(): Promise<Capabilities> {
       const raw = reportObject(await request<unknown>("/capabilities", { method: "GET" }), "capabilities");
       const methods = raw.templateMethods === undefined ? [] : parseTemplateMethods(raw.templateMethods);
-      const { imageAssets, styles, ...rest } = raw as unknown as Capabilities;
+      const { formBindings, imageAssets, styles, ...rest } = raw as unknown as Capabilities;
       return {
         ...rest,
         templateMethods: methods,
+        ...(formBindings === "v1" && formBindingSupported(raw.version as string) ? { formBindings: "v1" as const } : {}),
         ...(imageAssets === "v1" ? { imageAssets: "v1" as const } : {}),
         // Narrowed rather than passed through: a host that answers anything
         // else has not advertised the family, and the tab reads this field.

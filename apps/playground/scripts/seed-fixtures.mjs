@@ -263,6 +263,9 @@ execFileSync(BIN, ["new", "--template", "gongmun-basic", "-o", join(fixturesDir,
   stdio: "inherit",
 });
 
+// Approved Hancom-authored grade-D fixture; no private corpus documents are read.
+cpSync(join(appDir, "..", "..", "packages", "server", "test", "fixtures", "form-g5.hwpx"), join(fixturesDir, "form-binding-demo.hwpx"));
+
 const fixtures = readdirSync(fixturesDir).filter((f) => /\.hwpx?$/.test(f)).sort();
 for (const f of fixtures) cpSync(join(fixturesDir, f), join(publicDir, f));
 writeFileSync(join(publicDir, "manifest.json"), JSON.stringify({ fixtures }, null, 2));

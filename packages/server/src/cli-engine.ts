@@ -1,3 +1,5 @@
+import { createFormCommands } from "./form-engine.js";
+import { formBindingSupported, type FormDiscovery, type FormBindingPlan, type FormApplyOptions, type FormApplyResult } from "@hwp-editor/core";
 import { createTemplateCommands } from "./template-engine.js";
 import { classifyEditRefusal, classifyInsertionRefusal, editRefusalMarker, engineErrorReason, FILE_LINE_HEAD, insertionRefusalLine, STOPPED_WITHOUT_DIAGNOSTIC, unclassifiedEditLine, type EditRefusalKind, type InsertionRefusal, TEMPLATE_METHODS, templateVersionSupported, parseEditReport, refusalCodesSupported, reportRefusalFields, sanitizeEditReport, presetBatchOptions, readPresetBatch, type EditReport, type TemplateInputs, type FillResult, type LintReport, type LintProfile, type EmbeddedTemplate, type TemplateSpecV1, type TemplateDataV1 } from "@hwp-editor/core";
 /**
@@ -341,6 +343,8 @@ export interface CliCallOptions {
 }
 
 export interface CliEngine extends HwpEngine {
+  discoverForms(document: DocumentHandle, call?: CliCallOptions): Promise<FormDiscovery>;
+  applyFormBindings(document: DocumentHandle, plan: FormBindingPlan, values: Record<string, string>, options?: FormApplyOptions, call?: CliCallOptions): Promise<FormApplyResult>;
   slots(document: DocumentHandle, call?: CliCallOptions): Promise<TemplateInputs>;
   fill(document: DocumentHandle, values: Record<string, string>, call?: CliCallOptions): Promise<FillResult>;
   template(spec: TemplateSpecV1, data: TemplateDataV1, name: string, call?: CliCallOptions): Promise<ComposeResult>;
@@ -1520,8 +1524,15 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       return result.stdout;
     },
   });
+  const formCommands = createFormCommands({
+    version: ensureVersion, work: withWorkDir, stage,
+    async run(args, call) {
+      return (await runCliOk(await binPath(), args, timeoutMs, opts.locale, call?.signal)).stdout;
+    },
+  });
   const engine: CliEngine = {
     ...templateCommands,
+    ...formCommands,
     async read(document, call) {
       return (await describe(document, call)).envelope;
     },
@@ -1922,6 +1933,7 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       return {
         version,
         editable: true,
+        ...(formBindingSupported(version) ? { formBindings: "v1" as const } : {}),
         editOps: "v1",
         // Its own gate, not `templateMethods`': the two command families share
         // the 1.4.0 floor today, but a host can carry one and not the other.
