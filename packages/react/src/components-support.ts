@@ -39,8 +39,15 @@
 import type { MessageKey, TFunction } from "./messages.js";
 import { engineFailedWithoutCause, engineRefusalKind, engineStoppedWithoutDiagnostic } from "./errors.js";
 import type { EngineRefusalKind } from "./errors.js";
-import { isComponentError, isHwpEngineError, isInsertionRefusal, HwpEngineError } from "@hwp-editor/core";
-import type { Blocks, ComponentErrorCode, InsertionRefusal } from "@hwp-editor/core";
+import {
+  COMPONENT_LISTS_MIN_VERSION,
+  componentListsSupported,
+  isComponentError,
+  isHwpEngineError,
+  isInsertionRefusal,
+  HwpEngineError,
+} from "@hwp-editor/core";
+import type { Blocks, ComponentErrorCode, InsertionRefusal, List } from "@hwp-editor/core";
 
 /** One kind-to-message mapping for Apply and immediate insertion (#119 item 1). */
 const EDIT_REFUSAL_MESSAGE = {
@@ -137,6 +144,31 @@ export function insertionPreflight(
     return t("components.preflightEquation", { name: documentName });
   }
   return "";
+}
+
+/**
+ * The localized reason to refuse a component that carries its own lists on an
+ * engine too old to write them (#176), or "" when it can go.
+ *
+ * This is a version gate rather than a preflight over the values: the engine's
+ * list contract is agent-hwp#472's, shipped in 1.5.0, and an older engine
+ * cannot write the numbering a definition asks for. The sentence names the
+ * cause and the two next steps (upgrade, or write the markers into the text
+ * runs), so the palette refuses before the engine answers with a document
+ * path a user cannot act on.
+ *
+ * An unknown version (capabilities not read yet) is not an old one, so the
+ * gate stays open: `componentsSupportReason` treats the same unknown the same
+ * way, and the engine's own answer is the fallback.
+ */
+export function listEngineRefusal(
+  lists: Record<string, List> | undefined,
+  version: string | null,
+  t: TFunction,
+): string {
+  if (lists === undefined || Object.keys(lists).length === 0) return "";
+  if (version === null || componentListsSupported(version)) return "";
+  return t("components.listEngine", { version: COMPONENT_LISTS_MIN_VERSION });
 }
 
 /** The `insert_blocks` class a transport attached to the failure (#88), if any. */

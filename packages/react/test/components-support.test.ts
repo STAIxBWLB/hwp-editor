@@ -24,9 +24,9 @@ import {
   NO_ENGINE_CAUSE,
   STOPPED_WITHOUT_DIAGNOSTIC,
 } from "@hwp-editor/core";
-import type { Blocks, ComponentErrorCode, InsertionRefusal } from "@hwp-editor/core";
+import type { Blocks, ComponentErrorCode, InsertionRefusal, List } from "@hwp-editor/core";
 
-import { classifiedRefusalMessage, componentFailure, insertionFailure } from "../src/components-support.js";
+import { classifiedRefusalMessage, componentFailure, insertionFailure, listEngineRefusal } from "../src/components-support.js";
 import { createT } from "../src/messages.js";
 import type { MessageKey } from "../src/messages.js";
 
@@ -439,5 +439,48 @@ describe("insertion class end to end over HTTP (t37-a4)", () => {
       .then(() => { throw new Error("edit succeeded"); }, (e: unknown) => e);
     const shown = insertionFailure(failure, WIDE, en) as Error;
     expect(shown.message).not.toBe(en("components.unknownStyle", { style: "결재란 셀" }));
+  });
+});
+
+/**
+ * The engine-version gate for a component that carries its own list (#176):
+ * the own-numbering rule rests on the HWP 5.0 list fix agent-hwp#472 shipped
+ * in 1.5.0, and an older engine cannot write the numbering a definition asks
+ * for. The sentence names the version and both next steps a user has.
+ */
+describe("listEngineRefusal", () => {
+  const LISTS: Record<string, List> = {
+    항목: { kind: "ordered", levels: [{ marker: "{n}.", start: 1 }] },
+  };
+
+  it.each([en, ko])("says nothing for a component that carries no list", (t) => {
+    for (const version of ["1.4.2", "1.6.1", null]) {
+      expect(listEngineRefusal(undefined, version, t)).toBe("");
+      expect(listEngineRefusal({}, version, t)).toBe("");
+    }
+  });
+
+  it.each([en, ko])("says nothing on an engine that can write one", (t) => {
+    for (const version of ["1.5.0", "1.6.1", "2.0.0"]) {
+      expect({ version, refusal: listEngineRefusal(LISTS, version, t) }).toEqual({
+        version,
+        refusal: "",
+      });
+    }
+  });
+
+  it.each([en, ko])("names the version and both next steps on an older engine", (t) => {
+    const sentence = listEngineRefusal(LISTS, "1.4.2", t);
+    expect(sentence).toBe(t("components.listEngine", { version: "1.5.0" }));
+    expect(sentence).toContain("1.5.0");
+    // A refusal names its cause and the next step in one sentence: update the
+    // engine, or write the markers into the text runs instead.
+    expect(sentence).toMatch(t === en ? /write the list markers into the text runs/ : /목록 표식/);
+  });
+
+  it("keeps the gate open while the engine version is unknown", () => {
+    // `componentsSupportReason` treats a null capabilities the same way: an
+    // unread version is not an old one, so the engine's own answer stands.
+    expect(listEngineRefusal(LISTS, null, en)).toBe("");
   });
 });

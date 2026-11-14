@@ -15,6 +15,9 @@ import { join, sep } from "node:path";
 import { describe, expect, it, afterAll } from "vitest";
 
 import {
+  COMPONENT_LISTS_MIN_VERSION,
+  componentListMap,
+  componentListsSupported,
   componentStyleMap,
   documentSpecFromComponents,
   isComponentError,
@@ -29,13 +32,14 @@ import type {
   ComponentFetchResponse,
   ComponentIndex,
 } from "../src/components.js";
+import { opsToJson } from "../src/ops.js";
 import {
   DOCUMENT_PROFILE_NAMES,
   DOCUMENT_PROFILES,
   OFFICIAL_BODY_PROFILE,
   OFFICIAL_PROFILE,
 } from "../src/profiles.js";
-import type { Blocks } from "../src/generated/document-spec-v2.js";
+import type { Blocks, List } from "../src/generated/document-spec-v2.js";
 
 /** Which binary the real-binary suite runs against (mirrors the server's helper). */
 const BIN = resolveTestBin();
@@ -281,8 +285,13 @@ describe("starter components", () => {
     }
   });
 
-  it("keeps lists out of the starters (a component cannot know the target's list definitions)", () => {
+  it("keeps the starters on markers in the text rather than component-local lists", () => {
+    // 개조식 writes its □/○/-/· markers into the runs, which both native
+    // writers carry and which never touch the target's numbering. A component
+    // that wants real numbering carries its own `lists` instead (#176); the
+    // starter set stays on the fallback so its output does not change.
     for (const component of STARTER_COMPONENTS) {
+      expect(component.lists).toBeUndefined();
       expect(JSON.stringify(component.blocks)).not.toContain('"list":');
     }
   });
@@ -473,8 +482,8 @@ describe("validateComponent refusals", () => {
   };
 
   it("refuses an unknown key, naming the field and the file", () => {
-    expect(refusalFor((value) => (value["lists"] = []))).toBe(
-      "components: src/components/broken.json: lists: is not a field of this object",
+    expect(refusalFor((value) => (value["layout"] = {}))).toBe(
+      "components: src/components/broken.json: layout: is not a field of this object",
     );
   });
 
@@ -680,22 +689,201 @@ describe("validateComponent refusals", () => {
     );
   });
 
-  it("refuses a paragraph list, which no component can reference", () => {
+  /**
+   * List fixtures for the #176 rules, in the shape both native writers carry:
+   * HWP 5.0 keeps `{n}.` at levels 0-1 and `{n})` at 2-3 with a start of 1
+   * (`document_spec.rs`), and the bullet definition uses the engine's own `-`.
+   */
+  const ORDERED = {
+    kind: "ordered",
+    levels: [{ marker: "{n}.", start: 1 }, { marker: "{n}.", start: 1 }],
+  };
+  const THREE_LEVELS = {
+    kind: "ordered",
+    levels: [
+      { marker: "{n}.", start: 1 },
+      { marker: "{n}.", start: 1 },
+      { marker: "{n})", start: 1 },
+    ],
+  };
+  const BULLET = { kind: "bullet", levels: [{ marker: "-", start: 1 }] };
+
+  /** A paragraph carrying `list`, so a fixture only spells what it varies. */
+  const listed = (...refs: Record<string, unknown>[]): Record<string, unknown>[] =>
+    refs.map((ref) => ({
+      type: "paragraph",
+      list: ref,
+      runs: [{ type: "text", text: "항목" }],
+    }));
+
+  it("accepts a component's own list definition and the level a paragraph names", () => {
+    const component = validateComponent(
+      {
+        ...BASE_COMPONENT,
+        lists: { 개요: THREE_LEVELS, 불릿: BULLET },
+        blocks: [
+          ...listed({ name: "개요", level: 2 }, { name: "개요" }, { name: "불릿", level: 0 }),
+        ],
+      },
+      REFUSAL_SOURCE,
+    );
+    expect(component.lists).toEqual({ 개요: THREE_LEVELS, 불릿: BULLET });
+    // A reference with no level is level 0, which is the engine's default.
+    expect(component.blocks.map((block) => (block as { list?: unknown }).list)).toEqual([
+      { name: "개요", level: 2 },
+      { name: "개요" },
+      { name: "불릿", level: 0 },
+    ]);
+  });
+
+  it("refuses a list reference the component does not define, naming the field", () => {
+    // The target document's lists are never consulted: a component inserted
+    // into a document cannot know them, so a name it does not define is its
+    // own mistake (#176).
     expect(
       refusalFor((value) => {
-        value["blocks"] = [
-          {
-            type: "paragraph",
-            list: { name: "개요", level: 1 },
-            runs: [{ type: "text", text: "값" }],
-          },
-        ];
+        value["lists"] = { 개요: ORDERED };
+        value["blocks"] = listed({ name: "개요 2", level: 0 });
       }),
     ).toBe(
-      "components: src/components/broken.json: blocks[0].list: is not supported: a component is " +
-        "inserted into a document whose list definitions it cannot know, so a list it names may " +
-        "not exist there; write the markers into the text runs instead (the engine's HWP 5.0 " +
-        "list numbering fix, agent-hwp#472, shipped and does not change this)",
+      'components: src/components/broken.json: blocks[0].list.name: references list "개요 2", ' +
+        "which this component does not define; add it to the component's own lists (the target " +
+        "document's lists are never used), or fix the reference, then retry",
+    );
+  });
+
+  it("refuses a level the list definition does not have, naming the field", () => {
+    expect(
+      refusalFor((value) => {
+        value["lists"] = { 개요: ORDERED };
+        value["blocks"] = listed({ name: "개요", level: 2 });
+      }),
+    ).toBe(
+      'components: src/components/broken.json: blocks[0].list.level: names level 2 of list ' +
+        '"개요", which defines 2 levels; use a level from 0 to 1, or add that level to the list ' +
+        "definition, then retry",
+    );
+  });
+
+  it("refuses a level past the schema's own bound", () => {
+    expect(
+      refusalFor((value) => {
+        value["lists"] = { 개요: THREE_LEVELS };
+        value["blocks"] = listed({ name: "개요", level: 7 });
+      }),
+    ).toBe(
+      "components: src/components/broken.json: blocks[0].list.level: must be an integer between 0 and 6",
+    );
+  });
+
+  it("refuses a list reference that names a key the schema does not carry", () => {
+    expect(
+      refusalFor((value) => {
+        value["lists"] = { 개요: ORDERED };
+        value["blocks"] = listed({ name: "개요", level: 0, start: 1 });
+      }),
+    ).toBe(
+      "components: src/components/broken.json: blocks[0].list.start: is not a field of this object",
+    );
+  });
+
+  it("refuses an ordered marker with no {n}, as the engine does", () => {
+    expect(
+      refusalFor((value) => {
+        value["lists"] = { 개요: { kind: "ordered", levels: [{ marker: "1." }] } };
+        value["blocks"] = listed({ name: "개요", level: 0 });
+      }),
+    ).toBe(
+      "components: src/components/broken.json: lists.개요.levels[0].marker: must contain {n}, " +
+        "the number an ordered level places (document_spec.rs:769); add it to the marker, then retry",
+    );
+  });
+
+  it("refuses a bullet marker that is not exactly one character", () => {
+    expect(
+      refusalFor((value) => {
+        value["lists"] = { 불릿: { kind: "bullet", levels: [{ marker: "--" }] } };
+        value["blocks"] = listed({ name: "불릿", level: 0 });
+      }),
+    ).toBe(
+      "components: src/components/broken.json: lists.불릿.levels[0].marker: must be exactly one " +
+        "character for a bullet level (document_spec.rs:774); bullets do not count, so use the " +
+        "single marker character, then retry",
+    );
+  });
+
+  it("refuses a bullet start other than 1, because bullets do not count", () => {
+    expect(
+      refusalFor((value) => {
+        value["lists"] = { 불릿: { kind: "bullet", levels: [{ marker: "-", start: 2 }] } };
+        value["blocks"] = listed({ name: "불릿", level: 0 });
+      }),
+    ).toBe(
+      "components: src/components/broken.json: lists.불릿.levels[0].start: must be 1 for a " +
+        "bullet level, because bullets do not count (document_spec.rs:751); take the key out or " +
+        "set it to 1, then retry",
+    );
+  });
+
+  it("refuses a list kind, a start and a level count past their schema bounds", () => {
+    expect(
+      refusalFor((value) => {
+        value["lists"] = { 개요: { kind: "georgian", levels: [{ marker: "{n}." }] } };
+      }),
+    ).toBe(
+      "components: src/components/broken.json: lists.개요.kind: must be one of ordered, bullet",
+    );
+    expect(
+      refusalFor((value) => {
+        value["lists"] = { 개요: { kind: "ordered", levels: [{ marker: "{n}.", start: 0 }] } };
+      }),
+    ).toBe(
+      "components: src/components/broken.json: lists.개요.levels[0].start: must be an integer " +
+        "between 1 and 4294967295",
+    );
+    expect(
+      refusalFor((value) => {
+        value["lists"] = {
+          개요: {
+            kind: "ordered",
+            levels: Array.from({ length: 8 }, () => ({ marker: "{n}.", start: 1 })),
+          },
+        };
+      }),
+    ).toBe(
+      "components: src/components/broken.json: lists.개요.levels: must be at most 7 levels, " +
+        "as document-spec-v1 allows",
+    );
+  });
+
+  it("accepts a 128-character list name and refuses 129 or a padded one", () => {
+    const name = "가".repeat(128);
+    expect(
+      validateComponent(
+        {
+          ...BASE_COMPONENT,
+          lists: { [name]: ORDERED },
+          blocks: listed({ name, level: 0 }),
+        },
+        REFUSAL_SOURCE,
+      ).lists,
+    ).toEqual({ [name]: ORDERED });
+    expect(
+      refusalFor((value) => {
+        value["lists"] = { ["가".repeat(129)]: ORDERED };
+      }),
+    ).toBe(
+      "components: src/components/broken.json: lists." +
+        `${"가".repeat(129)}: must be at most 128 characters, as document-spec-v1 allows a list name`,
+    );
+    expect(refusalFor((value) => (value["lists"] = { " 개요": ORDERED }))).toBe(
+      "components: src/components/broken.json: lists. 개요: must be a list name without surrounding spaces",
+    );
+  });
+
+  it("refuses a lists key that is not an object", () => {
+    expect(refusalFor((value) => (value["lists"] = []))).toBe(
+      "components: src/components/broken.json: lists: must be an object",
     );
   });
 
@@ -1295,6 +1483,143 @@ describe("documentSpecFromComponents", () => {
     const styles = spec.document.styles ?? {};
     expect(Object.keys(styles)).toEqual(["바탕글", "개요 3", "두문 기관명"]);
     expect(styles["두문 기관명"]).toEqual(starter("두문").styles?.["두문 기관명"]);
+  });
+
+  /** A component carrying one ordered list, its paragraph naming level 0. */
+  const numbered = (name = "첫째", marker = "{n}."): Component =>
+    validateComponent(
+      {
+        ...BASE_COMPONENT,
+        name,
+        lists: { 항목: { kind: "ordered", levels: [{ marker, start: 1 }] } },
+        blocks: [
+          { type: "paragraph", list: { name: "항목", level: 0 }, runs: [{ type: "text", text: "가" }] },
+        ],
+      },
+      name,
+    );
+
+  it("carries the component's own list definition into the document spec", () => {
+    const component = numbered();
+    const spec = documentSpecFromComponents([component]);
+    expect(spec.document.lists).toEqual({ 항목: { kind: "ordered", levels: [{ marker: "{n}.", start: 1 }] } });
+    // A copy, not the component's own object: a host editing the spec it gets
+    // back cannot reach the component it composed.
+    expect(spec.document.lists?.["항목"]).not.toBe(component.lists?.["항목"]);
+  });
+
+  it("returns list definitions that share no state with the component's file", () => {
+    const component = numbered();
+    const spec = documentSpecFromComponents([component]);
+    const level = spec.document.lists?.["항목"]?.levels[0];
+    if (level === undefined) throw new Error("항목 is missing from the spec");
+    level.marker = "바뀜";
+    expect(component.lists?.["항목"]?.levels[0]?.marker).toBe("{n}.");
+  });
+
+  it("refuses one list name two components define differently", () => {
+    expect(() =>
+      documentSpecFromComponents([numbered("첫째", "{n}."), numbered("둘째", "{n})")]),
+    ).toThrow(
+      "components: 둘째: lists.항목: is defined differently by 첫째 and this component; make the " +
+        "two definitions agree, or rename one of them, then retry",
+    );
+  });
+
+  it("shares one list definition between two components that agree on it", () => {
+    // `start: 1` and no `start` describe the same numbering, so the two
+    // components share one definition instead of being refused.
+    const spelled = validateComponent(
+      {
+        ...BASE_COMPONENT,
+        name: "둘째",
+        lists: { 항목: { kind: "ordered", levels: [{ marker: "{n}." }] } },
+        blocks: [
+          { type: "paragraph", list: { name: "항목", level: 0 }, runs: [{ type: "text", text: "나" }] },
+        ],
+      },
+      "둘째",
+    );
+    expect(Object.keys(documentSpecFromComponents([numbered(), spelled]).document.lists ?? {})).toEqual([
+      "항목",
+    ]);
+  });
+
+  it("refuses two components whose merged list table passes the engine's cap", () => {
+    // One document carries one list table, so the cap is on the merge
+    // (`document_spec.rs`: `self.spec.lists.len() > 256`).
+    const many = (name: string, count: number): Component => {
+      const lists: Record<string, List> = Object.fromEntries(
+        Array.from({ length: count }, (_, index) => [
+          `${name} ${index}`,
+          { kind: "ordered", levels: [{ marker: "{n}.", start: 1 }] },
+        ]),
+      );
+      return {
+        name,
+        description: "목록 상한 시험",
+        params: {},
+        lists,
+        blocks: [{ type: "paragraph", runs: [{ type: "text", text: "가" }] }],
+      };
+    };
+    expect(() => documentSpecFromComponents([many("첫째", 200), many("둘째", 57)])).toThrow(
+      /components: 둘째: lists\.둘째 56: takes the merged list table to 257 lists; ahwp compose allows 256 lists in one document/,
+    );
+    expect(Object.keys(documentSpecFromComponents([many("첫째", 200), many("둘째", 56)]).document.lists ?? {})).toHaveLength(256);
+  });
+
+  it("refuses a list reference from a component a host assembled without validating it", () => {
+    // Validation is where the component's file is still known; this is the
+    // backstop for a `Component` built in memory, so the refusals name the
+    // component itself.
+    expect(() =>
+      documentSpecFromComponents([
+        {
+          name: "시험",
+          description: "시험용 구성요소",
+          params: {},
+          lists: { 항목: { kind: "ordered", levels: [{ marker: "{n}.", start: 1 }] } },
+          blocks: [{ type: "paragraph", list: { name: "없음", level: 0 }, runs: [{ type: "text", text: "가" }] }],
+        },
+      ]),
+    ).toThrow(
+      'components: 시험: blocks[0].list.name: references list "없음", which this component does ' +
+        "not define; add it to the component's own lists (the target document's lists are never " +
+        "used), or fix the reference, then retry",
+    );
+  });
+
+  it("resolves a list level's style, and refuses one nothing defines", () => {
+    const styled = validateComponent(
+      {
+        ...BASE_COMPONENT,
+        styles: { 강조: { based_on: "바탕글", bold: true } },
+        lists: {
+          항목: { kind: "ordered", levels: [{ marker: "{n}.", start: 1, style: "강조" }] },
+        },
+        blocks: [
+          { type: "paragraph", list: { name: "항목", level: 0 }, runs: [{ type: "text", text: "가" }] },
+        ],
+      },
+      "시험",
+    );
+    expect(documentSpecFromComponents([styled]).document.styles?.["강조"]).toEqual({
+      based_on: "바탕글",
+      bold: true,
+    });
+    expect(() =>
+      documentSpecFromComponents([
+        {
+          ...styled,
+          lists: {
+            항목: { kind: "ordered", levels: [{ marker: "{n}.", start: 1, style: "없음" }] },
+          },
+        },
+      ]),
+    ).toThrow(
+      /components: 시험: lists\.항목\.levels\[0\]\.style: references style 없음, which no component defines/,
+    );
   });
 
   it("refuses an empty component list", () => {
@@ -2050,6 +2375,123 @@ describeBin("compose with the real hwp", () => {
     expect(body).toContain("· 향후 계획");
   });
 
+  it("inserts an ordered and a bullet list that start their own numbering (#176)", () => {
+    // A target that already numbers 1..3 with a list of its own: the inserted
+    // component's list has to start at 1, and the target's own list has to
+    // keep counting where it was rather than shift by what went in above it.
+    // Both native writers are checked, because HWP 5.0 keeps only its own
+    // numbering record and that is the case agent-hwp#472 fixed.
+    const target = {
+      version: "2.0",
+      document: {
+        version: "1.0",
+        metadata: { title: "번호가 있는 대상" },
+        lists: { 대상목록: { kind: "ordered", levels: [{ marker: "{n}.", start: 1 }] } },
+        sections: [
+          {
+            blocks: [1, 2, 3].map((number) => ({
+              type: "paragraph",
+              list: { name: "대상목록", level: 0 },
+              runs: [{ type: "text", text: `대상 ${number}` }],
+            })),
+          },
+        ],
+      },
+    };
+    const component = validateComponent(
+      {
+        name: "목록 구성요소",
+        description: "자체 목록을 가진 구성요소",
+        params: {},
+        lists: {
+          "구성 목록": { kind: "ordered", levels: [{ marker: "{n}.", start: 1 }] },
+          "구성 불릿": { kind: "bullet", levels: [{ marker: "-", start: 1 }] },
+        },
+        blocks: [
+          {
+            type: "paragraph",
+            list: { name: "구성 목록", level: 0 },
+            runs: [{ type: "text", text: "삽입 하나" }],
+          },
+          {
+            type: "paragraph",
+            list: { name: "구성 목록", level: 0 },
+            runs: [{ type: "text", text: "삽입 둘" }],
+          },
+          {
+            type: "paragraph",
+            list: { name: "구성 불릿", level: 0 },
+            runs: [{ type: "text", text: "불릿 하나" }],
+          },
+          {
+            type: "paragraph",
+            list: { name: "구성 불릿", level: 0 },
+            runs: [{ type: "text", text: "불릿 둘" }],
+          },
+        ],
+      },
+      "list-component.json",
+    );
+    // The op goes through the package's own serializer, so this covers the
+    // `lists` half of edit-ops-v1 as well as the engine's writing of it.
+    const opsPath = out("list-ops.json");
+    writeFileSync(
+      opsPath,
+      opsToJson([
+        {
+          kind: "insert-blocks",
+          address: { at: { section: 0, paragraph: 0 } },
+          position: "after",
+          blocks: component.blocks,
+          lists: componentListMap([component]),
+        },
+      ]),
+      "utf8",
+    );
+    const specPath = out("numbered-target.spec.json");
+    writeFileSync(specPath, JSON.stringify(target), "utf8");
+    // What the engine's own markdown projection prints, which is where
+    // numbering appears: 1./2. for the inserted list, `-` for the bullets,
+    // and the target's own list restarting at 1 after a list break.
+    const expected = [
+      "1. 삽입 하나",
+      "2. 삽입 둘",
+      "",
+      "<!-- list-break -->",
+      "",
+      "- 불릿 하나",
+      "- 불릿 둘",
+      "",
+      "<!-- list-break -->",
+      "",
+      "1. 대상 1",
+      "2. 대상 2",
+      "3. 대상 3",
+      "",
+    ].join("\n");
+    for (const extension of ["hwpx", "hwp"] as const) {
+      const targetPath = out(`numbered-target.${extension}`);
+      execFileSync(BIN, ["compose", specPath, "-o", targetPath], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const insertedPath = out(`numbered-inserted.${extension}`);
+      execFileSync(BIN, ["edit", targetPath, "-o", insertedPath, "--ops", opsPath], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const read = JSON.parse(
+        execFileSync(
+          BIN,
+          ["cat", insertedPath, "--with-segments", "--segments", "v2", "--format", "json"],
+          { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        ),
+      ) as { markdown: string; segments: { kind: string }[] };
+      expect({ extension, markdown: read.markdown }).toEqual({ extension, markdown: expected });
+      // The four inserted paragraphs and the target's three, each its own
+      // paragraph: the insertion did not merge into a neighbouring list item.
+      expect(read.segments.filter((segment) => segment.kind === "para")).toHaveLength(7);
+    }
+  });
+
   afterAll(() => {
     rmSync(dir, { recursive: true, force: true });
   });
@@ -2143,5 +2585,93 @@ describe("componentStyleMap", () => {
           "declared params, or add the param to the component, then retry",
       );
     }
+  });
+});
+
+/**
+ * The list half of the insertion resolver (#176): `insert_blocks` takes a
+ * `lists` map beside its `styles`, and the engine compiles each definition
+ * into its own numbering record, so the map is what makes an inserted list
+ * start its own numbering instead of continuing the target's.
+ */
+describe("componentListMap", () => {
+  const listed = (name: string, marker = "{n}."): Component => ({
+    name,
+    description: "목록 정의",
+    params: {},
+    lists: { 항목: { kind: "ordered", levels: [{ marker, start: 1 }] } },
+    blocks: [
+      { type: "paragraph", list: { name: "항목", level: 0 }, runs: [{ type: "text", text: "가" }] },
+    ],
+  });
+
+  it("returns the component's own lists, as a copy", () => {
+    const component = substituteParams(listed("시험"));
+    const lists = componentListMap([component]);
+    expect(lists).toEqual({ 항목: { kind: "ordered", levels: [{ marker: "{n}.", start: 1 }] } });
+    expect(lists["항목"]).not.toBe(component.lists?.["항목"]);
+  });
+
+  it("returns an empty map for a component that defines no list", () => {
+    expect(componentListMap([starter("개조식")])).toEqual({});
+    expect(componentListMap([])).toEqual({});
+  });
+
+  it("refuses two components that define one list name differently", () => {
+    // A host assembled both in memory, so the refusal names the components
+    // rather than a file: the merged table would number one of them wrong.
+    let refusal: unknown;
+    try {
+      componentListMap([listed("첫째", "{n}."), listed("둘째", "{n})")]);
+    } catch (error) {
+      refusal = error;
+    }
+    expect(isComponentError(refusal)).toBe(true);
+    if (!isComponentError(refusal)) throw refusal;
+    expect(refusal.code).toBe("component_invalid");
+    expect(refusal.source).toBe("둘째");
+    expect(refusal.field).toBe("lists.항목");
+    expect(refusal.reason).toContain("is defined differently by 첫째 and this component");
+  });
+
+  it("refuses a reference to a list the component does not define", () => {
+    let refusal: unknown;
+    try {
+      componentListMap([{
+        ...listed("시험"),
+        blocks: [
+          { type: "paragraph", list: { name: "없음", level: 0 }, runs: [{ type: "text", text: "가" }] },
+        ],
+      }]);
+    } catch (error) {
+      refusal = error;
+    }
+    expect(isComponentError(refusal)).toBe(true);
+    if (!isComponentError(refusal)) throw refusal;
+    expect(refusal.source).toBe("시험");
+    expect(refusal.field).toBe("blocks[0].list.name");
+    expect(refusal.reason).toContain('references list "없음", which this component does not define');
+  });
+});
+
+/**
+ * The version gate the palettes use: the own-numbering rule rests on the HWP
+ * 5.0 list fix agent-hwp#472 shipped in 1.5.0, and an older engine cannot
+ * write the numbering a definition asks for.
+ */
+describe("componentListsSupported", () => {
+  it("pins 1.5.0 as the version that writes component-local lists", () => {
+    expect(COMPONENT_LISTS_MIN_VERSION).toBe("1.5.0");
+    expect(componentListsSupported("1.5.0")).toBe(true);
+    expect(componentListsSupported("1.5.0-rc.1")).toBe(true);
+    expect(componentListsSupported("1.6.1")).toBe(true);
+    expect(componentListsSupported("2.0.0")).toBe(true);
+    expect(componentListsSupported("1.4.2")).toBe(false);
+    expect(componentListsSupported("0.16.0-test")).toBe(false);
+    // A version this cannot read is not a yes: the caller keeps the engine's
+    // own answer rather than claiming support.
+    expect(componentListsSupported("")).toBe(false);
+    expect(componentListsSupported("1.5")).toBe(false);
+    expect(componentListsSupported("main")).toBe(false);
   });
 });

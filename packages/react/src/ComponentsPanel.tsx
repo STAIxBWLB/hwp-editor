@@ -40,8 +40,9 @@ export interface ComponentsPanelProps {
   /**
    * Localized reason this component's insertion is refused before it is sent,
    * given a component and returning "" when it can go. The refusals are the
-   * certain ones (an image, a section break, an equation into .hwp), and the
-   * row is disabled with the sentence rather than failing at the engine.
+   * certain ones (an image, a section break, an equation into .hwp, and a
+   * component-local list on an engine older than the one that writes it), and
+   * the row is disabled with the sentence rather than failing at the engine.
    */
   refusalFor?: (component: Component) => string;
   /** True while an engine call owns the document. */

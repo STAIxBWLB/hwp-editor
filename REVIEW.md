@@ -75,6 +75,16 @@ Run these passes and tag every finding with its pass:
   matching (`1.x`), never exact minor equality, and reject malformed consumed fields
   (`packages/core/src/templates.ts:reportSchemaVersion`,
   `packages/server/src/template-engine.ts:lint`).
+- **A component-local list always starts its own numbering.** A component may carry `lists`
+  and a paragraph's `list: {name, level}` (`packages/core/src/components.ts`); the definition
+  travels to `insert_blocks` as its `lists` map (`packages/core/src/ops.ts`), which the engine
+  compiles into its own numbering record, so an inserted list starts at the definition's `start`
+  and never continues a list in the target, whose own numbering stays as it was (#176). A
+  reference the component does not define, a level its definition lacks, and a component-local
+  list on an engine below agent-hwp 1.5.0 (the release that writes one, agent-hwp#472) are each
+  refused with a cause and a next step before the op is sent; markers written into the text runs
+  remain the fallback. Numbering an inserted list from the target's record, or letting the engine
+  be the one to refuse a definition the client could have checked, is a finding.
 - **Both locales ship together.** `ko` is declared `const ko: MessageTable`, and `MessageTable` is
   `typeof en` (`packages/react/src/messages.ts`), so a missing Korean key fails typecheck. A new
   control without strings in both tables is a finding.

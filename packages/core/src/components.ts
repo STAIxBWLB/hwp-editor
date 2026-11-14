@@ -3,28 +3,35 @@
  * after (or before) the selected paragraph, and the unit a new document is
  * composed from.
  *
- * Shape (issue #54): `{name, description, params, styles?, blocks}`. `params`
- * hold the defaults of the flat `{{name}}` placeholders a component's blocks
- * may carry. Substitution happens here, in the client, before an op is built,
- * so the engine never sees a placeholder; a param value is inserted literally
- * and never re-scanned, which keeps `{{` in real content safe. `blocks` are
- * DocumentSpec v1 blocks: the pinned `schemas/document-spec-v1.schema.json`
- * is the contract, and the hand-written checks below validate against it in
- * the style of `segments.ts` (no JSON-schema dependency), with every refusal
- * naming the field path and the file or index entry it came from.
+ * Shape (issue #54): `{name, description, params, styles?, lists?, blocks}`.
+ * `params` hold the defaults of the flat `{{name}}` placeholders a component's
+ * blocks may carry. Substitution happens here, in the client, before an op is
+ * built, so the engine never sees a placeholder; a param value is inserted
+ * literally and never re-scanned, which keeps `{{` in real content safe.
+ * `blocks` are DocumentSpec v1 blocks: the pinned
+ * `schemas/document-spec-v1.schema.json` is the contract, and the hand-written
+ * checks below validate against it in the style of `segments.ts` (no
+ * JSON-schema dependency), with every refusal naming the field path and the
+ * file or index entry it came from.
  *
- * A paragraph cannot carry a `list` here, so a starter that needs a bulleted
- * ladder writes the markers into the text. That is also what 개조식 notation
- * does. The reason is the target document: a component cannot know its list
- * definitions, so a list it names may not exist there, and the validator
- * refuses the field rather than letting the engine refuse the reference. The
- * engine's HWP 5.0 ordered-list numbering fix (agent-hwp#472, in 1.5.0) has
- * shipped and does not change that. Style values follow the
- * engine's official profile: starters reference `바탕글` and `개요 1`..`개요
- * 6` by name and define only what the profile does not have (for example a
- * centred 두문 line), always `based_on` an official style, so no starter file
- * restates a profile constant. The profile itself is copied once, in
- * `profiles.ts`, because a compose spec has to define every style it names.
+ * A paragraph may carry `list: {name, level}`, and the name has to be defined
+ * in the component's own `lists` (#176): a component is inserted into a
+ * document whose list definitions it cannot see, so a name it does not define
+ * is refused here rather than by the engine. A defined list is always written
+ * as its own numbering — `hwp compose` and `insert_blocks` compile the
+ * definition beside the target's own, so the inserted list starts again at its
+ * `start` and never continues a list already in the document (the HWP 5.0
+ * numbering fix, agent-hwp#472, needs 1.5.0 or newer). The HWP 5.0 writer
+ * preserves only its own numbering record: `{n}.` for levels 0-1, `{n})` for
+ * 2-3, `({n})` for 4-5 and `{n}` for 6, every one at start 1, while `.hwpx`
+ * keeps any marker. A component that needs another marker can write the
+ * markers into the text runs instead, which is what 개조식 notation does.
+ * Style values follow the engine's official profile: starters reference
+ * `바탕글` and `개요 1`..`개요 6` by name and define only what the profile does
+ * not have (for example a centred 두문 line), always `based_on` an official
+ * style, so no starter file restates a profile constant. The profile itself is
+ * copied once, in `profiles.ts`, because a compose spec has to define every
+ * style it names.
  *
  * Text is held to the engine's contract as well: `hwp compose` accepts a tab
  * and no other control character in a text run or a field value, so a param
@@ -32,7 +39,7 @@
  * and everything else is refused while the field and the component that
  * produced it are still known.
  */
-import type { Blocks, Style } from "./generated/document-spec-v2.js";
+import type { Blocks, List, Style } from "./generated/document-spec-v2.js";
 import type { DocumentSpecV2 } from "./spec.js";
 import { deepFreeze, OFFICIAL_PROFILE } from "./profiles.js";
 
@@ -58,6 +65,11 @@ export interface Component {
   params: Record<string, string>;
   /** Style definitions the blocks reference, for a target that lacks them. */
   styles?: Record<string, Style>;
+  /**
+   * Named list definitions the blocks reference. Always the component's own:
+   * a list is compiled beside the target's numbering, never into it (#176).
+   */
+  lists?: Record<string, List>;
   blocks: Blocks;
 }
 
@@ -160,6 +172,8 @@ function onlyKeys(
  */
 const MAX_LENGTH = {
   styleName: 128,
+  listName: 128,
+  listMarker: 64,
   fontFamily: 256,
   text: 2_000_000,
   fieldName: 128,
@@ -174,6 +188,17 @@ const MAX_ITEMS = 65535;
 
 /** The v1 schema's `maxProperties` for the style table. */
 const MAX_STYLES = 256;
+
+/** The v1 schema's `maxProperties` for the list table. */
+const MAX_LISTS = 256;
+
+/** The v1 schema's `maxItems` for one list's levels (levels 0..6). */
+const MAX_LIST_LEVELS = 7;
+
+/** The v1 schema's `start` bound: a u32 no smaller than 1. */
+const MAX_LIST_START = 4294967295;
+
+const LIST_KINDS = ["ordered", "bullet"] as const;
 
 /**
  * The engine's block-nesting cap (`document_spec.rs`: `MAX_NESTING`). A
@@ -479,6 +504,161 @@ function sameStyle(left: Style, right: Style): boolean {
 }
 
 /**
+ * Why a paragraph may not name a list the component does not define.
+ *
+ * Named once because two places refuse it and they must say the same thing:
+ * validation, which still knows the file or URL the component came from, and
+ * `checkListRefs`, which is the backstop for a component a host assembled
+ * without validating it.
+ */
+function unknownListReason(name: string): string {
+  return (
+    `references list ${JSON.stringify(name)}, which this component does not define; add it to ` +
+    "the component's own lists (the target document's lists are never used), or fix the " +
+    "reference, then retry"
+  );
+}
+
+/** Why a paragraph may not name a level its list definition does not have. */
+function listLevelReason(name: string, level: number, levels: number): string {
+  return (
+    `names level ${level} of list ${JSON.stringify(name)}, which defines ${levels} ` +
+    `level${levels === 1 ? "" : "s"}; use a level from 0 to ${levels - 1}, or add that level ` +
+    "to the list definition, then retry"
+  );
+}
+
+/**
+ * One list level, validated against the engine's own rules
+ * (`document_spec.rs`: `validate` walks `spec.lists`): a marker of 1..64
+ * characters, an ordered marker holding `{n}`, a bullet marker of exactly one
+ * character, and a start of 1 for bullets because they do not count.
+ */
+function validateListLevel(
+  raw: unknown,
+  source: string,
+  field: string,
+  kind: "ordered" | "bullet",
+): void {
+  const level = asObject(raw, source, field);
+  onlyKeys(level, ["marker", "start", "style"], source, field);
+  const marker = stringOf(level.marker, source, at(field, "marker"), false, MAX_LENGTH.listMarker);
+  if (kind === "ordered" && !marker.includes("{n}")) {
+    refuse(
+      source,
+      at(field, "marker"),
+      "must contain {n}, the number an ordered level places (document_spec.rs:769); add it to " +
+        "the marker, then retry",
+    );
+  }
+  if (kind === "bullet" && Array.from(marker).length !== 1) {
+    refuse(
+      source,
+      at(field, "marker"),
+      "must be exactly one character for a bullet level (document_spec.rs:774); bullets do not " +
+        "count, so use the single marker character, then retry",
+    );
+  }
+  if (level.start !== undefined) {
+    const start = count(level.start, source, at(field, "start"), 1, MAX_LIST_START, true);
+    if (kind === "bullet" && start !== 1) {
+      refuse(
+        source,
+        at(field, "start"),
+        "must be 1 for a bullet level, because bullets do not count (document_spec.rs:751); " +
+          "take the key out or set it to 1, then retry",
+      );
+    }
+  }
+  if (level.style !== undefined) {
+    text(level.style, source, at(field, "style"), false, MAX_LENGTH.styleName);
+  }
+}
+
+/** One list definition, in the shape the engine compiles. */
+function validateList(raw: unknown, source: string, field: string): List {
+  const list = asObject(raw, source, field);
+  onlyKeys(list, ["kind", "levels"], source, field);
+  const kind = oneOf(list.kind, LIST_KINDS, source, at(field, "kind"));
+  const levelsField = at(field, "levels");
+  if (!Array.isArray(list.levels) || list.levels.length === 0) {
+    refuse(source, levelsField, "must be an array of at least 1 level");
+  }
+  if (list.levels.length > MAX_LIST_LEVELS) {
+    refuse(
+      source,
+      levelsField,
+      `must be at most ${MAX_LIST_LEVELS} levels, as document-spec-v1 allows`,
+    );
+  }
+  // A copy with only the schema's own fields: a component returns blocks and
+  // definitions that share no state with the file it was validated from.
+  const levels = (list.levels as Record<string, unknown>[]).map((level, index) => {
+    validateListLevel(level, source, at(levelsField, index), kind);
+    const copy: Record<string, unknown> = { marker: level.marker };
+    if (level.start !== undefined) copy.start = level.start;
+    if (level.style !== undefined) copy.style = level.style;
+    return copy;
+  });
+  return { kind, levels } as unknown as List;
+}
+
+function validateLists(raw: unknown, source: string): Record<string, List> {
+  const value = asObject(raw, source, "lists");
+  if (Object.keys(value).length > MAX_LISTS) {
+    refuse(source, "lists", `must hold at most ${MAX_LISTS} lists, as document-spec-v1 allows`);
+  }
+  const validated: [string, List][] = [];
+  for (const [name, list] of Object.entries(value)) {
+    if (name.trim() === "" || name.trim() !== name) {
+      refuse(source, at("lists", name), "must be a list name without surrounding spaces");
+    }
+    if (exceeds(name, MAX_LENGTH.listName)) {
+      refuse(
+        source,
+        at("lists", name),
+        `must be at most ${MAX_LENGTH.listName} characters, as document-spec-v1 allows a list name`,
+      );
+    }
+    validated.push([name, validateList(list, source, at("lists", name))]);
+  }
+  // `fromEntries` defines own properties, so a list named `__proto__` survives.
+  return Object.fromEntries(validated);
+}
+
+/** The list definition `name` names, or undefined; never an inherited property. */
+function definedList(
+  lists: Record<string, List> | undefined,
+  name: string,
+): List | undefined {
+  return lists !== undefined && Object.hasOwn(lists, name) ? lists[name] : undefined;
+}
+
+/**
+ * A paragraph's `list: {name, level}` reference, resolved against the
+ * component's own definitions. The target document's lists are not consulted:
+ * that is the reason the reference is checked here at all (#176).
+ */
+function validateListRef(
+  raw: unknown,
+  source: string,
+  field: string,
+  lists: Record<string, List> | undefined,
+): void {
+  const ref = asObject(raw, source, field);
+  onlyKeys(ref, ["name", "level"], source, field);
+  const name = stringOf(ref.name, source, at(field, "name"), false, MAX_LENGTH.listName);
+  const defined = definedList(lists, name);
+  if (defined === undefined) refuse(source, at(field, "name"), unknownListReason(name));
+  const level = ref.level === undefined
+    ? 0
+    : count(ref.level, source, at(field, "level"), 0, 6, true);
+  if (level >= defined.levels.length) {
+    refuse(source, at(field, "level"), listLevelReason(name, level, defined.levels.length));
+  }
+}
+
+/**
  * Why a non-empty image description is refused.
  *
  * `hwp compose` refuses alt text at both positions it can appear, a block
@@ -605,7 +785,12 @@ function validateRun(raw: unknown, source: string, field: string): void {
   }
 }
 
-function validateParagraph(block: Record<string, unknown>, source: string, field: string): void {
+function validateParagraph(
+  block: Record<string, unknown>,
+  source: string,
+  field: string,
+  lists: Record<string, List> | undefined,
+): void {
   onlyKeys(block, ["type", "style", "list", "keep_with_next", "runs"], source, field);
   if (block.style !== undefined) {
     text(block.style, source, at(field, "style"), false, MAX_LENGTH.styleName);
@@ -617,14 +802,7 @@ function validateParagraph(block: Record<string, unknown>, source: string, field
     }
   }
   if (block.list !== undefined) {
-    refuse(
-      source,
-      at(field, "list"),
-      "is not supported: a component is inserted into a document whose list definitions it " +
-        "cannot know, so a list it names may not exist there; write the markers into the text " +
-        "runs instead (the engine's HWP 5.0 list numbering fix, agent-hwp#472, shipped and does " +
-        "not change this)",
-    );
+    validateListRef(block.list, source, at(field, "list"), lists);
   }
   const runsField = at(field, "runs");
   if (!Array.isArray(block.runs) || block.runs.length === 0) {
@@ -638,6 +816,7 @@ function validateTable(
   source: string,
   field: string,
   depth: number,
+  lists: Record<string, List> | undefined,
 ): void {
   onlyKeys(block, ["type", "width_mm", "columns", "rows"], source, field);
   if (block.width_mm !== undefined) dimension(block.width_mm, source, at(field, "width_mm"));
@@ -695,6 +874,7 @@ function validateTable(
         at(cellField, "blocks"),
         0,
         depth + 1,
+        lists,
       );
     });
   });
@@ -813,15 +993,21 @@ function validateTableGrid(block: Record<string, unknown>, source: string, field
   }
 }
 
-function validateBlock(raw: unknown, source: string, field: string, depth: number): void {
+function validateBlock(
+  raw: unknown,
+  source: string,
+  field: string,
+  depth: number,
+  lists: Record<string, List> | undefined,
+): void {
   const block = asObject(raw, source, field);
   const type = oneOf(block.type, BLOCK_TYPES, source, at(field, "type"));
   switch (type) {
     case "paragraph":
-      validateParagraph(block, source, field);
+      validateParagraph(block, source, field, lists);
       return;
     case "table":
-      validateTable(block, source, field, depth);
+      validateTable(block, source, field, depth, lists);
       return;
     case "image": {
       onlyKeys(block, ["type", "path", "width_mm", "height_mm", "alt", "placement"], source, field);
@@ -880,6 +1066,7 @@ function validateBlocks(
   field: string,
   minItems: number,
   depth: number,
+  lists: Record<string, List> | undefined,
 ): void {
   if (depth > MAX_NESTING) {
     refuse(
@@ -897,7 +1084,7 @@ function validateBlocks(
       minItems === 0 ? "must be an array" : `must be an array of at least ${minItems} block`,
     );
   }
-  raw.forEach((block, index) => validateBlock(block, source, at(field, index), depth));
+  raw.forEach((block, index) => validateBlock(block, source, at(field, index), depth, lists));
 }
 
 function validateParams(raw: unknown, source: string): Record<string, string> {
@@ -1114,16 +1301,18 @@ function checkPlaceholders(
  */
 export function validateComponent(raw: unknown, source: string): Component {
   const value = asObject(raw, source, "");
-  onlyKeys(value, ["name", "description", "params", "styles", "blocks"], source, "");
+  onlyKeys(value, ["name", "description", "params", "styles", "lists", "blocks"], source, "");
   const name = text(value.name, source, "name");
   const description = text(value.description, source, "description");
   const params = validateParams(value.params, source);
   const styles = value.styles === undefined ? undefined : validateStyles(value.styles, source);
-  validateBlocks(value.blocks, source, "blocks", 1, 0);
+  const lists = value.lists === undefined ? undefined : validateLists(value.lists, source);
+  validateBlocks(value.blocks, source, "blocks", 1, 0, lists);
   checkPlaceholders(value.blocks as readonly unknown[], params, source);
   const blocks = structuredClone(value.blocks) as Blocks;
   const component: Component = { name, description, params, blocks };
   if (styles !== undefined) component.styles = styles;
+  if (lists !== undefined) component.lists = lists;
   return component;
 }
 
@@ -1214,7 +1403,7 @@ export function substituteParams(
   }) as Blocks;
   // A value can push a run past a bound the placeholder itself met, so the
   // result is held to the same contract the component was validated against.
-  validateBlocks(blocks, source, "blocks", 1, 0);
+  validateBlocks(blocks, source, "blocks", 1, 0, component.lists);
   const filled: FilledComponent = {
     ...component,
     params,
@@ -1272,6 +1461,71 @@ function styleRefs(blocks: readonly unknown[], field: string): StyleRef[] {
   return refs;
 }
 
+/**
+ * Every named style a list level names. A level's `style` is the paragraph
+ * style its items take (`document_spec.rs`: `compiled_style.para_shape`), so
+ * it resolves through the same table as a block's style and counts against
+ * the same cap.
+ */
+function listStyleRefs(lists: Record<string, List> | undefined): StyleRef[] {
+  const refs: StyleRef[] = [];
+  for (const [name, list] of Object.entries(lists ?? {})) {
+    list.levels.forEach((level, index) => {
+      if (level.style !== undefined) {
+        refs.push({ field: `${at("lists", name)}.levels[${index}].style`, name: level.style });
+      }
+    });
+  }
+  return refs;
+}
+
+/**
+ * Every `list: {name, level}` a block list carries, at any table depth, with
+ * the field that carried it. Used by the assembly backstop, which checks a
+ * component a host built in memory without passing through validation.
+ */
+interface ListRefSite {
+  field: string;
+  name: string;
+  level: number;
+}
+
+function listRefs(blocks: readonly unknown[], field: string): ListRefSite[] {
+  const refs: ListRefSite[] = [];
+  blocks.forEach((raw, index) => {
+    const where = at(field, index);
+    const block = raw as Record<string, unknown>;
+    switch (block.type) {
+      case "paragraph": {
+        const ref = block.list as { name?: unknown; level?: unknown } | undefined;
+        if (ref !== undefined) {
+          refs.push({
+            field: at(where, "list"),
+            name: String(ref.name),
+            level: typeof ref.level === "number" ? ref.level : 0,
+          });
+        }
+        break;
+      }
+      case "table": {
+        const rowsField = at(where, "rows");
+        (block.rows as readonly Record<string, unknown>[]).forEach((row, rowIndex) => {
+          const cellsField = at(at(rowsField, rowIndex), "cells");
+          (row.cells as readonly Record<string, unknown>[]).forEach((cell, cellIndex) => {
+            if (Array.isArray(cell.blocks)) {
+              refs.push(...listRefs(cell.blocks, at(at(cellsField, cellIndex), "blocks")));
+            }
+          });
+        });
+        break;
+      }
+      default:
+        break;
+    }
+  });
+  return refs;
+}
+
 export interface ComposeComponentsOptions {
   /** Document title written into `metadata`. */
   title?: string;
@@ -1313,6 +1567,12 @@ function fillInput(input: Component | ComponentInput): FilledComponent {
  * as `unknown_reference`, later and without the field). A profile name is
  * already defined, so a component may reference it but not redefine it.
  *
+ * The components' list definitions are merged the same way, into
+ * `document.lists`: a name two components define differently is refused, and
+ * every `list` reference is checked against the merged table. The engine
+ * compiles each definition into its own numbering record, which is what makes
+ * a composed list start at its own `start` (#176).
+ *
  * The spec shares no object with the components or with the profile table, so
  * editing the result cannot reach module state or a caller's file.
  */
@@ -1325,6 +1585,8 @@ export function documentSpecFromComponents(
   }
   const filled = components.map((input) => fillInput(input));
   const resolved = resolvedStyles(filled);
+  const lists = resolvedLists(filled);
+  checkListRefs(filled, lists);
   const blocks: Block[] = [];
   for (const component of filled) {
     blocks.push(...(structuredClone(component.blocks) as Block[]));
@@ -1336,6 +1598,11 @@ export function documentSpecFromComponents(
   };
   if (options.title !== undefined) document.metadata = { title: options.title };
   if (resolved.size > 0) document.styles = Object.fromEntries(resolved);
+  if (lists.size > 0) {
+    document.lists = Object.fromEntries(
+      [...lists].map(([name, list]) => [name, structuredClone(list)]),
+    );
+  }
   return { version: "2.0", document };
 }
 
@@ -1358,6 +1625,45 @@ export function componentStyleMap(
 ): Record<string, Style> {
   if (components.length === 0) return {};
   return Object.fromEntries(resolvedStyles(components.map((input) => fillInput(input))));
+}
+
+/**
+ * The list definitions a component sends beside an insertion: its own,
+ * merged so two components that define one name differently are refused.
+ *
+ * This is the `lists` half of `insert_blocks`, the same way `componentStyleMap`
+ * is the `styles` half. The engine compiles each definition into its own
+ * numbering record beside the target's, so a list inserted this way always
+ * starts at its own `start` and never continues a list already in the
+ * document (#176). Every reference is checked here too, because a host may
+ * assemble a `Component` in memory without passing through validation.
+ *
+ * The returned map shares nothing with the components.
+ */
+export function componentListMap(
+  components: readonly (Component | ComponentInput)[],
+): Record<string, List> {
+  if (components.length === 0) return {};
+  const filled = components.map((input) => fillInput(input));
+  const lists = resolvedLists(filled);
+  checkListRefs(filled, lists);
+  return Object.fromEntries([...lists].map(([name, list]) => [name, structuredClone(list)]));
+}
+
+/**
+ * The engine version component-local lists need: agent-hwp 1.5.0, which ships
+ * the HWP 5.0 ordered-list numbering fix (#472) the own-numbering rule rests
+ * on. Below it a caller refuses the component with a cause and the next step
+ * rather than sending a `lists` map the engine would not write as defined.
+ */
+export const COMPONENT_LISTS_MIN_VERSION = "1.5.0";
+
+/** Whether an engine version can write a component-local list (#176). */
+export function componentListsSupported(version: string): boolean {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(version);
+  if (match === null) return false;
+  const major = Number(match[1]);
+  return major > 1 || (major === 1 && Number(match[2]) >= 5);
 }
 
 /**
@@ -1411,7 +1717,10 @@ function resolvedStyles(filled: readonly FilledComponent[]): Map<string, Style> 
 
   const unresolved: { source: string; field: string; name: string }[] = [];
   for (const component of filled) {
-    for (const ref of styleRefs(component.blocks, "blocks")) {
+    for (const ref of [
+      ...styleRefs(component.blocks, "blocks"),
+      ...listStyleRefs(component.lists),
+    ]) {
       if (!styles.has(ref.name)) {
         unresolved.push({ source: component.name, field: ref.field, name: ref.name });
       }
@@ -1473,6 +1782,93 @@ function resolvedStyles(filled: readonly FilledComponent[]): Map<string, Style> 
   for (const [name, style] of styles) resolved.set(name, structuredClone(style));
   validateStyleCycles(resolved, definedBy);
   return resolved;
+}
+
+/**
+ * One list definition equals another when its kind, levels, markers, starts
+ * and level styles match. `start` is compared at the engine's default (1), so
+ * a definition that spells `start: 1` and one that omits it describe the same
+ * numbering.
+ */
+function sameList(left: List, right: List): boolean {
+  if (left.kind !== right.kind || left.levels.length !== right.levels.length) return false;
+  return left.levels.every((level, index) => {
+    const other = right.levels[index];
+    if (other === undefined) return false;
+    return (
+      level.marker === other.marker &&
+      (level.start ?? 1) === (other.start ?? 1) &&
+      (level.style ?? "") === (other.style ?? "")
+    );
+  });
+}
+
+/**
+ * Merge the components' list definitions, refusing one name two components
+ * define differently and a merged table past the engine's cap.
+ *
+ * The engine compiles every definition into its own numbering record, so two
+ * components that share a *different* definition of one name would silently
+ * number one of them wrong; two components that agree share one list, exactly
+ * as they share a style.
+ */
+function resolvedLists(filled: readonly FilledComponent[]): Map<string, List> {
+  const lists = new Map<string, List>();
+  const definedBy = new Map<string, string>();
+  for (const component of filled) {
+    for (const [name, list] of Object.entries(component.lists ?? {})) {
+      const previous = lists.get(name);
+      if (previous !== undefined && !sameList(previous, list)) {
+        refuse(
+          component.name,
+          at("lists", name),
+          `is defined differently by ${definedBy.get(name) ?? "an earlier component"} and this ` +
+            "component; make the two definitions agree, or rename one of them, then retry",
+        );
+      }
+      lists.set(name, list);
+      definedBy.set(name, component.name);
+      // One document carries one list table, so the cap is on the merge, not
+      // on each component (`document_spec.rs`: `self.spec.lists.len() > 256`).
+      if (lists.size > MAX_LISTS) {
+        refuse(
+          component.name,
+          at("lists", name),
+          `takes the merged list table to ${lists.size} lists; ahwp compose allows ` +
+            `${MAX_LISTS} lists in one document (document_spec.rs:696), so share a list between ` +
+            "the components, or drop one no block references, then retry",
+        );
+      }
+    }
+  }
+  return lists;
+}
+
+/**
+ * Every `list` reference a filled component carries, checked against the
+ * merged table. This is the backstop for a component a host assembled in
+ * memory: validation already refused these references where the component's
+ * file was still known.
+ */
+function checkListRefs(
+  filled: readonly FilledComponent[],
+  lists: Map<string, List>,
+): void {
+  for (const component of filled) {
+    for (const ref of listRefs(component.blocks, "blocks")) {
+      const defined = lists.get(ref.name);
+      if (defined === undefined) {
+        refuse(component.name, at(ref.field, "name"), unknownListReason(ref.name));
+      }
+      if (ref.level >= defined.levels.length) {
+        refuse(
+          component.name,
+          at(ref.field, "level"),
+          listLevelReason(ref.name, ref.level, defined.levels.length),
+        );
+      }
+    }
+  }
 }
 
 /**

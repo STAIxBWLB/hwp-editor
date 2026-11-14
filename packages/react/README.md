@@ -119,6 +119,15 @@ Defaults ship in `theme.css` with a `prefers-color-scheme: dark` fallback.
   envelope; set-field editing; click jumps to the containing segment.
 - `ComposePanel` — preset picker (official/report/plan/notice/minutes/
   gaejosik/press) + guided form -> DocumentSpec v2 -> `engine.compose()`.
+- `ComponentsPanel` — the component catalogue: fill a component's params, pick
+  before/after, insert beside the selection. A component may carry its own
+  `lists` and a paragraph's `list: {name, level}`; the definitions travel with
+  the insertion, so the engine writes each as its own numbering record and an
+  inserted ordered or bullet list starts at its own `start` instead of
+  continuing a list already in the document (#176). Below agent-hwp 1.5.0 (the
+  release that writes a component-local list) the rows are disabled with the
+  version and both next steps, and markers written into the text runs stay the
+  fallback. See `packages/core/src/components.ts` for the file format.
 
 ## Known limitations (engine contract)
 
