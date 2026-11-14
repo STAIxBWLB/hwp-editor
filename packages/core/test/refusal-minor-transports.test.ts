@@ -24,7 +24,12 @@ describe.each(["http", "tauri"] as const)("typed report minors over %s", transpo
     const error = await refused(transport, fixture(`document-protected-${protection}`));
     expect(error.code).toBe(code); expect(error.message).toContain(reason);
     if (code === "protected") expect(error.message).toContain(PROTECTED_NEXT_STEP);
-    else { expect(error.message).toMatch(/password.*(?:supply|provide|enter|open)/i); expect(error.message).not.toContain(PROTECTED_NEXT_STEP); }
+    else {
+      expect(error.message).toMatch(/password.*(?:supply|provide|enter|open)/i);
+      expect(error.message).toContain("word processor");
+      expect(error.message).not.toContain("--password-stdin");
+      expect(error.message).not.toContain(PROTECTED_NEXT_STEP);
+    }
     expect(error.refusal).toBeUndefined();
   });
   it.each(["counts", "digest"])("names only typed verification invariants (%s)", async kind => {
