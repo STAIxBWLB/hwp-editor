@@ -865,6 +865,30 @@ describe("refused edit reports across Tauri (#119)", () => {
     return { engine: createTauriEngine(invoke), calls };
   }
 
+  it.each([
+    ["1.4.0", false], ["1.6.2", false], ["1.6.3", true], ["2.0.0", true],
+  ] as const)("opts into object rejections only on supported engine %s", async (version, supported) => {
+    const { engine, calls } = engineRejecting("hwp_failed: Error: refused", version);
+    // Explicit reports on older clients must not opt them into object errors.
+    await engine.edit(doc, [], { report: true }).catch(() => undefined);
+    const args = calls.find(call => call.cmd === "hwped_edit")!.args!;
+    expect(args.report).toBe(true);
+    if (supported) expect(args.structuredRefusal).toBe(true);
+    else expect(args).not.toHaveProperty("structuredRefusal");
+  });
+
+  it("negotiates the host's report-object rejection instead of its string fallback", async () => {
+    const invoke: TauriInvoke = async <T,>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
+      if (cmd === "hwped_capabilities") return { version: "2.0.0", editable: true, formats: ["hwp", "hwpx"], editOps: "v1" } as T;
+      if (cmd !== "hwped_edit") throw new Error("unexpected command");
+      if (args?.structuredRefusal === true) throw { code: "failed", message: FONT_TYPE_INFO, report: report(), engineVersion: "2.0.0" };
+      throw `hwp_failed: hwp edit failed (exit 3): ${FONT_TYPE_INFO}`;
+    };
+    const error = await createTauriEngine(invoke).edit(doc, [], { report: false }).catch((error: unknown) => error) as HwpEngineError;
+    expect(error.refusal).toBe("font_type_info");
+    expect((error.cause as { engineVersion: string }).engineVersion).toBe("2.0.0");
+  });
+
   it("requests modern reports and maps a structured font refusal, ignoring contradictory fields", async () => {
     const raw = report() as { output: string };
     raw.output = "/private/staged/out.hwp";
