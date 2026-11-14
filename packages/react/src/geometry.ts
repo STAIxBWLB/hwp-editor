@@ -1,7 +1,7 @@
 /** Exact layout rows take precedence; older hosts keep the linear flow model. */
 
 import type { CatEnvelope, PageImage, Segment } from "@hwp-editor/core";
-import { segmentAtOffset, markdownLength } from "@hwp-editor/core";
+import { segmentAtOffset, markdownLength, segmentIdPath } from "@hwp-editor/core";
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -101,6 +101,44 @@ function idIndex(envelope: CatEnvelope): Map<string, Segment> {
   return index;
 }
 
+/**
+ * Paragraphs of an id-less (v1) envelope by their positional path,
+ * `section.indices` joined with dots. A layout row id carries the same path
+ * after its checksum, so rows resolve without v2 ids (#168).
+ */
+const pathIndexes = new WeakMap<CatEnvelope, Map<string, Segment>>();
+
+function pathIndex(envelope: CatEnvelope): Map<string, Segment> {
+  const cached = pathIndexes.get(envelope);
+  if (cached !== undefined) return cached;
+  const index = new Map<string, Segment>();
+  for (const segment of envelope.segments) {
+    if (segment.id !== undefined || segment.kind !== "para") continue;
+    const key = [segment.section, ...(segment.indices ?? [segment.para])].join(".");
+    if (!index.has(key)) index.set(key, segment);
+  }
+  pathIndexes.set(envelope, index);
+  return index;
+}
+
+/** The segment a layout row draws, by v2 id or, without ids, by path. */
+function rowSegment(envelope: CatEnvelope, rowId: string): Segment | undefined {
+  const byId = idIndex(envelope).get(rowId);
+  if (byId !== undefined) return byId;
+  const path = segmentIdPath(rowId);
+  return path.length === 0 ? undefined : pathIndex(envelope).get(path.join("."));
+}
+
+function hasIds(envelope: CatEnvelope): boolean {
+  return envelope.segments.some((segment) => segment.id !== undefined);
+}
+
+/** Whether a row draws this segment: same id, or same path without ids. */
+function rowDraws(envelope: CatEnvelope, rowId: string, segment: Segment): boolean {
+  if (segment.id !== undefined) return rowId === segment.id;
+  return rowSegment(envelope, rowId) === segment;
+}
+
 /** Resolve both axes in page coordinates, favoring inner text over its table. */
 export function segmentOnPage(
   envelope: CatEnvelope,
@@ -110,20 +148,19 @@ export function segmentOnPage(
   pageIndex: number,
   pageCount: number,
 ): Segment | undefined {
-  if (page.layout === undefined || !envelope.segments.some((segment) => segment.id !== undefined)) {
+  if (page.layout === undefined || (!hasIds(envelope) && page.layout.rows.every((row) => rowSegment(envelope, row.id) === undefined))) {
     return nearestSegment(envelope, pageIndex, yFraction, pageCount);
   }
   const { width_pt, height_pt, rows } = page.layout;
   const x = clamp(xFraction, 0, 1) * width_pt;
   const y = clamp(yFraction, 0, 1) * height_pt;
-  const byId = idIndex(envelope);
   let best: Segment | undefined;
   let bestVertical = Infinity;
   let bestHorizontal = Infinity;
   let bestArea = Infinity;
   for (const row of rows) {
     const box = row.box;
-    const segment = byId.get(row.id);
+    const segment = rowSegment(envelope, row.id);
     if (box === null || segment === undefined) continue;
     const dx = Math.max(box.x0 - x, 0, x - box.x1);
     const dy = Math.max(box.y0 - y, 0, y - box.y1);
@@ -145,6 +182,8 @@ export function segmentOnPage(
 }
 
 export interface RowBand {
+  /** Set on a band estimated from Markdown length because the page has no layout. */
+  approximate?: true;
   left: number;
   top: number;
   width: number;
@@ -159,10 +198,12 @@ export function bandsOnPage(
   pageIndex: number,
   pageCount: number,
 ): RowBand[] {
-  if (page.layout === undefined || segment.id === undefined) {
+  // Row geometry wins with or without v2 ids (#168). The character-fraction
+  // estimate is only for a host that publishes no layout, and says so.
+  if (page.layout === undefined) {
     const band = segmentBand(envelope, segment, pageCount);
     return band?.pageIndex === pageIndex
-      ? [{ left: 0, top: band.top, width: 100, height: band.height }]
+      ? [{ left: 0, top: band.top, width: 100, height: band.height, approximate: true }]
       : [];
   }
   // Runs, images and fields fold into their enclosing paragraph's row.
@@ -173,7 +214,7 @@ export function bandsOnPage(
         candidate.indices.every((value, index) => value === segment.indices![index])) ?? segment
     : segment;
   const { width_pt, height_pt, rows } = page.layout;
-  return rows.filter((row) => row.id === target.id && row.box !== null).map((row) => {
+  return rows.filter((row) => row.box !== null && rowDraws(envelope, row.id, target)).map((row) => {
     const box = row.box!;
     return {
       left: box.x0 / width_pt * 100,

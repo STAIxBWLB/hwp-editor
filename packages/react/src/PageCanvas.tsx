@@ -127,9 +127,9 @@ function bandsForPage(
       bands.push({
         ...band,
         key: `${isSelected ? "sel" : "pend"}-${key}-${bandIdentity(segment)}-${index}`,
-        className: isSelected
+        className: (isSelected
           ? "hwped-band hwped-band-selected"
-          : "hwped-band hwped-band-pending",
+          : "hwped-band hwped-band-pending") + (band.approximate ? " hwped-band-approximate" : ""),
       });
     }
   }
@@ -181,6 +181,7 @@ function PageView(props: {
         <div
           key={band.key}
           className={band.className}
+          data-approximate={band.className.includes("hwped-band-approximate") ? "true" : undefined}
           style={{ top: `${band.top}%`, height: `${band.height}%`, left: `${band.left}%`, width: `${band.width}%` }}
         />
       ))}
