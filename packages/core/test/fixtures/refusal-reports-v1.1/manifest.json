@@ -1,0 +1,549 @@
+{
+  "engineVersion": "2.0.0",
+  "releaseAsset": "ahwp-v2.0.0-aarch64-apple-darwin.tar.gz",
+  "releaseAssetSha256": "6ce7d60f2816d49078ea6269023bf53ed9150d02ebd5518801c65006fd7b92fc",
+  "schemaVersion": "1.1",
+  "contract": "hwp-edit-report-v1",
+  "schemaSource": "https://github.com/STAIxBWLB/agent-hwp/blob/v2.0.0/schemas/edit-report-v1.schema.json",
+  "codes": [
+    "range_tag_shift",
+    "keep_together_unsupported",
+    "section_owner_insert",
+    "section_owner_move",
+    "add_table.anchor_not_found",
+    "insert_blocks.unknown_style",
+    "insert_blocks.invalid_definition",
+    "insert_blocks.style_not_paragraph",
+    "insert_blocks.duplicate_style",
+    "insert_blocks.style_cycle",
+    "insert_blocks.style_id_overflow",
+    "layout_overflow",
+    "insert_blocks.invalid_spec",
+    "preservation_loss",
+    "unapplied_requests",
+    "no_applicable_edits",
+    "unclassified"
+  ],
+  "cases": [
+    {
+      "name": "range-tag-shift",
+      "report": "range-tag-shift.json",
+      "stderr": "range-tag-shift.stderr.txt",
+      "code": "range_tag_shift",
+      "exit": 1,
+      "command": [
+        "ahwp",
+        "edit",
+        "tagged.hwp",
+        "-o",
+        "range-tag-shift.out.hwp",
+        "--ops",
+        "range-tag-shift.ops.json",
+        "--report",
+        "range-tag-shift.report.json"
+      ],
+      "ops": "range-tag-shift.ops.json",
+      "inputEvidence": "Engine-authored JSON IR with opaque range-tag sentinel, not a Hancom-saved range-tag sample."
+    },
+    {
+      "name": "keep-together",
+      "report": "keep-together.json",
+      "stderr": "keep-together.stderr.txt",
+      "code": "keep_together_unsupported",
+      "exit": 1,
+      "command": [
+        "ahwp",
+        "edit",
+        "base.hwpx",
+        "-o",
+        "keep-together.out.hwpx",
+        "--ops",
+        "keep-together.ops.json",
+        "--report",
+        "keep-together.report.json"
+      ],
+      "ops": "keep-together.ops.json"
+    },
+    {
+      "name": "section-owner-insert",
+      "report": "section-owner-insert.json",
+      "stderr": "section-owner-insert.stderr.txt",
+      "code": "section_owner_insert",
+      "exit": 1,
+      "command": [
+        "ahwp",
+        "edit",
+        "base.hwpx",
+        "-o",
+        "section-owner-insert.out.hwpx",
+        "--ops",
+        "section-owner-insert.ops.json",
+        "--report",
+        "section-owner-insert.report.json"
+      ],
+      "ops": "section-owner-insert.ops.json"
+    },
+    {
+      "name": "section-owner-move",
+      "report": "section-owner-move.json",
+      "stderr": "section-owner-move.stderr.txt",
+      "code": "section_owner_move",
+      "exit": 1,
+      "command": [
+        "ahwp",
+        "edit",
+        "base.hwpx",
+        "-o",
+        "section-owner-move.out.hwpx",
+        "--ops",
+        "section-owner-move.ops.json",
+        "--report",
+        "section-owner-move.report.json"
+      ],
+      "ops": "section-owner-move.ops.json"
+    },
+    {
+      "name": "anchor-miss",
+      "report": "anchor-miss.json",
+      "stderr": "anchor-miss.stderr.txt",
+      "code": "add_table.anchor_not_found",
+      "exit": 1,
+      "command": [
+        "ahwp",
+        "edit",
+        "base.hwpx",
+        "-o",
+        "anchor-miss.out.hwpx",
+        "--ops",
+        "anchor-miss.ops.json",
+        "--report",
+        "anchor-miss.report.json"
+      ],
+      "ops": "anchor-miss.ops.json"
+    },
+    {
+      "name": "unknown-style",
+      "report": "unknown-style.json",
+      "stderr": "unknown-style.stderr.txt",
+      "code": "insert_blocks.unknown_style",
+      "exit": 1,
+      "command": [
+        "ahwp",
+        "edit",
+        "base.hwpx",
+        "-o",
+        "unknown-style.out.hwpx",
+        "--ops",
+        "unknown-style.ops.json",
+        "--report",
+        "unknown-style.report.json"
+      ],
+      "ops": "unknown-style.ops.json"
+    },
+    {
+      "name": "invalid-definition",
+      "report": "invalid-definition.json",
+      "stderr": "invalid-definition.stderr.txt",
+      "code": "insert_blocks.invalid_definition",
+      "exit": 1,
+      "command": [
+        "ahwp",
+        "edit",
+        "base.hwpx",
+        "-o",
+        "invalid-definition.out.hwpx",
+        "--ops",
+        "invalid-definition.ops.json",
+        "--report",
+        "invalid-definition.report.json"
+      ],
+      "ops": "invalid-definition.ops.json"
+    },
+    {
+      "name": "style-not-paragraph-resolved",
+      "report": "style-not-paragraph-resolved.json",
+      "stderr": "style-not-paragraph-resolved.stderr.txt",
+      "code": "insert_blocks.style_not_paragraph",
+      "exit": 1,
+      "command": [
+        "ahwp",
+        "edit",
+        "character-style-not-base.hwpx",
+        "-o",
+        "style-not-paragraph-resolved.out.hwpx",
+        "--ops",
+        "style-not-paragraph-resolved.ops.json",
+        "--report",
+        "style-not-paragraph-resolved.report.json"
+      ],
+      "ops": "style-not-paragraph-resolved.ops.json"
+    },
+    {
+      "name": "duplicate-style",
+      "report": "duplicate-style.json",
+      "stderr": "duplicate-style.stderr.txt",
+      "code": "insert_blocks.duplicate_style",
+      "exit": 1,
+      "command": [
+        "ahwp",
+        "edit",
+        "duplicate-style.hwpx",
+        "-o",
+        "duplicate-style.out.hwpx",
+        "--ops",
+        "duplicate-style.ops.json",
+        "--report",
+        "duplicate-style.report.json"
+      ],
+      "ops": "duplicate-style.ops.json"
+    },
+    {
+      "name": "style-cycle",
+      "report": "style-cycle.json",
+      "stderr": "style-cycle.stderr.txt",
+      "code": "insert_blocks.style_cycle",
+      "exit": 1,
+      "command": [
+        "ahwp",
+        "edit",
+        "base.hwpx",
+        "-o",
+        "style-cycle.out.hwpx",
+        "--ops",
+        "style-cycle.ops.json",
+        "--report",
+        "style-cycle.report.json"
+      ],
+      "ops": "style-cycle.ops.json"
+    },
+    {
+      "name": "style-id-overflow",
+      "report": "style-id-overflow.json",
+      "stderr": "style-id-overflow.stderr.txt",
+      "code": "insert_blocks.style_id_overflow",
+      "exit": 1,
+      "command": [
+        "ahwp",
+        "edit",
+        "style-overflow.hwpx",
+        "-o",
+        "style-id-overflow.out.hwp",
+        "--ops",
+        "style-id-overflow.ops.json",
+        "--report",
+        "style-id-overflow.report.json"
+      ],
+      "ops": "style-id-overflow.ops.json"
+    },
+    {
+      "name": "layout-overflow",
+      "report": "layout-overflow.json",
+      "stderr": "layout-overflow.stderr.txt",
+      "code": "layout_overflow",
+      "exit": 1,
+      "command": [
+        "ahwp",
+        "edit",
+        "base.hwpx",
+        "-o",
+        "layout-overflow.out.hwpx",
+        "--ops",
+        "layout-overflow.ops.json",
+        "--report",
+        "layout-overflow.report.json"
+      ],
+      "ops": "layout-overflow.ops.json"
+    },
+    {
+      "name": "invalid-spec-cell-count",
+      "report": "invalid-spec-cell-count.json",
+      "stderr": "invalid-spec-cell-count.stderr.txt",
+      "code": "insert_blocks.invalid_spec",
+      "exit": 1,
+      "command": [
+        "ahwp",
+        "edit",
+        "base.hwpx",
+        "-o",
+        "invalid-spec-cell-count.out.hwpx",
+        "--ops",
+        "invalid-spec-cell-count.ops.json",
+        "--report",
+        "invalid-spec-cell-count.report.json"
+      ],
+      "ops": "invalid-spec-cell-count.ops.json"
+    },
+    {
+      "name": "preservation-font",
+      "report": "preservation-font.json",
+      "stderr": "preservation-font.stderr.txt",
+      "code": "preservation_loss",
+      "exit": 1,
+      "command": [
+        "ahwp",
+        "edit",
+        "font-type-info.hwpx",
+        "-o",
+        "preservation-font.out.hwp",
+        "--ops",
+        "preservation-font.ops.json",
+        "--report",
+        "preservation-font.report.json"
+      ],
+      "ops": "preservation-font.ops.json"
+    },
+    {
+      "name": "unapplied-replace",
+      "report": "unapplied-replace.json",
+      "stderr": "unapplied-replace.stderr.txt",
+      "code": "unapplied_requests",
+      "exit": 1,
+      "command": [
+        "ahwp",
+        "edit",
+        "base.hwpx",
+        "-o",
+        "unapplied-replace.out.hwpx",
+        "--ops",
+        "unapplied-replace.ops.json",
+        "--report",
+        "unapplied-replace.report.json"
+      ],
+      "ops": "unapplied-replace.ops.json"
+    },
+    {
+      "name": "no-applicable-allowed",
+      "report": "no-applicable-allowed.json",
+      "stderr": "no-applicable-allowed.stderr.txt",
+      "code": "no_applicable_edits",
+      "exit": 1,
+      "command": [
+        "ahwp",
+        "edit",
+        "base.hwpx",
+        "-o",
+        "no-applicable-allowed.out.hwpx",
+        "--ops",
+        "no-applicable-allowed.ops.json",
+        "--report",
+        "no-applicable-allowed.report.json",
+        "--allow-partial"
+      ],
+      "ops": "no-applicable-allowed.ops.json"
+    },
+    {
+      "name": "legacy-row",
+      "report": "legacy-row.json",
+      "stderr": "legacy-row.stderr.txt",
+      "code": "unclassified",
+      "exit": 1,
+      "command": [
+        "ahwp",
+        "edit",
+        "base.hwpx",
+        "-o",
+        "legacy-row.out.hwpx",
+        "--add-row",
+        "99",
+        "--report",
+        "legacy-row.report.json"
+      ]
+    },
+    {
+      "name": "unapplied-mixed",
+      "report": "unapplied-mixed.json",
+      "stderr": "unapplied-mixed.stderr.txt",
+      "code": "unapplied_requests",
+      "exit": 1,
+      "command": [
+        "ahwp",
+        "edit",
+        "base.hwpx",
+        "-o",
+        "unapplied-mixed.out.hwpx",
+        "--ops",
+        "unapplied-mixed.ops.json",
+        "--report",
+        "unapplied-mixed.report.json"
+      ],
+      "ops": "unapplied-mixed.ops.json"
+    },
+    {
+      "name": "preservation-range-tag",
+      "report": "preservation-range-tag.json",
+      "stderr": "preservation-range-tag.stderr.txt",
+      "code": "preservation_loss",
+      "exit": 1,
+      "command": [
+        "ahwp",
+        "edit",
+        "tagged.hwp",
+        "-o",
+        "preservation-range-tag.out.hwpx",
+        "--ops",
+        "preservation-range-tag.ops.json",
+        "--report",
+        "preservation-range-tag.report.json"
+      ],
+      "ops": "preservation-range-tag.ops.json",
+      "inputEvidence": "Engine-authored JSON IR with opaque range-tag sentinel, not a Hancom-saved range-tag sample."
+    },
+    {
+      "name": "run-conflict-resolved",
+      "report": "run-conflict-resolved.json",
+      "stderr": "run-conflict-resolved.stderr.txt",
+      "code": "unclassified",
+      "exit": 1,
+      "command": [
+        "ahwp",
+        "edit",
+        "base.hwpx",
+        "-o",
+        "run-conflict-resolved.out.hwpx",
+        "--ops",
+        "run-conflict-resolved.ops.json",
+        "--report",
+        "run-conflict-resolved.report.json"
+      ],
+      "ops": "run-conflict-resolved.ops.json"
+    },
+    {
+      "name": "address-unresolvable-valid",
+      "report": "address-unresolvable-valid.json",
+      "stderr": "address-unresolvable-valid.stderr.txt",
+      "code": "unclassified",
+      "exit": 1,
+      "command": [
+        "ahwp",
+        "edit",
+        "base.hwpx",
+        "-o",
+        "address-unresolvable-valid.out.hwpx",
+        "--ops",
+        "address-unresolvable-valid.ops.json",
+        "--report",
+        "address-unresolvable-valid.report.json"
+      ],
+      "ops": "address-unresolvable-valid.ops.json"
+    },
+    {
+      "name": "protected-encrypted",
+      "report": "protected-encrypted.json",
+      "stderr": "protected-encrypted.stderr.txt",
+      "code": "unclassified",
+      "exit": 1,
+      "command": [
+        "ahwp",
+        "edit",
+        "protected-encrypted.hwp",
+        "-o",
+        "protected-encrypted.out.hwp",
+        "--ops",
+        "protected-encrypted.ops.json",
+        "--report",
+        "protected-encrypted.report.json"
+      ],
+      "ops": "protected-encrypted.ops.json",
+      "inputEvidence": "Controlled HWP5 FileHeader protection flag, not a genuinely encrypted/signed document."
+    },
+    {
+      "name": "protected-drm",
+      "report": "protected-drm.json",
+      "stderr": "protected-drm.stderr.txt",
+      "code": "unclassified",
+      "exit": 1,
+      "command": [
+        "ahwp",
+        "edit",
+        "protected-drm.hwp",
+        "-o",
+        "protected-drm.out.hwp",
+        "--ops",
+        "protected-drm.ops.json",
+        "--report",
+        "protected-drm.report.json"
+      ],
+      "ops": "protected-drm.ops.json",
+      "inputEvidence": "Controlled HWP5 FileHeader protection flag, not a genuinely encrypted/signed document."
+    },
+    {
+      "name": "protected-cert-encrypted",
+      "report": "protected-cert-encrypted.json",
+      "stderr": "protected-cert-encrypted.stderr.txt",
+      "code": "unclassified",
+      "exit": 1,
+      "command": [
+        "ahwp",
+        "edit",
+        "protected-cert-encrypted.hwp",
+        "-o",
+        "protected-cert-encrypted.out.hwp",
+        "--ops",
+        "protected-cert-encrypted.ops.json",
+        "--report",
+        "protected-cert-encrypted.report.json"
+      ],
+      "ops": "protected-cert-encrypted.ops.json",
+      "inputEvidence": "Controlled HWP5 FileHeader protection flag, not a genuinely encrypted/signed document."
+    },
+    {
+      "name": "protected-cert-drm",
+      "report": "protected-cert-drm.json",
+      "stderr": "protected-cert-drm.stderr.txt",
+      "code": "unclassified",
+      "exit": 1,
+      "command": [
+        "ahwp",
+        "edit",
+        "protected-cert-drm.hwp",
+        "-o",
+        "protected-cert-drm.out.hwp",
+        "--ops",
+        "protected-cert-drm.ops.json",
+        "--report",
+        "protected-cert-drm.report.json"
+      ],
+      "ops": "protected-cert-drm.ops.json",
+      "inputEvidence": "Controlled HWP5 FileHeader protection flag, not a genuinely encrypted/signed document."
+    },
+    {
+      "name": "protected-signed",
+      "report": "protected-signed.json",
+      "stderr": "protected-signed.stderr.txt",
+      "code": "unclassified",
+      "exit": 1,
+      "command": [
+        "ahwp",
+        "edit",
+        "protected-signed.hwp",
+        "-o",
+        "protected-signed.out.hwp",
+        "--ops",
+        "protected-signed.ops.json",
+        "--report",
+        "protected-signed.report.json"
+      ],
+      "ops": "protected-signed.ops.json",
+      "inputEvidence": "Controlled HWP5 FileHeader protection flag, not a genuinely encrypted/signed document."
+    },
+    {
+      "name": "invalid-definition-compile",
+      "report": "invalid-definition-compile.json",
+      "stderr": "invalid-definition-compile.stderr.txt",
+      "ops": "invalid-definition-compile.ops.json",
+      "code": "insert_blocks.invalid_definition",
+      "exit": 1,
+      "command": [
+        "ahwp",
+        "edit",
+        "broken-style.hwpx",
+        "-o",
+        "invalid-definition-compile-out.hwpx",
+        "--ops",
+        "invalid-definition-compile.ops.json",
+        "--report",
+        "invalid-definition-compile.report.json"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+Error: 스타일 'body'의 정의를 해석할 수 없습니다: compile_error at $.styles.body: target style has a dangling shape reference. styles와 원본 문서의 서식 참조/표 크기를 확인한 뒤 다시 시도하세요

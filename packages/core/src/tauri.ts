@@ -1,6 +1,6 @@
 import { parsePageLayout } from "./layout.js";
-import { classifyEditRefusal, editRefusalMarker, isEditRefusalKind } from "./refusals.js";
-import { classifyInsertionRefusal, engineErrorReason, insertionRefusalLine, isInsertionRefusal, STOPPED_WITHOUT_DIAGNOSTIC, unclassifiedEditLine } from "./insertion-refusals.js";
+import { classifyEditRefusal, editRefusalMarker, isEditRefusalKind, reportRefusalFields } from "./refusals.js";
+import { classifyInsertionRefusal, engineErrorReason, insertionRefusalLine, isInsertionRefusal, STOPPED_WITHOUT_DIAGNOSTIC, unclassifiedEditLine, withoutPaths } from "./insertion-refusals.js";
 import type { InsertionRefusal } from "./insertion-refusals.js";
 import type { EditRefusalKind } from "./refusals.js";
 /**
@@ -43,7 +43,7 @@ import type { DocumentSpecV2 } from "./generated/document-spec-v2.js";
 import type { TemplateDataV1, TemplateSpecV1 } from "./spec.js";
 import type { LintProfile } from "./templates.js";
 import { parseEmbeddedTemplates, parseFillReport, parseLintReport, parseTemplateInputs, parseTemplateMethods, parseTemplateReport, reportObject, reportString } from "./templates.js";
-import { parseEditReport, withCallerName } from "./edit-report.js";
+import { parseEditReport, sanitizeEditReport, refusalCodesSupported, legacyRefusalSupported } from "./edit-report.js";
 import type { EditReport } from "./edit-report.js";
 import type {
   ComposeResponse,
@@ -147,10 +147,12 @@ function prefixToCode(detail: string): HwpErrorCode {
  * No `status` is set: there is no HTTP status on this bridge, and
  * synthesizing one would invent information.
  */
-function toEngineError(cmd: string, error: unknown, insertion = false): HwpEngineError {
-  // Forward compatibility (Phase 7 / EXT-04): every hwped_* command is
-  // `-> Result<T, String>` today, so this branch is dead now and goes live
-  // for free when the Rust side moves to a structured Err.
+interface EditFailureContext { version: string; name: string }
+
+function toEngineError(cmd: string, error: unknown, insertion = false, context?: EditFailureContext): HwpEngineError {
+  // Old hosts reject with a string. A host that carries refused edit reports
+  // rejects with the additive ErrorResponse-shaped object instead (#119).
+  // Both forms remain supported; only explicit old versions permit text classification.
   if (typeof error === "object" && error !== null && !(error instanceof Error)) {
     const rec = error as {
       code?: unknown;
@@ -159,26 +161,52 @@ function toEngineError(cmd: string, error: unknown, insertion = false): HwpEngin
       insertion?: unknown;
       stopped?: unknown;
       noCause?: unknown;
+      report?: unknown;
+      engineVersion?: unknown;
     };
     if (typeof rec.code === "string") {
-      const detail =
-        typeof rec.message === "string" ? rec.message : String(error);
-      return new HwpEngineError(
-        // Narrowed, never cast: a future (or compromised) command handler
-        // cannot inject a value outside the union into a typed field.
-        toHwpErrorCode(rec.code),
-        `${cmd} failed: ${detail}`,
-        {
-          cause: error,
-          // The same fields the HTTP body carries, narrowed the same way (#88),
-          // and the marker read the way the HTTP client reads it too: only
-          // `true` counts (#91).
+      const detail = typeof rec.message === "string" ? rec.message : String(error);
+      const code = toHwpErrorCode(rec.code);
+      const protectedReason = protectedReasonFor(cmd, code, detail);
+      let fields: { refusal?: EditRefusalKind; insertion?: InsertionRefusal } = {};
+      let cause: unknown = error;
+      let message = withoutPaths(detail);
+      if (rec.report !== undefined) {
+        try {
+          const report = sanitizeEditReport(parseEditReport(rec.report), context?.name ?? "document");
+          if (code === "failed" && protectedReason === null) fields = reportRefusalFields(report);
+          const safeError = { ...rec, report };
+          delete safeError.refusal;
+          delete safeError.insertion;
+          delete safeError.stopped;
+          delete safeError.noCause;
+          cause = safeError;
+          if (fields.refusal !== undefined) message = editRefusalMarker(fields.refusal);
+          else if (fields.insertion !== undefined) message = `insert_blocks refused: ${fields.insertion.kind}`;
+        } catch {
+          message = "Invalid refused edit report; upgrade the host adapter and retry the edit.";
+          const safeError = { ...rec };
+          delete safeError.report;
+          delete safeError.refusal;
+          delete safeError.insertion;
+          delete safeError.stopped;
+          delete safeError.noCause;
+          cause = safeError;
+        }
+      } else if (code === "failed" && protectedReason === null &&
+          legacyRefusalSupported(context?.version ?? rec.engineVersion) &&
+          (rec.engineVersion === undefined || legacyRefusalSupported(rec.engineVersion))) {
+        fields = {
           ...(isEditRefusalKind(rec.refusal) ? { refusal: rec.refusal } : {}),
           ...(isInsertionRefusal(rec.insertion) ? { insertion: rec.insertion } : {}),
-          ...(rec.stopped === true ? { stopped: true as const } : {}),
-          ...(rec.noCause === true ? { noCause: true as const } : {}),
-        },
-      );
+        };
+      }
+      if (protectedReason !== null) return new HwpEngineError("protected", `${cmd} failed: ${protectedReason}`, { cause });
+      return new HwpEngineError(code, `${cmd} failed: ${message}`, {
+        cause, ...fields,
+        ...(rec.report === undefined && rec.stopped === true ? { stopped: true as const } : {}),
+        ...(rec.report === undefined && rec.noCause === true ? { noCause: true as const } : {}),
+      });
     }
   }
   const detail = error instanceof Error ? error.message : String(error);
@@ -189,7 +217,7 @@ function toEngineError(cmd: string, error: unknown, insertion = false): HwpEngin
       cause: error,
     });
   }
-  const edit = editFailure(cmd, code, detail, insertion);
+  const edit = editFailure(cmd, code, detail, insertion, legacyRefusalSupported(context?.version));
   if (edit !== null) {
     return new HwpEngineError(code, `${cmd} failed: ${edit.message}`, { cause: error, ...edit.fields });
   }
@@ -243,6 +271,7 @@ function editFailure(
   code: HwpErrorCode,
   detail: string,
   insertion: boolean,
+  legacy: boolean,
 ): { message: string; fields: { refusal?: EditRefusalKind; insertion?: InsertionRefusal; stopped?: true; noCause?: true } } | null {
   if (code !== "failed" || cmd !== "hwped_edit") return null;
   const failure = MARU_EDIT_FAILURE.exec(detail);
@@ -250,11 +279,11 @@ function editFailure(
   const head = failure[1]!;
   const workDir = maruWorkDir(failure[2]);
   const stderr = failure[3]!;
-  const kind = classifyEditRefusal(stderr);
+  const kind = legacy ? classifyEditRefusal(stderr) : undefined;
   if (kind !== undefined) return { message: `${head}: ${editRefusalMarker(kind)}`, fields: { refusal: kind } };
   if (stderr.trim() === "") return { message: `${head}: ${STOPPED_WITHOUT_DIAGNOSTIC}`, fields: { stopped: true } };
   const noCause = engineErrorReason(stderr, workDir) === undefined ? { noCause: true as const } : {};
-  if (insertion) {
+  if (insertion && legacy) {
     const cls = classifyInsertionRefusal(stderr);
     return {
       message: `${head}: ${insertionRefusalLine(stderr, workDir)}`,
@@ -321,7 +350,7 @@ export function createTauriEngine(
       : {};
   }
 
-  async function call<T>(cmd: string, args: Record<string, unknown>, insertion = false): Promise<T> {
+  async function call<T>(cmd: string, args: Record<string, unknown>, insertion = false, context?: EditFailureContext): Promise<T> {
     try {
       return await invoke<T>(cmd, args);
     } catch (error) {
@@ -339,7 +368,7 @@ export function createTauriEngine(
           { cause: error },
         );
       }
-      throw toEngineError(cmd, error, insertion);
+      throw toEngineError(cmd, error, insertion, context);
     }
   }
 
@@ -446,9 +475,9 @@ export function createTauriEngine(
         ...(effective.allowPartial !== undefined
           ? { allowPartial: effective.allowPartial }
           : {}),
-        ...(wantsReport ? { report: true } : {}),
+        ...(wantsReport || refusalCodesSupported(caps.version) ? { report: true } : {}),
         ...scope(),
-      }, ops.some(op => op.kind === "insert-blocks"));
+      }, ops.some(op => op.kind === "insert-blocks"), { version: caps.version, name: document.name });
       let report: EditReport | undefined;
       if (wantsReport && res.report !== undefined) {
         try {
@@ -470,7 +499,7 @@ export function createTauriEngine(
       // The host's report names the `-o` path it staged the document at, and a
       // caller has no business seeing it: the same rewrite the CLI server's
       // engine and its HTTP route apply.
-      const named = report === undefined ? undefined : withCallerName(report, res.name);
+      const named = report === undefined ? undefined : sanitizeEditReport(report, res.name);
       return { name: res.name, data: base64.decode(res.dataBase64), ...(named === undefined ? {} : { report: named }) };
     },
 

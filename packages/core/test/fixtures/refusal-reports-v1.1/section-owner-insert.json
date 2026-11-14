@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.1",
+  "contract": "hwp-edit-report-v1",
+  "output": "section-owner-insert.out.hwpx",
+  "dry_run": false,
+  "ops": [
+    {
+      "index": 0,
+      "op": "insert_blocks",
+      "status": "failed",
+      "pieces_touched": 0,
+      "changed": [],
+      "reason": "insert_blocks: refused (section_owner_insert)",
+      "refusal": {
+        "code": "section_owner_insert",
+        "values": {},
+        "message": "구역 설정 문단 앞에 삽입하게 되어 거부했습니다"
+      }
+    }
+  ],
+  "applied_count": 0,
+  "failed_count": 1,
+  "refusal": {
+    "code": "section_owner_insert",
+    "values": {},
+    "message": "구역 설정 문단 앞에 삽입하게 되어 거부했습니다"
+  }
+}

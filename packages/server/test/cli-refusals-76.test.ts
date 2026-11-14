@@ -15,6 +15,7 @@ import { createCliEngine, HwpCliError } from "../src/cli-engine.js";
 import { createFakeBin, disposeFakeBins } from "./fake-bin.js";
 import { readFileSync } from "node:fs";
 
+const FONT_REPORT = readFileSync(new URL("../../core/test/fixtures/refusal-reports-v1.1/preservation-font.json", import.meta.url), "utf8");
 const FONT_TYPE_INFO = readFileSync(new URL("../../core/test/fixtures/font-type-info-stderr.txt", import.meta.url), "utf8");
 
 afterEach(disposeFakeBins);
@@ -168,7 +169,7 @@ describe("resolver refusal across HTTP (#85)", () => {
 
 describe("output validation across HTTP (#171)", () => {
   it.each([false, true])("carries the 2.0.0 output-validation class, including an insertion batch (%s)", async (insertion) => {
-    const { bin } = createFakeBin({ version: "2.0.0", mode: "fail", info: "{}", editStderrLines: FONT_TYPE_INFO.trimEnd().split("\n") });
+    const { bin } = createFakeBin({ version: "2.0.0", mode: "fail", info: "{}", editStderrLines: FONT_TYPE_INFO.trimEnd().split("\n"), editRefusalReport: FONT_REPORT });
     const handler = createHwpEditorHandler({ engine: createCliEngine({ bin }), sessions: false });
     const engine = createHttpEngine("http://localhost/api/hwp-editor", {
       fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -183,9 +184,9 @@ describe("output validation across HTTP (#171)", () => {
       : OPS;
     const error = await engine.edit({ name: "a.hwpx", data: hwpxBytes() }, ops).catch((cause: unknown) => cause);
     expect(error).toBeInstanceOf(HwpEngineError);
-    expect(error).toMatchObject({ code: "failed", refusal: "output_validation" });
+    expect(error).toMatchObject({ code: "failed", refusal: "font_type_info" });
     if (!(error instanceof HwpEngineError)) throw new Error("Expected a typed engine refusal");
-    expect(error.message).toContain("edit refused: output_validation");
+    expect(error.message).toContain("edit refused: font_type_info");
     expect(error.message).not.toContain("font-refused.hwp");
     expect(error.message).not.toContain("insert_blocks refused");
   });

@@ -1,0 +1,7 @@
+[
+  {
+    "op": "replace",
+    "from": "absent",
+    "to": "x"
+  }
+]

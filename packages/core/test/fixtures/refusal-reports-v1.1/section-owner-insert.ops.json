@@ -1,0 +1,26 @@
+[
+  {
+    "op": "insert_blocks",
+    "address": {
+      "at": {
+        "section": 0,
+        "paragraph": 0
+      }
+    },
+    "position": "before",
+    "missing_style": "create",
+    "styles": {},
+    "blocks": [
+      {
+        "type": "paragraph",
+        "style": "body",
+        "runs": [
+          {
+            "type": "text",
+            "text": "x"
+          }
+        ]
+      }
+    ]
+  }
+]

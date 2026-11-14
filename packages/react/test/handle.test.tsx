@@ -401,6 +401,80 @@ describe("onError", () => {
     expect(shown.cause).toBe(cause);
   });
 
+  describe.each(["en", "ko"] as const)("structured refusal Apply dispatch in %s (#119)", (locale) => {
+    it.each([
+      ["keep_together_unsupported", "error.keepTogetherUnsupported"],
+      ["section_owner", "error.sectionOwner"],
+      ["anchor_not_found", "error.anchorNotFound"],
+      ["font_type_info", "error.fontTypeInfo"],
+      ["preservation_loss", "error.preservationLoss"],
+      ["unapplied_requests", "error.unappliedRequests"],
+      ["no_applicable_edits", "error.noApplicableEdits"],
+      ["unclassified_refusal", "error.unclassifiedRefusal"],
+    ] as const)("shows %s and preserves the host error", async (refusal, key) => {
+      const messages = locale === "en" ? en : ko;
+      const cause = new Error("the engine report named this refusal");
+      const boom = new HwpEngineError("failed", "prose contains no trustworthy classification", {
+        refusal, status: 422, cause,
+      });
+      const engine = createMockEngine();
+      engine.edit = async () => { throw boom; };
+      const onError = vi.fn();
+      render(<HwpEditor locale={locale} engine={engine} file={file} onError={onError} />);
+      const page = await screen.findByRole("button", { name: messages["page.label"]({ page: 1 }) });
+      fireEvent.click(page, { clientY: clientYForPara(makeEnvelope(), 0) });
+      await screen.findByText("1. 회의록");
+      fireEvent.change(screen.getByLabelText(messages["segment.replaceLabel"]), { target: { value: "2. 회의록" } });
+      fireEvent.click(screen.getByRole("button", { name: messages["segment.replaceSubmit"] }));
+      await screen.findByText(messages["toolbar.pendingEdits"]({ count: 1 }));
+      fireEvent.click(screen.getByRole("button", { name: messages["toolbar.applyWithCount"]({ count: 1 }) }));
+      const alerts = await screen.findAllByRole("alert");
+      expect(alerts.map((alert) => alert.textContent ?? "").join(" ")).toContain(messages[key]);
+      expect(onError).toHaveBeenCalledTimes(1);
+      expect(onError.mock.calls[0]?.[0]).toBe(boom);
+      expect(boom.refusal).toBe(refusal);
+      expect(boom.status).toBe(422);
+      expect(boom.cause).toBe(cause);
+    });
+  });
+
+  describe.each(["en", "ko"] as const)("insertion refusal Apply dispatch in %s (#119)", (locale) => {
+    it.each([
+      { kind: "unknown_style", style: "결재란 셀" },
+      { kind: "invalid_definition" },
+      { kind: "layout_overflow", blockMm: 240.5, insertionMm: 46.4 },
+    ] as const)("localizes $kind and preserves the original host error", async (insertion) => {
+      const messages = locale === "en" ? en : ko;
+      const expected = insertion.kind === "unknown_style"
+        ? messages["components.unknownStyle"]({ style: insertion.style })
+        : insertion.kind === "layout_overflow"
+          ? messages["components.tooWide"]({ width: "240.5 mm", available: "46.4 mm" })
+          : messages["components.invalidDefinition"];
+      const cause = new Error("the report supplied an insertion refusal");
+      const boom = new HwpEngineError("failed", "untrusted marker text is not the localized cause", {
+        insertion, status: 422, cause,
+      });
+      const engine = createMockEngine();
+      engine.edit = async () => { throw boom; };
+      const onError = vi.fn();
+      render(<HwpEditor locale={locale} engine={engine} file={file} onError={onError} />);
+      const page = await screen.findByRole("button", { name: messages["page.label"]({ page: 1 }) });
+      fireEvent.click(page, { clientY: clientYForPara(makeEnvelope(), 0) });
+      await screen.findByText("1. 회의록");
+      fireEvent.change(screen.getByLabelText(messages["segment.replaceLabel"]), { target: { value: "2. 회의록" } });
+      fireEvent.click(screen.getByRole("button", { name: messages["segment.replaceSubmit"] }));
+      await screen.findByText(messages["toolbar.pendingEdits"]({ count: 1 }));
+      fireEvent.click(screen.getByRole("button", { name: messages["toolbar.applyWithCount"]({ count: 1 }) }));
+      const alerts = await screen.findAllByRole("alert");
+      expect(alerts.map((alert) => alert.textContent ?? "").join(" ")).toContain(expected);
+      expect(onError).toHaveBeenCalledTimes(1);
+      expect(onError.mock.calls[0]?.[0]).toBe(boom);
+      expect(boom.insertion).toEqual(insertion);
+      expect(boom.cause).toBe(cause);
+      expect(boom.status).toBe(422);
+    });
+  });
+
   it.each(["en", "ko"] as const)("localizes output-validation apply failures in %s and keeps the host error (#171)", async (locale) => {
     const messages = locale === "en" ? en : ko;
     const boom = new HwpEngineError("failed", "ahwp edit failed (exit 1): edit refused: output_validation", {

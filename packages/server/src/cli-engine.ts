@@ -1,5 +1,5 @@
 import { createTemplateCommands } from "./template-engine.js";
-import { classifyEditRefusal, classifyInsertionRefusal, editRefusalMarker, engineErrorReason, FILE_LINE_HEAD, insertionRefusalLine, STOPPED_WITHOUT_DIAGNOSTIC, unclassifiedEditLine, type EditRefusalKind, type InsertionRefusal, TEMPLATE_METHODS, templateVersionSupported, parseEditReport, withCallerName, presetBatchOptions, readPresetBatch, type EditReport, type TemplateInputs, type FillResult, type LintReport, type LintProfile, type EmbeddedTemplate, type TemplateSpecV1, type TemplateDataV1 } from "@hwp-editor/core";
+import { classifyEditRefusal, classifyInsertionRefusal, editRefusalMarker, engineErrorReason, FILE_LINE_HEAD, insertionRefusalLine, STOPPED_WITHOUT_DIAGNOSTIC, unclassifiedEditLine, type EditRefusalKind, type InsertionRefusal, TEMPLATE_METHODS, templateVersionSupported, parseEditReport, refusalCodesSupported, reportRefusalFields, sanitizeEditReport, presetBatchOptions, readPresetBatch, type EditReport, type TemplateInputs, type FillResult, type LintReport, type LintProfile, type EmbeddedTemplate, type TemplateSpecV1, type TemplateDataV1 } from "@hwp-editor/core";
 /**
  * CliEngine — HwpEngine implementation that shells out to the hwp-cli binary.
  *
@@ -21,7 +21,7 @@ import { classifyEditRefusal, classifyInsertionRefusal, editRefusalMarker, engin
 
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFile, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -228,6 +228,10 @@ export class HwpCliError extends Error {
     stopped?: true,
     /** The no-Error-line marker (#140), sent the same way. */
     noCause?: true,
+    /** Validated report from a refused edit, with staged paths removed. */
+    public readonly report?: EditReport,
+    /** Actual engine version used for this edit, for legacy fallback gates. */
+    public readonly engineVersion?: string,
   ) {
     super(message);
     this.name = "HwpCliError";
@@ -843,7 +847,7 @@ function rethrowUploadedImageFailure(error: unknown, imageOnly: boolean, inserti
         ? `${reason}. ${IMAGE_ONLY_STEP}`
         : unclassifiedEditLine(failure.stderr, workDir);
       throw new HwpCliError("failed", `${failure.message}: ${line}`, failure.stderr, failure.detail,
-        undefined, undefined, undefined, noCauseMarker(failure.stderr, workDir));
+        undefined, undefined, undefined, noCauseMarker(failure.stderr ?? "", workDir));
     }
     throw failure;
   }
@@ -908,6 +912,43 @@ function rethrowUnmatchedEditRefusal(error: unknown, workDir?: string): never {
         noCauseMarker(error.stderr, workDir),
       );
     }
+  }
+  throw error;
+}
+
+/** Read and redact the report before the per-call stage directory disappears. */
+async function readEditReport(file: string, name: string, workDir: string): Promise<EditReport | undefined> {
+  try {
+    if ((await stat(file)).size > HWP_MAX_BUFFER) return undefined;
+    return sanitizeEditReport(parseEditReport(JSON.parse(await readFile(file, "utf8"))), name, workDir);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Modern edit failures never fall back to a stderr semantic classifier. */
+async function rethrowReportedEditFailure(error: unknown, file: string, name: string, version: string, workDir: string): Promise<never> {
+  // Document-open protection has no specific edit-report code yet. It stays
+  // ahead of edit refusal mapping, including reports whose code is unclassified.
+  try { return rethrowProtected(error); }
+  catch (failure) {
+    if (!(failure instanceof HwpCliError) || failure.reason !== "failed") throw failure;
+    const report = await readEditReport(file, name, workDir);
+    const fields: { refusal?: EditRefusalKind; insertion?: InsertionRefusal } = report === undefined ? {} : reportRefusalFields(report);
+    const line = fields.refusal !== undefined ? editRefusalMarker(fields.refusal)
+      : fields.insertion !== undefined ? `insert_blocks refused: ${fields.insertion.kind}`
+      : failure.stopped === true ? STOPPED_WITHOUT_DIAGNOSTIC : unclassifiedEditLine(failure.stderr ?? "", workDir);
+    throw new HwpCliError("failed", `${failure.message}: ${line}`, failure.stderr, failure.detail,
+      fields.refusal, fields.insertion, report?.refusal === undefined ? failure.stopped : undefined,
+      report?.refusal === undefined ? failure.noCause ?? noCauseMarker(failure.stderr ?? "", workDir) : undefined, report, version);
+  }
+}
+
+/** Carry the explicit old engine version with legacy semantic fields. */
+function rethrowLegacyEditFailure(error: unknown, version: string): never {
+  if (error instanceof HwpCliError) {
+    throw new HwpCliError(error.reason, error.message, error.stderr, error.detail,
+      error.refusal, error.insertion, error.stopped, error.noCause, undefined, version);
   }
   throw error;
 }
@@ -1679,6 +1720,8 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
       // obey, so this engine cannot drift out of step with them.
       const effective = presetBatchOptions(ops, options);
       const wantsReport = effective.report === true;
+      const editVersion = hostVersion;
+      const wantsRefusalReport = refusalCodesSupported(editVersion);
       const allowPartial = effective.allowPartial === true;
       const edited = await withWorkDir(async (dir) => {
         const input = await stage(dir, document);
@@ -1741,11 +1784,17 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
         // work dir is removed; a truncated or absent file stays absent rather
         // than becoming empty ids the caller could act on.
         const reportPath = path.join(dir, "edit-report.json");
-        if (wantsReport) args.push("--report", reportPath);
-        await runCliOk(bin, args, timeoutMs, opts.locale, call?.signal).catch(options.assets?.length
-          ? error => rethrowUploadedImageFailure(error, ops.every(op => op.kind === "insert-image"), ops.some(op => op.kind === "insert-blocks"), dir)
-          : rethrowProtected).catch(error => rethrowInsertBlocksRefusal(error, ops.some(op => op.kind === "insert-blocks"), dir))
-          .catch(error => rethrowUnmatchedEditRefusal(error, dir));
+        if (wantsReport || wantsRefusalReport) args.push("--report", reportPath);
+        const invocation = runCliOk(bin, args, timeoutMs, opts.locale, call?.signal);
+        if (wantsRefusalReport) {
+          await invocation.catch(error => rethrowReportedEditFailure(error, reportPath, document.name, editVersion, dir));
+        } else {
+          await invocation.catch(options.assets?.length
+            ? error => rethrowUploadedImageFailure(error, ops.every(op => op.kind === "insert-image"), ops.some(op => op.kind === "insert-blocks"), dir)
+            : rethrowProtected).catch(error => rethrowInsertBlocksRefusal(error, ops.some(op => op.kind === "insert-blocks"), dir))
+            .catch(error => rethrowUnmatchedEditRefusal(error, dir))
+            .catch(error => rethrowLegacyEditFailure(error, editVersion));
+        }
         const data = new Uint8Array(await readFile(output));
         if (!wantsReport) return { name: document.name, data };
         let report: EditReport | undefined;
@@ -1754,9 +1803,9 @@ export function createCliEngine(opts: CliEngineOptions = {}): CliEngine {
           // work dir. A caller has no business seeing where the document was
           // staged (the same rule `runCliOk` enforces on stderr), so the
           // caller's own name replaces it before the report leaves here.
-          report = withCallerName(
+          report = sanitizeEditReport(
             parseEditReport(JSON.parse(await readFile(reportPath, "utf8"))),
-            document.name,
+            document.name, dir,
           );
         } catch {
           // A host that answers without a readable report is a host whose ids

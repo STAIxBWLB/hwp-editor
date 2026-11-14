@@ -98,3 +98,9 @@ pnpm --filter playground seed
 pnpm --filter playground exec playwright install chromium
 pnpm --filter playground test:e2e
 ```
+
+
+## Review background
+
+The edit-refusal code boundary, legacy fallback and protection evidence are
+explained in [Edit refusal reports](docs/edit-refusal-reports.md).

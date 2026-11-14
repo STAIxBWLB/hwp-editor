@@ -1,0 +1,36 @@
+[
+  {
+    "op": "insert_blocks",
+    "address": {
+      "at": {
+        "section": 0,
+        "paragraph": 0
+      }
+    },
+    "position": "after",
+    "missing_style": "create",
+    "styles": {},
+    "blocks": [
+      {
+        "type": "table",
+        "columns": [
+          {
+            "width_mm": 40
+          },
+          {
+            "width_mm": 40
+          }
+        ],
+        "rows": [
+          {
+            "cells": [
+              {
+                "blocks": []
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]

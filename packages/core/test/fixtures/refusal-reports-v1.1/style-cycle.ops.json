@@ -1,0 +1,33 @@
+[
+  {
+    "op": "insert_blocks",
+    "address": {
+      "at": {
+        "section": 0,
+        "paragraph": 0
+      }
+    },
+    "position": "after",
+    "missing_style": "create",
+    "styles": {
+      "cycleA": {
+        "based_on": "cycleB"
+      },
+      "cycleB": {
+        "based_on": "cycleA"
+      }
+    },
+    "blocks": [
+      {
+        "type": "paragraph",
+        "style": "cycleA",
+        "runs": [
+          {
+            "type": "text",
+            "text": "x"
+          }
+        ]
+      }
+    ]
+  }
+]

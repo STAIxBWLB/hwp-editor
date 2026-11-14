@@ -125,6 +125,8 @@ export interface FakeBinOptions {
    * would — including an `output` the caller never asked for.
    */
   editReport?: string;
+  /** Report written before an intentionally refused edit exits nonzero. */
+  editRefusalReport?: string;
 }
 
 const dirs: string[] = [];
@@ -224,12 +226,14 @@ export function createFakeBin(opts: FakeBinOptions = {}): { bin: string; log: ()
    * The `-o` and `--report` paths are read from argv rather than assumed, so
    * the report lands where the engine will look for it.
    */
-  const reportEdit = opts.editReport === undefined ? null : [
+  const reportText = opts.editRefusalReport ?? opts.editReport;
+  const reportEdit = reportText === undefined ? null : [
     'prev=""; out=""; rep="";',
     'for a in "$@"; do case "$prev" in -o) out="$a" ;; --report) rep="$a" ;; esac; prev="$a"; done;',
-    'cp "$2" "$out";',
-    `printf '%s' ${JSON.stringify(opts.editReport)} > "$rep";`,
-    "exit 0",
+    ...(opts.editRefusalReport === undefined ? ['cp "$2" "$out";'] : []),
+    `printf '%s' ${shellLiteral(reportText)} > "$rep";`,
+    ...(opts.editRefusalReport === undefined ? [] : (opts.editStderrLines ?? ["Error: test refusal"]).map(line => `printf '%s\\n' ${shellLiteral(line)} >&2;`)),
+    opts.editRefusalReport === undefined ? "exit 0" : "exit 3",
   ];
   writeFileSync(
     bin,

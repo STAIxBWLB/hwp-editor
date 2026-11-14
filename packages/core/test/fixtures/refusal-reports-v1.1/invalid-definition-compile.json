@@ -1,0 +1,34 @@
+{
+  "schema_version": "1.1",
+  "contract": "hwp-edit-report-v1",
+  "output": "invalid-definition-compile-out.hwpx",
+  "dry_run": false,
+  "ops": [
+    {
+      "index": 0,
+      "op": "insert_blocks",
+      "status": "failed",
+      "pieces_touched": 0,
+      "changed": [],
+      "reason": "insert_blocks: refused (insert_blocks.invalid_definition)",
+      "refusal": {
+        "code": "insert_blocks.invalid_definition",
+        "values": {
+          "detail": "compile_error at $.styles.body: target style has a dangling shape reference",
+          "style": "body"
+        },
+        "message": "insert_blocks 스타일 또는 목록 정의가 올바르지 않습니다"
+      }
+    }
+  ],
+  "applied_count": 0,
+  "failed_count": 1,
+  "refusal": {
+    "code": "insert_blocks.invalid_definition",
+    "values": {
+      "detail": "compile_error at $.styles.body: target style has a dangling shape reference",
+      "style": "body"
+    },
+    "message": "insert_blocks 스타일 또는 목록 정의가 올바르지 않습니다"
+  }
+}

@@ -1,0 +1,4 @@
+Error: HWP_PASSWORD_REQUIRED_OR_INVALID: 암호가 필요하거나 올바르지 않습니다. --password-stdin으로 암호를 전달하세요.
+
+Caused by:
+    HWP_PASSWORD_REQUIRED_OR_INVALID: 암호가 필요하거나 올바르지 않습니다. --password-stdin으로 암호를 전달하세요.

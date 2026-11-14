@@ -1,0 +1,1 @@
+Error: insert_blocks 블록/스타일/목록 정의가 유효하지 않습니다: incomplete_table_row at $.sections[0].blocks[0].rows[0]: row does not cover every table column. DocumentSpec v1 정의를 수정한 뒤 다시 시도하세요 (삽입 위치의 폭은 170.0mm입니다)

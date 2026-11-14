@@ -1,5 +1,5 @@
 import { parsePageLayout } from "./layout.js";
-import { parseEditReport } from "./edit-report.js";
+import { parseEditReport, legacyRefusalSupported, sanitizeEditReport } from "./edit-report.js";
 import type { EditReport } from "./edit-report.js";
 import { imageAssetMediaType, validateImageAssets } from "./assets.js";
 /**
@@ -18,8 +18,8 @@ import type {
   ValidationReport,
 } from "./engine.js";
 import { HwpEngineError, toHwpErrorCode } from "./errors.js";
-import { isEditRefusalKind } from "./refusals.js";
-import { isInsertionRefusal } from "./insertion-refusals.js";
+import { isEditRefusalKind, reportRefusalFields, type EditRefusalKind } from "./refusals.js";
+import { isInsertionRefusal, type InsertionRefusal } from "./insertion-refusals.js";
 import type { HwpErrorCode } from "./errors.js";
 import type { EditOp } from "./ops.js";
 import type { CatEnvelope } from "./segments.js";
@@ -121,28 +121,57 @@ function codeForStatus(status: number): HwpErrorCode {
   }
 }
 
-async function parseError(res: Response): Promise<HwpEngineError> {
+async function parseError(res: Response, callerName?: string): Promise<HwpEngineError> {
   try {
     const body = (await res.json()) as ErrorResponse;
+    let fields: { refusal?: EditRefusalKind; insertion?: InsertionRefusal } = {};
+    let cause: unknown = body;
+    let message = body.error.message;
+    if (body.error.report !== undefined) {
+      try {
+        const report = sanitizeEditReport(parseEditReport(body.error.report), callerName ?? "document");
+        if (body.error.code === "failed") fields = reportRefusalFields(report);
+        const safeError = { ...body.error, report };
+        delete safeError.refusal;
+        delete safeError.insertion;
+        delete safeError.stopped;
+        delete safeError.noCause;
+        cause = { ...body, error: safeError };
+      } catch {
+        // A present malformed report never falls through to contradictory
+        // legacy fields, regardless of the version a host advertises.
+        message = "Invalid refused edit report; upgrade the host adapter and retry the edit.";
+        const safeError = { ...body.error };
+        delete safeError.report;
+        delete safeError.refusal;
+        delete safeError.insertion;
+        delete safeError.stopped;
+        delete safeError.noCause;
+        cause = { ...body, error: safeError };
+      }
+    } else if (body.error.code === "failed" && legacyRefusalSupported(body.error.engineVersion)) {
+      fields = {
+        ...(isEditRefusalKind(body.error.refusal) ? { refusal: body.error.refusal } : {}),
+        ...(isInsertionRefusal(body.error.insertion) ? { insertion: body.error.insertion } : {}),
+      };
+    }
     // Narrow, never cast: the code comes from a server this client does
     // not control (a pre-1.0 build, a newer one, a proxy's own body).
     return new HwpEngineError(
       toHwpErrorCode(body.error.code),
       // Pinned format: the "http 504"/"http 503" substrings are the
       // fallback markers classifyEngineError reads in @hwp-editor/react.
-      `hwp-engine HTTP ${res.status}: ${body.error.message}`,
+      `hwp-engine HTTP ${res.status}: ${message}`,
       {
         status: res.status,
-        cause: body,
-        // Narrowed, never cast; an older server sends no field (#82).
-        ...(isEditRefusalKind(body.error.refusal) ? { refusal: body.error.refusal } : {}),
-        ...(isInsertionRefusal(body.error.insertion) ? { insertion: body.error.insertion } : {}),
+        cause,
+        ...fields,
         // A marker read for what it says, not for what it is: only `true`
         // counts, so a server that sends `false` or a string sends nothing
         // (#91). The sentence in the message stays as the fallback.
-        ...(body.error.stopped === true ? { stopped: true as const } : {}),
+        ...(body.error.report === undefined && body.error.stopped === true ? { stopped: true as const } : {}),
         // The no-Error-line marker (#140), read the same way.
-        ...(body.error.noCause === true ? { noCause: true as const } : {}),
+        ...(body.error.report === undefined && body.error.noCause === true ? { noCause: true as const } : {}),
       },
     );
   } catch {
@@ -176,9 +205,9 @@ export function createHttpEngine(
   const doFetch = opts.fetch ?? globalThis.fetch.bind(globalThis);
   const base = baseUrl.replace(/\/+$/, "");
 
-  async function request<T>(path: string, init: RequestInit): Promise<T> {
+  async function request<T>(path: string, init: RequestInit, callerName?: string): Promise<T> {
     const res = await doFetch(`${base}${path}`, init);
-    if (!res.ok) throw await parseError(res);
+    if (!res.ok) throw await parseError(res, callerName);
     return (await res.json()) as T;
   }
 
@@ -325,7 +354,7 @@ export function createHttpEngine(
       const res = await request<EditResponse>("/edit", {
         method: "POST",
         body: form,
-      });
+      }, document.name);
       // Parsed only when this call needs it, and an unreadable answer is
       // dropped rather than failing an edit whose document was published: the
       // same rule the Tauri engine applies, so both transports answer one
@@ -334,7 +363,7 @@ export function createHttpEngine(
       let report: EditReport | undefined;
       if (wantsReport && res.report !== undefined) {
         try {
-          report = parseEditReport(res.report);
+          report = sanitizeEditReport(parseEditReport(res.report), res.name);
         } catch {
           report = undefined;
         }
