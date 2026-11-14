@@ -419,6 +419,7 @@ describe("insertion class end to end over HTTP (t37-a4)", () => {
         error: {
           code: "failed",
           message: "ahwp edit failed (exit 3): insert_blocks refused: layout_overflow (block 120.00 mm, insertion point 46.40 mm)",
+          engineVersion: "1.6.2",
           insertion: { kind: "layout_overflow", blockMm: 120, insertionMm: 46.4 },
         },
       }), { status: 422 }))) as unknown as typeof fetch,
