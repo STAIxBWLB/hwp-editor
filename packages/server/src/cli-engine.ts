@@ -946,28 +946,28 @@ async function readEditReport(file: string, name: string, workDir: string): Prom
 
 /** A valid refusal report is authoritative; absent metadata keeps host fallback. */
 async function rethrowReportedEditFailure(error: unknown, file: string, name: string, version: string, workDir: string, ops: EditOp[], uploads: boolean): Promise<never> {
-  // Document-open protection has no specific edit-report code yet. It stays
-  // ahead of edit refusal mapping, including reports whose code is unclassified.
-  try { return rethrowProtected(error); }
-  catch (failure) {
-    if (!(failure instanceof HwpCliError) || failure.reason !== "failed") throw failure;
-    const reading = await readEditReport(file, name, workDir);
-    if (reading.state === "unavailable" || (reading.state === "valid" && reading.report.refusal === undefined)) {
-      return rethrowLegacyEditFailure(failure, version, workDir, ops, uploads,
-        reading.state === "valid" ? reading.report : undefined);
-    }
-    if (reading.state === "malformed") {
-      throw new HwpCliError("failed", `${failure.message}: Invalid refused edit report; upgrade the host adapter and retry the edit.`,
-        failure.stderr, failure.detail, undefined, undefined, undefined, undefined, undefined, version);
-    }
-    const report = reading.report;
-    const fields = reportRefusalFields(report);
-    const line = fields.refusal !== undefined ? editRefusalMarker(fields.refusal)
-      : fields.insertion !== undefined ? `insert_blocks refused: ${fields.insertion.kind}`
-      : unclassifiedEditLine(failure.stderr ?? "", workDir);
-    throw new HwpCliError("failed", `${failure.message}: ${line}`, failure.stderr, failure.detail,
-      fields.refusal, fields.insertion, undefined, undefined, report, version);
+  if (!(error instanceof HwpCliError) || (error.reason !== "failed" && error.reason !== "protected")) throw error;
+  const reading = await readEditReport(file, name, workDir);
+  if (reading.state === "unavailable" || (reading.state === "valid" && reading.report.refusal === undefined)) {
+    return rethrowLegacyEditFailure(error, version, workDir, ops, uploads,
+      reading.state === "valid" ? reading.report : undefined);
   }
+  if (reading.state === "malformed") {
+    throw new HwpCliError("failed", `${error.message}: Invalid refused edit report; upgrade the host adapter and retry the edit.`,
+      error.stderr, error.detail, undefined, undefined, undefined, undefined, undefined, version);
+  }
+  const report = reading.report;
+  const fields = reportRefusalFields(report);
+  // Schema1.1 did not encode protection: preserve only that older backstop.
+  if (fields.code === undefined) {
+    try { return rethrowProtected(error); }
+    catch (failure) { if (!(failure instanceof HwpCliError) || failure.reason !== "failed") throw failure; }
+  }
+  const line = fields.message ?? (fields.refusal !== undefined ? editRefusalMarker(fields.refusal)
+    : fields.insertion !== undefined ? `insert_blocks refused: ${fields.insertion.kind}`
+    : unclassifiedEditLine(error.stderr ?? "", workDir));
+  throw new HwpCliError(fields.code ?? "failed", `${error.message}: ${line}`, error.stderr, error.detail,
+    fields.refusal, fields.insertion, undefined, undefined, report, version);
 }
 
 /** Preserve the established fallback when the host supplies no refusal code. */

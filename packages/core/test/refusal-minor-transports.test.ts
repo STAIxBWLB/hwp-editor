@@ -37,6 +37,13 @@ describe.each(["http", "tauri"] as const)("typed report minors over %s", transpo
     if (kind === "counts") { expect(error.message).toContain("tables"); expect(error.message).toContain("text_chars"); }
     else expect(error.message).toMatch(/canonical digest/i);
   });
+  it("fails closed on malformed protection values instead of reading protection prose", async () => {
+    const report = fixture("document-protected-password") as { refusal: { values: unknown } };
+    report.refusal.values = { protection: "bogus" };
+    const error = await refused(transport, report);
+    expect(error.code).toBe("failed"); expect(error.refusal).toBeUndefined();
+    expect(error.message).toContain("Invalid refused edit report");
+  });
   it("keeps unknown future codes unclassified, even beside protection prose", async () => {
     const report = fixture("verify-mismatch-digest") as { schema_version: string; refusal: unknown };
     report.schema_version = "1.99"; report.refusal = { code: "future_code", values: { ignored: "PRIVATE" }, message: "unread" };

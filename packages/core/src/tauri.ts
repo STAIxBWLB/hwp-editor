@@ -168,9 +168,9 @@ function toEngineError(cmd: string, error: unknown, insertion = false, context?:
     };
     if (typeof rec.code === "string") {
       const detail = typeof rec.message === "string" ? rec.message : String(error);
-      const code = toHwpErrorCode(rec.code);
-      const protectedReason = protectedReasonFor(cmd, code, detail);
-      let fields: { refusal?: EditRefusalKind; insertion?: InsertionRefusal; stopped?: true; noCause?: true } = {};
+      let code = toHwpErrorCode(rec.code);
+      let protectedReason = protectedReasonFor(cmd, code, detail);
+      let fields: ReturnType<typeof reportRefusalFields> & { stopped?: true; noCause?: true } = {};
       let cause: unknown = error;
       let message = withoutPaths(detail);
       let fallback = true;
@@ -179,7 +179,11 @@ function toEngineError(cmd: string, error: unknown, insertion = false, context?:
         try {
           const report = sanitizeEditReport(parseEditReport(rec.report), context?.name ?? "document");
           fallback = report.refusal === undefined;
-          if (code === "failed" && protectedReason === null && !fallback) fields = reportRefusalFields(report);
+          if ((code === "failed" || code === "protected") && !fallback) {
+            const mapped = reportRefusalFields(report);
+            if (mapped.code !== undefined || protectedReason === null) fields = mapped;
+            if (mapped.code !== undefined) protectedReason = null;
+          }
           const safeError = { ...rec, report };
           if (!fallback) {
             delete safeError.refusal;
@@ -188,9 +192,13 @@ function toEngineError(cmd: string, error: unknown, insertion = false, context?:
             delete safeError.noCause;
           }
           cause = safeError;
-          if (fields.refusal !== undefined) message = editRefusalMarker(fields.refusal);
+          if (fields.message !== undefined) message = fields.message;
+          else if (fields.refusal !== undefined) message = editRefusalMarker(fields.refusal);
           else if (fields.insertion !== undefined) message = `insert_blocks refused: ${fields.insertion.kind}`;
         } catch {
+          protectedReason = null;
+          fields = {};
+          if (code === "failed" || code === "protected") code = "failed";
           message = "Invalid refused edit report; upgrade the host adapter and retry the edit.";
           const safeError = { ...rec };
           delete safeError.report;
@@ -212,7 +220,7 @@ function toEngineError(cmd: string, error: unknown, insertion = false, context?:
         }
       }
       if (protectedReason !== null) return new HwpEngineError("protected", `${cmd} failed: ${protectedReason}`, { cause });
-      return new HwpEngineError(code, `${cmd} failed: ${message}`, {
+      return new HwpEngineError(fields.code ?? code, `${cmd} failed: ${message}`, {
         cause, ...fields,
         ...(fallback && rec.stopped === true ? { stopped: true as const } : {}),
         ...(fallback && rec.noCause === true ? { noCause: true as const } : {}),

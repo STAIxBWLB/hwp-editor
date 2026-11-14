@@ -3,7 +3,12 @@
 Section 1 of issue #119 moves edit classification to the refusal codes shipped
 in agent-hwp 1.6.3. The source contract is the released 2.0.0
 [edit-report-v1 schema](https://github.com/STAIxBWLB/agent-hwp/blob/v2.0.0/schemas/edit-report-v1.schema.json).
-The minimum supported engine remains 0.20.0.
+The minimum supported engine remains 0.20.0. Minor-schema support also follows
+[agent-hwp at 7cff4c0f](https://github.com/STAIxBWLB/agent-hwp/blob/7cff4c0f19668fb1b8b1d2f675f3d36993777e2a/schemas/edit-report-v1.schema.json):
+1.2 adds `document_protected` and 1.3 adds `verify_mismatch`. These extensions
+are tested with synthetic schema-driven JSON fixtures; real-binary validation
+waits for an agent-hwp release containing them. Do not use a source build as
+release evidence.
 
 ## Mapping
 
@@ -20,14 +25,18 @@ The minimum supported engine remains 0.20.0.
 | Other `preservation_loss` events | `preservation_loss` |
 | `unapplied_requests` | `unmatched_replace` only when the complete failed outcome list consists of replacements; otherwise `unapplied_requests` |
 | `no_applicable_edits` | `no_applicable_edits` |
-| `unclassified` | `unclassified_refusal` |
+| `document_protected` (1.2) | `protected` for certificate encryption, certificate DRM, DRM and signature, with the existing reason and `PROTECTED_NEXT_STEP`; `password` remains `failed` with a password-specific remedy |
+| `verify_mismatch` (1.3) | `output_validation`; display validated invariant names only, or canonical digest mismatch when counts is empty, plus a retry step |
+| `unclassified`, unknown nonempty codes in 1.x | `unclassified_refusal`; unknown values are projected to `{}` and their diagnostic message is retained as report data |
 
 The code enum contains no dedicated run-conflict or address-resolution code.
 Real 2.0.0 measurements return `unclassified` for those cases. Their old,
 more specific remedies cannot be inferred from that code or from its prose.
 
 The parser validates both top-level and per-op refusal objects with schema
-major 1 matching. It validates code-specific values, including the two
+major 1 matching. Unknown codes do not invalidate a supported-major report;
+missing/invalid code, values, message, or any other consumed field still fails
+closed. Known-code values retain their typed validation. It validates code-specific values, including the two
 `invalid_definition` shapes, numeric widths, structured issue paths and
 preservation events. User anchors, styles and issue messages are report data;
 none selects the cause class. The same mapping drives Apply and immediate
@@ -69,17 +78,24 @@ native-runtime forwarding remains unverified. No host source changes are include
 
 ## Protection measurements
 
-The 17-code schema has no open-time protection code. Real released 2.0.0
+The released 2.0.0 schema 1.1 has no open-time protection code. Real released 2.0.0
 runs with controlled HWP5 FileHeader protection flags write reports with
 `code: unclassified` and empty values. Encrypted, DRM, certificate encryption,
 certificate DRM and signature gates are covered. These are controlled gate
 fixtures, not a genuinely encrypted-document corpus or proof of decryption.
 
-The open-time backstop in `packages/core/src/errors.ts` therefore remains
-unchanged and takes precedence over generic report mapping. Issue #119's
-protection-text residuals 1.1-1.3 remain open. Ordinary password-required input
-also reports `unclassified`; that is a separate password prompt, not a new
-certificate/DRM/signature backstop case.
+The typed 1.2/1.3 outcomes are mapped by `reportRefusalFields` on server, HTTP
+and Tauri boundaries before protection diagnostics. A password is a credential
+requirement, never an instruction to remove certificate/DRM/signature protection.
+The existing diagnostic backstop in `packages/core/src/errors.ts` is retained
+for no-report hosts and schema 1.1 hosts, where protection codes were absent.
+It does not override a valid newer structured refusal or rescue a malformed report.
+
+`verify_mismatch.values.counts` consumes only the enumerated invariant `name`
+and nonnegative safe-integer `expected`/`actual` counts. Messages never interpolate
+report prose, document text or numeric count values. The synthetic 1.2/1.3
+fixtures are in `packages/core/test/fixtures/refusal-reports-v1.3/`, with their
+pinned-contract provenance and native-release deferral recorded separately.
 
 ## Evidence and review background
 

@@ -173,7 +173,9 @@ function error(
     try { safeReport = sanitizeEditReport(report, withoutPaths(report.output)); }
     catch { safeReport = undefined; }
     if (safeReport === undefined || safeReport.refusal !== undefined) {
-      const fields: { refusal?: EditRefusalKind; insertion?: InsertionRefusal } = safeReport === undefined || code !== "failed" ? {} : reportRefusalFields(safeReport);
+      const fields = safeReport === undefined || (code !== "failed" && code !== "protected") ? {} : reportRefusalFields(safeReport);
+      code = fields.code ?? code;
+      message = fields.message ?? message;
       refusal = fields.refusal;
       insertion = fields.insertion;
       stopped = undefined;

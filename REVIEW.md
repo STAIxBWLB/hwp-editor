@@ -37,14 +37,21 @@ Run these passes and tag every finding with its pass:
 - **Structured edit refusals take precedence.** Validate `edit-report-v1` 1.x and classify a
   present `refusal` from its `code` and typed `values` in `packages/core/src/edit-report.ts`
   and `refusals.ts`. Never select a class or width from that report's message, issue prose,
-  user-valued path segments or a Caused-by list. A present malformed report fails closed.
+  user-valued path segments or a Caused-by list. Unknown nonempty codes in supported 1.x
+  reports project to `unclassified` with empty values and retained message; malformed consumed
+  fields still fail closed.
   When no structured refusal is available, preserve the host/server's existing semantic fields
   or fixed-head/tail stderr classification, regardless of engine version, then fall back to
   generic diagnostics. The existing `layout_overflow` issue-list reader in `insertion-refusals.ts`
   remains a no-report compatibility exception; add no other text reader. A valid structured
   refusal, including `unclassified`, must not fall through to that exception or conflicting fields.
-  Preserve the open-time protection backstop in `errors.ts`: the report code list has no
-  protection-specific code, so an `unclassified` report does not override a protection refusal.
+  Map `document_protected` (1.2) from typed `protection` through the existing protection
+  reasons and step in `errors.ts`; password stays `failed` with a password-specific remedy.
+  Map `verify_mismatch` (1.3) to `output_validation`, naming only validated count invariant
+  names, or canonical digest mismatch for empty counts, plus a next step. These structured
+  outcomes take precedence over diagnostic protection classification. Keep the existing
+  no-report and schema 1.1 protection backstops, where those codes were absent; never use
+  them to override a valid newer structured refusal or rescue a malformed report.
   For `apply_form_bindings` on released ahwp 2.0.0, do not require a separate `--report`;
   use the mandatory receipt and optional preview in `packages/server/src/form-engine.ts`.
   Keep native failures without a structured refusal as `engine_refused` with rediscover,

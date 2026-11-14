@@ -74,6 +74,9 @@ describe("edit-report-v1 minor refusal codes", () => {
       verifyMismatch([{ name: "tables", expected: 1.5, actual: 2 }]),
       verifyMismatch([{ name: "tables", expected: Number.MAX_SAFE_INTEGER + 1, actual: 2 }]),
       verifyMismatch([{ name: "tables", expected: 1, actual: "2" }]),
+      verifyMismatch([{ expected: 1, actual: 2 }]),
+      verifyMismatch([{ name: "tables", actual: 2 }]),
+      verifyMismatch([{ name: "tables", expected: 1 }]),
     ];
     for (const raw of malformed) expect(() => parseEditReport(raw)).toThrow(/Invalid edit report/);
 
@@ -86,6 +89,9 @@ describe("edit-report-v1 minor refusal codes", () => {
     const malformedUnknown = documentProtected("password") as Record<string, any>;
     malformedUnknown.refusal = { code: "future_refusal", values: null, message: "SYNTHETIC: future." };
     expect(() => parseEditReport(malformedUnknown)).toThrow(/Invalid edit report/);
+    const malformedKnown = documentProtected("password") as Record<string, any>;
+    malformedKnown.refusal = { code: "add_table.anchor_not_found", values: {}, message: "SYNTHETIC: malformed known refusal." };
+    expect(() => parseEditReport(malformedKnown)).toThrow(/Invalid edit report/);
   });
 
   it("applies the same validation to per-operation refusals", () => {

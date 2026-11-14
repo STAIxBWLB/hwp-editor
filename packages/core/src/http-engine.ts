@@ -126,7 +126,8 @@ function codeForStatus(status: number): HwpErrorCode {
 async function parseError(res: Response, callerName?: string): Promise<HwpEngineError> {
   try {
     const body = (await res.json()) as ErrorResponse;
-    let fields: { refusal?: EditRefusalKind; insertion?: InsertionRefusal } = {};
+    let code = toHwpErrorCode(body.error.code);
+    let fields: ReturnType<typeof reportRefusalFields> = {};
     let cause: unknown = body;
     let message = body.error.message;
     let fallback = true;
@@ -135,7 +136,10 @@ async function parseError(res: Response, callerName?: string): Promise<HwpEngine
       try {
         const report = sanitizeEditReport(parseEditReport(body.error.report), callerName ?? "document");
         fallback = report.refusal === undefined;
-        if (body.error.code === "failed" && !fallback) fields = reportRefusalFields(report);
+        if ((body.error.code === "failed" || body.error.code === "protected") && !fallback) {
+          fields = reportRefusalFields(report);
+          if (fields.message !== undefined) message = fields.message;
+        }
         const safeError = { ...body.error, report };
         if (!fallback) {
           delete safeError.refusal;
@@ -147,6 +151,8 @@ async function parseError(res: Response, callerName?: string): Promise<HwpEngine
       } catch {
         // A present malformed report is rejected, never used as permission
         // to select a contradictory legacy classification.
+        fields = {};
+        if (code === "failed" || code === "protected") code = "failed";
         message = "Invalid refused edit report; upgrade the host adapter and retry the edit.";
         const safeError = { ...body.error };
         delete safeError.report;
@@ -168,7 +174,7 @@ async function parseError(res: Response, callerName?: string): Promise<HwpEngine
     // Narrow, never cast: the code comes from a server this client does
     // not control (a pre-1.0 build, a newer one, a proxy's own body).
     return new HwpEngineError(
-      toHwpErrorCode(body.error.code),
+      fields.code ?? code,
       // Pinned format: the "http 504"/"http 503" substrings are the
       // fallback markers classifyEngineError reads in @hwp-editor/react.
       `hwp-engine HTTP ${res.status}: ${message}`,

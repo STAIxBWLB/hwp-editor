@@ -17,6 +17,7 @@
  * vocabulary that must never be folded into this union.
  */
 
+import type { DocumentProtection } from "./edit-report.js";
 import type { InsertionRefusal } from "./insertion-refusals.js";
 import type { EditRefusalKind } from "./refusals.js";
 
@@ -178,6 +179,23 @@ export function isHwpEngineError(value: unknown): value is HwpEngineError {
 export const PROTECTED_NEXT_STEP =
   "remove the protection in a word processor that can open it, save a copy, then reopen that copy here";
 
+const PROTECTION_REASONS = {
+  certificate_encryption: "encrypted document",
+  certificate_drm: "DRM-protected document",
+  drm: "DRM-protected document",
+  signature: "signed document",
+} as const;
+
+/** A typed report outcome, independent of the legacy diagnostic backstop. */
+export function documentProtectionFailure(protection: DocumentProtection): { code: "failed" | "protected"; message: string } {
+  if (protection === "password") return {
+    code: "failed",
+    message: "A password is required or the password is incorrect; supply the correct password through ahwp --password-stdin and retry.",
+  };
+  return { code: "protected", message: `${PROTECTION_REASONS[protection]}; ${PROTECTED_NEXT_STEP}` };
+}
+
+
 /**
  * The next step for a 배포용 (distribution) document, which the shared step
  * does not fit: hwp-cli's DistributionDoc message ("배포용 문서(ViewText)의 원본
@@ -262,22 +280,22 @@ export const DISTRIBUTION_NEXT_STEP =
 const PROTECTED_REFUSALS: ReadonlyArray<readonly [string, string, string]> = [
   [
     "공인 인증서로 암호화된 문서는 지원하지 않습니다. 한글에서 인증서 암호화를 해제한 뒤 다시 저장하세요.",
-    "encrypted document",
+    PROTECTION_REASONS.certificate_encryption,
     PROTECTED_NEXT_STEP,
   ],
   [
     "공인 인증서 DRM으로 보호된 문서는 지원하지 않습니다. 한글에서 인증서 DRM 보안을 해제한 뒤 다시 저장하세요.",
-    "DRM-protected document",
+    PROTECTION_REASONS.certificate_drm,
     PROTECTED_NEXT_STEP,
   ],
   [
     "DRM으로 보호된 문서는 지원하지 않습니다. 한글에서 DRM 보안을 해제한 뒤 다시 저장하세요.",
-    "DRM-protected document",
+    PROTECTION_REASONS.drm,
     PROTECTED_NEXT_STEP,
   ],
   [
     "서명된 문서는 지원하지 않습니다. 한글에서 서명을 제거한 뒤 다시 저장하세요.",
-    "signed document",
+    PROTECTION_REASONS.signature,
     PROTECTED_NEXT_STEP,
   ],
   [
