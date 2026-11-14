@@ -76,7 +76,7 @@ pnpm -r test
 pnpm -r typecheck
 ```
 
-Requires Node >= 22 and pnpm 10.
+Requires Node >= 22 and pnpm 12.
 
 Run the playground from a clean checkout (Node >= 22, the pinned pnpm version,
 and agent-hwp installed as `ahwp` >= 0.20.0, tested with 2.0.0):
