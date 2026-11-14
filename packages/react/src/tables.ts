@@ -10,7 +10,10 @@
  * publishes no segment for any of those. One such table shifts every later
  * published index onto another table, so the panel must not trust the count on
  * its own. The engine's own count arrives as `bodyTables`, and the table panel
- * refuses index-addressed ops when the two disagree (#97 item 1). Table indices
+ * refuses index-addressed ops when the two disagree (#97 item 1). A table
+ * inside a text box is no gap: it is published, and at the same position the
+ * walk gives it (measured on ahwp 2.0.0, pinned by the server package's
+ * `textbox-table-order.test.ts`, #119 item 2). Table indices
  * are 0-based in document order, matching the `hwp edit --set-cell
  * "table:row:col=value"` coordinate grammar; within a table, row 0 is the
  * header row and the `---` separator row is skipped.

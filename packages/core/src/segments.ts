@@ -610,6 +610,12 @@ export function publishedTableCount(envelope: CatEnvelope): number {
  * the number is not trustworthy in either direction and the guard reads both as
  * the same refusal (#101 items 2 and 3).
  *
+ * Equal counts mean aligned indices because both orders also match, including
+ * for a table inside a text box: it takes the same position in the `table`
+ * segments as in the engine's walk. That is pinned on a genuine document with
+ * tables before and after the box, by `textbox-table-order.test.ts` in the
+ * server package (ahwp 2.0.0, #119 item 2).
+ *
  * An absent count is not a mismatch. The statistic is opt-in and a host may not
  * send it, and refusing every table op on such a host would take table editing
  * away from documents that are perfectly addressable.
