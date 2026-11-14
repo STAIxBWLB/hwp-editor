@@ -11,11 +11,27 @@ import { segmentIdPath, segmentText } from "@hwp-editor/core";
  * verbatim (a longer anchor is still a valid anchor).
  */
 export function plainSegmentText(markdownSlice: string): string {
-  return markdownSlice
+  return dropListBreaks(markdownSlice)
     .split("\n")
     .map(stripLine)
     .join("\n")
     .trim();
+}
+
+/**
+ * The fixed line the engine's Markdown projection writes between a numbered
+ * list and a bulleted list that directly follows it (#183). It is projection,
+ * not paragraph text, but it falls inside the next paragraph's char_range.
+ * Only a line that is exactly this comment after trimming is dropped; the same
+ * text mid-line, or any other comment, is kept verbatim.
+ */
+const LIST_BREAK = "<!-- list-break -->";
+
+function dropListBreaks(markdown: string): string {
+  return markdown
+    .split("\n")
+    .filter(line => line.trim() !== LIST_BREAK)
+    .join("\n");
 }
 
 function stripLine(line: string): string {
@@ -70,7 +86,7 @@ export function paragraphSourceText(
       candidate.indices.length === para.indices!.length + 1 &&
       para.indices!.every((value, index) => candidate.indices![index] === value));
     if (first !== undefined) {
-      const lead = [...segmentText(envelope, para)].slice(0, Math.max(0, first.start - para.start)).join("");
+      const lead = dropListBreaks([...segmentText(envelope, para)].slice(0, Math.max(0, first.start - para.start)).join("")).trimStart();
       return LIST_MARKER.test(lead) && lead.trim() === marker[0].trim() ? stripped : plain;
     }
   }

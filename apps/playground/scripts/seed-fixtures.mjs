@@ -263,6 +263,16 @@ execFileSync(BIN, ["new", "--template", "gongmun-basic", "-o", join(fixturesDir,
   stdio: "inherit",
 });
 
+// #183: a numbered list directly before a bulleted list, which makes the
+// Markdown projection write `<!-- list-break -->` into the bullet paragraph.
+const listBreakMd = join(fixturesDir, "_list-break-demo.md");
+writeFileSync(listBreakMd, "# t\n\n1. a\n2. b\n\n- c\n\n끝\n");
+execFileSync(BIN, ["new", "--from", listBreakMd, "-o", join(fixturesDir, "list-break-demo.hwpx")], {
+  cwd: fixturesDir,
+  stdio: "inherit",
+});
+rmSync(listBreakMd, { force: true });
+
 // Approved Hancom-authored grade-D fixture; no private corpus documents are read.
 cpSync(join(appDir, "..", "..", "packages", "server", "test", "fixtures", "form-g5.hwpx"), join(fixturesDir, "form-binding-demo.hwpx"));
 
