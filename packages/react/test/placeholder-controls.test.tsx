@@ -85,7 +85,7 @@ describe.each([["en", en], ["ko", ko]] as const)("Make placeholder across run co
     render(<HwpEditor engine={engine} file={file} locale={locale} />);
     await select(messages, 0, 10);
     expect(makeButton(messages).disabled).toBe(true);
-    expect(await screen.findByText(messages[MESSAGE[kind]])).toBeTruthy();
+    expect(await screen.findByText(messages[MESSAGE[kind]] as string)).toBeTruthy();
     expect(screen.queryByText(messages["segment.placeholderRefused"])).toBeNull();
   });
 
@@ -93,7 +93,7 @@ describe.each([["en", en], ["ko", ko]] as const)("Make placeholder across run co
     const engine = createMockEngine({ envelope: controlEnvelope(kind) });
     render(<HwpEditor engine={engine} file={file} locale={locale} />);
     await select(messages, 0, 5);
-    expect(screen.queryByText(messages[MESSAGE[kind]])).toBeNull();
+    expect(screen.queryByText(messages[MESSAGE[kind]] as string)).toBeNull();
     expect(makeButton(messages).disabled).toBe(false);
     fireEvent.click(makeButton(messages));
     fireEvent.click(await screen.findByRole("button", { name: messages["toolbar.applyWithCount"]({ count: 1 }) }));
@@ -109,7 +109,7 @@ describe.each([["en", en], ["ko", ko]] as const)("Make placeholder across run co
     const engine = createMockEngine({ envelope: bare });
     render(<HwpEditor engine={engine} file={file} locale={locale} />);
     await select(messages, 0, 10);
-    for (const key of Object.values(MESSAGE)) expect(screen.queryByText(messages[key])).toBeNull();
+    for (const key of Object.values(MESSAGE)) expect(screen.queryByText(messages[key] as string)).toBeNull();
     expect(makeButton(messages).disabled).toBe(false);
   });
 });
