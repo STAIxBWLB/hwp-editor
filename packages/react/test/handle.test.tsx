@@ -401,6 +401,28 @@ describe("onError", () => {
     expect(shown.cause).toBe(cause);
   });
 
+  it.each(["en", "ko"] as const)("localizes output-validation apply failures in %s and keeps the host error (#171)", async (locale) => {
+    const messages = locale === "en" ? en : ko;
+    const boom = new HwpEngineError("failed", "ahwp edit failed (exit 1): edit refused: output_validation", {
+      refusal: "output_validation", status: 422,
+    });
+    const engine = createMockEngine();
+    engine.edit = async () => { throw boom; };
+    const onError = vi.fn();
+    render(<HwpEditor locale={locale} engine={engine} file={file} onError={onError} />);
+    const page = await screen.findByRole("button", { name: messages["page.label"]({ page: 1 }) });
+    fireEvent.click(page, { clientY: clientYForPara(makeEnvelope(), 0) });
+    await screen.findByText("1. 회의록");
+    fireEvent.change(screen.getByLabelText(messages["segment.replaceLabel"]), { target: { value: "2. 회의록" } });
+    fireEvent.click(screen.getByRole("button", { name: messages["segment.replaceSubmit"] }));
+    await screen.findByText(messages["toolbar.pendingEdits"]({ count: 1 }));
+    fireEvent.click(screen.getByRole("button", { name: messages["toolbar.applyWithCount"]({ count: 1 }) }));
+    const alerts = await screen.findAllByRole("alert");
+    expect(alerts.map((alert) => alert.textContent ?? "").join(" ")).toContain(messages["error.outputValidation"]);
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0]?.[0]).toBe(boom);
+  });
+
   it("fires with the caught value verbatim when revert fails", async () => {
     const boom = new HwpEngineError("failed", "hwp cat failed");
     const engine = createMockEngine();

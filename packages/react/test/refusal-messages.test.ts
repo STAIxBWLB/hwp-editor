@@ -54,6 +54,13 @@ describe("refusal sentences (#80)", () => {
     expect(ko["pending.kind.insert-image"]).toContain("이미지");
     expect(ko["error.rangeTagRefused"]).not.toContain("하나씩");
   });
+  it("names output validation, the known font cause and conditional remedies in both locales (#171)", () => {
+    for (const phrase of ["refused to write", "One known cause", "font metadata (typeInfo)", ".hwpx", "ahwp convert in.hwpx -o in.hwp", "without --strict", "If you accept its loss", "For other causes", "--verify", "verification report"])
+      expect(en["error.outputValidation"]).toContain(phrase);
+    for (const phrase of ["파일 쓰기를 거부", "알려진 원인 중 하나", "글꼴 메타데이터(typeInfo)", ".hwpx", "ahwp convert in.hwpx -o in.hwp", "--strict 없이", "손실을 수용", "다른 원인", "--verify", "검증 보고서"])
+      expect(ko["error.outputValidation"]).toContain(phrase);
+  });
+
 });
 
 describe("engineRefusalKind reads the structured field only (#82)", () => {

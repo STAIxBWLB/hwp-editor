@@ -1,0 +1,357 @@
+{
+  "contract": "hwp-segment-envelope-v2",
+  "markdown": "앞 가나다뒤**굵게** 뒤\n\n",
+  "schema_version": "1.2",
+  "segments": [
+    {
+      "char_range": {
+        "end": 16,
+        "start": 0
+      },
+      "direct": {
+        "char": {
+          "bold": false,
+          "color": "#000000",
+          "face_ids": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "faces": [
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕"
+          ],
+          "italic": false,
+          "size_pt": 10.0
+        },
+        "char_shape_id": 0,
+        "para": {
+          "alignment": "justify",
+          "indent": 0,
+          "line_spacing": 160,
+          "line_spacing_type": 0
+        },
+        "para_shape_id": 2
+      },
+      "id": "36b819f6d658e8b6.0.1",
+      "kind": "para",
+      "path": {
+        "indices": [
+          1
+        ],
+        "section": 0
+      },
+      "style": {
+        "char": {
+          "bold": false,
+          "color": "#000000",
+          "face_ids": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "faces": [
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕"
+          ],
+          "italic": false,
+          "size_pt": 10.0
+        },
+        "char_shape_id": 0,
+        "para": {
+          "alignment": "justify",
+          "indent": 0,
+          "line_spacing": 160,
+          "line_spacing_type": 0
+        },
+        "para_shape_id": 0
+      }
+    },
+    {
+      "char_range": {
+        "end": 6,
+        "start": 0
+      },
+      "controls": [
+        {
+          "at": 1,
+          "kind": "tab",
+          "source": 1
+        }
+      ],
+      "direct": {
+        "char": {
+          "bold": false,
+          "color": "#000000",
+          "face_ids": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "faces": [
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕"
+          ],
+          "italic": false,
+          "size_pt": 10.0
+        },
+        "char_shape_id": 0,
+        "para": {
+          "alignment": "justify",
+          "indent": 0,
+          "line_spacing": 160,
+          "line_spacing_type": 0
+        },
+        "para_shape_id": 2
+      },
+      "id": "5a2a7c70719ead37.0.1.0",
+      "kind": "run",
+      "path": {
+        "indices": [
+          1,
+          0
+        ],
+        "section": 0
+      },
+      "source_chars": {
+        "end": 13,
+        "start": 0
+      },
+      "style": {
+        "char": {
+          "bold": false,
+          "color": "#000000",
+          "face_ids": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "faces": [
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕"
+          ],
+          "italic": false,
+          "size_pt": 10.0
+        },
+        "char_shape_id": 0,
+        "para": {
+          "alignment": "justify",
+          "indent": 0,
+          "line_spacing": 160,
+          "line_spacing_type": 0
+        },
+        "para_shape_id": 0
+      }
+    },
+    {
+      "char_range": {
+        "end": 12,
+        "start": 6
+      },
+      "direct": {
+        "char": {
+          "bold": true,
+          "color": "#000000",
+          "face_ids": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "faces": [
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕"
+          ],
+          "italic": false,
+          "size_pt": 10.0
+        },
+        "char_shape_id": 1,
+        "para": {
+          "alignment": "justify",
+          "indent": 0,
+          "line_spacing": 160,
+          "line_spacing_type": 0
+        },
+        "para_shape_id": 2
+      },
+      "id": "fb4514644871dc71.0.1.1",
+      "kind": "run",
+      "path": {
+        "indices": [
+          1,
+          1
+        ],
+        "section": 0
+      },
+      "source_chars": {
+        "end": 15,
+        "start": 13
+      },
+      "style": {
+        "char": {
+          "bold": false,
+          "color": "#000000",
+          "face_ids": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "faces": [
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕"
+          ],
+          "italic": false,
+          "size_pt": 10.0
+        },
+        "char_shape_id": 0,
+        "para": {
+          "alignment": "justify",
+          "indent": 0,
+          "line_spacing": 160,
+          "line_spacing_type": 0
+        },
+        "para_shape_id": 0
+      }
+    },
+    {
+      "char_range": {
+        "end": 14,
+        "start": 12
+      },
+      "direct": {
+        "char": {
+          "bold": false,
+          "color": "#000000",
+          "face_ids": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "faces": [
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕"
+          ],
+          "italic": false,
+          "size_pt": 10.0
+        },
+        "char_shape_id": 0,
+        "para": {
+          "alignment": "justify",
+          "indent": 0,
+          "line_spacing": 160,
+          "line_spacing_type": 0
+        },
+        "para_shape_id": 2
+      },
+      "id": "57387be4e037be43.0.1.2",
+      "kind": "run",
+      "path": {
+        "indices": [
+          1,
+          2
+        ],
+        "section": 0
+      },
+      "source_chars": {
+        "end": 17,
+        "start": 15
+      },
+      "style": {
+        "char": {
+          "bold": false,
+          "color": "#000000",
+          "face_ids": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "faces": [
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕",
+            "함초롬바탕"
+          ],
+          "italic": false,
+          "size_pt": 10.0
+        },
+        "char_shape_id": 0,
+        "para": {
+          "alignment": "justify",
+          "indent": 0,
+          "line_spacing": 160,
+          "line_spacing_type": 0
+        },
+        "para_shape_id": 0
+      }
+    }
+  ]
+}

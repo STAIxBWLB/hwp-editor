@@ -2,6 +2,8 @@
  * hwp-cli v1.6.1 stderr for the classified edit refusals, shared by the core,
  * Tauri and server tests so every transport is checked against the same lines.
  */
+import { readFileSync } from "node:fs";
+
 export const UNMATCHED =
   "Error: 적용되지 않은 편집 요청이 있습니다: " +
   'replace address=0.1 from="없는 텍스트" to="{{owner}}" ' +
@@ -41,3 +43,15 @@ export const ECHOED_UNAPPLIED =
 export const UNRESOLVABLE_ADDRESS =
   "Error: 주소를 해석할 수 없는 편집 연산이 있습니다:\n" +
   "op[0] id b800fb2a253cdfb9.0.0.7.0.0 — 주소가 가리키는 위치를 문서에서 찾을 수 없습니다";
+
+/**
+ * Captured from the released ahwp v2.0.0 aarch64-apple-darwin binary, without
+ * --verify: `ahwp edit font-type-info.hwpx -o font-refused.hwp --set-meta title=x`.
+ * Input: `ahwp new -o font-base.hwpx`, then add one child to the first
+ * HANGUL font in Contents/header.xml:
+ * `<hh:typeInfo familyType="FCAT_GOTHIC" weight="6" proportion="4" contrast="0"
+ * strokeVariation="1" armStyle="1" letterform="1" midline="1" xHeight="1"/>`.
+ * Only the first Error: line is a classifier input; the cause list below
+ * demonstrates why the font code must not choose a more specific class.
+ */
+export const FONT_TYPE_INFO = readFileSync(new URL("./font-type-info-stderr.txt", import.meta.url), "utf8");

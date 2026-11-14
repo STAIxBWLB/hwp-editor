@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { classifyEditRefusal, editRefusalMarker } from "../src/index.js";
-import { UNRESOLVABLE_ADDRESS, DRIFT, ECHOED_UNAPPLIED, MIXED_CONFLICT, RANGE_TAG, RUN_CONFLICT, UNMATCHED } from "./fixtures/refusal-stderr.js";
+import { FONT_TYPE_INFO, UNRESOLVABLE_ADDRESS, DRIFT, ECHOED_UNAPPLIED, MIXED_CONFLICT, RANGE_TAG, RUN_CONFLICT, UNMATCHED } from "./fixtures/refusal-stderr.js";
 
 describe("classifyEditRefusal (#80)", () => {
   it.each([
     [UNMATCHED, "unmatched_replace"],
+    [FONT_TYPE_INFO, "output_validation"],
     [RANGE_TAG, "range_tag"],
     [UNRESOLVABLE_ADDRESS, "unresolvable_address"],
     [RUN_CONFLICT, "run_range_conflict"],
@@ -65,6 +66,25 @@ describe("classifyEditRefusal (#80)", () => {
     ]) expect(classifyEditRefusal(stderr)).toBeUndefined();
     expect(classifyEditRefusal(`${UNRESOLVABLE_ADDRESS}\n\nStack backtrace:\n   0: frame`))
       .toBe("unresolvable_address");
+  });
+
+  it("classifies output validation by its fixed first Error line, not the cause list (#171)", () => {
+    // Parentheses and refusal words inside the path are opaque user data.
+    expect(classifyEditRefusal("Error: 출력 검증 실패 (대상: a (copy) font_type_info_unrepresentable.hwp)"))
+      .toBe("output_validation");
+    expect(classifyEditRefusal(FONT_TYPE_INFO.replace("font_type_info_unrepresentable", "another_cause")))
+      .toBe("output_validation");
+    expect(classifyEditRefusal("Error: 출력 검증 실패 (대상: out.hwpx)"))
+      .toBe("output_validation");
+    for (const stderr of [
+      `Error: 앵커를 찾을 수 없습니다: ${FONT_TYPE_INFO}`,
+      "Error: 앵커를 찾을 수 없습니다: x\nError: 출력 검증 실패 (대상: a.hwp)",
+      "Error: unrelated\nCaused by: font_type_info_unrepresentable",
+      "Error: 출력 검증 실패 (대상: a.hwp) user tail",
+      "Error: 출력 검증 실패 (대상: a.hwp",
+      "Error: 다른 출력 검증 실패 (대상: a.hwp)",
+      '치환: "a" → "출력 검증 실패 (대상: a.hwp)"\nError: unrelated',
+    ]) expect(classifyEditRefusal(stderr)).toBeUndefined();
   });
 
 });

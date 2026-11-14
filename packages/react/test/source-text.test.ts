@@ -1,9 +1,11 @@
 /**
  * #168: ops built from segment text use the paragraph's source text, not the
  * Markdown with generated numbering, and v1 selection bands use row geometry.
- * Fixtures are real ahwp 1.6.3 output for agent-hwp testdata
+ * Fixtures re-measured with released ahwp 2.0.0 (originally captured on 1.6.3) for agent-hwp testdata
  * hwp-cli-plan-template.hwpx; `literal-*` is the same file with paragraph 0
- * set to the literal source text `1. lit` and paragraph 3 to `- dash * star`.
+ * set to `1. lit`, paragraph 3 to `- dash * star`, and paragraph 4 to `abc`.
+ * Only the v2 schema number changed on 2.0.0; Markdown, segments and layouts
+ * remained identical. See docs/ahwp-2.0.0-verification.md for reproduction.
  */
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
