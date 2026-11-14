@@ -54,12 +54,18 @@ a report on >=1.6.3 does not prove that the host forwarded one. The old
 layout-overflow issue-list reader remains only on this no-report compatibility
 path; structured numeric values take precedence whenever supplied.
 
-The Maru source inspected for this task does not yet return failed edit reports.
-The client supports additive `report: true` requests and structured error reports,
-and preserves current string-only refusal classification. Live Tauri refusal-code
-forwarding remains unverified; the installed native runtime was not probed.
-Host integration is a separate handoff after this PR. No Maru or agent-hwp
-source changes are included here.
+For `hwped_edit`, the client sends `structuredRefusal: true` when
+`refusalCodesSupported(caps.version)` holds (agent-hwp >= 1.6.3). This flag
+means "can handle an object rejection with report"; it does not request a
+report. The independent `report` flag controls report generation. In particular,
+asking for a successful report on an older engine does not enable object errors.
+A supporting host forwards the sanitized `{ code, message, report, engineVersion }`
+rejection only with `structuredRefusal: true`; otherwise it keeps the prefixed
+string error. Hosts that do not support object rejection may still return strings
+to an opted-in client, which retains the string classifier. The existing object
+branch validates the report and classifies its refusal code, never diagnostic prose.
+Fake-host tests cover the opt-in handshake and both rejection shapes; installed
+native-runtime forwarding remains unverified. No host source changes are included.
 
 ## Protection measurements
 

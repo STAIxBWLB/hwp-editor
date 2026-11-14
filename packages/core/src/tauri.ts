@@ -499,6 +499,9 @@ export function createTauriEngine(
           ? { allowPartial: effective.allowPartial }
           : {}),
         ...(wantsReport || refusalCodesSupported(caps.version) ? { report: true } : {}),
+        // Object-error opt-in is independent of successful-report requests:
+        // old engines may need report:true for insertion IDs or preset batches.
+        ...(refusalCodesSupported(caps.version) ? { structuredRefusal: true } : {}),
         ...scope(),
       }, ops.some(op => op.kind === "insert-blocks"), { name: document.name });
       let report: EditReport | undefined;
